@@ -1,24 +1,27 @@
 # pangea-agent
 
-`pangea-agent` 是面向测试分析的 LangGraph 风格 Agent 骨架。目标是从源码、设计资料、覆盖率和已有用例中生成风险账本、测试点、测试用例和报告。
+`pangea-agent` 是面向测试分析的 Agent 项目骨架，采用 LangGraph 风格的工作流组织方式。项目目标是把源码、设计资料、覆盖率和已有用例转化为可追溯的风险账本、测试点、测试用例和测试报告。
 
-## 核心原则
+## 定位
 
-- `graph` 是唯一流程源。
-- `schemas/` 是唯一数据契约。
-- `rubrics/` 是唯一分析方法论来源。
-- 用户源码、输入资料、索引、Run 结果不进入 Git。
-- 不做全仓 SHA、不做源码冻结快照、不做套娃审计。
-- Git 信息只做版本说明；非 Git 源码目录也允许分析。
+`pangea-agent` 面向测试工程场景，重点支持：
 
-## 目录约定
+- C/C++ 源码理解与测试视角转译。
+- 模块级专项分析。
+- DFX 与 SFMEA 风险识别。
+- 风险到测试点、测试用例的结构化输出。
+- OpenCode、Claude Code 等 Agent 客户端协作开发。
+
+## 项目结构
 
 ```text
 pangea-agent/
 ├── src/pangea_agent/          # 框架代码
 ├── schemas/                   # JSON Schema 数据契约
 ├── examples/                  # 示例 contract 与输出样例
-└── pangea-data/               # 本地用户数据，已被 .gitignore 忽略
+├── AGENTS.md                  # OpenCode / 通用 Agent 项目规则
+├── CLAUDE.md                  # Claude Code 项目规则
+└── pangea-data/               # 本地用户数据，由命令创建
 ```
 
 本地数据目录由命令创建：
@@ -31,14 +34,14 @@ pangea init-data
 
 ```text
 pangea-data/
-├── repositories/              # 用户待分析源码，可 Git，也可非 Git
+├── repositories/              # 用户待分析源码，可 Git，也可普通源码目录
 ├── inbox/                     # 需求、设计、历史缺陷、测试报告
 ├── coverage/                  # 覆盖率资料
 ├── testcases/                 # 已有测试用例
 └── runs/                      # 每次分析的索引、证据、风险、用例和报告
 ```
 
-## 最小流程
+## 工作流
 
 ```text
 load_contract
@@ -55,6 +58,14 @@ load_contract
 → finalize_report
 ```
 
+其中：
+
+- `graph/` 定义流程。
+- `schemas/` 定义数据结构。
+- `rubrics/` 定义分析方法论。
+- `index/` 负责把源码和资料转化为可检索证据。
+- `inventory/` 负责提取函数、分支、资源和状态线索。
+
 ## 快速开始
 
 ```bash
@@ -63,4 +74,25 @@ pangea init-data
 pangea module-analysis --contract examples/task_contract.module-analysis.example.json
 ```
 
-第一版为骨架，节点目前只保留清晰职责和可扩展接口。
+## Agent 客户端
+
+### OpenCode
+
+从项目根目录启动：
+
+```bash
+opencode .
+```
+
+OpenCode 会读取 `AGENTS.md`，也可以使用 `.opencode/agents/pangea-agent.md` 中的项目级 Agent 说明。
+
+### Claude Code
+
+从项目根目录启动 Claude Code。Claude Code 会读取 `CLAUDE.md` 作为项目规则。
+
+## 开发约定
+
+- 项目代码、schema、rubric 和示例进入 Git。
+- 用户源码、输入资料、索引和 Run 结果保存在 `pangea-data/`。
+- `tests/` 作为本地开发目录，当前不提交到 Git。
+- 第一版保留清晰骨架和扩展接口，后续逐步补充节点实现。
