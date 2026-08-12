@@ -26,7 +26,7 @@ pangea-agent/
 
 本地数据目录由命令创建：
 
-```bash
+```powershell
 pangea init-data
 ```
 
@@ -40,6 +40,30 @@ pangea-data/
 ├── testcases/                 # 已有测试用例
 └── runs/                      # 每次分析的索引、证据、风险、用例和报告
 ```
+
+## Windows / PowerShell
+
+项目命令按 Windows PowerShell 友好方式组织：
+
+```powershell
+pip install -e .
+pangea init-data
+pangea module-analysis --contract "examples/task_contract.module-analysis.example.json"
+```
+
+也可以使用 Python 模块入口，避免 PATH 尚未刷新时找不到 `pangea`：
+
+```powershell
+python -m pangea_agent.cli.main init-data
+python -m pangea_agent.cli.main module-analysis --contract "examples/task_contract.module-analysis.example.json"
+```
+
+开发和 Agent 执行约定：
+
+- 一次执行一个命令，不把正式步骤串联成一条 shell 命令。
+- 路径包含空格或中文时使用引号。
+- 用户源码放在 `pangea-data/repositories/`，项目不会自动对这些源码执行 `git pull`、`reset`、`stash` 或 `checkout`。
+- 项目文件编辑由 Agent 客户端的 read/write/edit 能力完成，命令行主要用于运行 CLI。
 
 ## 工作流
 
@@ -68,10 +92,10 @@ load_contract
 
 ## 快速开始
 
-```bash
+```powershell
 pip install -e .
 pangea init-data
-pangea module-analysis --contract examples/task_contract.module-analysis.example.json
+pangea module-analysis --contract "examples/task_contract.module-analysis.example.json"
 ```
 
 ## Agent 客户端
@@ -80,7 +104,7 @@ pangea module-analysis --contract examples/task_contract.module-analysis.example
 
 从项目根目录启动：
 
-```bash
+```powershell
 opencode .
 ```
 
