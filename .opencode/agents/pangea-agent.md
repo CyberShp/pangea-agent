@@ -23,6 +23,17 @@ tools:
 - `src/pangea_agent/rubrics/builtin/`：分析方法论。
 - `pangea-data/`：本地用户数据。
 
+## Windows / PowerShell 约定
+
+本项目优先兼容 Windows PowerShell。执行命令时遵循：
+
+- 一次只执行一个明确命令，不把多个正式步骤用 `&&`、`;` 或 shell 包装串联。
+- 不使用 `cd /d`、`source`、`export`、`rm -rf`、`touch` 等 bash-only 写法。
+- 优先使用 `python -m pangea_agent.cli.main ...` 或安装后的 `pangea ...`。
+- 路径包含空格或中文时必须加引号。
+- 编辑项目文件优先用 read/write/edit 工具，不靠 shell 重定向拼文件。
+- 不自动修改 `pangea-data/repositories/` 下的用户源码仓库状态。
+
 ## 本地数据约定
 
 用户源码、设计资料、覆盖率、已有用例和 Run 结果放入 `pangea-data/`。该目录已由 `.gitignore` 忽略。
