@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TaskContract",
+  "type": "object",
+  "required": ["mode", "repository", "target"],
+  "properties": {
+    "run_id": {"type": "string"},
+    "data_root": {"type": "string"},
+    "mode": {"const": "module_analysis"},
+    "repository": {"type": "string"},
+    "target": {"type": "string"},
+    "source_scope": {"type": "array", "items": {"type": "string"}},
+    "focus": {"type": "array", "items": {"type": "string"}}
+  },
+  "additionalProperties": true
+}

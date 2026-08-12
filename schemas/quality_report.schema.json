@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "QualityReport",
+  "type": "object",
+  "required": ["status", "checks"],
+  "properties": {
+    "status": {"enum": ["PASS", "REWORK", "UNRESOLVED"]},
+    "checks": {"type": "array", "items": {"type": "string"}},
+    "unresolved": {"type": "array", "items": {"type": "object"}}
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "pangea_agent": "./src/pangea_agent/graph/graph.py:graph"
+  },
+  "env": ".env"
+}

@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AnalysisUnit",
+  "type": "object",
+  "required": ["unit_id", "title", "source_scope", "focus", "dfx", "priority"],
+  "properties": {
+    "unit_id": {"type": "string"},
+    "title": {"type": "string"},
+    "source_scope": {"type": "array", "items": {"type": "string"}},
+    "focus": {"type": "array", "items": {"type": "string"}},
+    "dfx": {"type": "array", "items": {"type": "string"}},
+    "priority": {"enum": ["P0", "P1", "P2"]}
+  }
+}

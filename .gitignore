@@ -1,0 +1,56 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Local environment
+.env
+.env.*
+!.env.example
+
+# LangGraph / local dev
+.langgraph_api/
+.langgraph/
+.langsmith/
+*.log
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Local user data and generated artifacts
+pangea-data/
+reports/
+outputs/
+runs/
+scratch/
+tmp/
+temp/
+
+# Generated SQLite indexes
+*.sqlite
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal
+
+# User requested: do not put tests/ on Git
+tests/

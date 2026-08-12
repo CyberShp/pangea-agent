@@ -1,0 +1,9 @@
+{
+  "run_id": "RUN-example",
+  "data_root": "pangea-data",
+  "mode": "module_analysis",
+  "repository": "driver",
+  "target": "nvme_tcp",
+  "source_scope": ["src/nvme/tcp", "include/nvme"],
+  "focus": ["TLS/PSK 建链", "异常恢复", "资源释放"]
+}

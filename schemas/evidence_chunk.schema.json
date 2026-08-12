@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "EvidenceChunk",
+  "type": "object",
+  "required": ["chunk_id", "source_type", "path", "content"],
+  "properties": {
+    "chunk_id": {"type": "string"},
+    "source_type": {"type": "string"},
+    "repo_id": {"type": ["string", "null"]},
+    "path": {"type": "string"},
+    "line_start": {"type": ["integer", "null"]},
+    "line_end": {"type": ["integer", "null"]},
+    "content": {"type": "string"}
+  }
+}

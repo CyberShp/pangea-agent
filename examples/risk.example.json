@@ -1,0 +1,13 @@
+{
+  "risk_id": "R-U00-001",
+  "title": "超规格后资源能力未恢复",
+  "dfx": ["资源与规格", "可靠性与一致性"],
+  "severity": "High",
+  "confidence": "medium",
+  "trigger": "并发请求超过规格上限后逐步回落到规格内",
+  "system_result": "资源计数或连接能力未随压力解除恢复",
+  "external_observation": "新业务建立失败或 IOPS 长时间不能恢复",
+  "exclusion_condition": "相同环境下不超过规格上限时现象不出现",
+  "translation_status": "Graybox-ready",
+  "evidence": []
+}

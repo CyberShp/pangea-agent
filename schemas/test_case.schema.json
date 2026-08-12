@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TestCase",
+  "type": "object",
+  "required": ["test_case_id", "title", "linked_risk_ids", "preconditions", "steps", "expected_results", "observability", "cleanup"],
+  "properties": {
+    "test_case_id": {"type": "string"},
+    "title": {"type": "string"},
+    "linked_risk_ids": {"type": "array", "items": {"type": "string"}},
+    "preconditions": {"type": "array", "items": {"type": "string"}},
+    "steps": {"type": "array", "items": {"type": "string"}},
+    "expected_results": {"type": "array", "items": {"type": "string"}},
+    "observability": {"type": "array", "items": {"type": "string"}},
+    "cleanup": {"type": "array", "items": {"type": "string"}},
+    "status": {"type": "string"}
+  }
+}

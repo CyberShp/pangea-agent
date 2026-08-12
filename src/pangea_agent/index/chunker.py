@@ -1,0 +1,18 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+from .types import EvidenceChunk
+
+
+def chunk_text_file(path: Path, *, source_type: str, repo_id: str | None = None, root: Path | None = None, max_lines: int = 120) -> list[EvidenceChunk]:
+    text = path.read_text(encoding="utf-8", errors="ignore")
+    lines = text.splitlines()
+    rel = str(path.relative_to(root)) if root and path.is_relative_to(root) else str(path)
+    chunks: list[EvidenceChunk] = []
+    for start in range(0, len(lines), max_lines):
+        end = min(start + max_lines, len(lines))
+        content = "\n".join(lines[start:end])
+        chunk_id = f"{repo_id or source_type}:{rel}:{start + 1}-{end}"
+        chunks.append(EvidenceChunk(chunk_id, source_type, repo_id, rel, start + 1, end, content))
+    return chunks

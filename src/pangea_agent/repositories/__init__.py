@@ -1,0 +1,1 @@
+"""Registered source repository access."""

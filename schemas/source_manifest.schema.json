@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SourceManifest",
+  "type": "object",
+  "properties": {
+    "index_path": {"type": "string"},
+    "file_count": {"type": "integer"},
+    "chunk_count": {"type": "integer"}
+  },
+  "required": ["index_path", "file_count", "chunk_count"]
+}

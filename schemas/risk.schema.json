@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RiskCard",
+  "type": "object",
+  "required": ["risk_id", "title", "dfx", "severity", "confidence", "trigger", "system_result", "external_observation", "exclusion_condition", "translation_status", "evidence"],
+  "properties": {
+    "risk_id": {"type": "string"},
+    "title": {"type": "string"},
+    "dfx": {"type": "array", "items": {"type": "string"}},
+    "severity": {"enum": ["Low", "Medium", "High", "Critical"]},
+    "confidence": {"enum": ["low", "medium", "high"]},
+    "trigger": {"type": "string"},
+    "system_result": {"type": "string"},
+    "external_observation": {"type": "string"},
+    "exclusion_condition": {"type": "string"},
+    "translation_status": {"enum": ["Blackbox-ready", "Graybox-ready", "Developer-confirm"]},
+    "evidence": {"type": "array", "items": {"type": "object"}}
+  }
+}

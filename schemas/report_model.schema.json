@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ReportModel",
+  "type": "object",
+  "required": ["run_id", "risks", "test_cases", "quality_report"],
+  "properties": {
+    "run_id": {"type": "string"},
+    "risks": {"type": "array", "items": {"type": "object"}},
+    "test_cases": {"type": "array", "items": {"type": "object"}},
+    "quality_report": {"type": "object"}
+  }
+}
