@@ -18,6 +18,17 @@ Use Chinese for project discussion, planning, review notes, and user-facing expl
 
 Do not redefine workflow, schemas, or rubrics in ad-hoc prompts. Update the corresponding source file instead.
 
+## Windows / PowerShell compatibility
+
+Assume the primary local shell may be Windows PowerShell.
+
+- Prefer one command per execution.
+- Do not use `cd /d ... && ...`, POSIX path rewrites, `source`, `export`, `rm -rf`, or bash-only command chaining.
+- Prefer Python module entrypoints: `python -m pangea_agent.cli.main ...` or the installed `pangea ...` command.
+- Quote paths that may contain spaces or Chinese characters.
+- Use project-file edit/read capabilities for file changes instead of shell redirection when possible.
+- Never run destructive Git commands against user source repositories under `pangea-data/repositories/`.
+
 ## Development rules
 
 - Keep the package name `pangea_agent` and project name `pangea-agent`.
