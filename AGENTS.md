@@ -4,11 +4,10 @@
 
 ## 项目目标
 
-`pangea-agent` 是面向测试分析的 Agent 框架骨架。核心工作是把源码、设计资料、覆盖率和已有用例转化为：
+`pangea-agent` 是面向测试分析的项目级 Agent。核心工作是把源码、设计资料、覆盖率和已有用例转化为：
 
 - 代码与流程理解。
-- DFX / SFMEA 风险账本。
-- 测试点。
+- 六维 DFX 风险账本。
 - 可执行测试用例。
 - 测试报告。
 
@@ -57,3 +56,25 @@
 - OpenCode 读取本文件和 `.opencode/agents/pangea-agent.md`。
 - Claude Code 读取 `CLAUDE.md`。
 - 两个客户端应遵循同一套 graph / schema / rubric 分层。
+- Python 不调用模型 API。当前主 Agent 读取 `agent-tasks/` 文件，最多并发派发
+  4 个互不重叠的 `analysis-worker`；worker 不得再派发子 Agent。
+- analysis 结果齐备后，只启动 1 个 `review-worker`。初审和返工验证属于同一轮
+  review lifecycle，返工最多一次，且返工验证必须由原 reviewer 完成。
+- 每次运行 `module-analysis` 后检查 `phase`：等待阶段由 Agent 完成对应 task 文件，
+  再沿用同一 contract 继续运行；不得用占位风险冒充语义分析结果。
+
+## Private House Code Policy
+
+<!-- PRIVATE_HOUSE_CODE_PROJECT_POLICY_V1 -->
+
+- 当 `gpt-5.6-sol` 或 `gpt-5.6-terra` 在本仓库规划、编写、修改、调试、
+  测试、重构、审查或维护代码时，必须先完整读取
+  `.agents/skills/private-house-code/SKILL.md`，并在该代码任务中遵循它。
+- 仅当边界确实存在歧义时，才按 Skill 指引读取随附的校准示例；不要把上游
+  评测记录或全局配套说明当作项目任务指引。
+- 用户明确要求、本 `AGENTS.md`、真实安全与数据完整性边界、已发布兼容性和
+  必需测试与 Skill 冲突时，前者优先。
+- 本项目现有的 schema 契约、源码证据可追溯性、`UNRESOLVED` 真实性、
+  `pangea-data/repositories/` 用户源码保护和 Windows / PowerShell 兼容要求
+  都有现实用途；不得仅为减少代码、状态、检查或抽象而弱化它们。
+- 普通交流和不涉及代码的研究不适用本策略。

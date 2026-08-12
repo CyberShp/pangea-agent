@@ -22,7 +22,14 @@ def main() -> None:
         print_repositories()
     elif args.command == "module-analysis":
         result = run_module_analysis(args.contract)
-        print(result.get("report_path", result))
+        if result.get("report_path"):
+            print(result["report_path"])
+            if result.get("html_report_path"):
+                print(result["html_report_path"])
+        else:
+            print(f"phase={result.get('phase', 'UNKNOWN')}")
+            for task_path in result.get("agent_task_paths", []):
+                print(task_path)
 
 
 if __name__ == "__main__":

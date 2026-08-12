@@ -1,12 +1,19 @@
 [project]
 name = "pangea-agent"
 version = "0.1.0"
-description = "LangGraph-style testing analysis agent skeleton"
+description = "Evidence-driven C/C++ testing analysis workflow for coding agents"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.13"
 dependencies = [
-  "langgraph>=0.2.0",
-  "pydantic>=2.0",
+  "langgraph>=0.2,<2",
+  "openpyxl>=3.1,<4",
+  "Pillow>=11,<13",
+  "pydantic>=2,<3",
+  "pypdf>=5,<7",
+  "python-docx>=1.1,<2",
+  "tree-sitter>=0.24,<0.26",
+  "tree-sitter-c>=0.23,<0.25",
+  "tree-sitter-cpp>=0.23,<0.25",
 ]
 
 [project.scripts]
@@ -15,6 +22,9 @@ pangea = "pangea_agent.cli.main:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+"pangea_agent.rubrics" = ["builtin/*.md"]
+
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"

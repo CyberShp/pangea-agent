@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "EvidenceChunk",
   "type": "object",
-  "required": ["chunk_id", "source_type", "path", "content"],
+  "required": ["chunk_id", "source_type", "repo_id", "path", "line_start", "line_end", "content", "tags"],
   "properties": {
     "chunk_id": {"type": "string"},
     "source_type": {"type": "string"},
@@ -10,6 +10,8 @@
     "path": {"type": "string"},
     "line_start": {"type": ["integer", "null"]},
     "line_end": {"type": ["integer", "null"]},
-    "content": {"type": "string"}
-  }
+    "content": {"type": "string"},
+    "tags": {"type": "array", "items": {"type": "string"}}
+  },
+  "additionalProperties": false
 }

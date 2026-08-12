@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pangea_agent.graph.state import PangeaState
+from pangea_agent.inventory.scope_expander import expand_analysis_scope
 
 
 def locate_module(state: PangeaState) -> PangeaState:
@@ -14,4 +15,19 @@ def locate_module(state: PangeaState) -> PangeaState:
     scope = contract.get("source_scope") or []
     if isinstance(scope, str):
         scope = [scope]
-    return {**state, "module_scope": list(scope)}
+    expansion = expand_analysis_scope(
+        state.get("repositories", []),
+        list(scope),
+        target=str(contract.get("target", "")),
+        focus=list(contract.get("focus", [])),
+    )
+    expanded_scope = [
+        path
+        for group in expansion["groups"]
+        for path in group["code_paths"]
+    ]
+    return {
+        **state,
+        "module_scope": list(dict.fromkeys(expanded_scope)),
+        "scope_expansion": expansion,
+    }

@@ -7,5 +7,6 @@
     "status": {"enum": ["PASS", "REWORK", "UNRESOLVED"]},
     "checks": {"type": "array", "items": {"type": "string"}},
     "unresolved": {"type": "array", "items": {"type": "object"}}
-  }
+  },
+  "additionalProperties": false
 }

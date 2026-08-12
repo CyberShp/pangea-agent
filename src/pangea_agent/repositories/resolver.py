@@ -9,6 +9,8 @@ from .guards import ensure_inside_repositories
 def resolve_repositories_from_contract(contract: dict, data_root: str) -> list[dict]:
     repo_ids = contract.get("repositories") or [contract.get("repository")]
     repo_ids = [item for item in repo_ids if item]
+    if not repo_ids:
+        raise ValueError("任务契约必须指定 repository 或 repositories")
     repositories_root = Path(data_root) / "repositories"
     results = []
     for repo_id in repo_ids:

@@ -1,9 +1,13 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class QualityReport(BaseModel):
-    status: str
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["PASS", "REWORK", "UNRESOLVED"]
     unresolved: list[dict] = Field(default_factory=list)
     checks: list[str] = Field(default_factory=list)

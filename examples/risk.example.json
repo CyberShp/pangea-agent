@@ -8,6 +8,20 @@
   "system_result": "资源计数或连接能力未随压力解除恢复",
   "external_observation": "新业务建立失败或 IOPS 长时间不能恢复",
   "exclusion_condition": "相同环境下不超过规格上限时现象不出现",
+  "upstream_semantics": {
+    "reachability": "业务入口可到达该资源分配路径",
+    "caller_constraints": "调用方只限制首次并发量，没有在异常返回后重置资源计数",
+    "documented_behavior": "规格未把持续拒绝新业务定义为预期行为",
+    "existing_tests": "已有用例只覆盖规格内成功路径，未覆盖超规格后回落",
+    "conclusion": "risk_remains"
+  },
   "translation_status": "Graybox-ready",
-  "evidence": []
+  "status": "pending",
+  "evidence": [
+    {
+      "chunk_id": "driver:src/nvme/tcp/example.c:10-30",
+      "location": "driver:src/nvme/tcp/example.c:10-30",
+      "observation": "错误路径保留资源计数，正常路径才回收"
+    }
+  ]
 }

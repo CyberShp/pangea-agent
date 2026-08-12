@@ -1,6 +1,7 @@
 {
   "test_case_id": "TC-001",
   "title": "超规格后回落恢复测试",
+  "case_type": "可靠性",
   "linked_risk_ids": ["R-U00-001"],
   "preconditions": ["准备可观测资源余量和业务能力的测试环境"],
   "steps": ["逐步增加并发超过规格上限", "回落到规格内并持续观察"],

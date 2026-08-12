@@ -2,13 +2,15 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "AnalysisUnit",
   "type": "object",
-  "required": ["unit_id", "title", "source_scope", "focus", "dfx", "priority"],
+  "required": ["unit_id", "repo_id", "title", "source_scope", "context_scope", "focus", "dfx"],
   "properties": {
     "unit_id": {"type": "string"},
+    "repo_id": {"type": "string"},
     "title": {"type": "string"},
     "source_scope": {"type": "array", "items": {"type": "string"}},
+    "context_scope": {"type": "array", "items": {"type": "string"}},
     "focus": {"type": "array", "items": {"type": "string"}},
-    "dfx": {"type": "array", "items": {"type": "string"}},
-    "priority": {"enum": ["P0", "P1", "P2"]}
-  }
+    "dfx": {"type": "array", "items": {"type": "string"}, "minItems": 1}
+  },
+  "additionalProperties": false
 }

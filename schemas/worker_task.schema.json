@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "WorkerTask",
+  "type": "object",
+  "required": ["schema_version", "task_type", "run_id", "target", "unit", "repositories", "index_path", "inventory_path", "source_manifest_path", "contract_digest", "attempt", "input_digest", "result_path", "max_parallel_workers", "may_spawn_workers", "replacement_allowed", "prior_result_path", "prior_result_digest", "review_issues"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "task_type": {"enum": ["analysis", "rework"]},
+    "run_id": {"type": "string", "minLength": 1},
+    "target": {"type": "string", "minLength": 1},
+    "unit": {"$ref": "analysis_unit.schema.json"},
+    "repositories": {"type": "array", "minItems": 1, "items": {"type": "object", "required": ["repo_id", "source_root", "git"], "properties": {"repo_id": {"type": "string"}, "source_root": {"type": "string"}, "git": {"type": "object"}}, "additionalProperties": false}},
+    "index_path": {"type": "string", "minLength": 1},
+    "inventory_path": {"type": "string", "minLength": 1},
+    "source_manifest_path": {"type": "string", "minLength": 1},
+    "contract_digest": {"type": "string", "minLength": 64, "maxLength": 64},
+    "attempt": {"enum": [0, 1]},
+    "input_digest": {"type": "string", "minLength": 64, "maxLength": 64},
+    "result_path": {"type": "string", "minLength": 1},
+    "max_parallel_workers": {"const": 4},
+    "may_spawn_workers": {"const": false},
+    "preferred_worker_id": {"type": ["string", "null"]},
+    "replacement_allowed": {"type": "boolean"},
+    "prior_result_path": {"type": ["string", "null"]},
+    "prior_result_digest": {"type": ["string", "null"], "minLength": 64, "maxLength": 64},
+    "review_issues": {"type": "array", "items": {"$ref": "review_issue.schema.json"}}
+  },
+  "additionalProperties": false
+}

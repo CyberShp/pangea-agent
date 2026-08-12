@@ -11,13 +11,24 @@ def make_analysis_units(state: PangeaState) -> PangeaState:
     """
 
     units = []
-    for idx, item in enumerate(state.get("module_scope", []) or ["."]):
-        units.append({
-            "unit_id": f"U{idx:02d}",
-            "title": f"源码范围 {item}",
-            "source_scope": [item],
-            "focus": ["code_map", "flows", "branches", "risks", "test_cases"],
-            "dfx": ["功能与状态", "资源与规格", "并发与异常", "可靠性与一致性"],
-            "priority": "P0" if idx == 0 else "P1",
-        })
+    expansion_groups = state.get("scope_expansion", {}).get("groups", [])
+    for group in expansion_groups:
+        if group["code_paths"]:
+            requested = ", ".join(group["requested_scope"])
+            units.append({
+                "unit_id": f"U{len(units):02d}",
+                "repo_id": group["repo_id"],
+                "title": f"{group['repo_id']} 源码范围 {requested}",
+                "source_scope": group["code_paths"],
+                "context_scope": group["context_paths"],
+                "focus": ["code_map", "flows", "branches", "risks", "test_cases"],
+                "dfx": [
+                    "功能与状态",
+                    "资源与规格",
+                    "性能与压力",
+                    "并发与异常",
+                    "升级与兼容",
+                    "可靠性与一致性",
+                ],
+            })
     return {**state, "analysis_units": units}

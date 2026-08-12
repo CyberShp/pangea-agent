@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class EvidenceRef(BaseModel):
-    chunk_id: str
-    location: str
-    observation: str
+    model_config = ConfigDict(extra="forbid")
+
+    chunk_id: str = Field(min_length=1)
+    location: str = Field(min_length=1)
+    observation: str = Field(min_length=1)

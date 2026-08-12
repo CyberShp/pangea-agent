@@ -14,5 +14,22 @@ def index_materials(state: PangeaState) -> PangeaState:
         repositories=state.get("repositories", []),
         module_scope=state.get("module_scope", []),
         data_root=Path(state["data_root"]),
+        scope_expansion=state.get("scope_expansion", {}),
     )
-    return {**state, "index_path": str(index_path), "source_manifest": manifest}
+    attachments = manifest.get("attachments", [])
+    errors = list(state.get("errors", []))
+    errors.extend(
+        {"kind": "document_parse_warning", **warning}
+        for warning in manifest.get("warnings", [])
+    )
+    errors.extend(
+        {"kind": "missing_dependency", **dependency}
+        for dependency in manifest.get("missing_dependencies", [])
+    )
+    return {
+        **state,
+        "index_path": str(index_path),
+        "source_manifest": manifest,
+        "unread_images": attachments,
+        "errors": errors,
+    }

@@ -6,7 +6,7 @@ description: 创建 pangea-agent 本地数据目录
 
 执行：
 
-```bash
+```powershell
 pangea init-data
 ```
 
@@ -16,7 +16,6 @@ pangea init-data
 pangea-data/repositories/
 pangea-data/inbox/
 pangea-data/coverage/
-pangea-data/testcases/
 pangea-data/runs/
 ```
 

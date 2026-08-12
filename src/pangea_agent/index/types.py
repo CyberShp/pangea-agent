@@ -12,9 +12,11 @@ class EvidenceChunk:
     line_start: int | None
     line_end: int | None
     content: str
+    tags: tuple[str, ...] = ()
 
     @property
     def location(self) -> str:
+        prefix = f"{self.repo_id}:" if self.repo_id else ""
         if self.line_start is not None and self.line_end is not None:
-            return f"{self.path}:{self.line_start}-{self.line_end}"
-        return self.path
+            return f"{prefix}{self.path}:{self.line_start}-{self.line_end}"
+        return f"{prefix}{self.path}"

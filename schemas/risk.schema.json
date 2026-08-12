@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "RiskCard",
   "type": "object",
-  "required": ["risk_id", "title", "dfx", "severity", "confidence", "trigger", "system_result", "external_observation", "exclusion_condition", "translation_status", "evidence"],
+  "required": ["risk_id", "title", "dfx", "severity", "confidence", "trigger", "system_result", "external_observation", "exclusion_condition", "upstream_semantics", "translation_status", "status", "evidence"],
   "properties": {
     "risk_id": {"type": "string"},
     "title": {"type": "string"},
@@ -13,7 +13,21 @@
     "system_result": {"type": "string"},
     "external_observation": {"type": "string"},
     "exclusion_condition": {"type": "string"},
+    "upstream_semantics": {
+      "type": "object",
+      "required": ["reachability", "caller_constraints", "documented_behavior", "existing_tests", "conclusion"],
+      "properties": {
+        "reachability": {"type": "string", "minLength": 1},
+        "caller_constraints": {"type": "string", "minLength": 1},
+        "documented_behavior": {"type": "string", "minLength": 1},
+        "existing_tests": {"type": "string", "minLength": 1},
+        "conclusion": {"enum": ["risk_remains", "expected_behavior", "unresolved"]}
+      },
+      "additionalProperties": false
+    },
     "translation_status": {"enum": ["Blackbox-ready", "Graybox-ready", "Developer-confirm"]},
-    "evidence": {"type": "array", "items": {"type": "object"}}
-  }
+    "status": {"enum": ["pending", "accepted", "confirmed", "false_positive", "claimed_fixed", "verified_fixed"]},
+    "evidence": {"type": "array", "items": {"$ref": "evidence_ref.schema.json"}, "minItems": 1}
+  },
+  "additionalProperties": false
 }

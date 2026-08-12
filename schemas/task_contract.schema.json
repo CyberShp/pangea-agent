@@ -2,15 +2,27 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "TaskContract",
   "type": "object",
-  "required": ["mode", "repository", "target"],
+  "required": ["run_id", "data_root", "mode", "target"],
   "properties": {
     "run_id": {"type": "string"},
-    "data_root": {"type": "string"},
-    "mode": {"const": "module_analysis"},
+    "data_root": {"type": "string", "default": "pangea-data"},
+    "mode": {"enum": ["module_analysis", "mr_analysis"]},
     "repository": {"type": "string"},
+    "repositories": {"type": "array", "items": {"type": "string"}},
     "target": {"type": "string"},
+    "mr_url": {"type": "string"},
     "source_scope": {"type": "array", "items": {"type": "string"}},
     "focus": {"type": "array", "items": {"type": "string"}}
   },
-  "additionalProperties": true
+  "oneOf": [
+    {"required": ["repository"], "not": {"required": ["repositories"]}},
+    {"required": ["repositories"], "not": {"required": ["repository"]}}
+  ],
+  "allOf": [
+    {
+      "if": {"properties": {"mode": {"const": "mr_analysis"}}},
+      "then": {"required": ["mr_url"]}
+    }
+  ],
+  "additionalProperties": false
 }

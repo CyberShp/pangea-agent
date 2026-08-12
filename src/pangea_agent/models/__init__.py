@@ -1,1 +1,1 @@
-"""Pydantic models can be added here as schemas stabilize."""
+"""Validated file and report contracts for pangea-agent."""

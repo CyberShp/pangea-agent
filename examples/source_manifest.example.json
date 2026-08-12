@@ -1,5 +1,23 @@
 {
   "index_path": "pangea-data/runs/RUN-example/index.sqlite",
+  "material_index_path": "pangea-data/.pangea/materials.sqlite",
   "file_count": 128,
-  "chunk_count": 640
+  "chunk_count": 640,
+  "attachments": [],
+  "warnings": [],
+  "missing_dependencies": [],
+  "coverage_records": [],
+  "scope_expansion": {
+    "requested_scope": ["lib/nvmf/auth.c"],
+    "groups": [],
+    "context_files": [],
+    "added_files": [],
+    "boundary": "explicit scope + direct external callers + target-related config/docs/tests; no recursive caller expansion"
+  },
+  "repository_versions": [
+    {
+      "repo_id": "spdk",
+      "git": {"is_git": true, "version_status": "verified", "commit": "example", "branch": "main", "dirty": false}
+    }
+  ]
 }
