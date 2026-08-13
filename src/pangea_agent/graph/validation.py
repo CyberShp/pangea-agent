@@ -26,17 +26,24 @@ def _evidence_rows(task: WorkerTask, result: WorkerResult) -> dict[str, dict]:
             f"FROM chunks WHERE chunk_id IN ({placeholders})",
             chunk_ids,
         ).fetchall()
-    found = {
-        row[0]: {
+    found = {}
+    for row in rows:
+        prefix = f"{row[2]}:" if row[2] else ""
+        path = row[3].replace("\\", "/")
+        location = (
+            f"{prefix}{path}:{row[4]}-{row[5]}"
+            if row[4] is not None and row[5] is not None
+            else f"{prefix}{path}"
+        )
+        found[row[0]] = {
             "source_type": row[1],
             "repo_id": row[2],
-            "path": row[3].replace("\\", "/"),
+            "path": path,
             "line_start": row[4],
             "line_end": row[5],
             "tags": set(json.loads(row[6] or "[]")),
+            "location": location,
         }
-        for row in rows
-    }
     missing = sorted(set(chunk_ids) - set(found))
     if missing:
         raise ArtifactRejected(f"证据 chunk_id 不存在：{missing}")
@@ -45,15 +52,7 @@ def _evidence_rows(task: WorkerTask, result: WorkerResult) -> dict[str, dict]:
     context_scopes = [scope.replace("\\", "/").strip("/") or "." for scope in task.unit.context_scope]
     for evidence in result.evidence:
         row = found[evidence.chunk_id]
-        prefix = f"{row['repo_id']}:" if row["repo_id"] else ""
-        if row["line_start"] is not None and row["line_end"] is not None:
-            location = f"{prefix}{row['path']}:{row['line_start']}-{row['line_end']}"
-        else:
-            location = f"{prefix}{row['path']}"
-        if evidence.location != location:
-            raise ArtifactRejected(
-                f"证据 {evidence.chunk_id} location 不匹配：期望 {location}，实际 {evidence.location}"
-            )
+        evidence.location = row["location"]
         if row["source_type"] == "code":
             if row["repo_id"] != task.unit.repo_id:
                 raise ArtifactRejected(f"证据 {evidence.chunk_id} 不属于当前仓库 {task.unit.repo_id}")
@@ -123,10 +122,12 @@ def validate_worker_result(task: WorkerTask, result: WorkerResult) -> None:
         raise ArtifactRejected("worker 结果缺少单元证据")
     rows = _evidence_rows(task, result)
     _validate_visual_findings(task, result)
-    evidence_keys = {(evidence.chunk_id, evidence.location) for evidence in result.evidence}
+    evidence_ids = set(rows)
     for flow in result.business_flows:
-        if any((evidence.chunk_id, evidence.location) not in evidence_keys for evidence in flow.evidence):
+        if any(evidence.chunk_id not in evidence_ids for evidence in flow.evidence):
             raise ArtifactRejected(f"业务流程 {flow.title} 的证据未绑定到当前单元")
+        for evidence in flow.evidence:
+            evidence.location = rows[evidence.chunk_id]["location"]
         if not any(rows[evidence.chunk_id]["source_type"] == "code" for evidence in flow.evidence):
             raise ArtifactRejected(f"业务流程 {flow.title} 缺少当前源码证据")
         if any("testcase_reference" in rows[evidence.chunk_id]["tags"] for evidence in flow.evidence):
@@ -136,10 +137,10 @@ def validate_worker_result(task: WorkerTask, result: WorkerResult) -> None:
             raise ArtifactRejected(
                 f"风险 {risk.risk_id} 的上游语义结论为 {risk.upstream_semantics.conclusion}，不能继续列为风险"
             )
-        if not risk.evidence or any(
-            (evidence.chunk_id, evidence.location) not in evidence_keys for evidence in risk.evidence
-        ):
+        if not risk.evidence or any(evidence.chunk_id not in evidence_ids for evidence in risk.evidence):
             raise ArtifactRejected(f"风险 {risk.risk_id} 的证据未绑定到当前单元")
+        for evidence in risk.evidence:
+            evidence.location = rows[evidence.chunk_id]["location"]
         if not any(rows[evidence.chunk_id]["source_type"] == "code" for evidence in risk.evidence):
             raise ArtifactRejected(f"风险 {risk.risk_id} 缺少当前源码证据")
         if any("testcase_reference" in rows[evidence.chunk_id]["tags"] for evidence in risk.evidence):
