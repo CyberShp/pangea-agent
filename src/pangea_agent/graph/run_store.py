@@ -70,6 +70,27 @@ def load_worker_result(path: Path) -> WorkerResult:
     return WorkerResult.model_validate(read_json(path))
 
 
+def worker_result_skeleton(task: WorkerTask) -> dict:
+    return {
+        "schema_version": "1.0",
+        "run_id": task.run_id,
+        "unit_id": task.unit.unit_id,
+        "worker_id": "",
+        "attempt": task.attempt,
+        "finish_reason": "stop",
+        "summary": "",
+        "analyzed_scope": list(task.unit.source_scope),
+        "analyzed_context_scope": list(task.unit.context_scope),
+        "evidence": [],
+        "business_flows": [],
+        "visual_findings": [],
+        "risks": [],
+        "test_cases": [],
+        "addressed_review_issue_ids": [],
+        "errors": [],
+    }
+
+
 def load_review_task(path: Path) -> ReviewTask:
     return ReviewTask.model_validate(read_json(path))
 
