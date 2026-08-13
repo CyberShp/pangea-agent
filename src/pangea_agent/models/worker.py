@@ -88,18 +88,17 @@ class WorkerResult(StrictModel):
     unit_id: str = Field(min_length=1)
     worker_id: str = Field(min_length=1)
     attempt: Literal[0, 1]
-    input_digest: str = Field(min_length=64, max_length=64)
     finish_reason: Literal["stop", "truncated", "error"]
     summary: str = Field(min_length=1)
     analyzed_scope: list[str] = Field(min_length=1)
-    analyzed_context_scope: list[str] = Field(default_factory=list)
-    evidence: list[EvidenceRef] = Field(default_factory=list)
-    business_flows: list[BusinessFlow] = Field(default_factory=list)
-    visual_findings: list[VisualFinding] = Field(default_factory=list)
-    risks: list[RiskCard] = Field(default_factory=list)
-    test_cases: list[TestCase] = Field(default_factory=list)
-    addressed_review_issue_ids: list[str] = Field(default_factory=list)
-    errors: list[str] = Field(default_factory=list)
+    analyzed_context_scope: list[str]
+    evidence: list[EvidenceRef]
+    business_flows: list[BusinessFlow]
+    visual_findings: list[VisualFinding]
+    risks: list[RiskCard]
+    test_cases: list[TestCase]
+    addressed_review_issue_ids: list[str]
+    errors: list[str]
 
     @model_validator(mode="after")
     def validate_links(self) -> "WorkerResult":
