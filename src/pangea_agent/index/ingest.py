@@ -84,7 +84,7 @@ def build_run_index(
             for path in _iter_files(scoped_root, CODE_SUFFIXES):
                 file_count += 1
                 chunks = chunk_text_file(path, source_type="code", repo_id=repo_id, root=root)
-                relative_path = str(path.relative_to(root))
+                relative_path = path.relative_to(root).as_posix()
                 _replace((index_path,), chunks, source_type="code", repo_id=repo_id, path=relative_path)
                 chunk_count += len(chunks)
         for relative_path in context_by_repo.get(repo_id, []):
@@ -114,7 +114,7 @@ def build_run_index(
         if source_root.exists():
             for path in _iter_files(source_root, DOCUMENT_SUFFIXES):
                 file_count += 1
-                relative_path = str(path.relative_to(data_root))
+                relative_path = path.relative_to(data_root).as_posix()
                 try:
                     extracted = extract_document(path, attachments_root)
                 except DependencyUnavailableError as exc:
