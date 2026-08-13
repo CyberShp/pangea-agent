@@ -58,7 +58,8 @@ tools:
 ## V1 Worker 生命周期
 
 - Python 不调用模型 API。运行命令后读取当前 Run 的 `phase` 和 `agent-tasks/`。
-- `WAITING_ANALYSIS`：最多并发派发 4 个 `analysis-worker`，每个只处理一个互不重叠单元，禁止继续派生 Agent。
+- `WAITING_ANALYSIS`：最多并发派发 4 个 `analysis-worker`，每个只处理一个互不重叠单元，禁止继续派生 Agent。向 worker 传对应 task JSON 路径，不由主 Agent 转述或重构任务字段。
+- 正常 analysis/rework worker 只有在其自身执行 `validate-worker-result` 并得到 `PASS` 后才算完成；主 Agent 不接手修补 worker JSON 格式。
 - `WAITING_ANALYSIS` 中某个结果因 schema 或 validation 被拒绝时，只修正该结果并继续使用原 analysis task；这是 retry，不是 REWORK，不得自行修改 `attempt` 或创建 rework task。
 - `WAITING_REVIEW`：启动 1 个 `review-worker` 做独立复核。
 - `WAITING_REWORK`：只有 graph 已生成 `agent-tasks/rework/*.json` 时才进入正式返工；原 worker 优先处理，不可恢复时可替代，但返工仍只有一次。
