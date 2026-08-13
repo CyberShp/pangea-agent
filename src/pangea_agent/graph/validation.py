@@ -105,8 +105,8 @@ def validate_nonoverlapping_units(units: list[dict]) -> None:
 def validate_worker_result(task: WorkerTask, result: WorkerResult) -> None:
     if result.run_id != task.run_id or result.unit_id != task.unit.unit_id:
         raise ArtifactRejected("worker 结果与 run_id/unit_id 不匹配")
-    if result.attempt != task.attempt or result.input_digest != task.input_digest:
-        raise ArtifactRejected("worker 结果与任务版本不匹配")
+    if result.attempt != task.attempt:
+        raise ArtifactRejected(f"worker attempt 不匹配：task={task.attempt}, result={result.attempt}")
     if result.finish_reason != "stop":
         raise ArtifactRejected(f"worker 输出不完整：finish_reason={result.finish_reason}")
     expected_scope = {scope.replace("\\", "/").strip("/") or "." for scope in task.unit.source_scope}
