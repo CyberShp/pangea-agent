@@ -109,12 +109,18 @@ def build_run_index(
                 path=relative_path,
             )
             chunk_count += len(chunks)
+    inbox_coverage_root = data_root / "inbox" / "coverage"
     for folder, source_type in (("inbox", "material"), ("coverage", "coverage")):
         source_root = data_root / folder
         if source_root.exists():
             for path in _iter_files(source_root, DOCUMENT_SUFFIXES):
                 file_count += 1
                 relative_path = path.relative_to(data_root).as_posix()
+                effective_source_type = (
+                    "coverage"
+                    if source_type == "material" and path.is_relative_to(inbox_coverage_root)
+                    else source_type
+                )
                 try:
                     extracted = extract_document(path, attachments_root)
                 except DependencyUnavailableError as exc:
@@ -131,14 +137,20 @@ def build_run_index(
                 except Exception as exc:
                     warnings.append({"path": relative_path, "warning": f"{type(exc).__name__}: {exc}"})
                     continue
-                tags = _material_tags(path, extracted.text) if source_type == "material" else (source_type,)
+                tags = _material_tags(path, extracted.text) if effective_source_type == "material" else (effective_source_type,)
                 chunks = chunk_text(
                     extracted.text,
                     path=relative_path,
-                    source_type=source_type,
+                    source_type=effective_source_type,
                     tags=tags,
                 )
-                _replace((index_path, material_index_path), chunks, source_type=source_type, repo_id=None, path=relative_path)
+                _replace(
+                    (index_path, material_index_path),
+                    chunks,
+                    source_type=effective_source_type,
+                    repo_id=None,
+                    path=relative_path,
+                )
                 chunk_count += len(chunks)
                 attachments.extend({
                     "source_path": relative_path,
@@ -155,7 +167,7 @@ def build_run_index(
                     "error": f"attachment extraction requires the '{package}' package",
                 } for package in extracted.missing_dependencies)
 
-                if source_type == "coverage" and path.suffix.lower() == ".xlsx":
+                if effective_source_type == "coverage" and path.suffix.lower() == ".xlsx":
                     records, coverage_warnings = parse_coverage_xlsx(path)
                     coverage_records.extend(records)
                     coverage_text = "\n".join(
