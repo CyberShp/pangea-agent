@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 
 CODE_SUFFIXES = {".c", ".h", ".cc", ".cpp", ".cxx", ".hpp", ".hh"}
@@ -28,8 +28,9 @@ def expand_analysis_scope(
     target: str,
     focus: list[str],
 ) -> dict:
-    """Expand explicit C/C++ scope once to direct callers and related repository context."""
+    """Expand explicit C/C++ scope once to companion files, direct callers and related context."""
     normalized_scopes = [_normalize(value) for value in requested_scopes or ["."]]
+    requested_groups = _group_requested_scopes(normalized_scopes)
     domain_terms = _domain_terms(target, focus)
     groups: list[dict] = []
     context_files: list[dict] = []
@@ -42,16 +43,21 @@ def expand_analysis_scope(
         code_paths = {path: _relative(path, root) for path in code_files}
         repo_groups = []
         explicitly_owned: set[str] = set()
-        for scope in normalized_scopes:
+        for scopes in requested_groups:
             paths = sorted(
                 relative
                 for relative in code_paths.values()
-                if relative not in explicitly_owned and _inside_scope(relative, scope)
+                if relative not in explicitly_owned and any(_inside_scope(relative, scope) for scope in scopes)
             )
+            companions = _companion_paths(scopes, code_paths.values())
+            for relative in sorted(companions - set(paths) - explicitly_owned):
+                paths.append(relative)
+                added_files.append({"repo_id": repo_id, "path": relative, "reason": "companion_source"})
+            paths.sort()
             explicitly_owned.update(paths)
             repo_groups.append({
                 "repo_id": repo_id,
-                "requested_scope": [scope],
+                "requested_scope": scopes,
                 "code_paths": paths,
                 "context_paths": [],
             })
@@ -101,7 +107,7 @@ def expand_analysis_scope(
         "groups": groups,
         "context_files": _unique_records(context_files),
         "added_files": _unique_records(added_files),
-        "boundary": "explicit scope + direct external callers + target-related config/docs/tests; no recursive caller expansion",
+        "boundary": "explicit scope + same-stem companion source + direct external callers + target-related config/docs/tests; no recursive caller expansion",
     }
 
 
@@ -111,6 +117,39 @@ def _iter_files(root: Path, suffixes: set[str]):
             part in IGNORED_PARTS for part in path.relative_to(root).parts
         ):
             yield path
+
+
+def _group_requested_scopes(scopes: list[str]) -> list[list[str]]:
+    groups: list[list[str]] = []
+    file_groups: dict[tuple[str, str], list[str]] = {}
+    for scope in scopes:
+        path = PurePosixPath(scope)
+        if path.suffix.lower() in CODE_SUFFIXES:
+            key = (str(path.parent), path.stem)
+            if key not in file_groups:
+                file_groups[key] = []
+                groups.append(file_groups[key])
+            file_groups[key].append(scope)
+        else:
+            groups.append([scope])
+    return groups
+
+
+def _companion_paths(scopes: list[str], code_paths) -> set[str]:
+    keys = {
+        (str(path.parent), path.stem)
+        for scope in scopes
+        for path in [PurePosixPath(scope)]
+        if path.suffix.lower() in CODE_SUFFIXES
+    }
+    if not keys:
+        return set()
+    return {
+        relative
+        for relative in code_paths
+        for path in [PurePosixPath(relative)]
+        if (str(path.parent), path.stem) in keys and path.suffix.lower() in CODE_SUFFIXES
+    }
 
 
 def _exported_symbols(paths, domain_terms: tuple[str, ...]) -> set[str]:
@@ -141,8 +180,11 @@ def _select_group(relative: str, calls: set[str], groups: list[dict], symbols_by
     path_parts = relative.split("/")
     proximity = []
     for group in groups:
-        scope_parts = group["requested_scope"][0].split("/")
-        proximity.append(sum(a == b for a, b in zip(path_parts, scope_parts)))
+        scope_scores = []
+        for scope in group["requested_scope"]:
+            scope_parts = scope.split("/")
+            scope_scores.append(sum(a == b for a, b in zip(path_parts, scope_parts)))
+        proximity.append(max(scope_scores, default=0))
     return proximity.index(max(proximity)) if proximity else 0
 
 
@@ -173,7 +215,7 @@ def _normalize(value: str) -> str:
 
 
 def _relative(path: Path, root: Path) -> str:
-    return str(path.relative_to(root)).replace("\\", "/")
+    return path.relative_to(root).as_posix()
 
 
 def _inside_scope(path: str, scope: str) -> bool:
