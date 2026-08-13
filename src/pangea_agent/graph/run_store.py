@@ -121,7 +121,9 @@ def artifact_digest(model: object) -> str:
 
 
 def worker_task_digest(task: WorkerTask) -> str:
-    payload = task.model_dump(mode="json", exclude={"input_digest", "result_path"})
+    # coverage_context is analysis guidance added after the original V1 task format;
+    # excluding it keeps existing Run task digests stable across this upgrade.
+    payload = task.model_dump(mode="json", exclude={"input_digest", "result_path", "coverage_context"})
     payload["inventory_digest"] = _file_digest(Path(task.inventory_path))
     payload["source_manifest_digest"] = _file_digest(Path(task.source_manifest_path))
     payload["index_digest"] = _file_digest(Path(task.index_path))
