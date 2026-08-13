@@ -59,8 +59,9 @@ tools:
 
 - Python 不调用模型 API。运行命令后读取当前 Run 的 `phase` 和 `agent-tasks/`。
 - `WAITING_ANALYSIS`：最多并发派发 4 个 `analysis-worker`，每个只处理一个互不重叠单元，禁止继续派生 Agent。
+- `WAITING_ANALYSIS` 中某个结果因 schema 或 validation 被拒绝时，只修正该结果并继续使用原 analysis task；这是 retry，不是 REWORK，不得自行修改 `attempt` 或创建 rework task。
 - `WAITING_REVIEW`：启动 1 个 `review-worker` 做独立复核。
-- `WAITING_REWORK`：原 worker 优先返工；不可恢复时可替代，但返工仍只有一次。
+- `WAITING_REWORK`：只有 graph 已生成 `agent-tasks/rework/*.json` 时才进入正式返工；原 worker 优先处理，不可恢复时可替代，但返工仍只有一次。
 - `WAITING_REWORK_REVIEW`：必须由原 reviewer 验证返工结果；不可恢复时标记不完整，不换 reviewer。
 - 完成当前阶段产物后，用同一 contract 再运行命令推进。截断、格式错误和缺少证据不得作为完成。
 
