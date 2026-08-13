@@ -39,7 +39,8 @@ tools:
 
 ## 本地数据约定
 
-用户源码、设计资料、覆盖率、已有用例和 Run 结果放入 `pangea-data/`。该目录已由 `.gitignore` 忽略。
+- 用户源码、设计资料、覆盖率、已有用例和 Run 结果放入 `pangea-data/`，该目录已由 `.gitignore` 忽略。
+- 函数覆盖率 Excel 放在 `pangea-data/coverage/`。Python 会把能唯一匹配到当前分析单元的记录写入 worker task 的 `coverage_context`，worker 不需要自行扫描全部 Coverage 文件猜关联关系。
 
 ## 开发约定
 
@@ -53,21 +54,22 @@ tools:
 
 风险需要说明复现条件、系统结果、外部观测和排除条件。测试用例需要说明前置条件、步骤、预期结果、观测方式和清理/恢复。
 
-`source_scope` 是范围起点。准备阶段确定性加入直接调用者，以及与目标直接相关的配置、规格和测试；不做递归调用链扩张。analysis-worker 必须同时完成 `source_scope` 和 `context_scope`。风险进入报告前核对入口可达性、调用方限制/补救、规格或高层 API 定义、已有测试；预期行为不得列为风险。不要为此增加新的 Agent 类型或复核层。
+`source_scope` 是范围起点。准备阶段确定性加入头文件声明对应的实现文件、直接调用者，以及与目标直接相关的配置、规格和测试；不做递归调用链扩张。analysis-worker 必须同时完成 `source_scope` 和 `context_scope`。风险进入报告前核对入口可达性、调用方限制/补救、规格或高层 API 定义、已有测试；预期行为不得列为风险。不要为此增加新的 Agent 类型或复核层。
 
 ## V1 Worker 生命周期
 
 - Python 不调用模型 API。运行命令后读取当前 Run 的 `phase` 和 `agent-tasks/`。
 - 首次创建 Run 才使用 `module-analysis --contract <contract>`。Run 已存在后，后续推进统一使用 `resume-run --run-id <run_id>`；该命令读取 `runs/<run_id>/inputs/task-contract.json` 中冻结的原始契约。
-- Run 已存在时不得重新创建、修改或猜测 task contract，不得通过计算文件 SHA256 猜 `contract_digest`，也不得因为契约不匹配擅自换 `run_id` 重跑。只有用户明确要求新 Run 时才创建新 Run。
-- `agent-results/` 中结果文件存在不代表已完成；只有 graph 校验接受后，`progress.completed_analysis_units` / `completed_rework_units` 中的单元才算完成。
-- `WAITING_ANALYSIS`：最多并发派发 4 个 `analysis-worker`，每个只处理一个互不重叠单元，禁止继续派生 Agent。向 worker 传对应 task JSON 路径，不由主 Agent 转述或重构任务字段。
-- 正常 analysis/rework worker 只有在其自身执行 `validate-worker-result` 并得到 `PASS` 后才算完成；主 Agent 不接手修补 worker JSON 格式。
-- `WAITING_ANALYSIS` 中某个结果因 schema 或 validation 被拒绝时，只修正该结果并继续使用原 analysis task；这是 retry，不是 REWORK，不得自行修改 `attempt` 或创建 rework task。
+- Run 已存在时不得重新创建、修改或猜测 task contract，不得通过文件 SHA256 或其他 hash 猜内部 digest，也不得因为恢复失败擅自换 `run_id` 重跑。只有用户明确要求新 Run 时才创建新 Run。
+- 用户可见说明不输出 `contract_digest`、`input_digest`、`task_digest` 或长 hash。内部一致性值只用于 Python 自身判断；面向用户只说明该做什么，例如“请使用 resume-run 继续当前 Run”。
+- `agent-results/` 中结果文件存在不代表已完成；只有 graph 接受后，`progress.completed_analysis_units` / `completed_rework_units` 中的单元才算完成。
+- `WAITING_ANALYSIS`：最多并发派发 4 个 `analysis-worker`，每个只处理一个互不重叠单元，禁止继续派生 Agent。向 worker 传对应 task JSON 路径，不由主 Agent转述或重构任务字段。
+- Worker 在 Python 生成的结果骨架上填写分析内容；完成后只执行一次 `validate-worker-result` 作为轻量提交检查。该检查主要确认结果可解析、真实证据存在且属于当前范围，并自动恢复机械字段和 evidence location。
+- 若提交检查失败，只修正当前结果文件中指出的结构或证据引用，不重新分析整个单元、不修改 task、不增加 `attempt`、不创建新 Run。主 Agent 不接手重写 worker 结果。
 - `WAITING_REVIEW`：启动 1 个 `review-worker` 做独立复核。
 - `WAITING_REWORK`：只有 graph 已生成 `agent-tasks/rework/*.json` 时才进入正式返工；原 worker 优先处理，不可恢复时可替代，但返工仍只有一次。
 - `WAITING_REWORK_REVIEW`：必须由原 reviewer 验证返工结果；不可恢复时标记不完整，不换 reviewer。
-- 完成当前阶段产物后，用 `resume-run --run-id <run_id>` 推进。截断、格式错误和缺少证据不得作为完成。
+- 完成当前阶段产物后，用 `resume-run --run-id <run_id>` 推进。
 
 ## 初始化约定
 
