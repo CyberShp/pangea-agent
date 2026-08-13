@@ -72,7 +72,6 @@ def _task_result(task: dict, *, finish_reason: str = "stop", fake_location: bool
         "unit_id": task["unit"]["unit_id"],
         "worker_id": f"worker-{task['unit']['unit_id']}",
         "attempt": task["attempt"],
-        "input_digest": task["input_digest"],
         "finish_reason": finish_reason,
         "summary": "完成当前单元分析",
         "analyzed_scope": task["unit"]["source_scope"],
