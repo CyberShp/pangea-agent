@@ -23,6 +23,14 @@ tools:
 - `schemas/worker_result.schema.json` 及其直接引用的 schema。
 - `src/pangea_agent/rubrics/builtin/` 中与当前单元有关的方法文件；`dfx.md`、`c_cpp_analysis.md`、`risk_reproducibility.md` 和 `test_case_generation.md` 必读。
 
+随后执行：
+
+```powershell
+python -m pangea_agent.cli.main prepare-worker-result --task "<worker task JSON>"
+```
+
+再读取 task 指定的 `result_path`。PANGEA 已生成固定顶层结构；在这个文件上填写结果，不要从零重建 WorkerResult。
+
 若 `task_type` 是 `rework`，还必须读取 `prior_result_path` 和 `review_issues`。只修复列出的复核问题，不另开分析范围。
 
 任何必需输入不存在、摘要不匹配或无法读取时，不要猜测。按 `worker_result.schema.json` 写出 `finish_reason=error` 的结果，并在 `errors` 中准确说明。
@@ -30,8 +38,8 @@ tools:
 ## 取证规则
 
 - 以当前冻结源码为主，资料与图片只提供上下文；资料和源码矛盾时保留差异风险，并以源码行为为准。
-- 证据必须来自 SQLite index 的真实记录。不得编造、改写或自行生成 `chunk_id`。
-- 源码 `location` 必须写成 `<canonical repo_id>:<path>:<start>-<end>`。`repo_id` 只能取自 task；`path`、行号和 `chunk_id` 必须与 SQLite chunk 对应。
+- `evidence.chunk_id` 必须逐字使用 SQLite index 中真实存在的 `chunk_id`，不得按文件名、行号或单元编号自行构造或猜测格式。
+- 源码 `location` 必须与该 `chunk_id` 对应的 index 记录一致，格式为 `<canonical repo_id>:<path>:<start>-<end>`；`path` 和行号必须来自同一条 index 记录。
 - `inventory_path` 用于确认函数、分支、条件编译、资源信号和解析失败范围；`source_manifest_path` 用于确认资料、附件、缺依赖和不完整范围。
 - `testcase_reference` 或 `evidence_role=reference_only` 的历史用例只能参考表达、环境和前置条件，不能证明某个风险或源码分支已经覆盖。
 - Coverage 的函数执行次数只是执行线索，不是分支覆盖或风险覆盖证明。
@@ -48,46 +56,20 @@ tools:
 6. 用例不分优先级。步骤与预期结果必须能明确对应；一个风险允许多个用例。
 7. 不输出安全专项、SFMEA、实现质量评价、代码改进建议或未经证据支持的配置组合。
 
-## 不可推导字段
-
-以下字段只能从 worker task 原样复制，禁止自行计算、转换或根据这是第几次调用来修改：
-
-- `run_id` = `task.run_id`
-- `unit_id` = `task.unit.unit_id`
-- `attempt` = `task.attempt`
-- `analyzed_scope` = `task.unit.source_scope`
-- `analyzed_context_scope` = `task.unit.context_scope`
-
-`attempt` 表示 task 类型，不表示 worker 被调用了几次；同一个 analysis task 重试时仍保持原值。`repo_id:` 前缀只用于 evidence `location`，不得加入 `analyzed_scope` 或 `analyzed_context_scope`。
-
 ## 写入结果
 
-结果顶层只允许 `worker_result.schema.json` 定义的字段，并按下面的固定结构输出：
+- 不得修改骨架中已经由 PANGEA 写好的 `schema_version`、`run_id`、`unit_id`、`attempt`、`analyzed_scope`、`analyzed_context_scope`。
+- `repo_id:` 前缀只用于 evidence `location`，不得加入 `analyzed_scope` 或 `analyzed_context_scope`。
+- 所有顶层字段都必须保留；`risks`、`test_cases` 等允许为空，不为满足格式制造内容。
+- 正常完成写 `finish_reason=stop`，此时 `evidence` 和 `business_flows` 至少各有一项，`errors` 必须为空。
+- `business_flows`、`risks`、`test_cases` 内部对象必须严格按各自 schema 填写，不得增加自定义字段。
+- `addressed_review_issue_ids` 在初次分析时为空，返工时只写确实修复并验证过的问题 ID。
+- 只修改 task 指定的 `result_path`；不得改 task、index、inventory、source manifest、源码或其他 worker 的结果文件。
 
-```json
-{
-  "schema_version": "1.0",
-  "run_id": "",
-  "unit_id": "",
-  "worker_id": "",
-  "attempt": 0,
-  "finish_reason": "stop",
-  "summary": "",
-  "analyzed_scope": [],
-  "analyzed_context_scope": [],
-  "evidence": [],
-  "business_flows": [],
-  "visual_findings": [],
-  "risks": [],
-  "test_cases": [],
-  "addressed_review_issue_ids": [],
-  "errors": []
-}
+正常完成后必须执行：
+
+```powershell
+python -m pangea_agent.cli.main validate-worker-result --task "<worker task JSON>"
 ```
 
-- 所有顶层字段都必须输出；`risks`、`test_cases` 等允许为空，不为满足格式制造内容。
-- 正常完成只能写 `finish_reason=stop`，此时 `evidence` 和 `business_flows` 至少各有一项，`errors` 必须为空。
-- 内容截断、格式错误、缺少必需证据或未覆盖完整单元时不得伪装成完成。
-- `addressed_review_issue_ids` 在初次分析时为空，返工时只写确实修复并验证过的问题 ID。
-- 只把最终 JSON 写到 task 指定的 `result_path`。不得改 task、index、inventory、source manifest、源码或其他 worker 的结果文件，也不得另写一个替代结果路径。
-- 写完后重新读取该文件，确认是单个完整 JSON、字段符合 schema、路径正确且没有 Markdown 代码围栏。
+只有输出 `PASS` 才能把当前 worker 标记为完成。若返回 `FAIL <字段路径>: <原因>`，直接修正当前 `result_path` 后重新验证，不得把格式不合法的正常结果交回主 Agent。若确因必需输入缺失等原因只能输出 `finish_reason=error/truncated`，如实返回该失败结果，不得为了通过校验伪造完整结果。
