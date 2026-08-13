@@ -30,7 +30,10 @@ tools:
 - 一次只执行一个明确命令，不把多个正式步骤用 `&&`、`;` 或 shell 包装串联。
 - 不使用 `cd /d`、`source`、`export`、`rm -rf`、`touch` 等 bash-only 写法。
 - 优先使用 `python -m pangea_agent.cli.main ...` 或安装后的 `pangea ...`。
-- 路径包含空格或中文时必须加引号。
+- 所有文件路径按字面值处理；不得把路径中的 `\n`、`\t`、`\r` 等组合解释为转义字符。
+- 工具返回的路径必须原样复用，不得重新拼接、拆分或规范化。
+- PowerShell 访问已有路径时优先使用单引号和 `-LiteralPath`。
+- glob/filesystem 因特殊路径失败时直接换用 read 或 `-LiteralPath`，不要据此认定路径不存在。
 - 编辑项目文件优先用 read/write/edit 工具，不靠 shell 重定向拼文件。
 - 不自动修改 `pangea-data/repositories/` 下的用户源码仓库状态。
 
