@@ -4,7 +4,9 @@ import re
 from pathlib import Path, PurePosixPath
 
 
-CODE_SUFFIXES = {".c", ".h", ".cc", ".cpp", ".cxx", ".hpp", ".hh"}
+SOURCE_SUFFIXES = {".c", ".cc", ".cpp", ".cxx"}
+HEADER_SUFFIXES = {".h", ".hpp", ".hh"}
+CODE_SUFFIXES = SOURCE_SUFFIXES | HEADER_SUFFIXES
 CONTEXT_SUFFIXES = {".md", ".rst", ".txt", ".sh", ".py", ".json", ".yaml", ".yml"}
 IGNORED_PARTS = {".git", "build", "dist", "third_party", "node_modules", "__pycache__", ".pangea"}
 COMMON_FUNCTIONS = {"main", "free", "calloc", "malloc", "memcpy", "memset", "strcmp", "strlen"}
@@ -28,7 +30,7 @@ def expand_analysis_scope(
     target: str,
     focus: list[str],
 ) -> dict:
-    """Expand explicit C/C++ scope once to companion files, direct callers and related context."""
+    """Expand explicit C/C++ scope once to implementations, direct callers and related context."""
     normalized_scopes = [_normalize(value) for value in requested_scopes or ["."]]
     requested_groups = _group_requested_scopes(normalized_scopes)
     domain_terms = _domain_terms(target, focus)
@@ -41,26 +43,39 @@ def expand_analysis_scope(
         root = Path(repository["source_root"])
         code_files = list(_iter_files(root, CODE_SUFFIXES))
         code_paths = {path: _relative(path, root) for path in code_files}
+        explicit_paths = {
+            relative
+            for relative in code_paths.values()
+            if any(_inside_scope(relative, scope) for scope in normalized_scopes)
+        }
         repo_groups = []
-        explicitly_owned: set[str] = set()
         for scopes in requested_groups:
-            paths = sorted(
+            paths = {
                 relative
                 for relative in code_paths.values()
-                if relative not in explicitly_owned and any(_inside_scope(relative, scope) for scope in scopes)
-            )
+                if any(_inside_scope(relative, scope) for scope in scopes)
+            }
             companions = _companion_paths(scopes, code_paths.values())
-            for relative in sorted(companions - set(paths) - explicitly_owned):
-                paths.append(relative)
-                added_files.append({"repo_id": repo_id, "path": relative, "reason": "companion_source"})
-            paths.sort()
-            explicitly_owned.update(paths)
+            definitions = _declared_definition_paths(scopes, root, code_paths)
+            for relative in sorted(companions - paths):
+                if relative not in explicit_paths:
+                    added_files.append({"repo_id": repo_id, "path": relative, "reason": "companion_source"})
+            for relative, symbols in sorted(definitions.items()):
+                if relative not in explicit_paths:
+                    added_files.append({
+                        "repo_id": repo_id,
+                        "path": relative,
+                        "reason": f"declared_definition:{','.join(symbols[:5])}",
+                    })
+            paths.update(companions)
+            paths.update(definitions)
             repo_groups.append({
                 "repo_id": repo_id,
-                "requested_scope": scopes,
-                "code_paths": paths,
+                "requested_scope": list(scopes),
+                "code_paths": sorted(paths),
                 "context_paths": [],
             })
+        repo_groups = _merge_overlapping_groups(repo_groups)
         owned = {path for group in repo_groups for path in group["code_paths"]}
         symbols_by_group = [
             _exported_symbols((root / path for path in group["code_paths"]), domain_terms)
@@ -107,7 +122,7 @@ def expand_analysis_scope(
         "groups": groups,
         "context_files": _unique_records(context_files),
         "added_files": _unique_records(added_files),
-        "boundary": "explicit scope + same-stem companion source + direct external callers + target-related config/docs/tests; no recursive caller expansion",
+        "boundary": "explicit scope + declared implementations + direct external callers + target-related config/docs/tests; no recursive caller expansion",
     }
 
 
@@ -152,6 +167,66 @@ def _companion_paths(scopes: list[str], code_paths) -> set[str]:
     }
 
 
+def _declared_definition_paths(scopes: list[str], root: Path, code_paths: dict[Path, str]) -> dict[str, list[str]]:
+    declared: set[str] = set()
+    for scope in scopes:
+        relative = PurePosixPath(scope)
+        if relative.suffix.lower() not in HEADER_SUFFIXES:
+            continue
+        header = root.joinpath(*relative.parts)
+        if not header.is_file():
+            continue
+        text = header.read_text(encoding="utf-8", errors="replace")
+        declared.update(name for name in _DECL_RE.findall(text) if name not in COMMON_FUNCTIONS)
+    if not declared:
+        return {}
+
+    definitions: dict[str, list[str]] = {}
+    for path, relative in code_paths.items():
+        if path.suffix.lower() not in SOURCE_SUFFIXES:
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        matched = sorted(declared & set(_DEF_RE.findall(text)))
+        if matched:
+            definitions[relative] = matched
+    return definitions
+
+
+def _merge_overlapping_groups(groups: list[dict]) -> list[dict]:
+    merged = [
+        {
+            **group,
+            "requested_scope": list(group["requested_scope"]),
+            "code_paths": list(group["code_paths"]),
+            "context_paths": list(group["context_paths"]),
+        }
+        for group in groups
+    ]
+    changed = True
+    while changed:
+        changed = False
+        for left in range(len(merged)):
+            left_paths = set(merged[left]["code_paths"])
+            for right in range(left + 1, len(merged)):
+                if not left_paths.intersection(merged[right]["code_paths"]):
+                    continue
+                merged[left]["requested_scope"] = sorted(dict.fromkeys(
+                    merged[left]["requested_scope"] + merged[right]["requested_scope"]
+                ))
+                merged[left]["code_paths"] = sorted(dict.fromkeys(
+                    merged[left]["code_paths"] + merged[right]["code_paths"]
+                ))
+                merged[left]["context_paths"] = sorted(dict.fromkeys(
+                    merged[left]["context_paths"] + merged[right]["context_paths"]
+                ))
+                merged.pop(right)
+                changed = True
+                break
+            if changed:
+                break
+    return merged
+
+
 def _exported_symbols(paths, domain_terms: tuple[str, ...]) -> set[str]:
     symbols: set[str] = set()
     for path in paths:
@@ -161,7 +236,7 @@ def _exported_symbols(paths, domain_terms: tuple[str, ...]) -> set[str]:
             declaration = match.group(0).split("(", 1)[0]
             if name not in COMMON_FUNCTIONS and not re.search(r"\bstatic\b", declaration):
                 symbols.add(name)
-        if path.suffix.lower() in {".h", ".hpp", ".hh"}:
+        if path.suffix.lower() in HEADER_SUFFIXES:
             for match in _DECL_RE.finditer(text):
                 name = match.group(1)
                 declaration = match.group(0).lower()
