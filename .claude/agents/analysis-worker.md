@@ -35,7 +35,7 @@ python -m pangea_agent.cli.main prepare-worker-result --task "<worker task JSON>
 
 - 以当前冻结源码为主，资料与图片只提供上下文；资料和源码矛盾时保留差异风险，并以源码行为为准。
 - `evidence.chunk_id` 必须逐字使用 SQLite index 中真实存在的 `chunk_id`，不得按文件名、行号或单元编号自行构造或猜测格式。
-- 源码 `location` 必须与该 `chunk_id` 对应的 index 记录一致，格式为 `<canonical repo_id>:<path>:<start>-<end>`；`path` 和行号必须来自同一条 index 记录。
+- `evidence.location` 不需要自行填写；`validate-worker-result` 会根据 `chunk_id` 从 index 回填 canonical location。已有值也会以 index 记录为准覆盖。
 - `inventory_path` 用于确认函数、分支、条件编译、资源信号和解析失败范围；`source_manifest_path` 用于确认资料、附件、缺依赖和不完整范围。
 - `testcase_reference` 或 `evidence_role=reference_only` 的历史用例只能参考表达、环境和前置条件，不能证明某个风险或源码分支已经覆盖。
 - Coverage 的函数执行次数只是执行线索，不是分支覆盖或风险覆盖证明。
@@ -55,7 +55,7 @@ python -m pangea_agent.cli.main prepare-worker-result --task "<worker task JSON>
 ## 写入结果
 
 - 不得修改骨架中已经由 PANGEA 写好的 `schema_version`、`run_id`、`unit_id`、`attempt`、`analyzed_scope`、`analyzed_context_scope`。
-- `repo_id:` 前缀只用于 evidence `location`，不得加入 `analyzed_scope` 或 `analyzed_context_scope`。
+- `analyzed_scope` 和 `analyzed_context_scope` 只使用 task 中的 canonical path，不添加 `repo_id:` 前缀。
 - 所有顶层字段都必须保留；`risks`、`test_cases` 等允许为空，不为满足格式制造内容。
 - 正常完成写 `finish_reason=stop`，此时 `evidence` 和 `business_flows` 至少各有一项，`errors` 必须为空。
 - `business_flows`、`risks`、`test_cases` 内部对象必须严格按各自 schema 填写，不得增加自定义字段。
