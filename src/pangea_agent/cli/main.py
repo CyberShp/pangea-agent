@@ -48,8 +48,10 @@ def main() -> None:
     elif args.command == "validate-worker-result":
         try:
             task = load_worker_task(Path(args.task))
-            result = load_worker_result(Path(task.result_path))
+            result_path = Path(task.result_path)
+            result = load_worker_result(result_path)
             validate_worker_result(task, result)
+            write_json(result_path, result.model_dump(mode="json"))
         except Exception as exc:
             parser.exit(1, f"FAIL {validation_message(exc)}\n")
         print("PASS")
