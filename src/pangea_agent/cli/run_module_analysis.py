@@ -35,3 +35,10 @@ def run_module_analysis(contract_path: str) -> dict:
         "task_contract": contract,
     }
     return graph.invoke(state)
+
+
+def resume_module_analysis(run_id: str, data_root: str = "pangea-data") -> dict:
+    contract_path = Path(data_root) / "runs" / run_id / "inputs" / "task-contract.json"
+    if not contract_path.is_file():
+        raise ValueError(f"冻结 task contract 不存在：{contract_path}")
+    return run_module_analysis(str(contract_path))
