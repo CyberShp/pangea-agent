@@ -183,5 +183,8 @@ def validate_review_result(task: ReviewTask, result: ReviewResult, known_units: 
 
 def validation_message(exc: Exception) -> str:
     if isinstance(exc, ValidationError):
-        return "; ".join(error["msg"] for error in exc.errors())
+        return "; ".join(
+            f"{'.'.join(map(str, error['loc']))}: {error['msg']}"
+            for error in exc.errors()
+        )
     return str(exc)
