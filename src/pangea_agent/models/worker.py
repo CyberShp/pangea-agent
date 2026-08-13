@@ -36,6 +36,15 @@ class RepositoryRef(StrictModel):
     git: dict = Field(default_factory=dict)
 
 
+class CoverageContext(StrictModel):
+    repo_id: str = Field(min_length=1)
+    path: str = Field(min_length=1)
+    function: str = Field(min_length=1)
+    count: int
+    line: int | None = None
+    module: str = ""
+
+
 class BusinessFlow(StrictModel):
     title: str = Field(min_length=1)
     description: str = Field(min_length=1)
@@ -59,6 +68,7 @@ class WorkerTask(StrictModel):
     index_path: str = Field(min_length=1)
     inventory_path: str = Field(min_length=1)
     source_manifest_path: str = Field(min_length=1)
+    coverage_context: list[CoverageContext] = Field(default_factory=list)
     contract_digest: str = Field(min_length=64, max_length=64)
     attempt: Literal[0, 1]
     input_digest: str = Field(min_length=64, max_length=64)
