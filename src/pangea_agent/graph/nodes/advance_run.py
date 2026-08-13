@@ -120,7 +120,7 @@ def _load_analysis_results(state: PangeaState, progress: RunProgress) -> list[Wo
         task_path = analysis_task_path(state, unit_id)
         task = load_worker_task(task_path)
         if worker_task_digest(task) != task.input_digest:
-            raise ArtifactRejected(f"analysis task 文件被修改：{unit_id}")
+            raise ArtifactRejected(f"analysis task 已发生变化，无法继续当前单元：{unit_id}")
         path = Path(task.result_path)
         validate_task_result_path(analysis_result_path(state, unit_id, 0), path, run_directory(state))
         if not path.exists():
@@ -128,6 +128,7 @@ def _load_analysis_results(state: PangeaState, progress: RunProgress) -> list[Wo
         try:
             result = load_worker_result(path)
             validate_worker_result(task, result)
+            write_json(path, result.model_dump(mode="json"))
         except Exception as exc:
             _record_error(progress, "analysis_result_rejected", path, exc)
             continue
@@ -221,6 +222,7 @@ def _prepare_rework(state: PangeaState, progress: RunProgress, review) -> None:
             index_path=original_task.index_path,
             inventory_path=original_task.inventory_path,
             source_manifest_path=original_task.source_manifest_path,
+            coverage_context=original_task.coverage_context,
             contract_digest=original_task.contract_digest,
             attempt=1,
             input_digest="0" * 64,
@@ -252,7 +254,7 @@ def _load_rework_results(state: PangeaState, progress: RunProgress) -> list[Work
             try:
                 original_task = load_worker_task(analysis_task_path(state, unit_id))
                 if worker_task_digest(original_task) != original_task.input_digest:
-                    raise ArtifactRejected(f"analysis task 文件被修改：{unit_id}")
+                    raise ArtifactRejected(f"analysis task 已发生变化，无法继续当前单元：{unit_id}")
                 validate_task_result_path(original_path, Path(original_task.result_path), run_directory(state))
                 original_result = load_worker_result(original_path)
                 validate_worker_result(original_task, original_result)
@@ -266,7 +268,7 @@ def _load_rework_results(state: PangeaState, progress: RunProgress) -> list[Work
             continue
         task = load_worker_task(rework_path)
         if worker_task_digest(task) != task.input_digest:
-            raise ArtifactRejected(f"rework task 文件被修改：{unit_id}")
+            raise ArtifactRejected(f"rework task 已发生变化，无法继续当前单元：{unit_id}")
         original_result = load_worker_result(Path(task.prior_result_path))
         if artifact_digest(original_result) != task.prior_result_digest:
             raise ArtifactRejected(f"返工输入在任务生成后发生变化：{unit_id}")
@@ -277,6 +279,7 @@ def _load_rework_results(state: PangeaState, progress: RunProgress) -> list[Work
         try:
             result = load_worker_result(result_path)
             validate_worker_result(task, result)
+            write_json(result_path, result.model_dump(mode="json"))
         except Exception as exc:
             _record_error(progress, "rework_result_rejected", result_path, exc)
             continue
@@ -314,9 +317,9 @@ def _state_with_results(state: PangeaState, results: list[WorkerResult], status:
     quality = QualityReport(
         status=status,
         checks=[
-            "所有 worker 输出完整且通过结构校验",
-            "run、unit、attempt 和输入摘要绑定一致",
-            "风险和测试用例具有当前单元证据",
+            "所有 worker 均正常完成",
+            "worker 证据可追溯到当前分析范围",
+            "跨单元风险和测试用例编号唯一",
             "独立 review-worker 仅执行一轮",
         ],
         unresolved=unresolved,
@@ -379,7 +382,7 @@ def _terminate_if_requested(state: PangeaState, progress: RunProgress) -> Pangea
         return None
     signal = load_termination(path)
     if signal.run_id != state["run_id"] or signal.phase != progress.phase:
-        raise ArtifactRejected("终止信号与当前 run/phase 不匹配")
+        raise ArtifactRejected("终止信号不属于当前 Run 阶段")
     if progress.phase == "WAITING_REWORK":
         results = _load_analysis_results(state, progress) or []
     elif progress.phase == "WAITING_REWORK_REVIEW":
@@ -397,7 +400,7 @@ def _terminate_if_requested(state: PangeaState, progress: RunProgress) -> Pangea
 
 def _validate_review_inputs(state: PangeaState, task: ReviewTask) -> None:
     if review_task_digest(task) != task.task_digest:
-        raise ArtifactRejected("review task 文件被修改")
+        raise ArtifactRejected("review task 已发生变化，无法继续复核")
     for reference in task.analysis_results:
         attempt = 1 if task.stage == "rework_verification" and rework_task_path(state, reference.unit_id).exists() else 0
         validate_task_result_path(
@@ -415,7 +418,7 @@ def _rebuild_terminal_state(state: PangeaState, progress: RunProgress) -> Pangea
     if termination.exists():
         signal = load_termination(termination)
         if signal.run_id != state["run_id"]:
-            raise ArtifactRejected("终止信号与当前 run 不匹配")
+            raise ArtifactRejected("终止信号不属于当前 Run")
         if signal.phase == "WAITING_REWORK_REVIEW":
             results = _load_rework_results(state, progress)
         else:
@@ -441,7 +444,7 @@ def _rebuild_terminal_state(state: PangeaState, progress: RunProgress) -> Pangea
         if unavailable_path.exists():
             unavailable = load_reviewer_unavailable(unavailable_path)
             if unavailable.run_id != state["run_id"] or unavailable.reviewer_id != task.same_reviewer_id:
-                raise ArtifactRejected("reviewer unavailable 信号与原复核 Agent 不匹配")
+                raise ArtifactRejected("reviewer unavailable 信号不属于原复核 Agent")
             return _ready_to_finalize(
                 state,
                 progress,
@@ -470,9 +473,9 @@ def _rebuild_terminal_state(state: PangeaState, progress: RunProgress) -> Pangea
 def advance_run(state: PangeaState) -> PangeaState:
     progress = load_progress(state)
     if progress is None:
-        raise ValueError("progress.json 不存在，不能恢复 run")
+        raise ValueError("progress.json 不存在，不能恢复 Run")
     if canonical_digest(state["task_contract"]) != progress.contract_digest:
-        raise ArtifactRejected("当前 task contract 与已有 run 不一致")
+        raise ArtifactRejected("请使用 resume-run --run-id <run_id> 继续这个 Run")
     state = _hydrate_run_context(state, progress)
 
     if progress.phase in {"WAITING_REVIEW", "WAITING_REWORK", "WAITING_REWORK_REVIEW"}:
@@ -529,7 +532,7 @@ def advance_run(state: PangeaState) -> PangeaState:
             unavailable = load_reviewer_unavailable(unavailable_path)
             task = load_review_task(task_path)
             if unavailable.run_id != state["run_id"] or unavailable.reviewer_id != task.same_reviewer_id:
-                raise ArtifactRejected("reviewer unavailable 信号与原复核 Agent 不匹配")
+                raise ArtifactRejected("reviewer unavailable 信号不属于原复核 Agent")
             results = _load_rework_results(state, progress) or []
             unresolved = [{"reason": unavailable.reason, "reviewer_id": unavailable.reviewer_id}]
             return _ready_to_finalize(state, progress, results, "UNRESOLVED", unresolved)
