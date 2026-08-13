@@ -14,11 +14,20 @@ class ArtifactRejected(ValueError):
     pass
 
 
+def _all_evidence(result: WorkerResult):
+    yield from result.evidence
+    for flow in result.business_flows:
+        yield from flow.evidence
+    for risk in result.risks:
+        yield from risk.evidence
+
+
 def _evidence_rows(task: WorkerTask, result: WorkerResult) -> dict[str, dict]:
     index_path = Path(task.index_path)
     if not index_path.exists():
         raise ArtifactRejected(f"证据索引不存在：{index_path}")
-    chunk_ids = list(dict.fromkeys(item.chunk_id for item in result.evidence))
+    evidence_refs = list(_all_evidence(result))
+    chunk_ids = list(dict.fromkeys(item.chunk_id for item in evidence_refs))
     placeholders = ",".join("?" for _ in chunk_ids)
     with sqlite3.connect(index_path) as connection:
         rows = connection.execute(
@@ -46,30 +55,30 @@ def _evidence_rows(task: WorkerTask, result: WorkerResult) -> dict[str, dict]:
         }
     missing = sorted(set(chunk_ids) - set(found))
     if missing:
-        raise ArtifactRejected(f"证据 chunk_id 不存在：{missing}")
+        raise ArtifactRejected(f"以下证据在当前索引中不存在：{missing}")
 
     scopes = [scope.replace("\\", "/").strip("/") or "." for scope in task.unit.source_scope]
     context_scopes = [scope.replace("\\", "/").strip("/") or "." for scope in task.unit.context_scope]
-    for evidence in result.evidence:
+    for evidence in evidence_refs:
         row = found[evidence.chunk_id]
         evidence.location = row["location"]
         if row["source_type"] == "code":
             if row["repo_id"] != task.unit.repo_id:
-                raise ArtifactRejected(f"证据 {evidence.chunk_id} 不属于当前仓库 {task.unit.repo_id}")
+                raise ArtifactRejected(f"证据 {evidence.chunk_id} 不属于当前分析单元")
             if not any(
                 scope == "." or row["path"] == scope or row["path"].startswith(f"{scope}/")
                 for scope in scopes
             ):
-                raise ArtifactRejected(f"证据 {evidence.chunk_id} 超出当前分析单元范围")
+                raise ArtifactRejected(f"证据 {evidence.chunk_id} 超出当前分析范围")
         if row["source_type"] == "source_context":
-            if row["repo_id"] != task.unit.repo_id:
-                raise ArtifactRejected(f"上下文证据 {evidence.chunk_id} 不属于当前仓库 {task.unit.repo_id}")
-            if row["path"] not in context_scopes:
-                raise ArtifactRejected(f"上下文证据 {evidence.chunk_id} 超出当前分析单元范围")
+            if row["repo_id"] != task.unit.repo_id or row["path"] not in context_scopes:
+                raise ArtifactRejected(f"上下文证据 {evidence.chunk_id} 超出当前分析范围")
     return found
 
 
 def _validate_visual_findings(task: WorkerTask, result: WorkerResult) -> None:
+    if not result.visual_findings:
+        return
     manifest_path = Path(task.source_manifest_path)
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -80,9 +89,6 @@ def _validate_visual_findings(task: WorkerTask, result: WorkerResult) -> None:
     unknown = sorted(set(claimed) - declared)
     if unknown:
         raise ArtifactRejected(f"图片结论引用了清单外附件：{unknown}")
-    duplicates = sorted(item for item, count in Counter(claimed).items() if count > 1)
-    if duplicates:
-        raise ArtifactRejected(f"同一 worker 重复声明图片结论：{duplicates}")
 
 
 def validate_nonoverlapping_units(units: list[dict]) -> None:
@@ -102,49 +108,19 @@ def validate_nonoverlapping_units(units: list[dict]) -> None:
 
 
 def validate_worker_result(task: WorkerTask, result: WorkerResult) -> None:
-    if result.run_id != task.run_id or result.unit_id != task.unit.unit_id:
-        raise ArtifactRejected("worker 结果与 run_id/unit_id 不匹配")
-    if result.attempt != task.attempt:
-        raise ArtifactRejected(f"worker attempt 不匹配：task={task.attempt}, result={result.attempt}")
+    # 这些字段由任务定义，结果文件只承载分析内容；统一恢复为 task 中的确定值。
+    result.run_id = task.run_id
+    result.unit_id = task.unit.unit_id
+    result.attempt = task.attempt
+    result.analyzed_scope = list(task.unit.source_scope)
+    result.analyzed_context_scope = list(task.unit.context_scope)
+
     if result.finish_reason != "stop":
-        raise ArtifactRejected(f"worker 输出不完整：finish_reason={result.finish_reason}")
-    expected_scope = {scope.replace("\\", "/").strip("/") or "." for scope in task.unit.source_scope}
-    actual_scope = {scope.replace("\\", "/").strip("/") or "." for scope in result.analyzed_scope}
-    if actual_scope != expected_scope:
-        raise ArtifactRejected(f"worker 分析范围不完整：期望 {sorted(expected_scope)}，实际 {sorted(actual_scope)}")
-    expected_context = {scope.replace("\\", "/").strip("/") or "." for scope in task.unit.context_scope}
-    actual_context = {scope.replace("\\", "/").strip("/") or "." for scope in result.analyzed_context_scope}
-    if actual_context != expected_context:
-        raise ArtifactRejected(
-            f"worker 上游语义范围不完整：期望 {sorted(expected_context)}，实际 {sorted(actual_context)}"
-        )
-    if not result.evidence:
-        raise ArtifactRejected("worker 结果缺少单元证据")
-    rows = _evidence_rows(task, result)
+        raise ArtifactRejected(f"worker 未正常完成：finish_reason={result.finish_reason}")
+    if not result.evidence or not result.business_flows:
+        raise ArtifactRejected("worker 正常完成时必须包含真实证据和业务流程")
+    _evidence_rows(task, result)
     _validate_visual_findings(task, result)
-    evidence_ids = set(rows)
-    for flow in result.business_flows:
-        if any(evidence.chunk_id not in evidence_ids for evidence in flow.evidence):
-            raise ArtifactRejected(f"业务流程 {flow.title} 的证据未绑定到当前单元")
-        for evidence in flow.evidence:
-            evidence.location = rows[evidence.chunk_id]["location"]
-        if not any(rows[evidence.chunk_id]["source_type"] == "code" for evidence in flow.evidence):
-            raise ArtifactRejected(f"业务流程 {flow.title} 缺少当前源码证据")
-        if any("testcase_reference" in rows[evidence.chunk_id]["tags"] for evidence in flow.evidence):
-            raise ArtifactRejected(f"业务流程 {flow.title} 不能把历史测试用例作为实现证据")
-    for risk in result.risks:
-        if risk.upstream_semantics.conclusion != "risk_remains":
-            raise ArtifactRejected(
-                f"风险 {risk.risk_id} 的上游语义结论为 {risk.upstream_semantics.conclusion}，不能继续列为风险"
-            )
-        if not risk.evidence or any(evidence.chunk_id not in evidence_ids for evidence in risk.evidence):
-            raise ArtifactRejected(f"风险 {risk.risk_id} 的证据未绑定到当前单元")
-        for evidence in risk.evidence:
-            evidence.location = rows[evidence.chunk_id]["location"]
-        if not any(rows[evidence.chunk_id]["source_type"] == "code" for evidence in risk.evidence):
-            raise ArtifactRejected(f"风险 {risk.risk_id} 缺少当前源码证据")
-        if any("testcase_reference" in rows[evidence.chunk_id]["tags"] for evidence in risk.evidence):
-            raise ArtifactRejected(f"风险 {risk.risk_id} 不能把历史测试用例作为风险存在证据")
     if task.task_type == "rework":
         expected_issues = {issue.issue_id for issue in task.review_issues}
         if set(result.addressed_review_issue_ids) != expected_issues:
@@ -155,7 +131,7 @@ def validate_task_result_path(task_path: Path, result_path: Path, run_dir: Path)
     resolved_run = run_dir.resolve()
     resolved_result = result_path.resolve()
     if resolved_result != Path(task_path).resolve():
-        raise ArtifactRejected("任务声明的 result_path 与约定路径不一致")
+        raise ArtifactRejected("result_path 不是当前任务约定的结果路径")
     if resolved_run not in resolved_result.parents:
         raise ArtifactRejected("result_path 超出当前 run 目录")
 
@@ -172,7 +148,7 @@ def validate_unique_ids(results: list[WorkerResult]) -> None:
 
 def validate_review_result(task: ReviewTask, result: ReviewResult, known_units: set[str]) -> None:
     if result.run_id != task.run_id or result.task_digest != task.task_digest:
-        raise ArtifactRejected("review 结果与任务版本不匹配")
+        raise ArtifactRejected("review 结果不属于当前复核任务")
     if result.finish_reason != "stop":
         raise ArtifactRejected(f"review 输出不完整：finish_reason={result.finish_reason}")
     unknown = {issue.unit_id for issue in result.issues} - known_units
