@@ -9,7 +9,19 @@ from pangea_agent.graph.validation import validate_worker_result, validation_mes
 
 from .init_data import init_data
 from .index_repo import print_repositories
-from .run_module_analysis import run_module_analysis
+from .run_module_analysis import resume_module_analysis, run_module_analysis
+
+
+def _print_run_result(result: dict) -> None:
+    if result.get("report_path"):
+        print(result["report_path"])
+        if result.get("html_report_path"):
+            print(result["html_report_path"])
+        return
+    print(f"run_id={result.get('run_id', 'UNKNOWN')}")
+    print(f"phase={result.get('phase', 'UNKNOWN')}")
+    for task_path in result.get("agent_task_paths", []):
+        print(task_path)
 
 
 def main() -> None:
@@ -19,6 +31,9 @@ def main() -> None:
     sub.add_parser("list-repos")
     run = sub.add_parser("module-analysis")
     run.add_argument("--contract", required=True)
+    resume = sub.add_parser("resume-run")
+    resume.add_argument("--run-id", required=True)
+    resume.add_argument("--data-root", default="pangea-data")
     prepare = sub.add_parser("prepare-worker-result")
     prepare.add_argument("--task", required=True)
     validate = sub.add_parser("validate-worker-result")
@@ -30,15 +45,9 @@ def main() -> None:
     elif args.command == "list-repos":
         print_repositories()
     elif args.command == "module-analysis":
-        result = run_module_analysis(args.contract)
-        if result.get("report_path"):
-            print(result["report_path"])
-            if result.get("html_report_path"):
-                print(result["html_report_path"])
-        else:
-            print(f"phase={result.get('phase', 'UNKNOWN')}")
-            for task_path in result.get("agent_task_paths", []):
-                print(task_path)
+        _print_run_result(run_module_analysis(args.contract))
+    elif args.command == "resume-run":
+        _print_run_result(resume_module_analysis(args.run_id, args.data_root))
     elif args.command == "prepare-worker-result":
         task = load_worker_task(Path(args.task))
         result_path = Path(task.result_path)
