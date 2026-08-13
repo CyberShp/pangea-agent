@@ -2,10 +2,10 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "EvidenceRef",
   "type": "object",
-  "required": ["chunk_id", "location", "observation"],
+  "required": ["chunk_id", "observation"],
   "properties": {
     "chunk_id": {"type": "string", "minLength": 1},
-    "location": {"type": "string", "minLength": 1},
+    "location": {"type": ["string", "null"], "minLength": 1},
     "observation": {"type": "string", "minLength": 1}
   },
   "additionalProperties": false
