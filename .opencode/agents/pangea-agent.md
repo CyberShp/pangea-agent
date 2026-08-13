@@ -58,13 +58,16 @@ tools:
 ## V1 Worker 生命周期
 
 - Python 不调用模型 API。运行命令后读取当前 Run 的 `phase` 和 `agent-tasks/`。
+- 首次创建 Run 才使用 `module-analysis --contract <contract>`。Run 已存在后，后续推进统一使用 `resume-run --run-id <run_id>`；该命令读取 `runs/<run_id>/inputs/task-contract.json` 中冻结的原始契约。
+- Run 已存在时不得重新创建、修改或猜测 task contract，不得通过计算文件 SHA256 猜 `contract_digest`，也不得因为契约不匹配擅自换 `run_id` 重跑。只有用户明确要求新 Run 时才创建新 Run。
+- `agent-results/` 中结果文件存在不代表已完成；只有 graph 校验接受后，`progress.completed_analysis_units` / `completed_rework_units` 中的单元才算完成。
 - `WAITING_ANALYSIS`：最多并发派发 4 个 `analysis-worker`，每个只处理一个互不重叠单元，禁止继续派生 Agent。向 worker 传对应 task JSON 路径，不由主 Agent 转述或重构任务字段。
 - 正常 analysis/rework worker 只有在其自身执行 `validate-worker-result` 并得到 `PASS` 后才算完成；主 Agent 不接手修补 worker JSON 格式。
 - `WAITING_ANALYSIS` 中某个结果因 schema 或 validation 被拒绝时，只修正该结果并继续使用原 analysis task；这是 retry，不是 REWORK，不得自行修改 `attempt` 或创建 rework task。
 - `WAITING_REVIEW`：启动 1 个 `review-worker` 做独立复核。
 - `WAITING_REWORK`：只有 graph 已生成 `agent-tasks/rework/*.json` 时才进入正式返工；原 worker 优先处理，不可恢复时可替代，但返工仍只有一次。
 - `WAITING_REWORK_REVIEW`：必须由原 reviewer 验证返工结果；不可恢复时标记不完整，不换 reviewer。
-- 完成当前阶段产物后，用同一 contract 再运行命令推进。截断、格式错误和缺少证据不得作为完成。
+- 完成当前阶段产物后，用 `resume-run --run-id <run_id>` 推进。截断、格式错误和缺少证据不得作为完成。
 
 ## 初始化约定
 
