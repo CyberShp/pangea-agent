@@ -3,7 +3,8 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from pangea_agent.graph.run_store import load_worker_result, load_worker_task
+from pangea_agent.agent_io import write_json
+from pangea_agent.graph.run_store import load_worker_result, load_worker_task, worker_result_skeleton
 from pangea_agent.graph.validation import validate_worker_result, validation_message
 
 from .init_data import init_data
@@ -18,6 +19,8 @@ def main() -> None:
     sub.add_parser("list-repos")
     run = sub.add_parser("module-analysis")
     run.add_argument("--contract", required=True)
+    prepare = sub.add_parser("prepare-worker-result")
+    prepare.add_argument("--task", required=True)
     validate = sub.add_parser("validate-worker-result")
     validate.add_argument("--task", required=True)
     args = parser.parse_args()
@@ -36,6 +39,12 @@ def main() -> None:
             print(f"phase={result.get('phase', 'UNKNOWN')}")
             for task_path in result.get("agent_task_paths", []):
                 print(task_path)
+    elif args.command == "prepare-worker-result":
+        task = load_worker_task(Path(args.task))
+        result_path = Path(task.result_path)
+        if not result_path.exists():
+            write_json(result_path, worker_result_skeleton(task))
+        print(result_path)
     elif args.command == "validate-worker-result":
         try:
             task = load_worker_task(Path(args.task))
