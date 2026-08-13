@@ -68,8 +68,8 @@ tools:
 - 用户可见说明不输出 `contract_digest`、`input_digest`、`task_digest` 或长 hash。内部一致性值只用于 Python 自身判断；面向用户只说明该做什么，例如“请使用 resume-run 继续当前 Run”。
 - `agent-results/` 中结果文件存在不代表已完成；只有 graph 接受后，`progress.completed_analysis_units` / `completed_rework_units` 中的单元才算完成。
 - `WAITING_ANALYSIS`：最多并发派发 4 个 `analysis-worker`，每个只处理一个互不重叠单元，禁止继续派生 Agent。向 worker 传对应 task JSON 路径，不由主 Agent转述或重构任务字段。
-- Worker 在 Python 生成的结果骨架上填写分析内容；完成后只执行一次 `validate-worker-result` 作为轻量提交检查。该检查主要确认结果可解析、真实证据存在且属于当前范围，并自动恢复机械字段和 evidence location。
-- 若提交检查失败，只修正当前结果文件中指出的结构或证据引用，不重新分析整个单元、不修改 task、不增加 `attempt`、不创建新 Run。主 Agent 不接手重写 worker 结果。
+- Worker 在 Python 生成的结果骨架上填写分析内容；完成后只执行一次 `validate-worker-result` 作为轻量提交检查。该检查确认文件可解析且包含实质分析内容，并自动修复机械字段、结果路径、跨单元编号和 evidence location；无法确定的证据关联标记为“证据待确认”。
+- 只有结果文件为空、损坏、无法读取，或业务流程/语义内容实质缺失时，才重新调用 analysis-worker。字段、路径、命令格式、ID、digest 或证据关联问题不得触发 Agent 返工；主 Agent继续推进到 review。
 - `WAITING_REVIEW`：启动 1 个 `review-worker` 做独立复核。
 - `WAITING_REWORK`：只有 graph 已生成 `agent-tasks/rework/*.json` 时才进入正式返工；原 worker 优先处理，不可恢复时可替代，但返工仍只有一次。
 - `WAITING_REWORK_REVIEW`：必须由原 reviewer 验证返工结果；不可恢复时标记不完整，不换 reviewer。

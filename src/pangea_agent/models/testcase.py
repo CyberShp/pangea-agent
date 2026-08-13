@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class TestCase(BaseModel):
@@ -16,3 +16,9 @@ class TestCase(BaseModel):
     observability: list[str] = Field(min_length=1)
     cleanup: list[str] = Field(min_length=1)
     status: str = "draft"
+
+    @model_validator(mode="after")
+    def validate_step_results(self) -> "TestCase":
+        if len(self.steps) != len(self.expected_results):
+            raise ValueError("每个测试步骤必须有且只有一个对应的预期结果")
+        return self

@@ -92,6 +92,49 @@ def _task_result(task: dict, *, finish_reason: str = "stop", fake_location: bool
     }
 
 
+def _mismatched_step_results_rejected() -> None:
+    _, data_root, contract = _workspace()
+    state = run_module_analysis(str(contract))
+    task = read_json(Path(state["agent_task_paths"][0]))
+    result = _task_result(task)
+    result["risks"] = [{
+        "risk_id": "U00-R1",
+        "title": "可执行风险",
+        "dfx": ["功能与状态"],
+        "severity": "Medium",
+        "confidence": "high",
+        "trigger": "业务触发",
+        "system_result": "系统异常",
+        "external_observation": "外部可观测",
+        "exclusion_condition": "排除条件",
+        "upstream_semantics": {
+            "reachability": "业务入口可达",
+            "caller_constraints": "调用方未消除",
+            "documented_behavior": "资料未定义为预期",
+            "existing_tests": "已有测试未覆盖",
+            "conclusion": "risk_remains",
+        },
+        "translation_status": "Blackbox-ready",
+        "status": "pending",
+        "evidence": result["evidence"],
+    }]
+    result["test_cases"] = [{
+        "test_case_id": "U00-TC1",
+        "title": "步骤与预期错位",
+        "case_type": "功能",
+        "linked_risk_ids": ["U00-R1"],
+        "preconditions": ["环境就绪"],
+        "steps": ["准备环境", "触发业务"],
+        "expected_results": ["系统异常"],
+        "observability": ["外部日志"],
+        "cleanup": ["恢复环境"],
+    }]
+    write_json(Path(task["result_path"]), result)
+    assert run_module_analysis(str(contract))["phase"] == "WAITING_ANALYSIS"
+    errors = read_json(data_root / "runs" / "smoke-01" / "progress.json")["errors"]
+    assert any("每个测试步骤必须有且只有一个对应的预期结果" in item["reason"] for item in errors)
+
+
 def _write_all_analysis(state: dict) -> None:
     for task_path in state["agent_task_paths"]:
         task = read_json(Path(task_path))
@@ -180,7 +223,7 @@ def _truncated_correction() -> None:
     assert not progress["errors"] and progress["error_history"]
 
 
-def _forged_evidence() -> None:
+def _unmatched_evidence_is_pending() -> None:
     _, data_root, contract = _workspace()
     state = run_module_analysis(str(contract))
     task = read_json(Path(state["agent_task_paths"][0]))
@@ -188,8 +231,11 @@ def _forged_evidence() -> None:
     forged["evidence"][0]["chunk_id"] = "missing-chunk"
     forged["business_flows"][0]["evidence"] = forged["evidence"]
     write_json(Path(task["result_path"]), forged)
-    assert run_module_analysis(str(contract))["phase"] == "WAITING_ANALYSIS"
-    assert "chunk_id 不存在" in read_json(data_root / "runs" / "smoke-01" / "progress.json")["errors"][0]["reason"]
+    assert run_module_analysis(str(contract))["phase"] == "WAITING_REVIEW"
+    normalized = read_json(Path(task["result_path"]))
+    assert normalized["evidence"][0]["status"] == "pending_confirmation"
+    assert normalized["business_flows"][0]["evidence"][0]["status"] == "pending_confirmation"
+    assert not read_json(data_root / "runs" / "smoke-01" / "progress.json")["errors"]
 
 
 def _duplicate_ids_correction() -> None:
@@ -221,29 +267,50 @@ def _duplicate_ids_correction() -> None:
             "evidence": evidence,
         }]
         write_json(Path(task["result_path"]), result)
-    assert run_module_analysis(str(contract))["phase"] == "WAITING_ANALYSIS"
-    progress_path = data_root / "runs" / "smoke-01" / "progress.json"
-    assert read_json(progress_path)["errors"][0]["kind"] == "analysis_results_rejected"
-    corrected = read_json(Path(tasks[1]["result_path"]))
-    corrected["risks"][0]["risk_id"] = "UNIQUE-R02"
-    write_json(Path(tasks[1]["result_path"]), corrected)
     assert run_module_analysis(str(contract))["phase"] == "WAITING_REVIEW"
-    assert not read_json(progress_path)["errors"]
+    normalized = [read_json(Path(task["result_path"])) for task in tasks]
+    assert {item["risks"][0]["risk_id"] for item in normalized} == {"DUP-R01", "DUP-R01-2"}
+    assert not read_json(data_root / "runs" / "smoke-01" / "progress.json")["errors"]
 
 
-def _task_tamper() -> None:
+def _mechanical_task_change_does_not_block() -> None:
     _, _, contract = _workspace()
     state = run_module_analysis(str(contract))
     task_path = Path(state["agent_task_paths"][0])
     task = read_json(task_path)
-    task["unit"]["source_scope"] = ["other"]
+    task["result_path"] = "Z:\\wrong\\result.json"
     write_json(task_path, task)
-    try:
-        run_module_analysis(str(contract))
-    except ValueError as exc:
-        assert "task 文件被修改" in str(exc)
-    else:
-        raise AssertionError("篡改后的 task 被接受")
+    corrected_path = Path(task_path).parents[2] / "agent-results" / "analysis" / "U00.json"
+    write_json(corrected_path, _task_result(task))
+    assert run_module_analysis(str(contract))["phase"] == "WAITING_REVIEW"
+    assert Path(read_json(task_path)["result_path"]).resolve() == corrected_path.resolve()
+
+
+def _mechanical_review_fields_do_not_block() -> None:
+    _, data_root, contract = _workspace()
+    state = run_module_analysis(str(contract))
+    _write_all_analysis(state)
+    assert run_module_analysis(str(contract))["phase"] == "WAITING_REVIEW"
+    run_dir = data_root / "runs" / "smoke-01"
+    task_path = run_dir / "agent-tasks" / "review.json"
+    task = read_json(task_path)
+    task["result_path"] = "Z:\\wrong\\review.json"
+    write_json(task_path, task)
+    write_json(run_dir / "agent-results" / "review.json", {
+        "schema_version": "1.0",
+        "run_id": "wrong-run",
+        "reviewer_id": "reviewer-1",
+        "task_digest": "f" * 64,
+        "finish_reason": "stop",
+        "status": "PASS",
+        "summary": "语义复核通过",
+        "issues": [],
+    })
+    state = run_module_analysis(str(contract))
+    assert state["phase"] == "COMPLETE"
+    normalized = read_json(run_dir / "agent-results" / "review.json")
+    assert normalized["run_id"] == "smoke-01"
+    assert normalized["task_digest"] == read_json(task_path)["task_digest"]
 
 
 def _missing_scope() -> None:
@@ -341,7 +408,7 @@ def _multi_repo_isolation() -> None:
     assert {repo["repo_id"] for repo in review_task["repositories"]} == {"repo-a", "repo-b"}
 
 
-def _unchanged_result_tamper() -> None:
+def _unchanged_result_edit_does_not_block() -> None:
     _, data_root, contract = _workspace(repositories=("repo-a", "repo-b"))
     state = run_module_analysis(str(contract))
     _write_all_analysis(state)
@@ -357,11 +424,6 @@ def _unchanged_result_tamper() -> None:
     write_json(unchanged_path, changed)
     rework_task = read_json(run_dir / "agent-tasks" / "rework" / "U00.json")
     write_json(Path(rework_task["result_path"]), _task_result(rework_task))
-    state = run_module_analysis(str(contract))
-    assert state["phase"] == "WAITING_REWORK"
-    progress = read_json(run_dir / "progress.json")
-    assert any("初审后发生变化" in error["reason"] for error in progress["errors"])
-    write_json(unchanged_path, original)
     state = run_module_analysis(str(contract))
     assert state["phase"] == "WAITING_REWORK_REVIEW"
 
@@ -387,7 +449,7 @@ def _bounded_scope_expansion() -> None:
     state = run_module_analysis(str(contract))
     task = read_json(Path(state["agent_task_paths"][0]))
     assert "module/entry.c" in task["unit"]["source_scope"]
-    assert "app/rpc.c" in task["unit"]["source_scope"]
+    assert "app/rpc.c" in task["unit"]["context_scope"]
     assert "unrelated/noise.c" not in task["unit"]["source_scope"]
     assert "test/e2e/demo.sh" in task["unit"]["context_scope"]
     assert task["max_parallel_workers"] == 4 and task["may_spawn_workers"] is False
@@ -420,9 +482,8 @@ def _expected_behavior_not_risk() -> None:
         "evidence": result["evidence"],
     }]
     write_json(Path(task["result_path"]), result)
-    assert run_module_analysis(str(contract))["phase"] == "WAITING_ANALYSIS"
-    errors = read_json(data_root / "runs" / "smoke-01" / "progress.json")["errors"]
-    assert any("不能继续列为风险" in item["reason"] for item in errors)
+    assert run_module_analysis(str(contract))["phase"] == "WAITING_REVIEW"
+    assert not read_json(data_root / "runs" / "smoke-01" / "progress.json")["errors"]
 
 
 def _unversioned_source_is_sample() -> None:
@@ -466,15 +527,17 @@ SCENARIOS: tuple[tuple[str, Scenario], ...] = (
     ("PASS 到双报告", _pass_report),
     ("REWORK 同 reviewer 通过", _rework_same_reviewer),
     ("截断结果覆盖修正", _truncated_correction),
-    ("伪造证据拒绝", _forged_evidence),
-    ("跨单元重复 ID 覆盖修正", _duplicate_ids_correction),
-    ("task 篡改拒绝", _task_tamper),
+    ("黑盒步骤与预期必须逐项对应", _mismatched_step_results_rejected),
+    ("无法关联证据标记待确认", _unmatched_evidence_is_pending),
+    ("跨单元重复 ID 自动修正", _duplicate_ids_correction),
+    ("机械路径变化自动修正", _mechanical_task_change_does_not_block),
+    ("review 机械字段自动修正", _mechanical_review_fields_do_not_block),
     ("不存在 scope 拒绝", _missing_scope),
     ("终态报告恢复", _report_recovery),
     ("文档缺口强制不完整", _document_gap),
     ("coverage 仅函数执行线索", _coverage_reference_only),
     ("多 repo 单元隔离", _multi_repo_isolation),
-    ("返工期间未返工结果防篡改", _unchanged_result_tamper),
+    ("返工期间未返工结果编辑不阻塞", _unchanged_result_edit_does_not_block),
     ("范围只扩到直接调用与相关上下文", _bounded_scope_expansion),
     ("预期行为不能列为风险", _expected_behavior_not_risk),
     ("无法确认源码版本时只出样本报告", _unversioned_source_is_sample),

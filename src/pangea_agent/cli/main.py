@@ -4,7 +4,12 @@ import argparse
 from pathlib import Path
 
 from pangea_agent.agent_io import write_json
-from pangea_agent.graph.run_store import load_worker_result, load_worker_task, worker_result_skeleton
+from pangea_agent.graph.run_store import (
+    load_worker_result,
+    load_worker_task,
+    normalize_worker_result_path,
+    worker_result_skeleton,
+)
 from pangea_agent.graph.validation import validate_worker_result, validation_message
 
 from .init_data import init_data
@@ -49,16 +54,18 @@ def main() -> None:
     elif args.command == "resume-run":
         _print_run_result(resume_module_analysis(args.run_id, args.data_root))
     elif args.command == "prepare-worker-result":
-        task = load_worker_task(Path(args.task))
-        result_path = Path(task.result_path)
+        task_path = Path(args.task)
+        task = load_worker_task(task_path)
+        result_path = normalize_worker_result_path(task_path, task)
         if not result_path.exists():
             write_json(result_path, worker_result_skeleton(task))
         print(result_path)
     elif args.command == "validate-worker-result":
         try:
-            task = load_worker_task(Path(args.task))
-            result_path = Path(task.result_path)
-            result = load_worker_result(result_path)
+            task_path = Path(args.task)
+            task = load_worker_task(task_path)
+            result_path = normalize_worker_result_path(task_path, task)
+            result = load_worker_result(result_path, task)
             validate_worker_result(task, result)
             write_json(result_path, result.model_dump(mode="json"))
         except Exception as exc:

@@ -59,7 +59,10 @@ def _evidence(values: Any) -> str:
         if isinstance(item, Mapping):
             location = item.get("location") or item.get("source") or item.get("path") or "位置未提供"
             observation = item.get("observation") or item.get("summary") or item.get("reason") or "未提供说明"
-            rows.append(f"<li><code>{_escape(location)}</code> — {_escape(observation)}</li>")
+            pending = ""
+            if item.get("status") == "pending_confirmation":
+                pending = f' <span class="muted">（证据待确认：{_escape(item.get("pending_reason"))}）</span>'
+            rows.append(f"<li><code>{_escape(location)}</code> — {_escape(observation)}{pending}</li>")
         else:
             rows.append(f"<li>{_escape(item)}</li>")
     return "<ul>" + "".join(rows or ["<li>未提供源码证据</li>"]) + "</ul>"
@@ -182,7 +185,10 @@ def render_html_report(state: Mapping[str, Any]) -> str:
         if isinstance(finding, Mapping):
             attachment = finding.get("attachment_path") or finding.get("path") or finding.get("source")
             observation = finding.get("observation") or finding.get("summary")
-            visual_parts.append(f'<li><code>{_escape(attachment, "附件路径未提供")}</code> — {_escape(observation)}</li>')
+            pending = ""
+            if finding.get("status") == "pending_confirmation":
+                pending = f' <span class="muted">（证据待确认：{_escape(finding.get("pending_reason"))}）</span>'
+            visual_parts.append(f'<li><code>{_escape(attachment, "附件路径未提供")}</code> — {_escape(observation)}{pending}</li>')
         else:
             visual_parts.append(f"<li>{_escape(finding)}</li>")
     visual_html = f'<h3>图片分析发现</h3><ul>{"".join(visual_parts)}</ul>' if visual_parts else ""
@@ -224,7 +230,7 @@ def render_html_report(state: Mapping[str, Any]) -> str:
                 for index, step in enumerate(steps, 1)
             )
         else:
-            rows = "".join(f"<tr><td>{index}</td><td>{_escape(step)}</td><td>{_escape(expected[index-1] if index-1 < len(expected) else '见后续合并预期结果')}</td></tr>" for index, step in enumerate(steps, 1))
+            rows = "".join(f"<tr><td>{index}</td><td>{_escape(step)}</td><td>{_escape(expected[index-1] if index-1 < len(expected) else '未提供对应预期结果（语义缺口）')}</td></tr>" for index, step in enumerate(steps, 1))
         case_parts.append(f'<details><summary>{_escape(case.get("test_case_id"), "未编号")} · {_escape(case.get("title"))}</summary><div class="detail-body"><dl><dt>用例类型</dt><dd>{_escape(case.get("case_type") or case.get("type") or case.get("test_type"))}</dd><dt>关联风险</dt><dd>{_escape("、".join(str(v) for v in _items(case.get("linked_risk_ids"))) or "无")}</dd><dt>前置条件</dt><dd>{_list(case.get("preconditions"))}</dd></dl><table><thead><tr><th>#</th><th>操作目标</th><th>预期结果</th></tr></thead><tbody>{rows}</tbody></table><h4>观测方式</h4>{_list(case.get("observability"))}<h4>清理/恢复</h4>{_list(case.get("cleanup"))}</div></details>')
     rendered_cases = "".join(case_parts) or '<p class="muted">未生成测试用例。</p>'
     body.append(f'<section id="cases"><a class="back" href="#top">回到顶部</a><h2>6. 测试用例与风险映射</h2>{rendered_cases}</section>')

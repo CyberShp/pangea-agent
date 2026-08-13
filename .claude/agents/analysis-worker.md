@@ -36,11 +36,13 @@ python -m pangea_agent.cli.main prepare-worker-result --task "<worker task JSON>
 4. 提出风险前检查入口可达性、调用方限制或补救、规格/API 定义和已有测试。若行为已经被定义为预期，不列为风险。
 5. 风险必须说明复现条件、系统结果、外部观测、排除条件、严重度、置信度和真实源码证据。首次分析产生的新风险 `status` 固定为 `pending`。
 6. 写入 `test_cases` 前必须逐项执行 `test_case_generation.md` 的“从源码发现转换为测试语义”步骤，并按风险的 `translation_status` 决定生成方式；转换完成后才能写测试步骤和预期结果，不得直接把源码条件改写成用例。
+   每个步骤必须有一个同位置的预期结果，`steps` 与 `expected_results` 数量完全一致；并逐条确认用例的触发条件和观测现象确实能验证其 `linked_risk_ids`。
 7. 不输出安全专项、SFMEA、实现质量评价、代码改进建议或未经证据支持的配置组合。
 
 ## 证据
 
-- `evidence.chunk_id` 只能逐字复制 SQLite index 中真实存在的值，不自行构造、不猜格式。
+- 优先逐字复制 SQLite index 中真实存在的 `evidence.chunk_id`，不要自行猜格式。
+- 如果语义分析已经完成，但某条证据无法在索引中精确匹配，仍然保留真实观察与现有引用。PANGEA 会把该条标成“证据待确认”；不得因此重做整单元语义分析。
 - `evidence.location` 不需要填写；PANGEA 根据 `chunk_id` 自动补成真实位置。
 - 风险和业务流程使用的证据必须来自当前 task 的 `source_scope` 或 `context_scope`。
 - 历史测试和 Coverage 可以帮助判断已有覆盖与测试方向，但不能代替当前源码证据证明风险存在。
@@ -60,4 +62,4 @@ python -m pangea_agent.cli.main prepare-worker-result --task "<worker task JSON>
 python -m pangea_agent.cli.main validate-worker-result --task "<worker task JSON>"
 ```
 
-`PASS` 后结束当前 worker。若返回 `FAIL`，只修正指出的结果结构或证据引用后再提交；不要因此重新分析整个单元、修改 task、增加 `attempt` 或创建新 Run。
+`PASS` 后结束当前 worker。若返回 `FAIL`，只处理“文件无法读取、JSON 无法解析、结果为空或实质分析内容缺失”。字段、路径、编号和证据关联由 PANGEA 自动规范化，不因此重新分析整个单元、修改 task、增加 `attempt` 或创建新 Run。

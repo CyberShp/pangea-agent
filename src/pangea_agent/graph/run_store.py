@@ -66,8 +66,48 @@ def load_worker_task(path: Path) -> WorkerTask:
     return WorkerTask.model_validate(read_json(path))
 
 
-def load_worker_result(path: Path) -> WorkerResult:
-    return WorkerResult.model_validate(read_json(path))
+def load_worker_result(path: Path, task: WorkerTask | None = None) -> WorkerResult:
+    payload = read_json(path)
+    if not isinstance(payload, dict):
+        raise ValueError(f"worker 结果必须是 JSON 对象：{path}")
+    payload = dict(payload)
+    for field in (
+        "evidence",
+        "business_flows",
+        "visual_findings",
+        "risks",
+        "test_cases",
+        "addressed_review_issue_ids",
+        "errors",
+    ):
+        payload.setdefault(field, [])
+    if task is not None:
+        payload.update({
+            "schema_version": "1.0",
+            "run_id": task.run_id,
+            "unit_id": task.unit.unit_id,
+            "attempt": task.attempt,
+            "analyzed_scope": list(task.unit.source_scope),
+            "analyzed_context_scope": list(task.unit.context_scope),
+        })
+        if task.task_type == "rework":
+            payload["addressed_review_issue_ids"] = [issue.issue_id for issue in task.review_issues]
+    return WorkerResult.model_validate(payload)
+
+
+def normalize_worker_result_path(task_path: Path, task: WorkerTask) -> Path:
+    """Derive the only valid result location from the task file instead of trusting path text."""
+
+    resolved_task = task_path.resolve()
+    run_dir = next((parent for parent in resolved_task.parents if parent.name == "agent-tasks"), None)
+    if run_dir is None:
+        raise ValueError(f"worker task 不在当前 Run 的 agent-tasks 目录中：{task_path}")
+    folder = "analysis" if task.task_type == "analysis" else "rework"
+    result_path = run_dir.parent / "agent-results" / folder / f"{task.unit.unit_id}.json"
+    if task.result_path != str(result_path):
+        task.result_path = str(result_path)
+        write_json(task_path, task.model_dump(mode="json"))
+    return result_path
 
 
 def worker_result_skeleton(task: WorkerTask) -> dict:
@@ -95,8 +135,30 @@ def load_review_task(path: Path) -> ReviewTask:
     return ReviewTask.model_validate(read_json(path))
 
 
-def load_review_result(path: Path) -> ReviewResult:
-    return ReviewResult.model_validate(read_json(path))
+def load_review_result(path: Path, task: ReviewTask | None = None) -> ReviewResult:
+    payload = read_json(path)
+    if not isinstance(payload, dict):
+        raise ValueError(f"review 结果必须是 JSON 对象：{path}")
+    payload = dict(payload)
+    payload.setdefault("issues", [])
+    if task is not None:
+        payload.update({
+            "schema_version": "1.0",
+            "run_id": task.run_id,
+            "task_digest": task.task_digest,
+        })
+    return ReviewResult.model_validate(payload)
+
+
+def normalize_review_result_path(task_path: Path, task: ReviewTask) -> Path:
+    resolved_task = task_path.resolve()
+    if resolved_task.parent.name != "agent-tasks":
+        raise ValueError(f"review task 不在当前 Run 的 agent-tasks 目录中：{task_path}")
+    result_path = resolved_task.parent.parent / "agent-results" / resolved_task.name
+    if task.result_path != str(result_path):
+        task.result_path = str(result_path)
+        write_json(task_path, task.model_dump(mode="json"))
+    return result_path
 
 
 def load_reviewer_unavailable(path: Path) -> ReviewerUnavailable:

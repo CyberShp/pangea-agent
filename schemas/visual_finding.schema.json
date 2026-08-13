@@ -5,7 +5,9 @@
   "required": ["attachment_path", "observation"],
   "properties": {
     "attachment_path": {"type": "string", "minLength": 1},
-    "observation": {"type": "string", "minLength": 1}
+    "observation": {"type": "string", "minLength": 1},
+    "status": {"enum": ["confirmed", "pending_confirmation"], "default": "confirmed"},
+    "pending_reason": {"type": ["string", "null"], "minLength": 1}
   },
   "additionalProperties": false
 }

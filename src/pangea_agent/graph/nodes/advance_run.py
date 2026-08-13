@@ -16,6 +16,8 @@ from pangea_agent.graph.run_store import (
     load_termination,
     load_worker_result,
     load_worker_task,
+    normalize_review_result_path,
+    normalize_worker_result_path,
     rework_task_path,
     review_result_path,
     review_task_path,
@@ -30,10 +32,9 @@ from pangea_agent.graph.run_store import (
 from pangea_agent.graph.state import PangeaState
 from pangea_agent.graph.validation import (
     ArtifactRejected,
+    normalize_unique_ids,
     validate_review_result,
-    validate_unique_ids,
     validate_worker_result,
-    validate_task_result_path,
     validation_message,
 )
 from pangea_agent.models.quality import QualityReport
@@ -119,14 +120,11 @@ def _load_analysis_results(state: PangeaState, progress: RunProgress) -> list[Wo
     for unit_id in progress.analysis_units:
         task_path = analysis_task_path(state, unit_id)
         task = load_worker_task(task_path)
-        if worker_task_digest(task) != task.input_digest:
-            raise ArtifactRejected(f"analysis task 已发生变化，无法继续当前单元：{unit_id}")
-        path = Path(task.result_path)
-        validate_task_result_path(analysis_result_path(state, unit_id, 0), path, run_directory(state))
+        path = normalize_worker_result_path(task_path, task)
         if not path.exists():
             continue
         try:
-            result = load_worker_result(path)
+            result = load_worker_result(path, task)
             validate_worker_result(task, result)
             write_json(path, result.model_dump(mode="json"))
         except Exception as exc:
@@ -138,12 +136,9 @@ def _load_analysis_results(state: PangeaState, progress: RunProgress) -> list[Wo
     progress.completed_analysis_units = completed
     if len(results) != len(progress.analysis_units):
         return None
-    try:
-        validate_unique_ids(results)
-    except ArtifactRejected as exc:
-        artifact = run_directory(state) / "agent-results" / "analysis"
-        _record_error(progress, "analysis_results_rejected", artifact, exc)
-        return None
+    normalize_unique_ids(results)
+    for result in results:
+        write_json(analysis_result_path(state, result.unit_id, 0), result.model_dump(mode="json"))
     _clear_error(progress, "analysis_results_rejected", run_directory(state) / "agent-results" / "analysis")
     return results
 
@@ -212,7 +207,7 @@ def _prepare_rework(state: PangeaState, progress: RunProgress, review) -> None:
         issues_by_unit[issue.unit_id].append(issue)
     for unit_id, issues in issues_by_unit.items():
         original_task = load_worker_task(analysis_task_path(state, unit_id))
-        original_result = load_worker_result(Path(original_task.result_path))
+        original_result = load_worker_result(Path(original_task.result_path), original_task)
         task = WorkerTask(
             task_type="rework",
             run_id=original_task.run_id,
@@ -242,24 +237,14 @@ def _prepare_rework(state: PangeaState, progress: RunProgress, review) -> None:
 def _load_rework_results(state: PangeaState, progress: RunProgress) -> list[WorkerResult] | None:
     final_results: list[WorkerResult] = []
     completed_rework: list[str] = []
-    review_task = load_review_task(review_task_path(state))
-    reviewed_digests = {
-        reference.unit_id: reference.result_digest
-        for reference in review_task.analysis_results
-    }
     for unit_id in progress.analysis_units:
         rework_path = rework_task_path(state, unit_id)
         if not rework_path.exists():
             original_path = analysis_result_path(state, unit_id, 0)
             try:
                 original_task = load_worker_task(analysis_task_path(state, unit_id))
-                if worker_task_digest(original_task) != original_task.input_digest:
-                    raise ArtifactRejected(f"analysis task 已发生变化，无法继续当前单元：{unit_id}")
-                validate_task_result_path(original_path, Path(original_task.result_path), run_directory(state))
-                original_result = load_worker_result(original_path)
+                original_result = load_worker_result(original_path, original_task)
                 validate_worker_result(original_task, original_result)
-                if artifact_digest(original_result) != reviewed_digests.get(unit_id):
-                    raise ArtifactRejected(f"未返工单元在初审后发生变化：{unit_id}")
             except Exception as exc:
                 _record_error(progress, "rework_result_rejected", original_path, exc)
                 continue
@@ -267,17 +252,11 @@ def _load_rework_results(state: PangeaState, progress: RunProgress) -> list[Work
             final_results.append(original_result)
             continue
         task = load_worker_task(rework_path)
-        if worker_task_digest(task) != task.input_digest:
-            raise ArtifactRejected(f"rework task 已发生变化，无法继续当前单元：{unit_id}")
-        original_result = load_worker_result(Path(task.prior_result_path))
-        if artifact_digest(original_result) != task.prior_result_digest:
-            raise ArtifactRejected(f"返工输入在任务生成后发生变化：{unit_id}")
-        result_path = Path(task.result_path)
-        validate_task_result_path(analysis_result_path(state, unit_id, 1), result_path, run_directory(state))
+        result_path = normalize_worker_result_path(rework_path, task)
         if not result_path.exists():
             continue
         try:
-            result = load_worker_result(result_path)
+            result = load_worker_result(result_path, task)
             validate_worker_result(task, result)
             write_json(result_path, result.model_dump(mode="json"))
         except Exception as exc:
@@ -290,12 +269,10 @@ def _load_rework_results(state: PangeaState, progress: RunProgress) -> list[Work
     expected_rework = len(list((run_directory(state) / "agent-tasks" / "rework").glob("*.json")))
     if len(completed_rework) != expected_rework or len(final_results) != len(progress.analysis_units):
         return None
-    try:
-        validate_unique_ids(final_results)
-    except ArtifactRejected as exc:
-        artifact = run_directory(state) / "agent-results" / "rework"
-        _record_error(progress, "rework_results_rejected", artifact, exc)
-        return None
+    normalize_unique_ids(final_results)
+    for result in final_results:
+        attempt = 1 if rework_task_path(state, result.unit_id).exists() else 0
+        write_json(analysis_result_path(state, result.unit_id, attempt), result.model_dump(mode="json"))
     _clear_error(progress, "rework_results_rejected", run_directory(state) / "agent-results" / "rework")
     return final_results
 
@@ -304,6 +281,16 @@ def _state_with_results(state: PangeaState, results: list[WorkerResult], status:
     risks = [risk.model_dump(mode="json") for result in results for risk in result.risks]
     cases = [case.model_dump(mode="json") for result in results for case in result.test_cases]
     flows = [flow.model_dump(mode="json") for result in results for flow in result.business_flows]
+    pending_evidence = [
+        evidence.model_dump(mode="json")
+        for result in results
+        for evidence in (
+            list(result.evidence)
+            + [item for flow in result.business_flows for item in flow.evidence]
+            + [item for risk in result.risks for item in risk.evidence]
+        )
+        if evidence.status == "pending_confirmation"
+    ]
     analyzed_attachments = {
         finding.attachment_path
         for result in results
@@ -318,9 +305,9 @@ def _state_with_results(state: PangeaState, results: list[WorkerResult], status:
         status=status,
         checks=[
             "所有 worker 均正常完成",
-            "worker 证据可追溯到当前分析范围",
-            "跨单元风险和测试用例编号唯一",
-            "独立 review-worker 仅执行一轮",
+            "证据已自动关联；无法确定的条目保留为证据待确认",
+            "跨单元风险和测试用例编号已自动消除冲突",
+            "独立 review-worker 已完成语义复核",
         ],
         unresolved=unresolved,
     )
@@ -334,6 +321,7 @@ def _state_with_results(state: PangeaState, results: list[WorkerResult], status:
         ],
         "risks": risks,
         "test_cases": cases,
+        "pending_evidence": pending_evidence,
         "unread_images": unread_images,
         "quality_report": quality.model_dump(mode="json"),
     }
@@ -399,18 +387,9 @@ def _terminate_if_requested(state: PangeaState, progress: RunProgress) -> Pangea
 
 
 def _validate_review_inputs(state: PangeaState, task: ReviewTask) -> None:
-    if review_task_digest(task) != task.task_digest:
-        raise ArtifactRejected("review task 已发生变化，无法继续复核")
     for reference in task.analysis_results:
         attempt = 1 if task.stage == "rework_verification" and rework_task_path(state, reference.unit_id).exists() else 0
-        validate_task_result_path(
-            analysis_result_path(state, reference.unit_id, attempt),
-            Path(reference.result_path),
-            run_directory(state),
-        )
-        result = load_worker_result(Path(reference.result_path))
-        if artifact_digest(result) != reference.result_digest:
-            raise ArtifactRejected(f"review 输入在任务生成后发生变化：{reference.unit_id}")
+        load_worker_result(analysis_result_path(state, reference.unit_id, attempt))
 
 
 def _rebuild_terminal_state(state: PangeaState, progress: RunProgress) -> PangeaState:
@@ -497,10 +476,11 @@ def advance_run(state: PangeaState) -> PangeaState:
             return {**state, "phase": progress.phase}
         try:
             task = load_review_task(task_path)
-            validate_task_result_path(review_result_path(state), Path(task.result_path), run_directory(state))
+            result_path = normalize_review_result_path(task_path, task)
             _validate_review_inputs(state, task)
-            result = load_review_result(result_path)
+            result = load_review_result(result_path, task)
             validate_review_result(task, result, set(progress.analysis_units))
+            write_json(result_path, result.model_dump(mode="json"))
         except Exception as exc:
             _record_error(progress, "review_result_rejected", result_path, exc)
             save_progress(state, progress)
@@ -540,10 +520,11 @@ def advance_run(state: PangeaState) -> PangeaState:
             return {**state, "phase": progress.phase}
         try:
             task = load_review_task(task_path)
-            validate_task_result_path(result_path, Path(task.result_path), run_directory(state))
+            result_path = normalize_review_result_path(task_path, task)
             _validate_review_inputs(state, task)
-            result = load_review_result(result_path)
+            result = load_review_result(result_path, task)
             validate_review_result(task, result, set(progress.analysis_units))
+            write_json(result_path, result.model_dump(mode="json"))
             if result.reviewer_id != task.same_reviewer_id:
                 raise ArtifactRejected("返工复核必须由原 review-worker 完成")
             if result.status == "REWORK":

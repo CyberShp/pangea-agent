@@ -56,6 +56,8 @@ class BusinessFlow(StrictModel):
 class VisualFinding(StrictModel):
     attachment_path: str = Field(min_length=1)
     observation: str = Field(min_length=1)
+    status: Literal["confirmed", "pending_confirmation"] = "confirmed"
+    pending_reason: str | None = None
 
 
 class WorkerTask(StrictModel):

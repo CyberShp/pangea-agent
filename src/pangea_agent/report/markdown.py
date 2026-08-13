@@ -187,7 +187,9 @@ def _evidence_lines(evidence: Any) -> list[str]:
             observation = entry.get("observation") or entry.get("summary") or entry.get("reason")
             chunk_id = entry.get("chunk_id") or entry.get("evidence_id")
             label = " · ".join(_text(part, "") for part in (location, chunk_id) if part)
-            lines.append(f"  - `{label or '位置未提供'}`：{_text(observation)}")
+            pending = entry.get("status") == "pending_confirmation"
+            pending_text = f"（证据待确认：{_text(entry.get('pending_reason'))}）" if pending else ""
+            lines.append(f"  - `{label or '位置未提供'}`：{_text(observation)}{pending_text}")
         else:
             lines.append(f"  - {_text(entry)}")
     return lines or ["  - 未提供源码证据"]
@@ -401,7 +403,7 @@ def render_report(state: "PangeaState | Mapping[str, Any]") -> str:
             lines.append(f"  - **上述步骤共同预期**：{_text(expected[0])}")
         elif steps:
             for index, step in enumerate(steps, 1):
-                result = expected[index - 1] if index - 1 < len(expected) else "见后续合并预期结果"
+                result = expected[index - 1] if index - 1 < len(expected) else "未提供对应预期结果（语义缺口）"
                 lines.append(f"  {index}. **操作目标**：{_text(step)}  ")
                 lines.append(f"     **预期结果**：{_text(result)}")
         elif expected:

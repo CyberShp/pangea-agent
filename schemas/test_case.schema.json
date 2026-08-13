@@ -10,7 +10,7 @@
     "linked_risk_ids": {"type": "array", "minItems": 1, "items": {"type": "string"}},
     "preconditions": {"type": "array", "minItems": 1, "items": {"type": "string"}},
     "steps": {"type": "array", "minItems": 1, "items": {"type": "string"}},
-    "expected_results": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+    "expected_results": {"type": "array", "minItems": 1, "items": {"type": "string"}, "description": "必须与 steps 等长并按数组位置逐项对应"},
     "observability": {"type": "array", "minItems": 1, "items": {"type": "string"}},
     "cleanup": {"type": "array", "minItems": 1, "items": {"type": "string"}},
     "status": {"type": "string"}

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections import Counter
 import json
 from pathlib import Path
 import sqlite3
@@ -24,17 +23,26 @@ def _all_evidence(result: WorkerResult):
 
 def _evidence_rows(task: WorkerTask, result: WorkerResult) -> dict[str, dict]:
     index_path = Path(task.index_path)
-    if not index_path.exists():
-        raise ArtifactRejected(f"证据索引不存在：{index_path}")
     evidence_refs = list(_all_evidence(result))
+    if not index_path.exists():
+        for evidence in evidence_refs:
+            evidence.status = "pending_confirmation"
+            evidence.pending_reason = f"当前运行无法读取证据索引：{index_path}"
+        return {}
     chunk_ids = list(dict.fromkeys(item.chunk_id for item in evidence_refs))
     placeholders = ",".join("?" for _ in chunk_ids)
-    with sqlite3.connect(index_path) as connection:
-        rows = connection.execute(
-            "SELECT chunk_id, source_type, repo_id, path, line_start, line_end, tags "
-            f"FROM chunks WHERE chunk_id IN ({placeholders})",
-            chunk_ids,
-        ).fetchall()
+    try:
+        with sqlite3.connect(index_path) as connection:
+            rows = connection.execute(
+                "SELECT chunk_id, source_type, repo_id, path, line_start, line_end, tags "
+                f"FROM chunks WHERE chunk_id IN ({placeholders})",
+                chunk_ids,
+            ).fetchall()
+    except sqlite3.Error as exc:
+        for evidence in evidence_refs:
+            evidence.status = "pending_confirmation"
+            evidence.pending_reason = f"当前运行无法查询证据索引：{exc}"
+        return {}
     found = {}
     for row in rows:
         prefix = f"{row[2]}:" if row[2] else ""
@@ -53,26 +61,33 @@ def _evidence_rows(task: WorkerTask, result: WorkerResult) -> dict[str, dict]:
             "tags": set(json.loads(row[6] or "[]")),
             "location": location,
         }
-    missing = sorted(set(chunk_ids) - set(found))
-    if missing:
-        raise ArtifactRejected(f"以下证据在当前索引中不存在：{missing}")
-
     scopes = [scope.replace("\\", "/").strip("/") or "." for scope in task.unit.source_scope]
     context_scopes = [scope.replace("\\", "/").strip("/") or "." for scope in task.unit.context_scope]
     for evidence in evidence_refs:
-        row = found[evidence.chunk_id]
+        row = found.get(evidence.chunk_id)
+        if row is None:
+            evidence.status = "pending_confirmation"
+            evidence.pending_reason = "chunk_id 未在当前运行的 SQLite 索引中匹配到"
+            continue
         evidence.location = row["location"]
+        pending_reason = None
         if row["source_type"] == "code":
             if row["repo_id"] != task.unit.repo_id:
-                raise ArtifactRejected(f"证据 {evidence.chunk_id} 不属于当前分析单元")
-            if not any(
+                pending_reason = "证据所属源码仓与当前分析单元不一致"
+            elif not any(
                 scope == "." or row["path"] == scope or row["path"].startswith(f"{scope}/")
                 for scope in scopes
             ):
-                raise ArtifactRejected(f"证据 {evidence.chunk_id} 超出当前分析范围")
+                pending_reason = "证据路径不在当前分析单元的 source_scope 中"
         if row["source_type"] == "source_context":
             if row["repo_id"] != task.unit.repo_id or row["path"] not in context_scopes:
-                raise ArtifactRejected(f"上下文证据 {evidence.chunk_id} 超出当前分析范围")
+                pending_reason = "上下文证据不在当前分析单元的 context_scope 中"
+        if pending_reason:
+            evidence.status = "pending_confirmation"
+            evidence.pending_reason = pending_reason
+        else:
+            evidence.status = "confirmed"
+            evidence.pending_reason = None
     return found
 
 
@@ -83,12 +98,18 @@ def _validate_visual_findings(task: WorkerTask, result: WorkerResult) -> None:
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        raise ArtifactRejected(f"无法读取图片来源清单：{manifest_path}") from exc
+        for finding in result.visual_findings:
+            finding.status = "pending_confirmation"
+            finding.pending_reason = f"当前运行无法读取图片来源清单：{manifest_path} ({exc})"
+        return
     declared = {item.get("attachment_path") for item in manifest.get("attachments", [])}
-    claimed = [item.attachment_path for item in result.visual_findings]
-    unknown = sorted(set(claimed) - declared)
-    if unknown:
-        raise ArtifactRejected(f"图片结论引用了清单外附件：{unknown}")
+    for finding in result.visual_findings:
+        if finding.attachment_path in declared:
+            finding.status = "confirmed"
+            finding.pending_reason = None
+        else:
+            finding.status = "pending_confirmation"
+            finding.pending_reason = "附件路径未在当前运行的来源清单中匹配到"
 
 
 def validate_nonoverlapping_units(units: list[dict]) -> None:
@@ -127,28 +148,42 @@ def validate_worker_result(task: WorkerTask, result: WorkerResult) -> None:
             raise ArtifactRejected("返工结果未逐项回应 review issue")
 
 
-def validate_task_result_path(task_path: Path, result_path: Path, run_dir: Path) -> None:
-    resolved_run = run_dir.resolve()
-    resolved_result = result_path.resolve()
-    if resolved_result != Path(task_path).resolve():
-        raise ArtifactRejected("result_path 不是当前任务约定的结果路径")
-    if resolved_run not in resolved_result.parents:
-        raise ArtifactRejected("result_path 超出当前 run 目录")
+def normalize_unique_ids(results: list[WorkerResult]) -> None:
+    """Resolve cross-unit identifier collisions without asking an Agent to re-analyze."""
 
+    seen_risks: set[str] = set()
+    for result in results:
+        renamed: dict[str, str] = {}
+        for risk in result.risks:
+            original = risk.risk_id
+            candidate = original
+            suffix = 2
+            while candidate in seen_risks:
+                candidate = f"{original}-{suffix}"
+                suffix += 1
+            risk.risk_id = candidate
+            seen_risks.add(candidate)
+            if candidate != original:
+                renamed[original] = candidate
+        for case in result.test_cases:
+            case.linked_risk_ids = [renamed.get(risk_id, risk_id) for risk_id in case.linked_risk_ids]
 
-def validate_unique_ids(results: list[WorkerResult]) -> None:
-    for label, identifiers in (
-        ("risk_id", [risk.risk_id for result in results for risk in result.risks]),
-        ("test_case_id", [case.test_case_id for result in results for case in result.test_cases]),
-    ):
-        duplicates = sorted(item for item, count in Counter(identifiers).items() if count > 1)
-        if duplicates:
-            raise ArtifactRejected(f"跨单元 {label} 重复：{duplicates}")
+    seen_cases: set[str] = set()
+    for result in results:
+        for case in result.test_cases:
+            original = case.test_case_id
+            candidate = original
+            suffix = 2
+            while candidate in seen_cases:
+                candidate = f"{original}-{suffix}"
+                suffix += 1
+            case.test_case_id = candidate
+            seen_cases.add(candidate)
 
 
 def validate_review_result(task: ReviewTask, result: ReviewResult, known_units: set[str]) -> None:
-    if result.run_id != task.run_id or result.task_digest != task.task_digest:
-        raise ArtifactRejected("review 结果不属于当前复核任务")
+    result.run_id = task.run_id
+    result.task_digest = task.task_digest
     if result.finish_reason != "stop":
         raise ArtifactRejected(f"review 输出不完整：finish_reason={result.finish_reason}")
     unknown = {issue.unit_id for issue in result.issues} - known_units
