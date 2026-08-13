@@ -3,14 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from pangea_agent.agent_io import canonical_digest, write_json
-from pangea_agent.graph.run_store import (
-    analysis_result_path,
-    analysis_task_path,
-    run_directory,
-    save_progress,
-    worker_result_skeleton,
-    worker_task_digest,
-)
+from pangea_agent.graph.run_store import analysis_result_path, analysis_task_path, run_directory, save_progress, worker_task_digest
 from pangea_agent.graph.state import PangeaState
 from pangea_agent.graph.validation import validate_nonoverlapping_units
 from pangea_agent.models.run import RunProgress
@@ -76,7 +69,6 @@ def prepare_worker_tasks(state: PangeaState) -> PangeaState:
         task.input_digest = worker_task_digest(task)
         path = analysis_task_path(state, unit.unit_id)
         write_json(path, task.model_dump(mode="json"))
-        write_json(Path(task.result_path), worker_result_skeleton(task))
         task_paths.append(str(path))
     progress = RunProgress(
         run_id=state["run_id"],
