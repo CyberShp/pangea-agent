@@ -41,6 +41,9 @@ tools:
 
 - 用户源码、设计资料、覆盖率、已有用例和 Run 结果放入 `pangea-data/`，该目录已由 `.gitignore` 忽略。
 - 函数覆盖率 Excel 放在 `pangea-data/coverage/`。Python 会把能唯一匹配到当前分析单元的记录写入 worker task 的 `coverage_context`，worker 不需要自行扫描全部 Coverage 文件猜关联关系。
+- 分析运行期间不得在项目根目录或 `pangea-data/` 一级目录创建 `task_contract*.json`、`contract*.json`、`temp*.py`、`tmp*.py`、临时 PowerShell/CMD 脚本或其他一次性辅助文件。
+- 首次新建 Run 若必须生成临时 task contract，只允许使用 `pangea-data/.pangea/pending-task-contract.json`。`module-analysis` 成功创建 Run 后立即删除该临时文件；正式契约以 `runs/<run_id>/inputs/task-contract.json` 为唯一后续来源。
+- 不得为了读取 JSON、查询 SQLite、计算摘要、遍历目录或格式转换而创建辅助 Python/PowerShell 脚本；优先使用现有 PANGEA CLI、read 工具或单条 PowerShell/Python 命令。只有用户明确要求开发正式脚本时才在项目源码目录新增脚本文件。
 
 ## 开发约定
 
@@ -59,7 +62,8 @@ tools:
 ## V1 Worker 生命周期
 
 - Python 不调用模型 API。运行命令后读取当前 Run 的 `phase` 和 `agent-tasks/`。
-- 首次创建 Run 才使用 `module-analysis --contract <contract>`。Run 已存在后，后续推进统一使用 `resume-run --run-id <run_id>`；该命令读取 `runs/<run_id>/inputs/task-contract.json` 中冻结的原始契约。
+- 首次创建 Run 才使用 `module-analysis --contract pangea-data/.pangea/pending-task-contract.json`。不得在项目根目录、`pangea-data/` 一级目录或其他位置另建 task contract。Run 创建成功后删除该 pending 文件。
+- Run 已存在后，后续推进统一使用 `resume-run --run-id <run_id>`；该命令读取 `runs/<run_id>/inputs/task-contract.json` 中冻结的原始契约。
 - Run 已存在时不得重新创建、修改或猜测 task contract，不得通过文件 SHA256 或其他 hash 猜内部 digest，也不得因为恢复失败擅自换 `run_id` 重跑。只有用户明确要求新 Run 时才创建新 Run。
 - 用户可见说明不输出 `contract_digest`、`input_digest`、`task_digest` 或长 hash。内部一致性值只用于 Python 自身判断；面向用户只说明该做什么，例如“请使用 resume-run 继续当前 Run”。
 - `agent-results/` 中结果文件存在不代表已完成；只有 graph 接受后，`progress.completed_analysis_units` / `completed_rework_units` 中的单元才算完成。
