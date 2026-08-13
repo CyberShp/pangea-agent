@@ -34,7 +34,7 @@ def build_lightweight_inventory(repositories: list[dict], module_scope: list[str
                     continue
                 seen_paths.add(path)
                 lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-                relative_path = str(path.relative_to(root))
+                relative_path = path.relative_to(root).as_posix()
                 structural_complete = True
                 try:
                     parsed = parse_cpp_file(path)
