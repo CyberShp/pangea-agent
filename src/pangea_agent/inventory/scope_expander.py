@@ -29,11 +29,19 @@ def expand_analysis_scope(repositories: list[dict], requested_scopes: list[str],
         code_files = list(_iter_files(root, CODE_SUFFIXES))
         code_paths = {path: _relative(path, root) for path in code_files}
         explicit_paths = {relative for relative in code_paths.values() if any(_inside_scope(relative, scope) for scope in normalized_scopes)}
+        declarations_by_group = [_declared_symbols(scopes, root) for scopes in requested_groups]
+        wanted_definitions = set().union(*declarations_by_group) if declarations_by_group else set()
+        definition_symbols_by_path = _definition_symbols_by_path(wanted_definitions, code_paths)
         repo_groups = []
-        for scopes in requested_groups:
+        for group_index, scopes in enumerate(requested_groups):
             paths = {relative for relative in code_paths.values() if any(_inside_scope(relative, scope) for scope in scopes)}
             companions = _companion_paths(scopes, code_paths.values())
-            definitions = _declared_definition_paths(scopes, root, code_paths)
+            declared = declarations_by_group[group_index]
+            definitions: dict[str, list[str]] = {}
+            for relative, symbols in definition_symbols_by_path.items():
+                matched = sorted(declared & symbols)
+                if matched:
+                    definitions[relative] = matched
             for relative in sorted(companions - paths):
                 if relative not in explicit_paths:
                     added_files.append({"repo_id": repo_id, "path": relative, "reason": "companion_source"})
@@ -115,7 +123,7 @@ def _companion_paths(scopes: list[str], code_paths) -> set[str]:
     return {relative for relative in code_paths for path in [PurePosixPath(relative)] if (str(path.parent), path.stem) in keys and path.suffix.lower() in CODE_SUFFIXES}
 
 
-def _declared_definition_paths(scopes: list[str], root: Path, code_paths: dict[Path, str]) -> dict[str, list[str]]:
+def _declared_symbols(scopes: list[str], root: Path) -> set[str]:
     declared: set[str] = set()
     for scope in scopes:
         relative = PurePosixPath(scope)
@@ -126,14 +134,18 @@ def _declared_definition_paths(scopes: list[str], root: Path, code_paths: dict[P
             continue
         text = header.read_text(encoding="utf-8", errors="replace")
         declared.update(name for name in _DECL_RE.findall(text) if name not in COMMON_FUNCTIONS)
-    if not declared:
+    return declared
+
+
+def _definition_symbols_by_path(wanted: set[str], code_paths: dict[Path, str]) -> dict[str, set[str]]:
+    if not wanted:
         return {}
-    definitions: dict[str, list[str]] = {}
+    definitions: dict[str, set[str]] = {}
     for path, relative in code_paths.items():
         if path.suffix.lower() not in SOURCE_SUFFIXES:
             continue
         text = path.read_text(encoding="utf-8", errors="replace")
-        matched = sorted(declared & set(_DEF_RE.findall(text)))
+        matched = wanted & set(_DEF_RE.findall(text))
         if matched:
             definitions[relative] = matched
     return definitions
