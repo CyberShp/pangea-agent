@@ -2,18 +2,97 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "RunProgress",
   "type": "object",
-  "required": ["schema_version", "run_id", "contract_digest", "phase", "analysis_units", "completed_analysis_units", "completed_rework_units", "errors", "error_history"],
+  "required": [
+    "schema_version",
+    "run_id",
+    "contract_digest",
+    "phase",
+    "analysis_units",
+    "completed_analysis_units",
+    "completed_rework_units",
+    "errors",
+    "error_history"
+  ],
   "properties": {
-    "schema_version": {"const": "1.0"},
-    "run_id": {"type": "string", "minLength": 1},
-    "contract_digest": {"type": "string", "minLength": 64, "maxLength": 64},
-    "phase": {"enum": ["PREPARING", "WAITING_ANALYSIS", "WAITING_REVIEW", "WAITING_REWORK", "WAITING_REWORK_REVIEW", "READY_TO_FINALIZE", "COMPLETE", "INCOMPLETE"]},
-    "analysis_units": {"type": "array", "items": {"type": "string"}},
-    "completed_analysis_units": {"type": "array", "items": {"type": "string"}},
-    "completed_rework_units": {"type": "array", "items": {"type": "string"}},
-    "quality_status": {"type": ["string", "null"], "enum": ["PASS", "REWORK", "UNRESOLVED", null]},
-    "errors": {"type": "array", "items": {"type": "object"}},
-    "error_history": {"type": "array", "items": {"type": "object"}}
+    "schema_version": {
+      "const": "1.0"
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "contract_digest": {
+      "type": "string",
+      "minLength": 64,
+      "maxLength": 64
+    },
+    "phase": {
+      "enum": [
+        "PREPARING",
+        "WAITING_ANALYSIS",
+        "WAITING_REVIEW",
+        "WAITING_REWORK",
+        "WAITING_REWORK_REVIEW",
+        "READY_TO_FINALIZE",
+        "COMPLETE",
+        "INCOMPLETE"
+      ]
+    },
+    "init_step": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "CONTRACT_FROZEN",
+        "SCOPE_READY",
+        "INDEX_READY",
+        "INVENTORY_READY",
+        null
+      ]
+    },
+    "analysis_units": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "completed_analysis_units": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "completed_rework_units": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "quality_status": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "PASS",
+        "REWORK",
+        "UNRESOLVED",
+        null
+      ]
+    },
+    "errors": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "error_history": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    }
   },
   "additionalProperties": false
 }

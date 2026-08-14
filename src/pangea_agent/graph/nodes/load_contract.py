@@ -2,16 +2,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from pangea_agent.agent_io import canonical_digest, read_json, write_json
+from pangea_agent.graph.run_store import load_progress, save_progress
 from pangea_agent.graph.state import PangeaState
 from pangea_agent.models.contract import TaskContract
+from pangea_agent.models.run import RunProgress
 
 
 def load_contract(state: PangeaState) -> PangeaState:
-    """Validate that the task contract is present in state.
-
-    CLI entrypoints may load JSON from disk before invoking the graph. This node
-    deliberately avoids a draft/confirm/activate lifecycle.
-    """
+    """Validate and freeze the task contract, then restore completed init outputs."""
 
     raw_contract = state.get("task_contract")
     if not isinstance(raw_contract, dict):
@@ -22,5 +21,55 @@ def load_contract(state: PangeaState) -> PangeaState:
         raise ValueError("run_id 必须是非空文件名，且不能包含路径分隔符")
     data_root = state.get("data_root") or contract.get("data_root") or "pangea-data"
     run_dir = Path(data_root, "runs", run_id)
-    run_dir.parent.mkdir(parents=True, exist_ok=True)
-    return {**state, "task_contract": contract, "run_id": run_id, "data_root": data_root}
+    base_state = {**state, "task_contract": contract, "run_id": run_id, "data_root": data_root}
+    contract_digest = canonical_digest(contract)
+    frozen_contract_path = run_dir / "inputs" / "task-contract.json"
+
+    progress = load_progress(base_state)
+    if progress is None:
+        write_json(frozen_contract_path, contract)
+        progress = RunProgress(
+            run_id=run_id,
+            contract_digest=contract_digest,
+            phase="PREPARING",
+            init_step="CONTRACT_FROZEN",
+        )
+        save_progress(base_state, progress)
+    elif progress.contract_digest != contract_digest:
+        raise ValueError("当前 task contract 与已有 Run 不一致，不能继续该 Run")
+    elif progress.phase == "PREPARING" and not frozen_contract_path.is_file():
+        # Compatibility for a Run that was interrupted before early contract freezing existed.
+        write_json(frozen_contract_path, contract)
+
+    restored = {**base_state, "phase": progress.phase}
+    if progress.phase != "PREPARING":
+        return restored
+
+    init_step = progress.init_step or "CONTRACT_FROZEN"
+    if init_step in {"SCOPE_READY", "INDEX_READY", "INVENTORY_READY"}:
+        scope_path = run_dir / "inputs" / "scope-expansion.json"
+        if not scope_path.is_file():
+            raise ValueError(f"初始化 checkpoint 与产物不一致：缺少 {scope_path}")
+        expansion = read_json(scope_path)
+        restored["scope_expansion"] = expansion
+        restored["module_scope"] = list(dict.fromkeys(
+            path
+            for group in expansion.get("groups", [])
+            for path in group.get("code_paths", [])
+        ))
+
+    if init_step in {"INDEX_READY", "INVENTORY_READY"}:
+        manifest_path = run_dir / "inputs" / "source-manifest.json"
+        index_path = run_dir / "index.sqlite"
+        if not manifest_path.is_file() or not index_path.is_file():
+            raise ValueError("初始化 checkpoint 与索引产物不一致，不能跳过 index_materials")
+        restored["source_manifest"] = read_json(manifest_path)
+        restored["index_path"] = str(index_path)
+
+    if init_step == "INVENTORY_READY":
+        inventory_path = run_dir / "inputs" / "inventory.json"
+        if not inventory_path.is_file():
+            raise ValueError(f"初始化 checkpoint 与产物不一致：缺少 {inventory_path}")
+        restored["inventory"] = read_json(inventory_path)
+
+    return restored

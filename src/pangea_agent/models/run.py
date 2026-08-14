@@ -16,6 +16,13 @@ RunPhase = Literal[
     "INCOMPLETE",
 ]
 
+InitStep = Literal[
+    "CONTRACT_FROZEN",
+    "SCOPE_READY",
+    "INDEX_READY",
+    "INVENTORY_READY",
+]
+
 
 class RunProgress(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -24,6 +31,7 @@ class RunProgress(BaseModel):
     run_id: str = Field(min_length=1)
     contract_digest: str = Field(min_length=64, max_length=64)
     phase: RunPhase
+    init_step: InitStep | None = None
     analysis_units: list[str] = Field(default_factory=list)
     completed_analysis_units: list[str] = Field(default_factory=list)
     completed_rework_units: list[str] = Field(default_factory=list)

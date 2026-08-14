@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from langgraph.graph import END, START, StateGraph
 
-from .routing import route_after_advance, route_after_contract
+from .routing import route_after_advance, route_after_contract, route_after_repositories
 from .state import PangeaState
 from .nodes.load_contract import load_contract
 from .nodes.resolve_repositories import resolve_repositories
@@ -33,7 +33,16 @@ builder.add_conditional_edges(
     route_after_contract,
     {"resolve_repositories": "resolve_repositories", "advance_run": "advance_run"},
 )
-builder.add_edge("resolve_repositories", "locate_module")
+builder.add_conditional_edges(
+    "resolve_repositories",
+    route_after_repositories,
+    {
+        "locate_module": "locate_module",
+        "index_materials": "index_materials",
+        "build_inventory": "build_inventory",
+        "make_analysis_units": "make_analysis_units",
+    },
+)
 builder.add_edge("locate_module", "index_materials")
 builder.add_edge("index_materials", "build_inventory")
 builder.add_edge("build_inventory", "make_analysis_units")
