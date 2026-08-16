@@ -57,9 +57,9 @@ tools:
 - 派发 analysis-worker 时消息只包含对应 task JSON 路径，不追加验收点、源码结论、风险猜测或文档摘要，避免主 Agent 转述替代 worker 读取冻结输入。
 - Worker 在 Python 生成的结果骨架上填写分析内容；完成后只执行一次 `validate-worker-result` 作为轻量提交检查。该检查确认文件可解析且包含实质分析内容，并自动修复机械字段、结果路径、跨单元编号和 evidence location；无法确定的证据关联标记为“证据待确认”。
 - 只有结果文件为空、损坏、无法读取，或业务流程/语义内容实质缺失时，才重新调用 analysis-worker。字段、路径、命令格式、ID、digest 或证据关联问题不得触发 Agent 返工；主 Agent继续推进到 review。
-- `WAITING_REVIEW`：启动 1 个 `review-worker` 做独立复核。
+- `WAITING_REVIEW`：启动 1 个 `review-worker` 做独立复核，并保留 task 工具返回的 `task_id`；该值只保留在当前主 Agent 会话中，不另写状态文件。
 - `WAITING_REWORK`：只有 graph 已生成 `agent-tasks/rework/*.json` 时才进入正式返工；原 worker 优先处理，不可恢复时可替代，但返工仍只有一次。
-- `WAITING_REWORK_REVIEW`：必须由原 reviewer 验证返工结果；不可恢复时标记不完整，不换 reviewer。
+- `WAITING_REWORK_REVIEW`：必须把初审返回的同一个 `task_id` 传回 task 工具，恢复原 `review-worker` 会话并让它读取 rework review task JSON；不得新建 reviewer 会话。`task_id` 缺失或恢复失败时标记 `UNRESOLVED`，不换 reviewer。
 - 完成当前阶段产物后，用 `resume-run --run-id <run_id>` 推进。
 
 ## 初始化约定

@@ -88,6 +88,50 @@ def _markdown_table(headers: tuple[str, ...], rows: list[tuple[Any, ...]]) -> li
     return lines
 
 
+def _risk_dimension_rows(risks: list[Any]) -> list[tuple[Any, ...]]:
+    rows = []
+    for dimension in DFX_DIMENSIONS:
+        risk_ids = [
+            _text(risk.get("risk_id"), "未编号")
+            for risk in risks
+            if isinstance(risk, Mapping) and dimension in _items(risk.get("dfx"))
+        ]
+        rows.append((dimension, len(risk_ids), risk_ids or "未发现有证据支撑的风险"))
+    return rows
+
+
+def _coverage_rows(coverage: Mapping[str, Any]) -> list[tuple[Any, ...]]:
+    labels = {"matched": "已匹配", "ambiguous": "匹配不唯一", "unmatched": "未匹配"}
+    rows: list[tuple[Any, ...]] = []
+    for status in ("matched", "ambiguous", "unmatched"):
+        for record in _items(coverage.get(status)):
+            if not isinstance(record, Mapping):
+                rows.append((labels[status], "未说明", record, "未说明", "未说明", "未说明"))
+                continue
+            coverage_type = record.get("coverage_type") or "未说明"
+            subject = record.get("function") or record.get("branch_id") or "未说明"
+            if coverage_type == "branch" and record.get("branch_id"):
+                subject = f"{subject} / {record.get('branch_id')}"
+            counts = (
+                f"true={_text(record.get('true_count'))}, false={_text(record.get('false_count'))}"
+                if coverage_type == "branch"
+                else _text(record.get("count"))
+            )
+            source = " · ".join(
+                part for part in (
+                    _text(record.get("source"), ""),
+                    f"{_text(record.get('sheet'), '')}:{_text(record.get('row'), '')}".strip(":"),
+                ) if part
+            ) or "未说明"
+            locations = [
+                f"{_text(match.get('repo_id'))}:{_text(match.get('path'))}:{_text(match.get('line'))}"
+                for match in _items(record.get("matches"))
+                if isinstance(match, Mapping)
+            ]
+            rows.append((labels[status], coverage_type, subject, counts, source, locations or "无唯一源码位置"))
+    return rows
+
+
 def _contract_rows(state: Mapping[str, Any], contract: Mapping[str, Any]) -> list[tuple[Any, Any]]:
     return [
         ("运行编号", state.get("run_id") or contract.get("run_id")),
@@ -337,48 +381,54 @@ def render_report(state: "PangeaState | Mapping[str, Any]") -> str:
 
     lines.extend(["## 4. 六维 DFX 风险", ""])
     risks = _items(state.get("risks"))
-    for dimension in DFX_DIMENSIONS:
-        lines.extend([f"### {dimension}", ""])
-        matched = [risk for risk in risks if isinstance(risk, Mapping) and dimension in _items(risk.get("dfx"))]
-        if not matched:
-            lines.extend(["- 未发现有源码或资料证据支撑的对应风险。", ""])
+    lines.extend(_markdown_table(("DFX 维度", "风险数", "风险编号"), _risk_dimension_rows(risks)))
+    lines.extend(["", "### 风险明细", ""])
+    if not risks:
+        lines.extend(["- 未发现有源码或资料证据支撑的风险。", ""])
+    for risk in risks:
+        if not isinstance(risk, Mapping):
+            lines.extend([f"- {_text(risk)}", ""])
             continue
-        for risk in matched:
-            risk_id = _text(risk.get("risk_id"), "未编号")
-            lines.extend(
-                [
-                    f"#### {risk_id} · {_text(risk.get('title'))}",
-                    "",
-                    f"- **严重度**：{_text(risk.get('severity'))}",
-                    f"- **置信度**：{_text(risk.get('confidence'))}",
-                    f"- **风险状态**：{_text(risk.get('status'))}",
-                    f"- **测试转化状态**：{_text(risk.get('translation_status'))}",
-                    f"- **复现条件**：{_text(risk.get('trigger') or risk.get('reproduction_condition'))}",
-                    f"- **系统结果**：{_text(risk.get('system_result'))}",
-                    f"- **外部观测**：{_text(risk.get('external_observation'))}",
-                    f"- **排除条件**：{_text(risk.get('exclusion_condition'))}",
-                    "- **上游语义核对**：",
-                ]
-            )
-            semantics = risk.get("upstream_semantics")
-            if isinstance(semantics, Mapping):
-                lines.extend([
-                    f"  - 入口可达性：{_text(semantics.get('reachability'))}",
-                    f"  - 调用方限制/补救：{_text(semantics.get('caller_constraints'))}",
-                    f"  - 规格或高层 API：{_text(semantics.get('documented_behavior'))}",
-                    f"  - 已有测试：{_text(semantics.get('existing_tests'))}",
-                    f"  - 结论：{_text(semantics.get('conclusion'))}",
-                ])
-            else:
-                lines.append("  - 未提供。")
-            lines.append("- **证据**：")
-            lines.extend(_evidence_lines(risk.get("evidence")))
-            lines.append("")
+        risk_id = _text(risk.get("risk_id"), "未编号")
+        lines.extend(
+            [
+                f"#### {risk_id} · {_text(risk.get('title'))}",
+                "",
+                f"- **DFX 维度**：{'、'.join(_text(item) for item in _items(risk.get('dfx'))) or '未提供'}",
+                f"- **严重度**：{_text(risk.get('severity'))}",
+                f"- **置信度**：{_text(risk.get('confidence'))}",
+                f"- **风险状态**：{_text(risk.get('status'))}",
+                f"- **测试转化状态**：{_text(risk.get('translation_status'))}",
+                f"- **复现条件**：{_text(risk.get('trigger') or risk.get('reproduction_condition'))}",
+                f"- **系统结果**：{_text(risk.get('system_result'))}",
+                f"- **外部观测**：{_text(risk.get('external_observation'))}",
+                f"- **排除条件**：{_text(risk.get('exclusion_condition'))}",
+                "- **上游语义核对**：",
+            ]
+        )
+        semantics = risk.get("upstream_semantics")
+        if isinstance(semantics, Mapping):
+            lines.extend([
+                f"  - 入口可达性：{_text(semantics.get('reachability'))}",
+                f"  - 调用方限制/补救：{_text(semantics.get('caller_constraints'))}",
+                f"  - 规格或高层 API：{_text(semantics.get('documented_behavior'))}",
+                f"  - 已有测试：{_text(semantics.get('existing_tests'))}",
+                f"  - 结论：{_text(semantics.get('conclusion'))}",
+            ])
+        else:
+            lines.append("  - 未提供。")
+        lines.append("- **证据**：")
+        lines.extend(_evidence_lines(risk.get("evidence")))
+        lines.append("")
 
     lines.extend(["## 5. 覆盖率缺口", ""])
     coverage = state.get("coverage_report") or state.get("coverage") or {}
     if isinstance(coverage, Mapping):
-        lines.extend(_mapping_lines(coverage) if coverage else ["- 未提供覆盖率文件或匹配结果。"])
+        if coverage and any(key in coverage for key in ("matched", "ambiguous", "unmatched")):
+            lines.extend(_markdown_table(("状态", "类型", "函数/分支", "执行次数", "Coverage 来源", "源码位置"), _coverage_rows(coverage)))
+            lines.extend(["", "未出现在 Coverage 文件中的函数或分支状态为“未提供/未知”，不按 0 次执行处理。"])
+        else:
+            lines.extend(_mapping_lines(coverage) if coverage else ["- 未提供覆盖率文件或匹配结果。"])
     else:
         _append_list(lines, coverage, "- 未提供覆盖率文件或匹配结果。")
 

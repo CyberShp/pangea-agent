@@ -10,14 +10,15 @@ from pathlib import Path
 from typing import Any
 
 from .markdown import (
-    DFX_DIMENSIONS,
     _boundary_text,
+    _coverage_rows,
     _contract_rows,
     _items,
     _parse_failures,
     _quality_summary,
     _report_title,
     _repository_rows,
+    _risk_dimension_rows,
     _scope_rows,
     _status,
     _text,
@@ -201,28 +202,33 @@ def render_html_report(state: Mapping[str, Any]) -> str:
     body.append(f'<section id="flows"><a class="back" href="#top">回到顶部</a><h2>3. 业务流程与关键函数证据</h2>{rendered_flows}{visual_html}</section>')
 
     risks = _items(state.get("risks"))
-    risk_parts = []
-    for dimension in DFX_DIMENSIONS:
-        matched = [risk for risk in risks if isinstance(risk, Mapping) and dimension in _items(risk.get("dfx"))]
-        cards = []
-        for risk in matched:
-            fields = (
-                ("严重度", risk.get("severity")), ("置信度", risk.get("confidence")),
-                ("风险状态", risk.get("status")), ("测试转化状态", risk.get("translation_status")),
-                ("复现条件", risk.get("trigger") or risk.get("reproduction_condition")),
-                ("系统结果", risk.get("system_result")), ("外部观测", risk.get("external_observation")),
-                ("排除条件", risk.get("exclusion_condition")),
-            )
-            facts = "".join(f"<dt>{label}</dt><dd>{_escape(value)}</dd>" for label, value in fields)
-            semantics = risk.get("upstream_semantics")
-            semantics_html = _upstream_semantics(semantics)
-            cards.append(f'<details><summary>{_escape(risk.get("risk_id"), "未编号")} · {_escape(risk.get("title"))}</summary><div class="detail-body"><dl>{facts}</dl><h4>上游语义核对</h4>{semantics_html}<h4>证据</h4>{_evidence(risk.get("evidence"))}</div></details>')
-        rendered_cards = "".join(cards) or '<p class="muted">未发现有源码或资料证据支撑的对应风险。</p>'
-        risk_parts.append(f'<h3>{dimension}</h3>{rendered_cards}')
-    body.append(f'<section id="risks"><a class="back" href="#top">回到顶部</a><h2>4. 六维 DFX 风险</h2>{"".join(risk_parts)}</section>')
+    cards = []
+    for risk in risks:
+        if not isinstance(risk, Mapping):
+            cards.append(f"<p>{_escape(risk)}</p>")
+            continue
+        fields = (
+            ("DFX 维度", "、".join(_text(item) for item in _items(risk.get("dfx"))) or "未提供"),
+            ("严重度", risk.get("severity")), ("置信度", risk.get("confidence")),
+            ("风险状态", risk.get("status")), ("测试转化状态", risk.get("translation_status")),
+            ("复现条件", risk.get("trigger") or risk.get("reproduction_condition")),
+            ("系统结果", risk.get("system_result")), ("外部观测", risk.get("external_observation")),
+            ("排除条件", risk.get("exclusion_condition")),
+        )
+        facts = "".join(f"<dt>{label}</dt><dd>{_escape(value)}</dd>" for label, value in fields)
+        semantics_html = _upstream_semantics(risk.get("upstream_semantics"))
+        cards.append(f'<details><summary>{_escape(risk.get("risk_id"), "未编号")} · {_escape(risk.get("title"))}</summary><div class="detail-body"><dl>{facts}</dl><h4>上游语义核对</h4>{semantics_html}<h4>证据</h4>{_evidence(risk.get("evidence"))}</div></details>')
+    rendered_cards = "".join(cards) or '<p class="muted">未发现有源码或资料证据支撑的风险。</p>'
+    dimension_summary = _table(("DFX 维度", "风险数", "风险编号"), _risk_dimension_rows(risks))
+    body.append(f'<section id="risks"><a class="back" href="#top">回到顶部</a><h2>4. 六维 DFX 风险</h2>{dimension_summary}<h3>风险明细</h3>{rendered_cards}</section>')
 
     coverage = state.get("coverage_report") or state.get("coverage")
-    body.append(f'<section id="coverage"><a class="back" href="#top">回到顶部</a><h2>5. 覆盖率缺口</h2>{_list(coverage, "未提供覆盖率文件或匹配结果。")}</section>')
+    if isinstance(coverage, Mapping) and any(key in coverage for key in ("matched", "ambiguous", "unmatched")):
+        coverage_html = _table(("状态", "类型", "函数/分支", "执行次数", "Coverage 来源", "源码位置"), _coverage_rows(coverage), {2, 4, 5})
+        coverage_html += '<p class="muted">未出现在 Coverage 文件中的函数或分支状态为“未提供/未知”，不按 0 次执行处理。</p>'
+    else:
+        coverage_html = _list(coverage, "未提供覆盖率文件或匹配结果。")
+    body.append(f'<section id="coverage"><a class="back" href="#top">回到顶部</a><h2>5. 覆盖率缺口</h2>{coverage_html}</section>')
 
     case_parts = []
     for case in _items(state.get("test_cases")):
