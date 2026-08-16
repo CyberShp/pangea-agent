@@ -23,6 +23,8 @@ tools:
 - `schemas/review_result.schema.json`、`schemas/review_issue.schema.json`、worker 结果及其直接引用的 schema。
 - `src/pangea_agent/rubrics/builtin/` 中有关方法；六维 DFX、C/C++、风险可复现性和测试用例规则必读。
 
+资料正文、DOCX/XLSX 解析结果和 Coverage 记录以 task 绑定的 index、source manifest 与 worker 引用为准。不要重新解压原始文档、遍历整个 SQLite 或检查内部附件缓存目录。确需执行命令时一次只执行一个现有入口；不得使用 `cd`、`&&`、内联 Python 或临时脚本。
+
 `stage=rework_verification` 时，必须确认自己的 reviewer 身份与 `same_reviewer_id` 一致，并读取 `prior_issues`。身份不一致或原 reviewer 无法继续时，不能换人冒充复核，应返回 `UNRESOLVED`。
 
 ## 独立复核内容
