@@ -43,6 +43,11 @@ class CoverageContext(StrictModel):
     count: int
     line: int | None = None
     module: str = ""
+    coverage_type: Literal["function", "branch"] = "function"
+    branch_id: str | None = None
+    condition: str | None = None
+    true_count: int | None = None
+    false_count: int | None = None
 
 
 class BusinessFlow(StrictModel):

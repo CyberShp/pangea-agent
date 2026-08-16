@@ -172,6 +172,9 @@ def build_run_index(
                     coverage_records.extend(records)
                     coverage_text = "\n".join(
                         f"module={record['module']}\tfunction={record['function']}\tcount={record['count']}\t"
+                        f"coverage_type={record.get('coverage_type', 'function')}\t"
+                        f"branch_id={record.get('branch_id', '')}\tcondition={record.get('condition', '')}\t"
+                        f"true_count={record.get('true_count', '')}\tfalse_count={record.get('false_count', '')}\t"
                         f"sheet={record['sheet']}\trow={record['row']}"
                         for record in records
                     )

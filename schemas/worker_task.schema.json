@@ -24,7 +24,12 @@
           "function": {"type": "string", "minLength": 1},
           "count": {"type": "integer"},
           "line": {"type": ["integer", "null"]},
-          "module": {"type": "string"}
+          "module": {"type": "string"},
+          "coverage_type": {"enum": ["function", "branch"]},
+          "branch_id": {"type": ["string", "null"]},
+          "condition": {"type": ["string", "null"]},
+          "true_count": {"type": ["integer", "null"]},
+          "false_count": {"type": ["integer", "null"]}
         },
         "additionalProperties": false
       }

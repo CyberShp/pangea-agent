@@ -28,8 +28,18 @@ def _coverage_context(unit: AnalysisUnit, coverage_report: dict) -> list[dict]:
             "count": record["count"],
             "line": match.get("line"),
             "module": record.get("module", ""),
+            "coverage_type": record.get("coverage_type", "function"),
+            "branch_id": record.get("branch_id"),
+            "condition": record.get("condition"),
+            "true_count": record.get("true_count"),
+            "false_count": record.get("false_count"),
         })
-    return sorted(context, key=lambda item: (item["path"], item["line"] or 0, item["function"]))
+    return sorted(
+        context,
+        key=lambda item: (
+            item["path"], item["line"] or 0, item["function"], item.get("branch_id") or ""
+        ),
+    )
 
 
 def prepare_worker_tasks(state: PangeaState) -> PangeaState:
