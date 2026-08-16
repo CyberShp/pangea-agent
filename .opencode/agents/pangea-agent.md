@@ -62,6 +62,10 @@ tools:
 ## V1 Worker 生命周期
 
 - Python 不调用模型 API。运行命令后读取当前 Run 的 `phase` 和 `agent-tasks/`。
+- 用户已经给出 `data_root`、`repository`、`run_id`、`target` 和最小 `source_scope` 时，
+  直接用这些字段创建 pending contract 并执行 `module-analysis`。只检查路径存在、源码仓状态
+  和同名 Run 是否已存在；不再阅读 README、产品实现、schema、旧 Run 或手工解析 DOCX/XLSX。
+  文档与 Coverage 由 `module-analysis` 统一索引并冻结。
 - 首次创建 Run 才使用 `module-analysis --contract pangea-data/.pangea/pending-task-contract.json`。不得在项目根目录、`pangea-data/` 一级目录或其他位置另建 task contract。Run 创建成功后删除该 pending 文件。
 - Run 已存在后，后续推进统一使用 `resume-run --run-id <run_id>`；该命令读取 `runs/<run_id>/inputs/task-contract.json` 中冻结的原始契约。
 - Run 已存在时不得重新创建、修改或猜测 task contract，不得通过文件 SHA256 或其他 hash 猜内部 digest，也不得因为恢复失败擅自换 `run_id` 重跑。只有用户明确要求新 Run 时才创建新 Run。
