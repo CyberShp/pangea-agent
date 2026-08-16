@@ -14,7 +14,7 @@ tools:
 ## 运行入口
 
 - 用户已经给出 `data_root`、`repository`、`run_id`、`target` 和 `source_scope` 时，首次执行 `module-analysis` 前最多使用 3 次工具调用：检查 `data_root` 与源码仓路径、检查同名 Run、写入 pending contract。
-- pending contract 直接使用用户给出的 `run_id`、`data_root`、`repository`、`target`、`source_scope`，固定 `mode=module_analysis`、`repositories=[]`；若用户未单列 `focus`，使用 `[target]`。
+- pending contract 直接使用用户给出的 `run_id`、`data_root`、`repository`、`target`、`source_scope`，固定 `mode=module_analysis`、`repositories=[]`；`source_scope` 即使只有一个路径也必须写成 JSON 数组，若用户未单列 `focus`，使用 `[target]`。
 - 随后立即执行 `python -m pangea_agent.cli.main module-analysis --contract <data_root>/.pangea/pending-task-contract.json`。
 - 首次 `module-analysis` 前禁止读取 README、`src/`、`schemas/`、Agent prompt、旧 Run，禁止查看 CLI help，禁止手工解析 DOCX/XLSX，禁止检查或导入 Python 依赖。graph 会完成资料索引、契约校验和任务生成。
 - 如果同名 Run 已存在，不创建 pending contract，直接执行 `resume-run --run-id <run_id> --data-root <data_root>`。
