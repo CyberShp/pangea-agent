@@ -276,6 +276,14 @@ def render_report(state: "PangeaState | Mapping[str, Any]") -> str:
     lines.extend(["", "### 明确排除", ""])
     exclusions = state.get("excluded_scope") or state.get("exclusions")
     _append_list(lines, exclusions)
+    summaries = _items(state.get("analysis_summaries"))
+    if summaries:
+        lines.extend(["", "### 资料采用与排除结论", ""])
+        lines.extend(_markdown_table(("分析单元", "Worker", "结论"), [
+            (item.get("unit_id"), item.get("worker_id"), item.get("summary"))
+            for item in summaries
+            if isinstance(item, Mapping)
+        ]))
     if state.get("source_manifest"):
         lines.extend(["", "### 源码清单摘要", ""])
         manifest = state["source_manifest"]

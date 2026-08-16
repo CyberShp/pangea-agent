@@ -161,9 +161,15 @@ def render_html_report(state: Mapping[str, Any]) -> str:
         ("图片附件", len(_items(manifest.get("attachments"))) if isinstance(manifest, Mapping) else 0),
         ("Coverage 记录", len(_items(manifest.get("coverage_records"))) if isinstance(manifest, Mapping) else 0),
     ])
+    summary_rows = [
+        (item.get("unit_id"), item.get("worker_id"), item.get("summary"))
+        for item in _items(state.get("analysis_summaries"))
+        if isinstance(item, Mapping)
+    ]
+    summaries_html = _table(("分析单元", "Worker", "结论"), summary_rows, {0, 1})
     body = [
         f'<section id="contract"><a class="back" href="#top">回到顶部</a><h2>1. 任务契约</h2>{contract_html}</section>',
-        f'<section id="scope"><a class="back" href="#top">回到顶部</a><h2>2. 分析范围与排除项</h2><h3>纳入范围</h3>{scope_html}{boundary_html}<h3>源码仓</h3>{repositories_html}<h3>明确排除</h3>{_list(state.get("excluded_scope") or state.get("exclusions"))}<h3>源码清单摘要</h3>{manifest_html}</section>',
+        f'<section id="scope"><a class="back" href="#top">回到顶部</a><h2>2. 分析范围与排除项</h2><h3>纳入范围</h3>{scope_html}{boundary_html}<h3>源码仓</h3>{repositories_html}<h3>明确排除</h3>{_list(state.get("excluded_scope") or state.get("exclusions"))}<h3>资料采用与排除结论</h3>{summaries_html}<h3>源码清单摘要</h3>{manifest_html}</section>',
     ]
 
     flow_parts = []

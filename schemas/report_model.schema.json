@@ -10,6 +10,7 @@
     "repositories": {"type": "array", "items": {"type": "object"}},
     "source_manifest": {"type": "object"},
     "inventory": {"type": "object"},
+    "analysis_summaries": {"type": "array", "items": {"type": "object"}},
     "business_flows": {"type": "array", "items": {"$ref": "business_flow.schema.json"}},
     "visual_findings": {"type": "array", "items": {"$ref": "visual_finding.schema.json"}},
     "risks": {"type": "array", "items": {"type": "object"}},

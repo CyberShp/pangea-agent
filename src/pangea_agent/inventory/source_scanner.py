@@ -130,6 +130,8 @@ def _known_macro_parse_artifact(item: dict, lines: list[str]) -> bool:
     token = str(item.get("text", "")).strip()
     if "TAILQ_HEAD(" in current:
         return True
+    if current.lstrip().startswith("IOBUF_FOREACH_NUMA_ID("):
+        return True
     if "SPDK_CONTAINEROF(" in nearby:
         return True
     if "__attribute__((" in current or "__spdk_nonstring" in current:

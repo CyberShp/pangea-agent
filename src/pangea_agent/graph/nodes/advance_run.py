@@ -313,6 +313,10 @@ def _state_with_results(state: PangeaState, results: list[WorkerResult], status:
     )
     return {
         **state,
+        "analysis_summaries": [
+            {"unit_id": result.unit_id, "worker_id": result.worker_id, "summary": result.summary}
+            for result in results
+        ],
         "business_flows": flows,
         "visual_findings": [
             finding.model_dump(mode="json")

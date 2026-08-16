@@ -18,7 +18,7 @@ _DEF_RE = re.compile(r"^[ \t]*(?!if\b|for\b|while\b|switch\b)(?:[A-Za-z_]\w*[ \t
 def expand_analysis_scope(repositories: list[dict], requested_scopes: list[str], *, target: str, focus: list[str]) -> dict:
     normalized_scopes = [_normalize(value) for value in requested_scopes or ["."]]
     requested_groups = _group_requested_scopes(normalized_scopes)
-    domain_terms = _domain_terms(target, focus)
+    domain_terms = _domain_terms(target, focus, normalized_scopes)
     groups: list[dict] = []
     context_files: list[dict] = []
     added_files: list[dict] = []
@@ -205,7 +205,26 @@ def _select_group(relative: str, calls: set[str], groups: list[dict], symbols_by
     return proximity.index(max(proximity)) if proximity else 0
 
 
-def _domain_terms(target: str, focus: list[str]) -> tuple[str, ...]:
+def _domain_terms(target: str, focus: list[str], requested_scopes: list[str] | None = None) -> tuple[str, ...]:
+    scope_terms: set[str] = set()
+    for scope in requested_scopes or []:
+        path = PurePosixPath(scope)
+        if path.suffix.lower() not in CODE_SUFFIXES:
+            continue
+        stem = re.sub(r"[^a-z0-9]+", "_", path.stem.lower()).strip("_")
+        parent = re.sub(r"[^a-z0-9]+", "_", path.parent.name.lower()).strip("_")
+        if stem in {"tcp", "conn", "qpair", "transport"} and parent:
+            stem = f"{parent}_{stem}"
+        if stem:
+            scope_terms.add(stem)
+    if scope_terms:
+        variants = set(scope_terms)
+        variants.update(term.replace("_", "-") for term in scope_terms if "_" in term)
+        variants.update(term.replace("_", " ") for term in scope_terms if "_" in term)
+        if "chap" in target.lower() or any("chap" in value.lower() for value in focus):
+            variants.update({"dhchap", "dh-hmac-chap", "dh_hmac_chap"})
+        return tuple(sorted(variants))
+
     source = " ".join([target, *focus]).lower()
     terms = {value for value in re.findall(r"[a-z0-9_+-]{3,}|[\u4e00-\u9fff]{2,}", source) if value not in GENERIC_TERMS}
     if any("chap" in value for value in terms):
