@@ -10,6 +10,7 @@ CONTEXT_SUFFIXES = {".md", ".rst", ".txt", ".sh", ".py", ".json", ".yaml", ".yml
 IGNORED_PARTS = {".git", "build", "dist", "third_party", "node_modules", "__pycache__", ".pangea"}
 COMMON_FUNCTIONS = {"main", "free", "calloc", "malloc", "memcpy", "memset", "strcmp", "strlen"}
 GENERIC_TERMS = {"analysis", "feature", "include", "module", "source", "test", "功能", "模块", "分析"}
+MAX_TARGET_CONTEXT_PER_GROUP = 8
 _CALL_RE = re.compile(r"\b([A-Za-z_]\w{5,})\s*\(")
 _MEMBER_CALL_RE = re.compile(r"(?:->|\.)\s*([A-Za-z_]\w*)\s*\(")
 _FUNCTION_POINTER_RE = re.compile(r"\(\s*\*\s*([A-Za-z_]\w*)\s*\)\s*\(")
@@ -81,6 +82,7 @@ def expand_analysis_scope(repositories: list[dict], requested_scopes: list[str],
         owned = {path for group in repo_groups for path in group["code_paths"]}
         symbols_by_group = [_exported_symbols((root / path for path in group["code_paths"]), domain_terms) for group in repo_groups]
         all_symbols = set().union(*symbols_by_group) if symbols_by_group else set()
+        target_context_candidates: list[list[tuple[int, str]]] = [[] for _ in repo_groups]
 
         for path in code_files:
             relative = code_paths[path]
@@ -99,11 +101,21 @@ def expand_analysis_scope(repositories: list[dict], requested_scopes: list[str],
             relative = _relative(path, root)
             text = path.read_text(encoding="utf-8", errors="replace")
             calls = set(_CALL_RE.findall(text)) & all_symbols
-            if calls or (owned and _matches_domain(relative, text, domain_terms)):
-                group_index = _select_group(relative, calls, repo_groups, symbols_by_group)
+            group_index = _select_group(relative, calls, repo_groups, symbols_by_group)
+            if calls:
                 record = {"repo_id": repo_id, "path": relative, "reason": f"direct_reference:{','.join(sorted(calls)[:5])}" if calls else "target_context"}
                 repo_groups[group_index]["context_paths"].append(relative)
                 context_files.append(record)
+            elif owned and _matches_domain(relative, text, domain_terms):
+                score = _target_context_score(relative, text, domain_terms)
+                if score >= 10:
+                    target_context_candidates[group_index].append((score, relative))
+
+        for group_index, candidates in enumerate(target_context_candidates):
+            selected = sorted(candidates, key=lambda item: (-item[0], item[1]))[:MAX_TARGET_CONTEXT_PER_GROUP]
+            for _, relative in selected:
+                repo_groups[group_index]["context_paths"].append(relative)
+                context_files.append({"repo_id": repo_id, "path": relative, "reason": "target_context"})
 
         for group in repo_groups:
             group["code_paths"] = sorted(dict.fromkeys(group["code_paths"]))
@@ -315,6 +327,18 @@ def _matches_domain(relative: str, text: str, terms: tuple[str, ...]) -> bool:
     dhchap_terms = tuple(term for term in terms if term in {"dhchap", "dh-hmac-chap", "dh_hmac_chap"})
     candidates = dhchap_terms or terms
     return bool(candidates) and any(term in sample for term in candidates)
+
+
+def _target_context_score(relative: str, text: str, terms: tuple[str, ...]) -> int:
+    path = relative.lower().replace("-", "_")
+    sample = text[:20000].lower()
+    score = 0
+    for term in terms:
+        normalized = term.lower().replace("-", "_").replace(" ", "_")
+        if normalized and normalized in path:
+            score += 10
+        score += min(3, sample.count(term.lower()))
+    return score
 
 
 def _normalize(value: str) -> str:

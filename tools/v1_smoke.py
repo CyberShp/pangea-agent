@@ -470,6 +470,7 @@ def _bounded_scope_expansion() -> None:
     assert "app/rpc.c" in task["unit"]["context_scope"]
     assert "unrelated/noise.c" not in task["unit"]["source_scope"]
     assert "test/e2e/demo.sh" in task["unit"]["context_scope"]
+    assert len(task["unit"]["context_scope"]) <= 10
     assert task["max_parallel_workers"] == 4 and task["may_spawn_workers"] is False
 
 
