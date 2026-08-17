@@ -450,8 +450,17 @@ def _unchanged_result_edit_does_not_block() -> None:
 def _bounded_scope_expansion() -> None:
     _, _, contract = _workspace()
     repo = Path(read_json(contract)["data_root"]) / "repositories" / "demo"
+    (repo / "module" / "demo_internal.h").write_text(
+        "static inline int demo_abort(void) { return 0; }\n",
+        encoding="utf-8",
+    )
+    (repo / "module" / "unused_internal.h").write_text(
+        "static inline int demo_unused(void) { return 0; }\n",
+        encoding="utf-8",
+    )
     (repo / "module" / "entry.c").write_text(
-        "int demo_feature_start(void) { return 0; }\n", encoding="utf-8"
+        '#include "demo_internal.h"\n#include "unused_internal.h"\nint demo_feature_start(void) { return demo_abort(); }\n',
+        encoding="utf-8",
     )
     (repo / "app").mkdir()
     (repo / "app" / "rpc.c").write_text(
@@ -464,10 +473,13 @@ def _bounded_scope_expansion() -> None:
     (repo / "test" / "e2e" / "demo.sh").write_text("demo_feature_start()\n", encoding="utf-8")
     payload = read_json(contract)
     payload["target"] = "demo feature"
+    payload["source_scope"] = ["module/entry.c"]
     write_json(contract, payload)
     state = run_module_analysis(str(contract))
     task = read_json(Path(state["agent_task_paths"][0]))
     assert "module/entry.c" in task["unit"]["source_scope"]
+    assert "module/demo_internal.h" in task["unit"]["context_scope"]
+    assert "module/unused_internal.h" not in task["unit"]["context_scope"]
     assert "app/rpc.c" in task["unit"]["context_scope"]
     assert "unrelated/noise.c" not in task["unit"]["source_scope"]
     assert "test/e2e/demo.sh" in task["unit"]["context_scope"]

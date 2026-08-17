@@ -17,6 +17,11 @@ _FUNCTION_POINTER_RE = re.compile(r"\(\s*\*\s*([A-Za-z_]\w*)\s*\)\s*\(")
 _STRUCT_START_RE = re.compile(r"\bstruct\s+([A-Za-z_]\w*)\s*\{")
 _STRUCT_INITIALIZER_RE = re.compile(r"\bstruct\s+([A-Za-z_]\w*)\s+[A-Za-z_]\w*\s*=\s*\{")
 _DESIGNATED_ASSIGNMENT_RE = re.compile(r"\.\s*([A-Za-z_]\w*)\s*=")
+_INCLUDE_RE = re.compile(r'^\s*#\s*include\s*[<"]([^>"]+)[>"]', re.MULTILINE)
+_INLINE_DEF_RE = re.compile(
+    r"\bstatic\s+inline\b[\s\w*]*?\b([A-Za-z_]\w*)\s*\([^;{}]*\)\s*\{",
+    re.MULTILINE,
+)
 _DECL_RE = re.compile(r"^[ \t]*(?:extern[ \t]+)?(?:[A-Za-z_]\w*[ \t*]+)+([A-Za-z_]\w*)[ \t]*\([^;{}]*\)[ \t]*;", re.MULTILINE)
 _DEF_RE = re.compile(r"^[ \t]*(?!if\b|for\b|while\b|switch\b)(?:[A-Za-z_]\w*[ \t*]+)+([A-Za-z_]\w*)[ \t]*\([^;{}]*\)[ \t\n]*\{", re.MULTILINE)
 
@@ -57,6 +62,16 @@ def expand_analysis_scope(repositories: list[dict], requested_scopes: list[str],
                     added_files.append({"repo_id": repo_id, "path": relative, "reason": f"declared_definition:{','.join(symbols[:5])}"})
             paths.update(companions)
             paths.update(definitions)
+            inline_headers = _called_inline_headers(
+                (root / relative for relative in paths),
+                code_paths,
+            )
+            for relative, symbols in sorted(inline_headers.items()):
+                context_files.append({
+                    "repo_id": repo_id,
+                    "path": relative,
+                    "reason": f"direct_inline_dependency:{','.join(sorted(symbols)[:5])}",
+                })
             pointer_implementations = _called_function_pointer_implementations(
                 (root / relative for relative in paths),
                 function_pointer_implementations,
@@ -75,7 +90,7 @@ def expand_analysis_scope(repositories: list[dict], requested_scopes: list[str],
                 "repo_id": repo_id,
                 "requested_scope": list(scopes),
                 "code_paths": sorted(paths),
-                "context_paths": sorted(pointer_implementations),
+                "context_paths": sorted(set(pointer_implementations) | set(inline_headers)),
             })
 
         repo_groups = _merge_overlapping_groups(repo_groups)
@@ -127,7 +142,7 @@ def expand_analysis_scope(repositories: list[dict], requested_scopes: list[str],
         "groups": groups,
         "context_files": _unique_records(context_files),
         "added_files": _unique_records(added_files),
-        "boundary": "source_scope = explicit scope + declared implementations; context_scope = direct function-pointer implementations + callers + target-related config/docs/tests",
+        "boundary": "source_scope = explicit scope + declared implementations; context_scope = called inline headers + direct function-pointer implementations + callers + target-related config/docs/tests",
     }
 
 
@@ -235,6 +250,37 @@ def _called_function_pointer_implementations(paths, index: dict[str, set[str]]) 
         for relative in index.get(member, set()):
             implementations.setdefault(relative, set()).add(member)
     return implementations
+
+
+def _called_inline_headers(paths, code_paths: dict[Path, str]) -> dict[str, set[str]]:
+    by_relative = {relative: path for path, relative in code_paths.items()}
+    dependencies: dict[str, set[str]] = {}
+    for source_path in paths:
+        if not source_path.is_file():
+            continue
+        text = source_path.read_text(encoding="utf-8", errors="replace")
+        calls = set(_CALL_RE.findall(text))
+        source_relative = code_paths.get(source_path)
+        if source_relative is None:
+            continue
+        for include in _INCLUDE_RE.findall(text):
+            candidates = {
+                include,
+                f"include/{include}",
+                str(PurePosixPath(source_relative).parent / include),
+            }
+            matches = [by_relative[candidate] for candidate in candidates if candidate in by_relative]
+            if len(matches) != 1:
+                continue
+            header_path = matches[0]
+            header_relative = code_paths[header_path]
+            inline_symbols = set(_INLINE_DEF_RE.findall(
+                header_path.read_text(encoding="utf-8", errors="replace")
+            ))
+            used = calls & inline_symbols
+            if used:
+                dependencies.setdefault(header_relative, set()).update(used)
+    return dependencies
 
 
 def _merge_overlapping_groups(groups: list[dict]) -> list[dict]:

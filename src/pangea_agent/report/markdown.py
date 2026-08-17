@@ -30,6 +30,8 @@ BOUNDARY_LABELS = {
         "用户指定范围 + 直接调用者 + 与分析对象相关的配置、文档和测试；不递归扩展调用链",
     "source_scope = explicit scope + declared implementations; context_scope = direct function-pointer implementations + callers + target-related config/docs/tests":
         "源码范围 = 用户指定范围 + 声明的直接实现；上下文范围 = 函数指针的直接实现 + 直接调用者 + 相关配置、文档和测试",
+    "source_scope = explicit scope + declared implementations; context_scope = called inline headers + direct function-pointer implementations + callers + target-related config/docs/tests":
+        "源码范围 = 用户指定范围 + 声明的直接实现；上下文范围 = 当前源码实际调用的内联头文件 + 函数指针的直接实现 + 直接调用者 + 相关配置、文档和测试",
 }
 
 
@@ -154,6 +156,8 @@ def _reason_text(reason: Any) -> str:
         return f"直接引用 {raw.split(':', 1)[1]}"
     if raw.startswith("function_pointer_implementation:"):
         return f"函数指针直接实现 {raw.split(':', 1)[1]}"
+    if raw.startswith("direct_inline_dependency:"):
+        return f"当前源码调用的内联实现 {raw.split(':', 1)[1]}"
     return REASON_LABELS.get(raw, raw)
 
 

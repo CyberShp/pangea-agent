@@ -36,7 +36,7 @@ python -m pangea_agent.cli.main prepare-review-result --task "<review task JSON>
 
 ## 独立复核内容
 
-先不要读取 worker result。按各 worker task 的 `source_scope`、`context_scope` 和资料目录独立检查入口、生命周期、状态、副作用、失败、调用方处理、最终状态及恢复，形成 `independent_findings`；之后才读取 worker result 并填写每项的 `worker_disposition`。没有发现缺口时允许 findings 为空，但 `reviewed_units` 必须列出实际完成独立检查的全部单元。
+先不要读取 worker result。按各 worker task 的 `source_scope`、`context_scope` 和资料目录独立检查入口、生命周期、状态、副作用、失败、调用方处理、最终状态及恢复；正常调用链检查后，再从 `source_scope` 中进程终止、数据丢失、资源遗失和不可恢复状态的明确终点反向追一次触发条件，避免只验证 worker 已经列出的候选。形成 `independent_findings` 后才读取 worker result 并填写每项的 `worker_disposition`。没有发现缺口时允许 findings 为空，但 `reviewed_units` 必须列出实际完成独立检查的全部单元。
 
 - 完整性：每个 task 单元都有可读取且包含实质分析内容的 worker result，没有截断、空结果或外层“完成”代替真实结果。机械字段、路径、编号和格式由 PANGEA 处理，不作为语义返工理由。
 - 范围：`analyzed_scope`、`analyzed_context_scope` 与 inventory、source manifest 和单元边界一致；解析失败、缺依赖、未读图片或排除文件没有被隐藏。
