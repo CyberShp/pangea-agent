@@ -3,13 +3,13 @@ from __future__ import annotations
 from collections import defaultdict
 from pathlib import Path
 
-from pangea_agent.agent_io import canonical_digest, read_json, write_json
+from pangea_agent.agent_io import read_json, write_json
 from pangea_agent.graph.run_store import (
     analysis_result_path,
     analysis_task_path,
-    artifact_digest,
     load_final_state,
     load_progress,
+    load_ready_state,
     load_reviewer_unavailable,
     load_review_result,
     load_review_task,
@@ -21,13 +21,12 @@ from pangea_agent.graph.run_store import (
     rework_task_path,
     review_result_path,
     review_task_path,
-    review_task_digest,
     reviewer_unavailable_path,
     run_directory,
     save_final_state,
+    save_ready_state,
     save_progress,
     termination_path,
-    worker_task_digest,
 )
 from pangea_agent.graph.state import PangeaState
 from pangea_agent.graph.validation import (
@@ -38,7 +37,7 @@ from pangea_agent.graph.validation import (
     validation_message,
 )
 from pangea_agent.models.quality import QualityReport
-from pangea_agent.models.run import RunProgress
+from pangea_agent.models.run import AgentSession, RunProgress
 from pangea_agent.models.worker import ResultRef, ReviewTask, WorkerResult, WorkerTask
 from pangea_agent.documents.coverage import match_coverage_records
 from pangea_agent.report import reports_are_complete
@@ -116,6 +115,12 @@ def _clear_error(progress: RunProgress, kind: str, artifact: Path) -> None:
     ]
 
 
+def _complete_session(progress: RunProgress, key: str) -> None:
+    session = progress.agent_sessions.get(key)
+    if session is not None:
+        session.status = "completed"
+
+
 def _sync_state_errors(state: PangeaState, progress: RunProgress) -> PangeaState:
     environment_errors = [
         error for error in state.get("errors", [])
@@ -141,6 +146,7 @@ def _load_analysis_results(state: PangeaState, progress: RunProgress) -> list[Wo
             _record_error(progress, "analysis_result_rejected", path, exc)
             continue
         completed.append(unit_id)
+        _complete_session(progress, f"analysis:{unit_id}")
         _clear_error(progress, "analysis_result_rejected", path)
         results.append(result)
     progress.completed_analysis_units = completed
@@ -157,7 +163,7 @@ def _prepare_review(state: PangeaState, progress: RunProgress, results: list[Wor
     refs = []
     for result in results:
         path = analysis_result_path(state, result.unit_id, 0)
-        refs.append(ResultRef(unit_id=result.unit_id, result_path=str(path), result_digest=artifact_digest(result)))
+        refs.append(ResultRef(unit_id=result.unit_id, result_path=str(path)))
     analysis_tasks = [
         load_worker_task(analysis_task_path(state, unit_id))
         for unit_id in progress.analysis_units
@@ -174,13 +180,11 @@ def _prepare_review(state: PangeaState, progress: RunProgress, results: list[Wor
         repositories=repositories,
         inventory_path=first_task.inventory_path,
         source_manifest_path=first_task.source_manifest_path,
-        contract_digest=progress.contract_digest,
-        task_digest="0" * 64,
         result_path=str(review_result_path(state)),
         analysis_results=refs,
     )
-    task.task_digest = review_task_digest(task)
     write_json(review_task_path(state), task.model_dump(mode="json"))
+    progress.agent_sessions["review"] = AgentSession(role="review", stage="initial_review")
     progress.phase = "WAITING_REVIEW"
 
 
@@ -191,23 +195,26 @@ def _prepare_rework_review(state: PangeaState, progress: RunProgress, results: l
     for result in results:
         attempt = 1 if rework_task_path(state, result.unit_id).exists() else 0
         path = analysis_result_path(state, result.unit_id, attempt)
-        refs.append(ResultRef(unit_id=result.unit_id, result_path=str(path), result_digest=artifact_digest(result)))
+        refs.append(ResultRef(unit_id=result.unit_id, result_path=str(path)))
     task = ReviewTask(
         run_id=state["run_id"],
         target=initial_task.target,
         repositories=initial_task.repositories,
         inventory_path=initial_task.inventory_path,
         source_manifest_path=initial_task.source_manifest_path,
-        contract_digest=progress.contract_digest,
-        task_digest="0" * 64,
         stage="rework_verification",
         result_path=str(review_result_path(state, "rework")),
         analysis_results=refs,
         same_reviewer_id=initial_review.reviewer_id,
         prior_issues=initial_review.issues,
     )
-    task.task_digest = review_task_digest(task)
     write_json(review_task_path(state, "rework"), task.model_dump(mode="json"))
+    review_session = progress.agent_sessions.get("review")
+    if review_session is None:
+        review_session = AgentSession(role="review", stage="rework_verification")
+        progress.agent_sessions["review"] = review_session
+    review_session.stage = "rework_verification"
+    review_session.status = "pending"
     progress.phase = "WAITING_REWORK_REVIEW"
 
 
@@ -228,18 +235,18 @@ def _prepare_rework(state: PangeaState, progress: RunProgress, review) -> None:
             inventory_path=original_task.inventory_path,
             source_manifest_path=original_task.source_manifest_path,
             coverage_context=original_task.coverage_context,
-            contract_digest=original_task.contract_digest,
             attempt=1,
-            input_digest="0" * 64,
             result_path=str(analysis_result_path(state, unit_id, 1)),
             preferred_worker_id=original_result.worker_id,
             replacement_allowed=True,
             prior_result_path=str(original_task.result_path),
-            prior_result_digest=artifact_digest(original_result),
             review_issues=issues,
         )
-        task.input_digest = worker_task_digest(task)
         write_json(rework_task_path(state, unit_id), task.model_dump(mode="json"))
+        progress.agent_sessions[f"rework:{unit_id}"] = AgentSession(
+            role="rework", unit_id=unit_id, stage="rework"
+        )
+    _complete_session(progress, "review")
     progress.phase = "WAITING_REWORK"
     progress.quality_status = "REWORK"
 
@@ -273,6 +280,7 @@ def _load_rework_results(state: PangeaState, progress: RunProgress) -> list[Work
             _record_error(progress, "rework_result_rejected", result_path, exc)
             continue
         completed_rework.append(unit_id)
+        _complete_session(progress, f"rework:{unit_id}")
         _clear_error(progress, "rework_result_rejected", result_path)
         final_results.append(result)
     progress.completed_rework_units = completed_rework
@@ -374,7 +382,7 @@ def _ready_to_finalize(
     progress.quality_status = status
     progress.phase = "READY_TO_FINALIZE"
     final = final | {"phase": progress.phase}
-    save_final_state(final)
+    save_ready_state(final)
     save_progress(state, progress)
     return final
 
@@ -407,6 +415,8 @@ def _validate_review_inputs(state: PangeaState, task: ReviewTask) -> None:
         task_path = rework_task_path(state, reference.unit_id) if attempt == 1 else analysis_task_path(state, reference.unit_id)
         worker_task = load_worker_task(task_path)
         result_path = analysis_result_path(state, reference.unit_id, attempt)
+        if reference.result_path != str(result_path):
+            raise ArtifactRejected(f"review 输入路径与当前 Run 不一致：{reference.unit_id}")
         result = load_worker_result(result_path, worker_task)
         validate_worker_result(worker_task, result)
         write_json(result_path, result.model_dump(mode="json"))
@@ -473,7 +483,8 @@ def advance_run(state: PangeaState) -> PangeaState:
     progress = load_progress(state)
     if progress is None:
         raise ValueError("progress.json 不存在，不能恢复 Run")
-    if canonical_digest(state["task_contract"]) != progress.contract_digest:
+    frozen_contract_path = run_directory(state) / "inputs" / "task-contract.json"
+    if not frozen_contract_path.is_file() or read_json(frozen_contract_path) != state["task_contract"]:
         raise ArtifactRejected("请使用 resume-run --run-id <run_id> 继续这个 Run")
     state = _hydrate_run_context(state, progress)
 
@@ -513,6 +524,7 @@ def advance_run(state: PangeaState) -> PangeaState:
             save_progress(state, progress)
             return {**state, "phase": progress.phase}
         _clear_error(progress, "review_result_rejected", result_path)
+        _complete_session(progress, "review")
         results = _load_analysis_results(state, progress) or []
         unresolved = [issue.model_dump(mode="json") for issue in result.issues]
         return _ready_to_finalize(state, progress, results, result.status, unresolved)
@@ -558,14 +570,15 @@ def advance_run(state: PangeaState) -> PangeaState:
             save_progress(state, progress)
             return {**state, "phase": progress.phase}
         _clear_error(progress, "rework_review_rejected", result_path)
+        _complete_session(progress, "review")
         results = _load_rework_results(state, progress) or []
         unresolved = [issue.model_dump(mode="json") for issue in result.issues]
         return _ready_to_finalize(state, progress, results, result.status, unresolved)
 
     if progress.phase == "READY_TO_FINALIZE":
-        final = load_final_state(state)
+        final = load_ready_state(state)
         if final is None:
-            raise ArtifactRejected("final-state.json 缺失，不能恢复报告生成")
+            raise ArtifactRejected("ready-state.json 缺失，不能恢复报告生成")
         return final
 
     report_path = run_directory(state) / "report.md"
@@ -577,6 +590,10 @@ def advance_run(state: PangeaState) -> PangeaState:
         if final is not None and not reports_are_complete(run_directory(state)):
             final["phase"] = "READY_TO_FINALIZE"
             return final
+        if final.get("phase") != progress.phase:
+            final["phase"] = progress.phase
+            final["run_status"] = progress.phase
+            save_final_state(final)
         if report_path.exists():
             terminal["report_path"] = str(report_path)
             html_path = run_directory(state) / "report.html"

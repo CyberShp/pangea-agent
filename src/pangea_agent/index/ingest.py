@@ -64,12 +64,15 @@ def build_run_index(
     warnings: list[dict[str, str]] = []
     missing_dependencies: list[dict[str, str]] = []
     coverage_records: list[dict] = []
+    material_catalog: list[dict] = []
     expansion = scope_expansion or {}
     context_by_repo: dict[str, list[str]] = {}
     for item in expansion.get("context_files", []):
         context_by_repo.setdefault(item["repo_id"], []).append(item["path"])
-    attachments_root = data_root / ".pangea" / "evidence-attachments"
-    material_index_path = data_root / ".pangea" / "materials.sqlite"
+    run_dir = index_path.parent
+    materials_root = run_dir / "inputs" / "frozen" / "materials"
+    attachments_root = run_dir / "inputs" / "attachments"
+    material_index_path = run_dir / "materials.sqlite"
     material_source_types = ("material", "coverage", "coverage_record", "testcase")
     for target in {index_path, material_index_path}:
         clear_source_types(target, material_source_types)
@@ -109,13 +112,13 @@ def build_run_index(
                 path=relative_path,
             )
             chunk_count += len(chunks)
-    inbox_coverage_root = data_root / "inbox" / "coverage"
+    inbox_coverage_root = materials_root / "inbox" / "coverage"
     for folder, source_type in (("inbox", "material"), ("coverage", "coverage")):
-        source_root = data_root / folder
+        source_root = materials_root / folder
         if source_root.exists():
             for path in _iter_files(source_root, DOCUMENT_SUFFIXES):
                 file_count += 1
-                relative_path = path.relative_to(data_root).as_posix()
+                relative_path = path.relative_to(materials_root).as_posix()
                 effective_source_type = (
                     "coverage"
                     if source_type == "material" and path.is_relative_to(inbox_coverage_root)
@@ -130,12 +133,33 @@ def build_run_index(
                         "document_type": exc.document_type,
                         "error": str(exc),
                     })
+                    material_catalog.append({
+                        "path": relative_path,
+                        "type": effective_source_type,
+                        "index_locations": [],
+                        "parse_status": "missing_dependency",
+                        "attachment_state": "not_examined",
+                    })
                     continue
                 except (OSError, ValueError, zipfile.BadZipFile) as exc:
                     warnings.append({"path": relative_path, "warning": f"{type(exc).__name__}: {exc}"})
+                    material_catalog.append({
+                        "path": relative_path,
+                        "type": effective_source_type,
+                        "index_locations": [],
+                        "parse_status": "failed",
+                        "attachment_state": "not_examined",
+                    })
                     continue
                 except Exception as exc:
                     warnings.append({"path": relative_path, "warning": f"{type(exc).__name__}: {exc}"})
+                    material_catalog.append({
+                        "path": relative_path,
+                        "type": effective_source_type,
+                        "index_locations": [],
+                        "parse_status": "failed",
+                        "attachment_state": "not_examined",
+                    })
                     continue
                 tags = _material_tags(path, extracted.text) if effective_source_type == "material" else (effective_source_type,)
                 chunks = chunk_text(
@@ -166,6 +190,13 @@ def build_run_index(
                     "document_type": f"{path.suffix.lower()} attachment",
                     "error": f"attachment extraction requires the '{package}' package",
                 } for package in extracted.missing_dependencies)
+                material_catalog.append({
+                    "path": relative_path,
+                    "type": effective_source_type,
+                    "index_locations": [str(index_path), str(material_index_path)],
+                    "parse_status": "parsed_with_warnings" if extracted.warnings or extracted.missing_dependencies else "parsed",
+                    "attachment_state": "awaiting_visual_analysis" if extracted.attachments else "none",
+                })
 
                 if effective_source_type == "coverage" and path.suffix.lower() == ".xlsx":
                     records, coverage_warnings = parse_coverage_xlsx(path)
@@ -204,6 +235,7 @@ def build_run_index(
         "warnings": warnings,
         "missing_dependencies": missing_dependencies,
         "coverage_records": coverage_records,
+        "material_catalog": material_catalog,
         "scope_expansion": expansion,
         "repository_versions": [
             {"repo_id": repo["repo_id"], "git": repo.get("git", {"is_git": False})}

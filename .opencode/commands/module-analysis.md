@@ -14,4 +14,4 @@ description: 按用户当前自然语言要求执行模块分析
 4. Run 已存在时直接恢复该 Run，继续当前 phase；不得重新创建 task contract 或换新的 run_id。
 5. 按 graph 返回的 phase 派发对应 worker，直到生成 `report.md` 和 `report.html`。
 
-面向用户只报告分析阶段、范围和结果，不展示内部 CLI、digest/hash 或 task contract 细节。
+面向用户只报告分析阶段、范围和结果，不展示内部 CLI 或 task contract 细节。

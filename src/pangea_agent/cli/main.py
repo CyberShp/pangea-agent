@@ -5,9 +5,11 @@ from pathlib import Path
 
 from pangea_agent.agent_io import write_json
 from pangea_agent.graph.run_store import (
+    load_progress,
     load_worker_result,
     load_worker_task,
     normalize_worker_result_path,
+    save_progress,
     worker_result_skeleton,
 )
 from pangea_agent.graph.validation import validate_worker_result, validation_message
@@ -43,6 +45,13 @@ def main() -> None:
     prepare.add_argument("--task", required=True)
     validate = sub.add_parser("validate-worker-result")
     validate.add_argument("--task", required=True)
+    session = sub.add_parser("record-agent-session")
+    session.add_argument("--run-id", required=True)
+    session.add_argument("--data-root", default="pangea-data")
+    session.add_argument("--role", choices=("analysis", "review", "rework"), required=True)
+    session.add_argument("--unit-id")
+    session.add_argument("--task-id")
+    session.add_argument("--status", choices=("dispatched", "completed"), default="dispatched")
     args = parser.parse_args()
 
     if args.command == "init-data":
@@ -78,6 +87,24 @@ def main() -> None:
                 f"请在当前 Worker 内一次处理下列全部错误后重新执行 validate-worker-result：{detail}\n",
             )
         print("PASS")
+    elif args.command == "record-agent-session":
+        state = {"run_id": args.run_id, "data_root": args.data_root}
+        progress = load_progress(state)
+        if progress is None:
+            parser.error("指定 Run 不存在")
+        key = "review" if args.role == "review" else f"{args.role}:{args.unit_id or ''}"
+        record = progress.agent_sessions.get(key)
+        if record is None:
+            parser.error(f"当前 Run 没有待记录的 Agent 会话：{key}")
+        if args.status == "dispatched" and not args.task_id:
+            parser.error("记录 dispatched 状态时必须提供 --task-id")
+        if record.task_id and args.task_id and record.task_id != args.task_id:
+            parser.error("同一 Agent 会话不能替换 task_id")
+        if args.task_id:
+            record.task_id = args.task_id
+        record.status = args.status
+        save_progress(state, progress)
+        print(f"{key}={record.status}")
 
 
 if __name__ == "__main__":

@@ -13,6 +13,7 @@ description: 按用户当前自然语言要求执行 PANGEA 模块分析
 4. Run 已存在时直接恢复该 Run，继续当前 phase；不得重新创建 task contract 或换新的 run_id。
 5. `WAITING_ANALYSIS` 中每个 analysis-worker 必须在自己的 task 上执行 `validate-worker-result` 并得到 `PASS` 后才算完成。JSON/schema 失败由同一个 Worker 在同一 result/attempt 内修正，不属于正式 rework，也不得由主 Agent 用临时脚本代修。
 6. 只有当前阶段所有必需 Worker 都通过提交校验后，才执行 `resume-run` 推进 graph；不得把 schema FAIL 的结果留给后续 review 处理。
-7. 按 graph 返回的 phase 派发对应 worker，直到生成 `report.md` 和 `report.html`。
+7. 每次派发 Agent 后立刻用 `record-agent-session` 记录 task 工具返回的 `task_id`；恢复 Run 时从 `progress.agent_sessions` 恢复原会话，返工复核不得换 reviewer。
+8. 按 graph 返回的 phase 派发对应 worker，直到生成 `report.md` 和 `report.html`。
 
-面向用户只报告分析阶段、范围和结果，不展示内部 CLI、digest/hash 或 task contract 细节。
+面向用户只报告分析阶段、范围和结果，不展示内部 CLI 或 task contract 细节。

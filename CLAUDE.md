@@ -45,6 +45,7 @@ Assume the primary local shell may be Windows PowerShell.
 - When evidence is insufficient, record `UNRESOLVED` rather than inventing a conclusion.
 - Treat `source_scope` as the starting point. Deterministically include direct callers and target-related configuration, specifications, and tests without recursively expanding the call graph. Each analysis worker must complete both `source_scope` and `context_scope`.
 - Before retaining a risk, check reachability, caller constraints or remedies, documented high-level behavior, and existing tests. Expected behavior must not be reported as a risk. Do not add another agent or review layer for this check.
+- Analyze frozen source first, then consult the run-scoped material catalog and finally use Coverage only to prioritize tests. Freeze the risk set before writing test cases.
 
 ## Client compatibility
 
@@ -55,6 +56,7 @@ This repository also includes `AGENTS.md` for OpenCode and other agent clients. 
 - Python never calls a model API. Read the JSON tasks under the current run and write results to each declared `result_path`.
 - Dispatch at most four non-overlapping `analysis-worker` tasks concurrently. Workers must not spawn child workers.
 - Use one `review-worker` after analysis. Initial review and rework verification are one review lifecycle; allow at most one rework and require the same reviewer for verification.
+- After each Agent dispatch, record the returned task ID with `record-agent-session`. Restore task IDs from `progress.agent_sessions` after a main-session restart.
 - Re-run the same contract after completing the tasks for the current `phase`. Never replace missing worker output with placeholder risks.
 
 ## Initialization contract

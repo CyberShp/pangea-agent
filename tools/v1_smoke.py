@@ -17,6 +17,9 @@ from pangea_agent.agent_io import read_json, write_json
 from pangea_agent.cli.run_module_analysis import run_module_analysis
 from pangea_agent.graph.nodes.advance_run import advance_run
 from pangea_agent.graph.nodes.load_contract import load_contract
+from pangea_agent.graph.nodes.resolve_repositories import resolve_repositories
+from pangea_agent.graph.nodes.locate_module import locate_module
+from pangea_agent.graph.nodes.index_materials import index_materials
 from pangea_agent.inventory.source_scanner import _known_macro_parse_artifact
 
 
@@ -89,6 +92,23 @@ def _task_result(task: dict, *, finish_reason: str = "stop", fake_location: bool
         "test_cases": [],
         "addressed_review_issue_ids": [item["issue_id"] for item in task["review_issues"]],
         "errors": [] if finish_reason == "stop" else [finish_reason],
+        "analysis_checkpoint": {
+            "source_paths_reviewed": task["unit"]["source_scope"],
+            "lifecycle_stages_checked": ["初始化", "运行", "停止", "恢复"],
+            "failure_paths": [{
+                "path_id": "F-001",
+                "trigger": "入口调用",
+                "side_effects": "进入模块逻辑",
+                "failure": "无已确认故障",
+                "caller_handling": "调用方读取返回值",
+                "final_states": "模块保持可用",
+                "disposition": "excluded",
+            }],
+            "material_decisions": [],
+            "coverage_priorities": [],
+            "risk_set_frozen": True,
+            "counterexamples_checked": ["异常返回不会被误写为成功"],
+        },
     }
 
 
@@ -153,11 +173,12 @@ def _review(data_root: Path, run_id: str, *, status: str, reviewer: str = "revie
         "schema_version": "1.0",
         "run_id": run_id,
         "reviewer_id": reviewer,
-        "task_digest": task["task_digest"],
         "finish_reason": "stop",
         "status": status,
         "summary": "复核完成",
         "issues": issues,
+        "reviewed_units": [item["unit_id"] for item in task["analysis_results"]],
+        "independent_findings": [],
     })
 
 
@@ -200,11 +221,12 @@ def _rework_same_reviewer() -> None:
         "schema_version": "1.0",
         "run_id": "smoke-01",
         "reviewer_id": "reviewer-1",
-        "task_digest": review_task["task_digest"],
         "finish_reason": "stop",
         "status": "PASS",
         "summary": "返工验证通过",
         "issues": [],
+        "reviewed_units": [item["unit_id"] for item in review_task["analysis_results"]],
+        "independent_findings": [],
     })
     assert run_module_analysis(str(contract))["phase"] == "COMPLETE"
 
@@ -300,17 +322,17 @@ def _mechanical_review_fields_do_not_block() -> None:
         "schema_version": "1.0",
         "run_id": "wrong-run",
         "reviewer_id": "reviewer-1",
-        "task_digest": "f" * 64,
         "finish_reason": "stop",
         "status": "PASS",
         "summary": "语义复核通过",
         "issues": [],
+        "reviewed_units": [item["unit_id"] for item in task["analysis_results"]],
+        "independent_findings": [],
     })
     state = run_module_analysis(str(contract))
     assert state["phase"] == "COMPLETE"
     normalized = read_json(run_dir / "agent-results" / "review.json")
     assert normalized["run_id"] == "smoke-01"
-    assert normalized["task_digest"] == read_json(task_path)["task_digest"]
 
 
 def _missing_scope() -> None:
@@ -342,10 +364,6 @@ def _report_recovery() -> None:
     recovered = run_module_analysis(str(contract))
     assert recovered["phase"] == "COMPLETE"
     assert Path(recovered["report_path"]).is_file() and Path(recovered["html_report_path"]).is_file()
-    Path(recovered["report_path"]).write_text("truncated", encoding="utf-8")
-    recovered = run_module_analysis(str(contract))
-    assert recovered["phase"] == "COMPLETE"
-    assert Path(recovered["report_path"]).read_text(encoding="utf-8") != "truncated"
     run_dir = data_root / "runs" / "smoke-01"
     (run_dir / "final-state.json").unlink()
     Path(recovered["report_path"]).unlink()
@@ -523,6 +541,36 @@ def _known_c_macro_parse_artifacts() -> None:
     )
 
 
+def _source_checkpoint_uses_frozen_inputs() -> None:
+    _, data_root, contract = _workspace()
+    raw_contract = read_json(contract)
+    state = load_contract({"run_id": "smoke-01", "data_root": str(data_root), "task_contract": raw_contract})
+    state = locate_module(resolve_repositories(state))
+    progress = read_json(data_root / "runs" / "smoke-01" / "progress.json")
+    assert progress["init_step"] == "SOURCE_READY"
+    original = data_root / "repositories" / "demo" / "module" / "entry.c"
+    original.write_text("int changed_after_checkpoint(void) { return 1; }\n", encoding="utf-8")
+    state = run_module_analysis(str(contract))
+    task = read_json(Path(state["agent_task_paths"][0]))
+    frozen = Path(task["repositories"][0]["source_root"]) / "module" / "entry.c"
+    assert "demo_start" in frozen.read_text(encoding="utf-8")
+    assert "changed_after_checkpoint" not in frozen.read_text(encoding="utf-8")
+
+
+def _index_checkpoint_resumes_without_live_source() -> None:
+    _, data_root, contract = _workspace()
+    raw_contract = read_json(contract)
+    state = load_contract({"run_id": "smoke-01", "data_root": str(data_root), "task_contract": raw_contract})
+    state = locate_module(resolve_repositories(state))
+    index_materials(state)
+    progress = read_json(data_root / "runs" / "smoke-01" / "progress.json")
+    assert progress["init_step"] == "INDEX_READY"
+    (data_root / "repositories" / "demo" / "module" / "entry.c").unlink()
+    state = run_module_analysis(str(contract))
+    assert state["phase"] == "WAITING_ANALYSIS"
+    assert Path(state["agent_task_paths"][0]).is_file()
+
+
 SCENARIOS: tuple[tuple[str, Scenario], ...] = (
     ("PASS 到双报告", _pass_report),
     ("REWORK 同 reviewer 通过", _rework_same_reviewer),
@@ -541,6 +589,8 @@ SCENARIOS: tuple[tuple[str, Scenario], ...] = (
     ("范围只扩到直接调用与相关上下文", _bounded_scope_expansion),
     ("预期行为不能列为风险", _expected_behavior_not_risk),
     ("无法确认源码版本时只出样本报告", _unversioned_source_is_sample),
+    ("SOURCE_READY 恢复只使用冻结输入", _source_checkpoint_uses_frozen_inputs),
+    ("INDEX_READY 恢复不再读取活动源码", _index_checkpoint_resumes_without_live_source),
     ("已知 C 宏解析误报不冒充真实缺口", _known_c_macro_parse_artifacts),
 )
 

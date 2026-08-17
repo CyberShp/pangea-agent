@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 
-from pangea_agent.agent_io import canonical_digest, read_json, write_json
+from pangea_agent.agent_io import read_json, write_json
 from pangea_agent.models.run import RunProgress
 from pangea_agent.models.worker import ReviewerUnavailable, ReviewResult, ReviewTask, TerminationSignal, WorkerResult, WorkerTask
 
@@ -62,6 +61,10 @@ def final_state_path(state: dict) -> Path:
     return run_directory(state) / "final-state.json"
 
 
+def ready_state_path(state: dict) -> Path:
+    return run_directory(state) / "ready-state.json"
+
+
 def load_worker_task(path: Path) -> WorkerTask:
     return WorkerTask.model_validate(read_json(path))
 
@@ -81,6 +84,7 @@ def load_worker_result(path: Path, task: WorkerTask | None = None) -> WorkerResu
         "errors",
     ):
         payload.setdefault(field, [])
+    payload.setdefault("analysis_checkpoint", worker_result_skeleton(task)["analysis_checkpoint"] if task else {})
     if task is not None:
         payload.update({
             "schema_version": "1.0",
@@ -90,8 +94,6 @@ def load_worker_result(path: Path, task: WorkerTask | None = None) -> WorkerResu
             "analyzed_scope": list(task.unit.source_scope),
             "analyzed_context_scope": list(task.unit.context_scope),
         })
-        if task.task_type == "rework":
-            payload["addressed_review_issue_ids"] = [issue.issue_id for issue in task.review_issues]
     return WorkerResult.model_validate(payload)
 
 
@@ -128,6 +130,15 @@ def worker_result_skeleton(task: WorkerTask) -> dict:
         "test_cases": [],
         "addressed_review_issue_ids": [],
         "errors": [],
+        "analysis_checkpoint": {
+            "source_paths_reviewed": [],
+            "lifecycle_stages_checked": [],
+            "failure_paths": [],
+            "material_decisions": [],
+            "coverage_priorities": [],
+            "risk_set_frozen": False,
+            "counterexamples_checked": [],
+        },
     }
 
 
@@ -148,7 +159,6 @@ def load_review_result(path: Path, task: ReviewTask | None = None) -> ReviewResu
         payload.update({
             "schema_version": "1.0",
             "run_id": task.run_id,
-            "task_digest": task.task_digest,
         })
     return ReviewResult.model_validate(payload)
 
@@ -181,28 +191,10 @@ def save_final_state(state: dict) -> None:
     write_json(final_state_path(state), state)
 
 
-def artifact_digest(model: object) -> str:
-    return canonical_digest(model.model_dump(mode="json"))
+def load_ready_state(state: dict) -> dict | None:
+    path = ready_state_path(state)
+    return read_json(path) if path.exists() else None
 
 
-def worker_task_digest(task: WorkerTask) -> str:
-    # coverage_context is analysis guidance added after the original V1 task format;
-    # excluding it keeps existing Run task digests stable across this upgrade.
-    payload = task.model_dump(mode="json", exclude={"input_digest", "result_path", "coverage_context"})
-    payload["inventory_digest"] = _file_digest(Path(task.inventory_path))
-    payload["source_manifest_digest"] = _file_digest(Path(task.source_manifest_path))
-    payload["index_digest"] = _file_digest(Path(task.index_path))
-    return canonical_digest(payload)
-
-
-def review_task_digest(task: ReviewTask) -> str:
-    payload = task.model_dump(mode="json", exclude={"task_digest", "result_path"})
-    payload["inventory_digest"] = _file_digest(Path(task.inventory_path))
-    payload["source_manifest_digest"] = _file_digest(Path(task.source_manifest_path))
-    return canonical_digest(payload)
-
-
-def _file_digest(path: Path) -> str:
-    if not path.is_file():
-        raise ValueError(f"任务输入文件不存在：{path}")
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+def save_ready_state(state: dict) -> None:
+    write_json(ready_state_path(state), state)

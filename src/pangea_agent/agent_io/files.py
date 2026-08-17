@@ -1,15 +1,9 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 from pathlib import Path
 from typing import Any
-
-
-def canonical_digest(value: Any) -> str:
-    encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
 
 
 def read_json(path: Path) -> Any:

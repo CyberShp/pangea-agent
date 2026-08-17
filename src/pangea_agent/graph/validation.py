@@ -209,6 +209,11 @@ def validate_worker_result(task: WorkerTask, result: WorkerResult) -> None:
         raise ArtifactRejected(f"worker 未正常完成：finish_reason={result.finish_reason}")
     if not result.evidence or not result.business_flows:
         raise ArtifactRejected("worker 正常完成时必须包含真实证据和业务流程")
+    checkpoint = result.analysis_checkpoint
+    if not checkpoint.risk_set_frozen:
+        raise ArtifactRejected("worker 尚未冻结风险集合，不能开始生成或提交测试用例")
+    if not checkpoint.counterexamples_checked:
+        raise ArtifactRejected("worker 尚未记录提交前的反例检查")
     _evidence_rows(task, result)
     _validate_visual_findings(task, result)
     if task.task_type == "rework":
@@ -252,7 +257,6 @@ def normalize_unique_ids(results: list[WorkerResult]) -> None:
 
 def validate_review_result(task: ReviewTask, result: ReviewResult, known_units: set[str]) -> None:
     result.run_id = task.run_id
-    result.task_digest = task.task_digest
     if result.finish_reason != "stop":
         raise ArtifactRejected(f"review 输出不完整：finish_reason={result.finish_reason}")
     unknown = {issue.unit_id for issue in result.issues} - known_units
@@ -260,6 +264,11 @@ def validate_review_result(task: ReviewTask, result: ReviewResult, known_units: 
         raise ArtifactRejected(f"review issue 引用了未知单元：{sorted(unknown)}")
     if len({issue.issue_id for issue in result.issues}) != len(result.issues):
         raise ArtifactRejected("review issue_id 重复")
+    if set(result.reviewed_units) != known_units:
+        raise ArtifactRejected("review 未记录全部分析单元的独立复核")
+    unknown_findings = {item.unit_id for item in result.independent_findings} - known_units
+    if unknown_findings:
+        raise ArtifactRejected(f"独立发现引用了未知单元：{sorted(unknown_findings)}")
 
 
 def validation_message(exc: Exception) -> str:

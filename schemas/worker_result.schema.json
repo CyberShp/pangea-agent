@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "WorkerResult",
   "type": "object",
-  "required": ["schema_version", "run_id", "unit_id", "worker_id", "attempt", "finish_reason", "summary", "analyzed_scope", "analyzed_context_scope", "evidence", "business_flows", "visual_findings", "risks", "test_cases", "addressed_review_issue_ids", "errors"],
+  "required": ["schema_version", "run_id", "unit_id", "worker_id", "attempt", "finish_reason", "summary", "analyzed_scope", "analyzed_context_scope", "evidence", "business_flows", "visual_findings", "risks", "test_cases", "addressed_review_issue_ids", "errors", "analysis_checkpoint"],
   "properties": {
     "schema_version": {"const": "1.0"},
     "run_id": {"type": "string", "minLength": 1},
@@ -19,7 +19,21 @@
     "risks": {"type": "array", "items": {"$ref": "risk.schema.json"}},
     "test_cases": {"type": "array", "items": {"$ref": "test_case.schema.json"}},
     "addressed_review_issue_ids": {"type": "array", "items": {"type": "string"}},
-    "errors": {"type": "array", "items": {"type": "string"}}
+    "errors": {"type": "array", "items": {"type": "string"}},
+    "analysis_checkpoint": {
+      "type": "object",
+      "required": ["source_paths_reviewed", "lifecycle_stages_checked", "failure_paths", "material_decisions", "coverage_priorities", "risk_set_frozen", "counterexamples_checked"],
+      "properties": {
+        "source_paths_reviewed": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+        "lifecycle_stages_checked": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+        "failure_paths": {"type": "array", "items": {"type": "object", "required": ["path_id", "trigger", "side_effects", "failure", "caller_handling", "final_states", "disposition"], "properties": {"path_id": {"type": "string"}, "trigger": {"type": "string"}, "side_effects": {"type": "string"}, "failure": {"type": "string"}, "caller_handling": {"type": "string"}, "final_states": {"type": "string"}, "disposition": {"enum": ["risk", "excluded", "unresolved"]}}, "additionalProperties": false}},
+        "material_decisions": {"type": "array", "items": {"type": "object", "required": ["path", "decision", "reason"], "properties": {"path": {"type": "string"}, "decision": {"enum": ["current", "context", "excluded"]}, "reason": {"type": "string"}}, "additionalProperties": false}},
+        "coverage_priorities": {"type": "array", "items": {"type": "string"}},
+        "risk_set_frozen": {"type": "boolean"},
+        "counterexamples_checked": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": false
+    }
   },
   "allOf": [
     {

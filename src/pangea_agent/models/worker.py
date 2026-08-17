@@ -65,6 +65,32 @@ class VisualFinding(StrictModel):
     pending_reason: str | None = None
 
 
+class FailurePathCheck(StrictModel):
+    path_id: str = Field(min_length=1)
+    trigger: str = Field(min_length=1)
+    side_effects: str = Field(min_length=1)
+    failure: str = Field(min_length=1)
+    caller_handling: str = Field(min_length=1)
+    final_states: str = Field(min_length=1)
+    disposition: Literal["risk", "excluded", "unresolved"]
+
+
+class MaterialDecision(StrictModel):
+    path: str = Field(min_length=1)
+    decision: Literal["current", "context", "excluded"]
+    reason: str = Field(min_length=1)
+
+
+class AnalysisCheckpoint(StrictModel):
+    source_paths_reviewed: list[str] = Field(min_length=1)
+    lifecycle_stages_checked: list[str] = Field(min_length=1)
+    failure_paths: list[FailurePathCheck] = Field(default_factory=list)
+    material_decisions: list[MaterialDecision] = Field(default_factory=list)
+    coverage_priorities: list[str] = Field(default_factory=list)
+    risk_set_frozen: bool = False
+    counterexamples_checked: list[str] = Field(default_factory=list)
+
+
 class WorkerTask(StrictModel):
     schema_version: Literal["1.0"] = "1.0"
     task_type: Literal["analysis", "rework"]
@@ -76,24 +102,21 @@ class WorkerTask(StrictModel):
     inventory_path: str = Field(min_length=1)
     source_manifest_path: str = Field(min_length=1)
     coverage_context: list[CoverageContext] = Field(default_factory=list)
-    contract_digest: str = Field(min_length=64, max_length=64)
     attempt: Literal[0, 1]
-    input_digest: str = Field(min_length=64, max_length=64)
     result_path: str = Field(min_length=1)
     max_parallel_workers: Literal[4] = 4
     may_spawn_workers: Literal[False] = False
     preferred_worker_id: str | None = None
     replacement_allowed: bool = False
     prior_result_path: str | None = None
-    prior_result_digest: str | None = Field(default=None, min_length=64, max_length=64)
     review_issues: list[ReviewIssue] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_task_type(self) -> "WorkerTask":
-        if self.task_type == "analysis" and (self.attempt != 0 or self.prior_result_path or self.prior_result_digest or self.review_issues):
+        if self.task_type == "analysis" and (self.attempt != 0 or self.prior_result_path or self.review_issues):
             raise ValueError("analysis task 只能是 attempt=0，且不能携带返工字段")
         if self.task_type == "rework" and (
-            self.attempt != 1 or not self.prior_result_path or not self.prior_result_digest or not self.review_issues
+            self.attempt != 1 or not self.prior_result_path or not self.review_issues
         ):
             raise ValueError("rework task 必须绑定原结果和 review issues")
         return self
@@ -116,6 +139,7 @@ class WorkerResult(StrictModel):
     test_cases: list[TestCase]
     addressed_review_issue_ids: list[str]
     errors: list[str]
+    analysis_checkpoint: AnalysisCheckpoint
 
     @model_validator(mode="after")
     def validate_links(self) -> "WorkerResult":
@@ -134,7 +158,6 @@ class WorkerResult(StrictModel):
 class ResultRef(StrictModel):
     unit_id: str
     result_path: str
-    result_digest: str = Field(min_length=64, max_length=64)
 
 
 class ReviewTask(StrictModel):
@@ -144,8 +167,6 @@ class ReviewTask(StrictModel):
     repositories: list[RepositoryRef] = Field(min_length=1)
     inventory_path: str = Field(min_length=1)
     source_manifest_path: str = Field(min_length=1)
-    contract_digest: str = Field(min_length=64, max_length=64)
-    task_digest: str = Field(min_length=64, max_length=64)
     stage: Literal["initial_review", "rework_verification"] = "initial_review"
     result_path: str = Field(min_length=1)
     analysis_results: list[ResultRef] = Field(min_length=1)
@@ -163,15 +184,23 @@ class ReviewTask(StrictModel):
         return self
 
 
+class IndependentFinding(StrictModel):
+    unit_id: str = Field(min_length=1)
+    finding: str = Field(min_length=1)
+    evidence: list[str] = Field(min_length=1)
+    worker_disposition: Literal["covered", "reasonably_excluded", "missing", "contradiction"]
+
+
 class ReviewResult(StrictModel):
     schema_version: Literal["1.0"] = "1.0"
     run_id: str = Field(min_length=1)
     reviewer_id: str = Field(min_length=1)
-    task_digest: str = Field(min_length=64, max_length=64)
     finish_reason: Literal["stop", "truncated", "error"]
     status: Literal["PASS", "REWORK", "UNRESOLVED"]
     summary: str = Field(min_length=1)
     issues: list[ReviewIssue] = Field(default_factory=list)
+    reviewed_units: list[str] = Field(min_length=1)
+    independent_findings: list[IndependentFinding] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_status(self) -> "ReviewResult":

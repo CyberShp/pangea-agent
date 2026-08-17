@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pangea_agent.agent_io import canonical_digest, read_json, write_json
+from pangea_agent.agent_io import read_json, write_json
 from pangea_agent.graph.run_store import load_progress, save_progress
 from pangea_agent.graph.state import PangeaState
 from pangea_agent.models.contract import TaskContract
@@ -22,7 +22,6 @@ def load_contract(state: PangeaState) -> PangeaState:
     data_root = state.get("data_root") or contract.get("data_root") or "pangea-data"
     run_dir = Path(data_root, "runs", run_id)
     base_state = {**state, "task_contract": contract, "run_id": run_id, "data_root": data_root}
-    contract_digest = canonical_digest(contract)
     frozen_contract_path = run_dir / "inputs" / "task-contract.json"
 
     progress = load_progress(base_state)
@@ -30,12 +29,11 @@ def load_contract(state: PangeaState) -> PangeaState:
         write_json(frozen_contract_path, contract)
         progress = RunProgress(
             run_id=run_id,
-            contract_digest=contract_digest,
             phase="PREPARING",
             init_step="CONTRACT_FROZEN",
         )
         save_progress(base_state, progress)
-    elif progress.contract_digest != contract_digest:
+    elif frozen_contract_path.is_file() and read_json(frozen_contract_path) != contract:
         raise ValueError("当前 task contract 与已有 Run 不一致，不能继续该 Run")
     elif progress.phase == "PREPARING" and not frozen_contract_path.is_file():
         # Compatibility for a Run that was interrupted before early contract freezing existed.
@@ -46,12 +44,14 @@ def load_contract(state: PangeaState) -> PangeaState:
         return restored
 
     init_step = progress.init_step or "CONTRACT_FROZEN"
-    if init_step in {"SCOPE_READY", "INDEX_READY", "INVENTORY_READY"}:
+    if init_step in {"SOURCE_READY", "INDEX_READY", "INVENTORY_READY"}:
         scope_path = run_dir / "inputs" / "scope-expansion.json"
-        if not scope_path.is_file():
-            raise ValueError(f"初始化 checkpoint 与产物不一致：缺少 {scope_path}")
+        repositories_path = run_dir / "inputs" / "source-repositories.json"
+        if not scope_path.is_file() or not repositories_path.is_file():
+            raise ValueError("SOURCE_READY checkpoint 缺少冻结源码清单")
         expansion = read_json(scope_path)
         restored["scope_expansion"] = expansion
+        restored["repositories"] = read_json(repositories_path)
         restored["module_scope"] = list(dict.fromkeys(
             path
             for group in expansion.get("groups", [])

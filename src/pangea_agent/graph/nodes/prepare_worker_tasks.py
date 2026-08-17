@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pangea_agent.agent_io import canonical_digest, write_json
+from pangea_agent.agent_io import write_json
 from pangea_agent.documents.coverage import match_coverage_records
-from pangea_agent.graph.run_store import analysis_result_path, analysis_task_path, run_directory, save_progress, worker_task_digest
+from pangea_agent.graph.run_store import analysis_result_path, analysis_task_path, run_directory, save_progress
 from pangea_agent.graph.state import PangeaState
 from pangea_agent.graph.validation import validate_nonoverlapping_units
-from pangea_agent.models.run import RunProgress
+from pangea_agent.models.run import AgentSession, RunProgress
 from pangea_agent.models.worker import AnalysisUnit, WorkerTask
 
 
@@ -65,7 +65,6 @@ def prepare_worker_tasks(state: PangeaState) -> PangeaState:
         raise ValueError(f"未发现对应 C/C++ 实现：{', '.join(empty_units)}")
     validate_nonoverlapping_units(units)
     run_dir = run_directory(state)
-    contract_digest = canonical_digest(state["task_contract"])
     inventory_path = run_dir / "inputs" / "inventory.json"
     source_manifest_path = run_dir / "inputs" / "source-manifest.json"
     source_manifest = state.get("source_manifest", {})
@@ -97,20 +96,22 @@ def prepare_worker_tasks(state: PangeaState) -> PangeaState:
             inventory_path=str(inventory_path),
             source_manifest_path=str(source_manifest_path),
             coverage_context=_coverage_context(unit, coverage_report),
-            contract_digest=contract_digest,
             attempt=0,
-            input_digest="0" * 64,
             result_path=str(analysis_result_path(state, unit.unit_id, 0)),
         )
-        task.input_digest = worker_task_digest(task)
         path = analysis_task_path(state, unit.unit_id)
         write_json(path, task.model_dump(mode="json"))
         task_paths.append(str(path))
     progress = RunProgress(
         run_id=state["run_id"],
-        contract_digest=contract_digest,
         phase="WAITING_ANALYSIS",
         analysis_units=[unit["unit_id"] for unit in units],
+        agent_sessions={
+            f"analysis:{unit['unit_id']}": AgentSession(
+                role="analysis", unit_id=unit["unit_id"], stage="analysis"
+            )
+            for unit in units
+        },
     )
     save_progress(state, progress)
     return {**state, "phase": progress.phase, "agent_task_paths": task_paths}

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import mimetypes
 import re
 import shutil
@@ -18,8 +17,12 @@ class DependencyUnavailableError(RuntimeError):
 
 
 def _attachment_dir(source: Path, attachments_root: Path) -> Path:
-    key = hashlib.sha256(str(source.resolve()).encode("utf-8")).hexdigest()[:12]
-    destination = attachments_root / f"{source.stem}-{key}"
+    materials_root = attachments_root.parent / "frozen" / "materials"
+    try:
+        relative = source.resolve().relative_to(materials_root.resolve())
+    except ValueError:
+        relative = Path(source.name)
+    destination = attachments_root / relative.parent / source.name
     if destination.exists():
         shutil.rmtree(destination)
     destination.mkdir(parents=True, exist_ok=True)

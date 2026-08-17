@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import html
-import hashlib
 import json
 import re
 import tempfile
 from collections.abc import Mapping
 from pathlib import Path
+from datetime import datetime, timezone
 from typing import Any
 
 from .markdown import (
@@ -277,26 +277,24 @@ def write_reports(run_dir: str | Path, state: Mapping[str, Any]) -> tuple[Path, 
     rendered_html = render_html_report(state)
     _atomic_write_text(markdown_path, markdown)
     _atomic_write_text(html_path, rendered_html)
-    manifest = {
-        "report.md": hashlib.sha256(markdown.encode("utf-8")).hexdigest(),
-        "report.html": hashlib.sha256(rendered_html.encode("utf-8")).hexdigest(),
+    marker = {
+        "files": ["report.md", "report.html"],
+        "completed_at": datetime.now(timezone.utc).isoformat(),
     }
-    _atomic_write_text(output_dir / "report-manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
+    _atomic_write_text(output_dir / "report-complete.json", json.dumps(marker, ensure_ascii=False, indent=2) + "\n")
     return markdown_path, html_path
 
 
 def reports_are_complete(run_dir: str | Path) -> bool:
     output_dir = Path(run_dir)
-    manifest_path = output_dir / "report-manifest.json"
-    if not manifest_path.is_file():
+    marker_path = output_dir / "report-complete.json"
+    if not marker_path.is_file():
         return False
     try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        return all(
-            (output_dir / name).is_file()
-            and hashlib.sha256((output_dir / name).read_bytes()).hexdigest() == expected
-            for name, expected in manifest.items()
-        ) and set(manifest) == {"report.md", "report.html"}
+        marker = json.loads(marker_path.read_text(encoding="utf-8"))
+        return marker.get("files") == ["report.md", "report.html"] and all(
+            (output_dir / name).is_file() for name in marker["files"]
+        )
     except (OSError, ValueError, TypeError):
         return False
 

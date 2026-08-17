@@ -26,6 +26,7 @@ python -m pangea_agent.cli.main prepare-worker-result --task "<worker task JSON>
 - `unit.context_scope`：函数指针的直接实现，以及调用入口、配置、规格和测试等语义范围。直接实现用于核对回调的部分副作用，不要求像 `source_scope` 一样逐文件完整分析，也不得继续递归扩展。
 - `coverage_context`：当前单元能唯一匹配到的函数与分支覆盖率线索。分支记录包含 `branch_id`、`condition`、`true_count` 和 `false_count`。
 - `index_path`、`inventory_path`、`source_manifest_path`：冻结的证据、结构和资料输入。
+- `source_manifest.material_catalog`：本 Run 的资料目录，给出资料类型、解析状态、索引位置和附件状态。
 - `schemas/worker_result.schema.json` 及其直接引用的对象 schema。
 - `src/pangea_agent/rubrics/builtin/` 中与当前单元有关的方法文件；`dfx.md`、`c_cpp_analysis.md`、`risk_reproducibility.md` 和 `test_case_generation.md` 必读。
 
@@ -35,15 +36,14 @@ python -m pangea_agent.cli.main prepare-worker-result --task "<worker task JSON>
 
 ## 分析要求
 
-1. 先形成测试人员能理解的业务流程，覆盖当前单元实际存在的正常、异常、分支以及初始化、运行、停止、恢复、卸载生命周期。
-2. 按六个 DFX 维度检查：功能与状态、资源与规格、性能与压力、并发与异常、升级与兼容、可靠性与一致性。没有可信信号时不为凑数制造风险。
-3. `coverage_context` 非空时优先分析执行次数为 0 或较低的函数，以及 true/false 任一侧为 0 的分支，并继续检查这些函数内部的异常、边界和分支路径。Coverage 只决定分析优先级和补覆盖方向，不作为风险成立证据；没有某函数或分支记录表示“未提供/未知”，不得写成执行次数为 0 或未覆盖。
-4. 提出风险前检查入口可达性、调用方限制或补救、规格/API 定义和已有测试。依赖关闭断言后传入错误 owner/group 的未定义调用方误用不得冒充产品入口。若行为已经被定义为预期，不列为风险；但接口允许返回失败不代表失败后的状态必然安全，仍须检查底层部分副作用以及重试、关闭和恢复路径。
-5. 风险必须说明复现条件、系统结果、外部观测、排除条件、严重度、置信度和真实源码证据，并按 `risk_reproducibility.md` 区分公共绑定、实现链表、内核注册、请求队列等不同状态。删除、注销或关闭类系统调用不能只写“返回失败”，必须选定具体失败原因并推导该原因下的最终状态；`ENOENT` 表示对象不在目标注册表中，`EBADF` 表示句柄失效，不能再声称依靠原注册继续收到事件。当前范围可达错误路径中的 `assert(false)` 必须形成风险或写出有源码依据的排除理由。首次分析产生的新风险 `status` 固定为 `pending`。
-6. 写入 `test_cases` 前调用 `product-blackbox-test-case` Skill，并逐项执行 `test_case_generation.md` 的“从源码发现转换为测试语义”步骤；转换完成后才能写测试步骤和预期结果，不得直接把源码或认证报文改写成用例。该 Skill 只改善最终用例表达，不新增状态、门禁、审计或返工。
-   每个步骤必须有一个同位置的预期结果，`steps` 与 `expected_results` 数量完全一致；并逐条确认用例的触发条件和观测现象确实能验证其 `linked_risk_ids`。某一步预期进程或服务崩溃、退出或停止后，后续配置、连接或 IO 前必须显式重启并等待恢复；故障窗口恢复不会自动复活进程。删除、注销或关闭类系统调用失败时，前置条件必须选定一个真实可制造的失败原因和对应对象状态；泛称“底层操作返回失败”或只让桩返回错误不能生成可执行用例。前置条件已限定 Debug 或 Release 构建时，预期不得混入另一构建，也不得使用“可能”。
-7. 不输出安全专项、SFMEA、实现质量评价、代码改进建议或未经证据支持的配置组合。
-8. 必须读取 index 中全部 `material` 资料。区分当前需求/设计与旧版、冲突或无关资料；当前资料作为规格证据，旧版/冲突资料只用于说明排除理由，不得混入当前结论。结果的 `summary` 或 `evidence` 必须留下资料采用与排除记录，并引用实际 material location。
+1. 源码优先。先逐文件读取 `source_scope`，再读取 `context_scope`，建立入口、生命周期、状态、资源、副作用、错误处理、清理与恢复关系。此时不要先看设计、历史用例或 Coverage 来猜结论。
+2. 对每条候选异常路径按固定顺序重放：触发前状态 → 已发生副作用 → 失败点 → 调用方处理 → 最终状态 → 重试/关闭/恢复 → 外部观测。把过程持续写入结果骨架的 `analysis_checkpoint.failure_paths`，并记录 disposition；没有可信信号时不为凑数制造风险。
+3. 源码候选形成后，按 `source_manifest.material_catalog` 逐项读取已解析资料，只查询目录列出的 index location，不遍历整个 SQLite，也不重新解压原始文档。在 `material_decisions` 记录采用、仅作上下文或排除及原因。
+4. 最后读取 `coverage_context`。它只决定补测优先级：低执行函数、单侧未执行分支优先；缺少记录表示未知，不能写成未覆盖。把采用的优先级写入 `coverage_priorities`，不得用 Coverage 证明风险成立。
+5. 按六个 DFX 维度和初始化、运行、停止、恢复、卸载生命周期检查候选问题；风险必须说明复现条件、系统结果、外部观测、排除条件、严重度、置信度和真实源码证据。首次分析产生的新风险 `status` 固定为 `pending`。
+6. 在生成测试用例前完成上游约束和反证检查，把最终风险集合固定下来，并将 `risk_set_frozen=true`。之后不得为了凑用例临时新增风险。
+7. 写入 `test_cases` 前调用 `product-blackbox-test-case` Skill，并执行 `test_case_generation.md` 的转换步骤。每个步骤与预期结果一一对应；故障注入只制造触发条件，测试人员仍从业务入口执行、观察并恢复。
+8. 提交前至少记录一项针对核心结论的反例检查到 `counterexamples_checked`，确认最终状态、外部观测和恢复步骤没有互相矛盾。不输出安全专项、SFMEA、代码改进建议或无证据配置组合。
 
 ## 证据
 
@@ -64,11 +64,12 @@ python -m pangea_agent.cli.main prepare-worker-result --task "<worker task JSON>
 - `risks[]`：必须使用 `risk_id`、`title`、`dfx`、`severity`、`confidence`、`trigger`、`system_result`、`external_observation`、`exclusion_condition`、`upstream_semantics`、`translation_status`、`status`、`evidence`。`dfx` 必须是数组；`severity` 只能是 `Low/Medium/High/Critical`；`confidence` 只能是 `low/medium/high`；首次分析的 `status` 为 `pending`。不得使用 `dfx_dimension`、`category`、`reproducibility`、`reproduction_conditions`、`exclusion_conditions` 等旧字段。
 - `upstream_semantics` 必须完整包含 `reachability`、`caller_constraints`、`documented_behavior`、`existing_tests`、`conclusion`；`conclusion` 只能是 `risk_remains/expected_behavior/unresolved`。
 - `risks`、`test_cases` 可以为空，但已经写入的对象必须完整符合各自 schema；不得通过空字符串、空步骤、空 evidence 或占位文本绕过校验。
+- `analysis_checkpoint`：边分析边更新，不在最后凭记忆补写。提交时必须包含已读源码、生命周期检查、候选失败路径处置、资料决策、Coverage 优先级、风险冻结状态和反例检查。
 
 ## 写入结果
 
 - 保留骨架中所有顶层字段。`run_id`、`unit_id`、`attempt`、`analyzed_scope`、`analyzed_context_scope` 等机械字段由 PANGEA 管理，不需要你维护一致性。
-- 你主要填写 `worker_id`、`summary`、`evidence`、`business_flows`、`visual_findings`、`risks`、`test_cases` 和必要的 review 响应。
+- 你主要填写 `worker_id`、`summary`、`analysis_checkpoint`、`evidence`、`business_flows`、`visual_findings`、`risks`、`test_cases` 和必要的 review 响应。
 - 正常完成写 `finish_reason=stop`，此时至少包含真实 `evidence` 和 `business_flows`，`errors` 为空。
 - 只修改 task 指定的 `result_path`。
 

@@ -21,6 +21,7 @@ python -m pangea_agent.cli.main prepare-worker-result --task "<worker task JSON>
 - `unit.context_scope`：调用入口、配置、规格和测试等上游语义范围。
 - `coverage_context`：当前单元能唯一匹配到的函数覆盖率线索。
 - `index_path`、`inventory_path`、`source_manifest_path`：冻结的证据、结构和资料输入。
+- `source_manifest.material_catalog`：本 Run 的资料目录，给出资料类型、解析状态、索引位置和附件状态。
 - `schemas/worker_result.schema.json` 及其直接引用的对象 schema。
 - `src/pangea_agent/rubrics/builtin/` 中与当前单元有关的方法文件；`dfx.md`、`c_cpp_analysis.md`、`risk_reproducibility.md` 和 `test_case_generation.md` 必读。
 
@@ -30,13 +31,13 @@ python -m pangea_agent.cli.main prepare-worker-result --task "<worker task JSON>
 
 ## 分析要求
 
-1. 先形成测试人员能理解的业务流程，覆盖当前单元实际存在的正常、异常、分支以及初始化、运行、停止、恢复、卸载生命周期。
-2. 按六个 DFX 维度检查：功能与状态、资源与规格、性能与压力、并发与异常、升级与兼容、可靠性与一致性。没有可信信号时不为凑数制造风险。
-3. `coverage_context` 非空时优先分析执行次数为 0 或较低的函数，并继续检查这些函数内部的异常、边界和分支路径。Coverage 只决定分析优先级和补覆盖方向，不作为风险成立证据。
-4. 提出风险前检查入口可达性、调用方限制或补救、规格/API 定义和已有测试。若行为已经被定义为预期，不列为风险。
-5. 风险必须说明复现条件、系统结果、外部观测、排除条件、严重度、置信度和真实源码证据。首次分析产生的新风险 `status` 固定为 `pending`。
-6. 写入 `test_cases` 前必须逐项执行 `test_case_generation.md` 的“从源码发现转换为测试语义”步骤，并按风险的 `translation_status` 决定生成方式；转换完成后才能写测试步骤和预期结果，不得直接把源码条件改写成用例。每个步骤必须有一个同位置的预期结果，`steps` 与 `expected_results` 数量完全一致。
-7. 不输出安全专项、SFMEA、实现质量评价、代码改进建议或未经证据支持的配置组合。
+1. 先逐文件读取 `source_scope`，再读取 `context_scope`，建立入口、生命周期、状态、资源、副作用、错误处理、清理与恢复关系；不要先让设计、历史用例或 Coverage 引导源码结论。
+2. 对每条候选异常路径按“触发前状态 → 已发生副作用 → 失败点 → 调用方处理 → 最终状态 → 重试/关闭/恢复 → 外部观测”重放，并持续填写 `analysis_checkpoint.failure_paths`。
+3. 源码候选形成后，按 `source_manifest.material_catalog` 读取资料并在 `material_decisions` 记录采用或排除原因；只使用目录中的 index location，不遍历整个 SQLite，不重新解压原始文档。
+4. 最后读取 `coverage_context`，只把它用于补测优先级并记录到 `coverage_priorities`；缺少记录表示未知，Coverage 不能证明风险成立。
+5. 按六个 DFX 维度及初始化、运行、停止、恢复、卸载生命周期检查候选。风险必须包含复现条件、系统结果、外部观测、排除条件、严重度、置信度和源码证据。
+6. 完成上游限制和反证检查后冻结风险集合，写入 `risk_set_frozen=true`，再按 `test_case_generation.md` 生成步骤与预期一一对应的测试用例。
+7. 提交前在 `counterexamples_checked` 至少记录一项核心结论反例检查，确认最终状态、外部观测和恢复步骤不矛盾。不输出安全专项、SFMEA、实现评价、代码建议或无证据配置组合。
 
 ## 证据
 
@@ -57,11 +58,12 @@ python -m pangea_agent.cli.main prepare-worker-result --task "<worker task JSON>
 - `risks[]`：必须使用 `risk_id`、`title`、`dfx`、`severity`、`confidence`、`trigger`、`system_result`、`external_observation`、`exclusion_condition`、`upstream_semantics`、`translation_status`、`status`、`evidence`。`dfx` 是数组；`severity` 只能是 `Low/Medium/High/Critical`；`confidence` 只能是 `low/medium/high`；首次分析 `status=pending`。不得使用 `dfx_dimension`、`category`、`reproducibility`、`reproduction_conditions`、`exclusion_conditions` 等旧字段。
 - `upstream_semantics` 必须包含 `reachability`、`caller_constraints`、`documented_behavior`、`existing_tests`、`conclusion`，其中 `conclusion` 只能是 `risk_remains/expected_behavior/unresolved`。
 - `risks`、`test_cases` 可以为空，但已经写入的对象必须完整符合 schema；不得用空字符串、空步骤、空 evidence 或占位文本绕过校验。
+- `analysis_checkpoint` 必须边分析边更新，记录已读源码、生命周期检查、候选失败路径、资料决策、Coverage 优先级、风险冻结状态和反例检查。
 
 ## 写入结果
 
 - 保留骨架中所有顶层字段。`run_id`、`unit_id`、`attempt`、`analyzed_scope`、`analyzed_context_scope` 等机械字段由 PANGEA 管理，不需要你维护一致性。
-- 你主要填写 `worker_id`、`summary`、`evidence`、`business_flows`、`visual_findings`、`risks`、`test_cases` 和必要的 review 响应。
+- 你主要填写 `worker_id`、`summary`、`analysis_checkpoint`、`evidence`、`business_flows`、`visual_findings`、`risks`、`test_cases` 和必要的 review 响应。
 - 正常完成写 `finish_reason=stop`，此时至少包含真实 `evidence` 和 `business_flows`，`errors` 为空。
 - 只修改 task 指定的 `result_path`。
 

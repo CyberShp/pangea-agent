@@ -10,15 +10,16 @@ from pangea_agent.report import write_reports
 def finalize_report(state: PangeaState) -> PangeaState:
     run_dir = Path(state["data_root"]) / "runs" / state["run_id"]
     progress = load_progress(state)
-    if progress is not None:
-        progress.phase = "COMPLETE" if progress.quality_status == "PASS" else "INCOMPLETE"
-        save_progress(state, progress)
+    terminal_phase = "COMPLETE" if progress and progress.quality_status == "PASS" else "INCOMPLETE"
     final_state = {
         **state,
-        "phase": progress.phase if progress else state.get("phase"),
-        "run_status": progress.phase if progress else state.get("run_status"),
+        "phase": terminal_phase,
+        "run_status": terminal_phase,
     }
     markdown_path, html_path = write_reports(run_dir, final_state)
+    if progress is not None:
+        progress.phase = terminal_phase
+        save_progress(state, progress)
     completed = {**final_state, "report_path": str(markdown_path), "html_report_path": str(html_path)}
     save_final_state(completed)
     return completed
