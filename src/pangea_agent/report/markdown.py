@@ -328,9 +328,25 @@ def render_report(state: "PangeaState | Mapping[str, Any]") -> str:
     lines.extend(["", "### 明确排除", ""])
     exclusions = state.get("excluded_scope") or state.get("exclusions")
     _append_list(lines, exclusions)
+    material_decisions = _items(state.get("material_decisions"))
+    if material_decisions:
+        lines.extend(["", "### 资料采用与排除结论", ""])
+        lines.extend(_markdown_table(("分析单元", "资料", "处理", "理由"), [
+            (item.get("unit_id"), item.get("path"), item.get("decision"), item.get("reason"))
+            for item in material_decisions
+            if isinstance(item, Mapping)
+        ]))
+    material_evidence = _items(state.get("material_evidence"))
+    if material_evidence:
+        lines.extend(["", "### 资料引用", ""])
+        lines.extend(_markdown_table(("分析单元", "引用位置", "使用结论", "状态"), [
+            (item.get("unit_id"), item.get("location") or item.get("chunk_id"), item.get("observation"), item.get("status"))
+            for item in material_evidence
+            if isinstance(item, Mapping)
+        ]))
     summaries = _items(state.get("analysis_summaries"))
     if summaries:
-        lines.extend(["", "### 资料采用与排除结论", ""])
+        lines.extend(["", "### 分析结论摘要", ""])
         lines.extend(_markdown_table(("分析单元", "Worker", "结论"), [
             (item.get("unit_id"), item.get("worker_id"), item.get("summary"))
             for item in summaries

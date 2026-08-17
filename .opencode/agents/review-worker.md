@@ -36,7 +36,7 @@ python -m pangea_agent.cli.main prepare-review-result --task "<review task JSON>
 
 ## 独立复核内容
 
-先不要读取 worker result。按各 worker task 的 `source_scope`、`context_scope` 和资料目录独立检查入口、生命周期、状态、副作用、失败、调用方处理、最终状态及恢复；正常调用链检查后，再从 `source_scope` 中进程终止、数据丢失、资源遗失和不可恢复状态的明确终点反向追一次触发条件，避免只验证 worker 已经列出的候选。形成 `independent_findings` 后才读取 worker result 并填写每项的 `worker_disposition`。没有发现缺口时允许 findings 为空，但 `reviewed_units` 必须列出实际完成独立检查的全部单元。
+先不要读取 worker result。按各 worker task 的 `source_scope`、`context_scope` 和资料目录独立检查入口、生命周期、状态、副作用、失败、调用方处理、最终状态及恢复；正常调用链检查后，再从 `source_scope` 和 `context_scope` 中任务已提供的 C/C++ 直接实现、内联头文件里，对进程终止、数据丢失、资源遗失和不可恢复状态的明确终点反向追一次触发条件，避免只验证 worker 已经列出的候选。不得为此递归扩大文件范围。形成 `independent_findings` 后才读取 worker result 并填写每项的 `worker_disposition`。没有发现缺口时允许 findings 为空，但 `reviewed_units` 必须列出实际完成独立检查的全部单元。
 
 - 完整性：每个 task 单元都有可读取且包含实质分析内容的 worker result，没有截断、空结果或外层“完成”代替真实结果。机械字段、路径、编号和格式由 PANGEA 处理，不作为语义返工理由。
 - 范围：`analyzed_scope`、`analyzed_context_scope` 与 inventory、source manifest 和单元边界一致；解析失败、缺依赖、未读图片或排除文件没有被隐藏。
@@ -44,7 +44,7 @@ python -m pangea_agent.cli.main prepare-review-result --task "<review task JSON>
 - 方法覆盖：核对六个 DFX 维度、业务正常/异常/分支流程，以及初始化、运行、停止、恢复、卸载生命周期。没有实现信号可以不生成风险，但必须是查证后的结论，不能因为已有用例看似覆盖就跳过。
 - 候选排除：逐项复核 `analysis_checkpoint.failure_paths` 中 disposition=`excluded` 的路径。若最终状态包含进程终止、数据丢失、资源泄漏或无法恢复，只有源码证明入口不可达、调用方必然阻断或该模式明确不受支持时才能排除；仅写“Debug/特定构建才发生”不构成排除理由。
 - 风险：核对入口可达性、调用方限制/补救、规格定义和已有测试；接口允许失败不代表失败后的状态安全。对每条风险按“触发前状态 → 已发生副作用 → 失败点 → 调用方处理 → 最终状态 → 重试/关闭/恢复 → 外部观测”独立重放，不得把不同资源层或不同时间点的状态混写。最终状态、外部观测或恢复步骤矛盾属于语义 `REWORK`。
-- 用例：必须关联真实风险，步骤和预期结果一一对应，观测与清理可执行。故障环境只制造触发条件，不能预先制造待验证结果；失败原因必须对应真实对象状态，资源释放或进程退出后不得继续操作失效对象，必须显式重建后再验证恢复。构建类型或运行模式一旦限定，预期必须唯一，不得混入其他模式或使用“可能”“A 或 B”。
+- 用例：必须关联真实风险，步骤和预期结果一一对应，观测与清理可执行。故障环境只制造触发条件，不能预先制造待验证结果；失败原因必须对应真实对象状态，资源释放或进程退出后不得继续操作失效对象，必须显式重建后再验证恢复。同一条 TestCase 只能有一种构建类型和一种运行模式；如果步骤中从 Debug 切到 Release、从 epoll 切到 kevent，必须 `REWORK` 并拆成不同用例，不能把它当成预期唯一的普通对照步骤。
 - 返工边界：只有缺少关键业务流程、异常/生命周期路径，遗漏明显必须的风险或测试用例时，才允许 `REWORK`。JSON 字段、命令格式、路径格式、ID 冲突、证据待确认和纯措辞问题不得触发正式返工。
 - 历史用例与 Coverage：历史用例仅能作为表达/环境参考；函数执行次数不能证明分支或风险已经覆盖。Coverage 中没有某函数或分支记录表示“未提供/未知”，不得写成执行次数为 0 或未覆盖。
 - 资料处理：确认 worker 读取了全部 material，引用当前需求/设计的实际 location，并显式说明

@@ -22,6 +22,8 @@ class PangeaState(TypedDict, total=False):
     inventory: dict[str, Any]
     analysis_units: list[dict[str, Any]]
     analysis_summaries: list[dict[str, Any]]
+    material_decisions: list[dict[str, Any]]
+    material_evidence: list[dict[str, Any]]
     business_flows: list[dict[str, Any]]
     visual_findings: list[dict[str, Any]]
     risks: list[dict[str, Any]]

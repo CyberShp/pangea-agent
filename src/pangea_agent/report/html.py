@@ -168,9 +168,21 @@ def render_html_report(state: Mapping[str, Any]) -> str:
         if isinstance(item, Mapping)
     ]
     summaries_html = _table(("分析单元", "Worker", "结论"), summary_rows, {0, 1})
+    material_decision_rows = [
+        (item.get("unit_id"), item.get("path"), item.get("decision"), item.get("reason"))
+        for item in _items(state.get("material_decisions"))
+        if isinstance(item, Mapping)
+    ]
+    material_decisions_html = _table(("分析单元", "资料", "处理", "理由"), material_decision_rows, {0, 1, 2})
+    material_evidence_rows = [
+        (item.get("unit_id"), item.get("location") or item.get("chunk_id"), item.get("observation"), item.get("status"))
+        for item in _items(state.get("material_evidence"))
+        if isinstance(item, Mapping)
+    ]
+    material_evidence_html = _table(("分析单元", "引用位置", "使用结论", "状态"), material_evidence_rows, {0, 1, 3})
     body = [
         f'<section id="contract"><a class="back" href="#top">回到顶部</a><h2>1. 任务契约</h2>{contract_html}</section>',
-        f'<section id="scope"><a class="back" href="#top">回到顶部</a><h2>2. 分析范围与排除项</h2><h3>纳入范围</h3>{scope_html}{boundary_html}<h3>源码仓</h3>{repositories_html}<h3>明确排除</h3>{_list(state.get("excluded_scope") or state.get("exclusions"))}<h3>资料采用与排除结论</h3>{summaries_html}<h3>源码清单摘要</h3>{manifest_html}</section>',
+        f'<section id="scope"><a class="back" href="#top">回到顶部</a><h2>2. 分析范围与排除项</h2><h3>纳入范围</h3>{scope_html}{boundary_html}<h3>源码仓</h3>{repositories_html}<h3>明确排除</h3>{_list(state.get("excluded_scope") or state.get("exclusions"))}<h3>资料采用与排除结论</h3>{material_decisions_html}<h3>资料引用</h3>{material_evidence_html}<h3>分析结论摘要</h3>{summaries_html}<h3>源码清单摘要</h3>{manifest_html}</section>',
     ]
 
     flow_parts = []

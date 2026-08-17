@@ -335,6 +335,17 @@ def _state_with_results(state: PangeaState, results: list[WorkerResult], status:
             {"unit_id": result.unit_id, "worker_id": result.worker_id, "summary": result.summary}
             for result in results
         ],
+        "material_decisions": [
+            {"unit_id": result.unit_id, **decision.model_dump(mode="json")}
+            for result in results
+            for decision in result.analysis_checkpoint.material_decisions
+        ],
+        "material_evidence": [
+            {"unit_id": result.unit_id, **evidence.model_dump(mode="json")}
+            for result in results
+            for evidence in result.evidence
+            if evidence.chunk_id.startswith("material:")
+        ],
         "business_flows": flows,
         "visual_findings": [
             finding.model_dump(mode="json")

@@ -413,6 +413,36 @@ def _coverage_reference_only() -> None:
     assert report["matched"][0]["meaning"] == "function_execution_reference_only"
 
 
+def _material_traceability_report() -> None:
+    _, data_root, contract = _workspace()
+    inbox = data_root / "inbox"
+    inbox.mkdir()
+    (inbox / "current.md").write_text("REQ-DEMO-01 当前需求。\n", encoding="utf-8")
+    state = run_module_analysis(str(contract))
+    task = read_json(Path(state["agent_task_paths"][0]))
+    result = _task_result(task)
+    result["evidence"].append({
+        "chunk_id": "material:inbox/current.md:1-1",
+        "location": "inbox/current.md:1-1",
+        "observation": "REQ-DEMO-01 作为当前需求采用。",
+    })
+    result["analysis_checkpoint"]["material_decisions"] = [{
+        "path": "inbox/current.md",
+        "decision": "current",
+        "reason": "当前需求基线。",
+    }]
+    write_json(Path(task["result_path"]), result)
+    run_module_analysis(str(contract))
+    _review(data_root, "smoke-01", status="PASS")
+    state = run_module_analysis(str(contract))
+    markdown = Path(state["report_path"]).read_text(encoding="utf-8")
+    html = Path(state["html_report_path"]).read_text(encoding="utf-8")
+    for expected in ("inbox/current.md", "inbox/current.md:1-1", "REQ-DEMO-01 作为当前需求采用。"):
+        assert expected in markdown and expected in html
+    assert "### 资料采用与排除结论" in markdown
+    assert "### 资料引用" in markdown
+
+
 def _multi_repo_isolation() -> None:
     _, data_root, contract = _workspace(repositories=("repo-a", "repo-b"))
     state = run_module_analysis(str(contract))
@@ -623,6 +653,7 @@ SCENARIOS: tuple[tuple[str, Scenario], ...] = (
     ("终态报告恢复", _report_recovery),
     ("文档缺口强制不完整", _document_gap),
     ("coverage 仅函数执行线索", _coverage_reference_only),
+    ("报告展示逐资料决策与引用", _material_traceability_report),
     ("多 repo 单元隔离", _multi_repo_isolation),
     ("返工期间未返工结果编辑不阻塞", _unchanged_result_edit_does_not_block),
     ("范围只扩到直接调用与相关上下文", _bounded_scope_expansion),
