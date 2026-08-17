@@ -44,8 +44,9 @@ def _failure_signal_focus(signal: str) -> str:
     if _ABORT_RE.search(signal):
         return "反向确认公开入口和支持模式是否可达该终止点，并检查终止前已经发生的副作用。"
     return (
-        "追踪该状态在整个对象生命周期中的置位与清除，并检查公开重配置、禁用和销毁操作；"
-        "状态可能在资源存在时先置位，再在资源被移除后残留。当前分支没有写入者不能证明不可达。"
+        "把断言可达性与重配置后的状态残留拆成两条 failure path。先判断断言本身，再从状态置位"
+        "重放 related_state_context 中的 destroy/NULL/setter；即使断言不可达，重配置仍可能独立"
+        "造成数据丢失或残留状态。当前分支没有写入者不能证明先前状态不会残留。"
     )
 
 

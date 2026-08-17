@@ -45,6 +45,8 @@ python -m pangea_agent.cli.main prepare-review-result --task "<review task JSON>
 
 断言要求状态与资源一致时，按时间顺序检查资源存在时的状态写入，以及公开重配置、禁用或销毁资源时是否同步清理状态。当前资源为空的分支中没有状态写入，不足以证明旧状态不会残留。
 
+对每个带 `related_state_context` 的状态信号，独立复核必须拆成两项：断言本身的可达性，以及状态置位后经过 destroy、NULL、setter 的重配置后果。worker 正确排除断言本身时，仍要检查并记录第二项；不能把断言排除结论当成数据丢失、虚假通知或状态残留也不存在。
+
 - 完整性：每个 task 单元都有可读取且包含实质分析内容的 worker result，没有截断、空结果或外层“完成”代替真实结果。机械字段、路径、编号和格式由 PANGEA 处理，不作为语义返工理由。
 - 范围：`analyzed_scope`、`analyzed_context_scope` 与 inventory、source manifest 和单元边界一致；解析失败、缺依赖、未读图片或排除文件没有被隐藏。
 - 源码证据：确认 observation 与可读取源码不矛盾。PANGEA 已将无法自动关联的条目标成“证据待确认”；该状态可以随正常报告交付，不得仅因 `chunk_id`、location、路径格式或摘要值不一致要求返工。

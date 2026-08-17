@@ -555,8 +555,9 @@ def _bounded_scope_expansion() -> None:
             "line": 4,
             "signal": "static inline void demo_state(void) { assert(sock->pipe_has_data == false); }",
             "analysis_focus": (
-                "追踪该状态在整个对象生命周期中的置位与清除，并检查公开重配置、禁用和销毁操作；"
-                "状态可能在资源存在时先置位，再在资源被移除后残留。当前分支没有写入者不能证明不可达。"
+                "把断言可达性与重配置后的状态残留拆成两条 failure path。先判断断言本身，再从状态置位"
+                "重放 related_state_context 中的 destroy/NULL/setter；即使断言不可达，重配置仍可能独立"
+                "造成数据丢失或残留状态。当前分支没有写入者不能证明先前状态不会残留。"
             ),
             "related_state_context": [
                 "module/demo_internal.h:5: static inline void demo_mark(void) { sock->pipe_has_data = true; }",
