@@ -50,7 +50,7 @@ python -m pangea_agent.cli.main prepare-worker-result --task "<worker task JSON>
 5. 最后读取 `coverage_context`。它只决定补测优先级：低执行函数、单侧未执行分支优先；缺少记录表示未知，不能写成未覆盖。把采用的优先级写入 `coverage_priorities`，不得用 Coverage 证明风险成立。
 6. 按六个 DFX 维度和初始化、运行、停止、恢复、卸载生命周期检查候选问题；风险必须说明复现条件、系统结果、外部观测、排除条件、严重度、置信度和真实源码证据。首次分析产生的新风险 `status` 固定为 `pending`。
 7. 在生成测试用例前完成上游约束和反证检查，把最终风险集合固定下来，并将 `risk_set_frozen=true`。之后不得为了凑用例临时新增风险。
-8. 写入 `test_cases` 前调用 `product-blackbox-test-case` Skill，并执行 `test_case_generation.md` 的转换步骤。每个步骤与预期结果一一对应；故障注入只制造触发条件，测试人员仍从业务入口执行、观察并恢复。同一用例不得在步骤中切换 Debug/Release、epoll/kevent 或其他构建与运行模式，对照场景拆成不同用例。
+8. 写入 `test_cases` 前调用 `product-blackbox-test-case` Skill，并执行 `test_case_generation.md` 的转换步骤。先为每条风险列出测试变体，每个变体只含一种构建、一种运行模式和一个唯一终态，再逐行生成独立 TestCase；Debug 与 Release 等对照必须在生成步骤前拆开。某个变体的终态是进程/服务崩溃、退出或停止时，若还要验证恢复，下一步先写“重启并等待服务恢复”，再写后续业务操作。每个步骤与预期结果一一对应；故障注入只制造触发条件，测试人员仍从业务入口执行、观察并恢复。
 9. 提交前至少记录一项针对核心结论的反例检查到 `counterexamples_checked`，确认最终状态、外部观测和恢复步骤没有互相矛盾。不输出安全专项、SFMEA、代码改进建议或无证据配置组合。
 
 ## 证据
