@@ -140,6 +140,9 @@ def load_review_result(path: Path, task: ReviewTask | None = None) -> ReviewResu
     if not isinstance(payload, dict):
         raise ValueError(f"review 结果必须是 JSON 对象：{path}")
     payload = dict(payload)
+    # Compatibility for review agents that emitted detailed per-unit notes outside
+    # the formal ReviewResult contract. Keep every other unknown field strict.
+    payload.pop("unit_reviews", None)
     payload.setdefault("issues", [])
     if task is not None:
         payload.update({
