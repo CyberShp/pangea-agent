@@ -169,6 +169,8 @@ def build_run_index(
 
                 if effective_source_type == "coverage" and path.suffix.lower() == ".xlsx":
                     records, coverage_warnings = parse_coverage_xlsx(path)
+                    for record in records:
+                        record["source"] = relative_path
                     coverage_records.extend(records)
                     coverage_text = "\n".join(
                         f"module={record['module']}\tfunction={record['function']}\tcount={record['count']}\t"
