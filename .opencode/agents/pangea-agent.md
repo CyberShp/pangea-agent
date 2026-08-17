@@ -54,12 +54,14 @@ tools:
 - Run 已存在时不得重新创建、修改或猜测 task contract，不得通过文件 SHA256 或其他 hash 猜内部 digest，也不得因为恢复失败擅自换 `run_id` 重跑。只有用户明确要求新 Run 时才创建新 Run。
 - 用户可见说明不输出 `contract_digest`、`input_digest`、`task_digest` 或长 hash。内部一致性值只用于 Python 自身判断；面向用户只说明该做什么，例如“请使用 resume-run 继续当前 Run”。
 - `agent-results/` 中结果文件存在不代表已完成；只有 graph 接受后，`progress.completed_analysis_units` / `completed_rework_units` 中的单元才算完成。
-- `WAITING_ANALYSIS`：最多并发派发 4 个 `analysis-worker`，每个只处理一个互不重叠单元，禁止继续派生 Agent。向 worker 传对应 task JSON 路径，不由主 Agent转述或重构任务字段。
+- `WAITING_ANALYSIS`：最多并发派发 4 个 `analysis-worker`，每个只处理一个互不重叠单元，禁止继续派生 Agent。向 worker 传对应 task JSON 路径，不由主 Agent 转述或重构任务字段。
 - 派发 analysis-worker 时消息只包含对应 task JSON 路径，不追加验收点、源码结论、风险猜测或文档摘要，避免主 Agent 转述替代 worker 读取冻结输入。
-- Worker 在 Python 生成的结果骨架上填写分析内容；完成后只执行一次 `validate-worker-result` 作为轻量提交检查。该检查确认文件可解析且包含实质分析内容，并自动修复机械字段、结果路径、跨单元编号和 evidence location；无法确定的证据关联标记为“证据待确认”。
-- 只有结果文件为空、损坏、无法读取，或业务流程/语义内容实质缺失时，才重新调用 analysis-worker。字段、路径、命令格式、ID、digest 或证据关联问题不得触发 Agent 返工；主 Agent继续推进到 review。
-- `WAITING_REVIEW`：启动 1 个 `review-worker` 做独立复核，并保留 task 工具返回的 `task_id`；该值只保留在当前主 Agent 会话中，不另写状态文件。
-- `WAITING_REWORK`：只有 graph 已生成 `agent-tasks/rework/*.json` 时才进入正式返工；原 worker 优先处理，不可恢复时可替代，但返工仍只有一次。
+- Worker 必须在 Python 生成的结果骨架上填写分析内容，并在结束前执行 `validate-worker-result`。**只有该命令返回 `PASS`，这个 Worker 才算提交完成。**
+- `validate-worker-result` 返回 JSON/schema 错误时，不进入正式 rework，也不增加 `attempt`。优先恢复同一个 analysis-worker 会话，让它根据本次完整错误列表和当前 schema 修正同一 `result_path`，直到 `PASS`。不得由主 Agent 编写 `fix_all.py`、临时脚本或手工拼 JSON 代替 Worker 修复实质分析内容。
+- PANGEA 只自动恢复 `run_id`、`unit_id`、`attempt`、分析范围等机械字段，以及能够确定性定位的 evidence 引用；**不会自动补写** `business_flows`、`visual_findings`、`risks`、`test_cases` 的缺失字段、空步骤、空证据或旧字段体系。不得再以“字段问题会自动规范化”为理由跳过校验失败。
+- 若 Worker 会话在未 `PASS` 时结束，主 Agent 不得执行 `resume-run` 期待 graph 接收该结果；必须先恢复该 Worker 完成提交。如果原 Worker 无法恢复，可重新启动同一个 analysis task 继续修改同一 attempt=0 结果，但不得创建新 Run 或占用正式 rework 次数。
+- `WAITING_REVIEW`：只有全部 analysis unit 都已被 graph 接受后，才启动 1 个 `review-worker` 做独立复核，并保留 task 工具返回的 `task_id`；该值只保留在当前主 Agent 会话中，不另写状态文件。
+- `WAITING_REWORK`：只有 graph 已生成 `agent-tasks/rework/*.json` 时才进入正式返工；原 worker 优先处理，不可恢复时可替代，但返工仍只有一次。返工 Worker 同样必须 `validate-worker-result=PASS` 后才能结束。
 - `WAITING_REWORK_REVIEW`：必须把初审返回的同一个 `task_id` 传回 task 工具，恢复原 `review-worker` 会话并让它读取 rework review task JSON；不得新建 reviewer 会话。`task_id` 缺失或恢复失败时标记 `UNRESOLVED`，不换 reviewer。
 - 完成当前阶段产物后，用 `resume-run --run-id <run_id>` 推进。
 
