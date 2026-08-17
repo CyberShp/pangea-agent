@@ -483,7 +483,8 @@ def _bounded_scope_expansion() -> None:
     (repo / "module" / "demo_internal.h").write_text(
         "static inline int demo_abort(void) { assert(false); return 0; }\n"
         "static inline void demo_remove(void) { assert(STAILQ_EMPTY(&recv_stream)); }\n"
-        "static inline void demo_release(void) { assert(entry->ref > 0); }\n",
+        "static inline void demo_release(void) { assert(entry->ref > 0); }\n"
+        "static inline void demo_state(void) { assert(sock->pipe_has_data == false); }\n",
         encoding="utf-8",
     )
     (repo / "module" / "unused_internal.h").write_text(
@@ -538,6 +539,15 @@ def _bounded_scope_expansion() -> None:
             "analysis_focus": (
                 "按任务提供的每个直接调用实现分别核对引用增加与减少；一个实现安全或未确认，不能"
                 "覆盖另一个实现的可达风险。尤其检查增加失败后该实现是否仍继续并执行减少。"
+            ),
+        },
+        {
+            "path": "module/demo_internal.h",
+            "line": 4,
+            "signal": "static inline void demo_state(void) { assert(sock->pipe_has_data == false); }",
+            "analysis_focus": (
+                "追踪该状态在整个对象生命周期中的置位与清除，并检查公开重配置、禁用和销毁操作；"
+                "状态可能在资源存在时先置位，再在资源被移除后残留。当前分支没有写入者不能证明不可达。"
             ),
         },
     ]

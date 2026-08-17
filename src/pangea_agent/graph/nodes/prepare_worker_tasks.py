@@ -37,7 +37,10 @@ def _failure_signal_focus(signal: str) -> str:
         )
     if _ABORT_RE.search(signal):
         return "反向确认公开入口和支持模式是否可达该终止点，并检查终止前已经发生的副作用。"
-    return "追踪该状态的写入者、公开入口和失败后的最终状态；断言本身不能证明调用方保证。"
+    return (
+        "追踪该状态在整个对象生命周期中的置位与清除，并检查公开重配置、禁用和销毁操作；"
+        "状态可能在资源存在时先置位，再在资源被移除后残留。当前分支没有写入者不能证明不可达。"
+    )
 
 
 def _coverage_context(unit: AnalysisUnit, coverage_report: dict) -> list[dict]:
