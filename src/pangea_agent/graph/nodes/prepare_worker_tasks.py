@@ -36,8 +36,10 @@ def _failure_signal_focus(signal: str) -> str:
         )
     if re.search(r"\bref\s*>\s*0", signal):
         return (
-            "按任务提供的每个直接调用实现分别核对引用增加与减少；一个实现安全或未确认，不能"
-            "覆盖另一个实现的可达风险。尤其检查增加失败后该实现是否仍继续并执行减少。"
+            "按任务提供的每个直接实现写出实际的增加与减少调用序列，并追踪错误日志之后的函数"
+            "返回值和上层是否真正绑定对象。只有证明某次 release/decrement 前没有成功 insert/"
+            "increment 才能判定失衡；lookup 不增加引用本身不足以证明风险。一个实现的结论不能"
+            "覆盖另一个实现。"
         )
     if _ABORT_RE.search(signal):
         return "反向确认公开入口和支持模式是否可达该终止点，并检查终止前已经发生的副作用。"
