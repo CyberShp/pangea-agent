@@ -59,6 +59,7 @@ tools:
 ## 写入结果
 
 - 结果必须完整符合 `schemas/review_result.schema.json`；不要复制或修改 schema。
+- 最终 JSON 顶层只允许 `schema_version`、`run_id`、`reviewer_id`、`task_digest`、`finish_reason`、`status`、`summary`、`issues` 八个字段。逐单元复核过程只用于形成 `summary` 和 `issues`，不得输出 `unit_reviews`、`details`、`checks` 或其他额外顶层字段。
 - `run_id` 和 `task_digest` 必须逐字取自 review task，`reviewer_id` 在初审确定后保持不变。
 - 只把最终 JSON 写到 task 指定的 `result_path`。不得改 worker result、task、index、inventory、source manifest、源码或其他路径。
 - 正常复核只能写 `finish_reason=stop`。截断、异常或无法完成核验时不得伪装成 PASS。
