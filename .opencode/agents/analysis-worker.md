@@ -25,7 +25,7 @@ python -m pangea_agent.cli.main prepare-worker-result --task "<worker task JSON>
 - `unit.source_scope`：必须逐文件分析的源码，已经包含 PANGEA 确定性找到的接口实现和必要源码。
 - `unit.context_scope`：函数指针的直接实现，以及调用入口、配置、规格和测试等语义范围。直接实现用于核对回调的部分副作用，不要求像 `source_scope` 一样逐文件完整分析，也不得继续递归扩展。
 - `coverage_context`：当前单元能唯一匹配到的函数与分支覆盖率线索。分支记录包含 `branch_id`、`condition`、`true_count` 和 `false_count`。
-- `failure_signal_context`：Python 从当前任务已经提供的 C/C++ 文件中定位出的少量高影响断言/终止信号。它只告诉你位置，不证明可达、危害或风险成立；必须逐项读取源码上下文后做语义判断。
+- `failure_signal_context`：Python 从当前任务已经提供的 C/C++ 文件中定位出的少量高影响断言/终止信号。它只告诉你位置，不证明可达、危害或风险成立；必须逐项读取源码上下文，并按新任务中每项附带的 `analysis_focus` 做语义判断。
 - `index_path`、`inventory_path`、`source_manifest_path`：冻结的证据、结构和资料输入。
 - `source_manifest.material_catalog`：本 Run 的资料目录，给出资料类型、解析状态、索引位置和附件状态。
 - `schemas/worker_result.schema.json` 及其直接引用的对象 schema。
@@ -38,7 +38,7 @@ python -m pangea_agent.cli.main prepare-worker-result --task "<worker task JSON>
 ## 分析要求
 
 1. 源码优先。先逐文件读取 `source_scope`，再读取 `context_scope`，建立入口、生命周期、状态、资源、副作用、错误处理、清理与恢复关系。此时不要先看设计、历史用例或 Coverage 来猜结论。
-2. 正常调用链梳理完成后，逐项打开 `failure_signal_context` 指向的源码位置，再独立反向扫描 `source_scope` 及任务已提供的 C/C++ 直接实现和内联头文件，查找会导致进程终止、数据丢失、资源遗失或不可恢复状态的明确终点。定位清单不是风险结论：对每项都要从终点反推触发条件、Debug/Release 差异、调用方和最终状态，可达的严重路径纳入候选，安全或不可达的说明依据后排除。不要为此递归寻找新文件，普通且状态安全的错误返回也不需要为凑完整性而逐项登记。
+2. 入口和状态关系明确后，先逐项处理 `failure_signal_context`，再写宽泛的正常流程总结。打开信号附近源码并按 `analysis_focus` 反向追触发条件、Debug/Release、调用方和最终状态；实现内的注释只能解释实现意图，不能单独证明公开调用方承担了前置条件。调用方保证必须来自公开契约或入口处实际执行的阻断检查。之后再独立反向扫描 `source_scope` 及任务已提供的 C/C++ 直接实现和内联头文件，查找会导致进程终止、数据丢失、资源遗失或不可恢复状态的明确终点。定位清单不是风险结论；不要递归寻找新文件，普通且状态安全的错误返回也不需要为凑完整性而逐项登记。
 3. 对每条候选异常路径按固定顺序重放：触发前状态 → 已发生副作用 → 失败点 → 调用方处理 → 最终状态 → 重试/关闭/恢复 → 外部观测。把过程持续写入结果骨架的 `analysis_checkpoint.failure_paths`，并记录 disposition；没有可信信号时不为凑数制造风险。
    `excluded` 必须有源码支持的不可达条件、调用方保证或明确不支持的运行模式。不能仅因问题只发生在 Debug、特定构建或特定受支持模式就排除；若最终状态是进程终止、数据丢失、资源泄漏或无法恢复，必须分别核对该模式并保留风险或给出可验证的不可达证据。
 4. 源码候选形成后，按 `source_manifest.material_catalog` 逐项读取已解析资料，只查询目录列出的 index location，不遍历整个 SQLite，也不重新解压原始文档。在 `material_decisions` 记录采用、仅作上下文或排除及原因；每份用于结论或排除理由的资料，都要在顶层 `evidence` 保留至少一条真实 `chunk_id`，让最终报告展示实际引用位置。

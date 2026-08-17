@@ -19,6 +19,24 @@ _ABORT_RE = re.compile(r"\babort\s*\(")
 _CODE_SUFFIXES = {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp"}
 
 
+def _failure_signal_focus(signal: str) -> str:
+    if re.search(r"\bassert\s*\(\s*false\s*\)", signal):
+        return (
+            "分别重放 Debug 与 Release：Debug 会在后续清理前终止，不能用 assert 后的清理或返回"
+            "排除该模式；Release 继续核对清理后的最终状态。"
+        )
+    if re.search(r"(?:STAILQ|TAILQ|SLIST|LIST)_EMPTY", signal):
+        return (
+            "追踪容器元素的产生、归还和公开移除入口；实现注释或 assert 本身不是调用方契约，"
+            "只有公开契约或入口强制检查才能证明该状态不可达。"
+        )
+    if re.search(r"\bref\s*>\s*0", signal):
+        return "核对所有增加与减少引用的路径，尤其检查增加失败后调用方是否仍会执行减少。"
+    if _ABORT_RE.search(signal):
+        return "反向确认公开入口和支持模式是否可达该终止点，并检查终止前已经发生的副作用。"
+    return "追踪该状态的写入者、公开入口和失败后的最终状态；断言本身不能证明调用方保证。"
+
+
 def _coverage_context(unit: AnalysisUnit, coverage_report: dict) -> list[dict]:
     scopes = [scope.replace("\\", "/").strip("/") or "." for scope in unit.source_scope]
     context: list[dict] = []
@@ -63,7 +81,13 @@ def _failure_signal_context(unit: AnalysisUnit, repositories: list[dict]) -> lis
         for line_number, line in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
             match = _HIGH_IMPACT_ASSERT_RE.search(line) or _ABORT_RE.search(line)
             if match:
-                signals.append({"path": relative, "line": line_number, "signal": line.strip()})
+                signal = line.strip()
+                signals.append({
+                    "path": relative,
+                    "line": line_number,
+                    "signal": signal,
+                    "analysis_focus": _failure_signal_focus(signal),
+                })
     return signals
 
 

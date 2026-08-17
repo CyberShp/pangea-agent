@@ -42,7 +42,8 @@
         "properties": {
           "path": {"type": "string", "minLength": 1},
           "line": {"type": "integer", "minimum": 1},
-          "signal": {"type": "string", "minLength": 1}
+          "signal": {"type": "string", "minLength": 1},
+          "analysis_focus": {"type": ["string", "null"], "minLength": 1}
         },
         "additionalProperties": false
       }

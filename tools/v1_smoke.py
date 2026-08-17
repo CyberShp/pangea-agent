@@ -481,7 +481,8 @@ def _bounded_scope_expansion() -> None:
     _, _, contract = _workspace()
     repo = Path(read_json(contract)["data_root"]) / "repositories" / "demo"
     (repo / "module" / "demo_internal.h").write_text(
-        "static inline int demo_abort(void) { assert(false); return 0; }\n",
+        "static inline int demo_abort(void) { assert(false); return 0; }\n"
+        "static inline void demo_remove(void) { assert(STAILQ_EMPTY(&recv_stream)); }\n",
         encoding="utf-8",
     )
     (repo / "module" / "unused_internal.h").write_text(
@@ -510,11 +511,26 @@ def _bounded_scope_expansion() -> None:
     assert "module/entry.c" in task["unit"]["source_scope"]
     assert "module/demo_internal.h" in task["unit"]["context_scope"]
     assert "module/unused_internal.h" not in task["unit"]["context_scope"]
-    assert task["failure_signal_context"] == [{
-        "path": "module/demo_internal.h",
-        "line": 1,
-        "signal": "static inline int demo_abort(void) { assert(false); return 0; }",
-    }]
+    assert task["failure_signal_context"] == [
+        {
+            "path": "module/demo_internal.h",
+            "line": 1,
+            "signal": "static inline int demo_abort(void) { assert(false); return 0; }",
+            "analysis_focus": (
+                "分别重放 Debug 与 Release：Debug 会在后续清理前终止，不能用 assert 后的清理或返回"
+                "排除该模式；Release 继续核对清理后的最终状态。"
+            ),
+        },
+        {
+            "path": "module/demo_internal.h",
+            "line": 2,
+            "signal": "static inline void demo_remove(void) { assert(STAILQ_EMPTY(&recv_stream)); }",
+            "analysis_focus": (
+                "追踪容器元素的产生、归还和公开移除入口；实现注释或 assert 本身不是调用方契约，"
+                "只有公开契约或入口强制检查才能证明该状态不可达。"
+            ),
+        },
+    ]
     assert "app/rpc.c" in task["unit"]["context_scope"]
     assert "unrelated/noise.c" not in task["unit"]["source_scope"]
     assert "test/e2e/demo.sh" in task["unit"]["context_scope"]

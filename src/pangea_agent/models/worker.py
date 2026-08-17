@@ -54,6 +54,7 @@ class FailureSignalContext(StrictModel):
     path: str = Field(min_length=1)
     line: int = Field(gt=0)
     signal: str = Field(min_length=1)
+    analysis_focus: str | None = Field(default=None, min_length=1)
 
 
 class BusinessFlow(StrictModel):

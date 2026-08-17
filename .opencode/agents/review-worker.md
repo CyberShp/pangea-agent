@@ -26,7 +26,7 @@ python -m pangea_agent.cli.main prepare-review-result --task "<review task JSON>
 - `repositories` 的 canonical `repo_id`、`inventory_path` 和 `source_manifest_path`。
 - review task 绑定的 worker task 中的 SQLite `index_path`，以及 source manifest 中的附件、解析告警和不完整项。
 - worker task 的 `context_scope` 中若包含函数指针直接实现，必须用它核对回调失败前后的部分副作用；不得只凭公共接口或需求允许返回失败就判定状态安全。
-- worker task 的 `failure_signal_context` 是定位线索，不是风险判定。独立复核时逐项打开这些位置，确认 worker 是否正确判定可达性、Debug/Release、最终状态和 disposition。
+- worker task 的 `failure_signal_context` 是定位线索，不是风险判定。独立复核时逐项打开这些位置，按新任务中每项附带的 `analysis_focus` 确认 worker 是否正确判定可达性、Debug/Release、最终状态和 disposition。
 - 每个 `analysis_results[].result_path`。路径绑定由 PANGEA 的 Python 流程校验。
 - `schemas/review_result.schema.json`、`schemas/review_issue.schema.json`、worker 结果及其直接引用的 schema。
 - `src/pangea_agent/rubrics/builtin/` 中有关方法；六维 DFX、C/C++、风险可复现性和测试用例规则必读。
@@ -37,7 +37,7 @@ python -m pangea_agent.cli.main prepare-review-result --task "<review task JSON>
 
 ## 独立复核内容
 
-先不要读取 worker result。按各 worker task 的 `source_scope`、`context_scope` 和资料目录独立检查入口、生命周期、状态、副作用、失败、调用方处理、最终状态及恢复；正常调用链检查后，再从 `source_scope` 和 `context_scope` 中任务已提供的 C/C++ 直接实现、内联头文件里，对进程终止、数据丢失、资源遗失和不可恢复状态的明确终点反向追一次触发条件，避免只验证 worker 已经列出的候选。不得为此递归扩大文件范围。形成 `independent_findings` 后才读取 worker result 并填写每项的 `worker_disposition`。没有发现缺口时允许 findings 为空，但 `reviewed_units` 必须列出实际完成独立检查的全部单元。
+先不要读取 worker result。先处理各 worker task 的 `failure_signal_context`：逐项打开位置，按 `analysis_focus` 独立判断入口、触发条件、Debug/Release 和最终状态，再检查 `source_scope`、`context_scope` 的正常生命周期。实现注释描述“无法处理”或 assert 某状态，不等于公开调用方已经承担该前置条件；只有公开契约或入口强制检查才能证明调用方保证。随后从任务已提供的 C/C++ 直接实现、内联头文件里，对进程终止、数据丢失、资源遗失和不可恢复状态再反向追一次，避免只验证 worker 已经列出的候选。不得为此递归扩大文件范围。形成 `independent_findings` 后才读取 worker result 并填写每项的 `worker_disposition`。没有发现缺口时允许 findings 为空，但 `reviewed_units` 必须列出实际完成独立检查的全部单元。
 
 - 完整性：每个 task 单元都有可读取且包含实质分析内容的 worker result，没有截断、空结果或外层“完成”代替真实结果。机械字段、路径、编号和格式由 PANGEA 处理，不作为语义返工理由。
 - 范围：`analyzed_scope`、`analyzed_context_scope` 与 inventory、source manifest 和单元边界一致；解析失败、缺依赖、未读图片或排除文件没有被隐藏。
