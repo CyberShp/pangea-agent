@@ -16,6 +16,9 @@ _HIGH_IMPACT_ASSERT_RE = re.compile(
     r"\bassert\s*\([^\n]*(?:\bfalse\b|(?:STAILQ|TAILQ|SLIST|LIST)_EMPTY|\bref\s*>\s*0)[^\n]*\)"
 )
 _ABORT_RE = re.compile(r"\babort\s*\(")
+_STATE_ASSERT_RE = re.compile(
+    r"\bassert\s*\(\s*(?P<state>[A-Za-z_]\w*(?:(?:->|\.)[A-Za-z_]\w*)+)\s*==\s*false"
+)
 _CODE_SUFFIXES = {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp"}
 
 
@@ -41,6 +44,33 @@ def _failure_signal_focus(signal: str) -> str:
         "追踪该状态在整个对象生命周期中的置位与清除，并检查公开重配置、禁用和销毁操作；"
         "状态可能在资源存在时先置位，再在资源被移除后残留。当前分支没有写入者不能证明不可达。"
     )
+
+
+def _related_state_context(relative: str, lines: list[str], signal: str) -> list[str]:
+    match = _STATE_ASSERT_RE.search(signal)
+    if match is None:
+        return []
+    state = match.group("state")
+    member = re.split(r"->|\.", state)[-1]
+    stem = member.split("_has_", 1)[0]
+    if stem == member and member.startswith("pending_"):
+        stem = member.removeprefix("pending_")
+    assignment = re.compile(rf"(?:->|\.){re.escape(member)}\s*=(?!=)")
+    assignments: list[str] = []
+    reconfigurations: list[str] = []
+    for line_number, line in enumerate(lines, 1):
+        lowered = line.lower()
+        is_assignment = assignment.search(line) is not None
+        is_reconfiguration = stem in lowered and any(
+            token in lowered
+            for token in ("alloc", "destroy", "set_", "enable", "disable", "= null")
+        )
+        entry = f"{relative}:{line_number}: {line.strip()}"
+        if is_assignment:
+            assignments.append(entry)
+        elif is_reconfiguration:
+            reconfigurations.append(entry)
+    return [*assignments, *reconfigurations][:12]
 
 
 def _coverage_context(unit: AnalysisUnit, coverage_report: dict) -> list[dict]:
@@ -84,7 +114,8 @@ def _failure_signal_context(unit: AnalysisUnit, repositories: list[dict]) -> lis
         path = root / relative
         if path.suffix.lower() not in _CODE_SUFFIXES or not path.is_file():
             continue
-        for line_number, line in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        for line_number, line in enumerate(lines, 1):
             match = _HIGH_IMPACT_ASSERT_RE.search(line) or _ABORT_RE.search(line)
             if match:
                 signal = line.strip()
@@ -93,6 +124,7 @@ def _failure_signal_context(unit: AnalysisUnit, repositories: list[dict]) -> lis
                     "line": line_number,
                     "signal": signal,
                     "analysis_focus": _failure_signal_focus(signal),
+                    "related_state_context": _related_state_context(relative, lines, signal),
                 })
     return signals
 

@@ -55,6 +55,7 @@ class FailureSignalContext(StrictModel):
     line: int = Field(gt=0)
     signal: str = Field(min_length=1)
     analysis_focus: str | None = Field(default=None, min_length=1)
+    related_state_context: list[str] = Field(default_factory=list)
 
 
 class BusinessFlow(StrictModel):
