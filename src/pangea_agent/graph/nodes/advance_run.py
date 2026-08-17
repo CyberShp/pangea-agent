@@ -404,7 +404,12 @@ def _terminate_if_requested(state: PangeaState, progress: RunProgress) -> Pangea
 def _validate_review_inputs(state: PangeaState, task: ReviewTask) -> None:
     for reference in task.analysis_results:
         attempt = 1 if task.stage == "rework_verification" and rework_task_path(state, reference.unit_id).exists() else 0
-        load_worker_result(analysis_result_path(state, reference.unit_id, attempt))
+        task_path = rework_task_path(state, reference.unit_id) if attempt == 1 else analysis_task_path(state, reference.unit_id)
+        worker_task = load_worker_task(task_path)
+        result_path = analysis_result_path(state, reference.unit_id, attempt)
+        result = load_worker_result(result_path, worker_task)
+        validate_worker_result(worker_task, result)
+        write_json(result_path, result.model_dump(mode="json"))
 
 
 def _rebuild_terminal_state(state: PangeaState, progress: RunProgress) -> PangeaState:
@@ -488,6 +493,8 @@ def advance_run(state: PangeaState) -> PangeaState:
         task_path = review_task_path(state)
         result_path = review_result_path(state)
         if not result_path.exists():
+            task = load_review_task(task_path)
+            _validate_review_inputs(state, task)
             return {**state, "phase": progress.phase}
         try:
             task = load_review_task(task_path)
@@ -532,6 +539,8 @@ def advance_run(state: PangeaState) -> PangeaState:
             unresolved = [{"reason": unavailable.reason, "reviewer_id": unavailable.reviewer_id}]
             return _ready_to_finalize(state, progress, results, "UNRESOLVED", unresolved)
         if not result_path.exists():
+            task = load_review_task(task_path)
+            _validate_review_inputs(state, task)
             return {**state, "phase": progress.phase}
         try:
             task = load_review_task(task_path)
