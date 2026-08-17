@@ -25,8 +25,9 @@ _CODE_SUFFIXES = {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp"}
 def _failure_signal_focus(signal: str) -> str:
     if re.search(r"\bassert\s*\(\s*false\s*\)", signal):
         return (
-            "分别重放 Debug 与 Release：Debug 会在后续清理前终止，不能用 assert 后的清理或返回"
-            "排除该模式；Release 继续核对清理后的最终状态。"
+            "先定位直接支配 assert 的失败条件，再分别重放 Debug 与 Release。受支持模式中的底层"
+            "操作若可返回失败，且公开契约或入口没有阻断，Debug 终止必须保留为风险；不能用"
+            " assert 后的清理或返回排除，Release 继续核对清理后的最终状态。"
         )
     if re.search(r"(?:STAILQ|TAILQ|SLIST|LIST)_EMPTY", signal):
         return (
@@ -57,7 +58,9 @@ def _related_state_context(relative: str, lines: list[str], signal: str) -> list
         stem = member.removeprefix("pending_")
     assignment = re.compile(rf"(?:->|\.){re.escape(member)}\s*=(?!=)")
     assignments: list[str] = []
-    reconfigurations: list[str] = []
+    destructive_reconfigurations: list[str] = []
+    setter_reconfigurations: list[str] = []
+    other_reconfigurations: list[str] = []
     for line_number, line in enumerate(lines, 1):
         lowered = line.lower()
         is_assignment = assignment.search(line) is not None
@@ -69,8 +72,28 @@ def _related_state_context(relative: str, lines: list[str], signal: str) -> list
         if is_assignment:
             assignments.append(entry)
         elif is_reconfiguration:
+            if "destroy" in lowered or "= null" in lowered:
+                destructive_reconfigurations.append(entry)
+            elif "set_" in lowered and "set_field" not in lowered:
+                setter_reconfigurations.append(entry)
+            else:
+                other_reconfigurations.append(entry)
+
+    def lifecycle_slice(entries: list[str]) -> list[str]:
+        if len(entries) <= 6:
+            return entries
+        return [*entries[:3], *entries[-3:]]
+
+    destructive = lifecycle_slice(destructive_reconfigurations)
+    setters = lifecycle_slice(setter_reconfigurations)
+    others = lifecycle_slice(other_reconfigurations)
+    reconfigurations: list[str] = []
+    for entry in [*destructive[:3], *setters[:2], *destructive, *setters, *others]:
+        if entry not in reconfigurations:
             reconfigurations.append(entry)
-    return [*assignments, *reconfigurations][:12]
+        if len(reconfigurations) == 6:
+            break
+    return [*lifecycle_slice(assignments), *reconfigurations]
 
 
 def _coverage_context(unit: AnalysisUnit, coverage_report: dict) -> list[dict]:

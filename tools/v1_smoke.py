@@ -21,6 +21,7 @@ from pangea_agent.graph.nodes.load_contract import load_contract
 from pangea_agent.graph.nodes.resolve_repositories import resolve_repositories
 from pangea_agent.graph.nodes.locate_module import locate_module
 from pangea_agent.graph.nodes.index_materials import index_materials
+from pangea_agent.graph.nodes.prepare_worker_tasks import _related_state_context
 from pangea_agent.inventory.source_scanner import _known_macro_parse_artifact
 
 
@@ -521,8 +522,9 @@ def _bounded_scope_expansion() -> None:
             "line": 1,
             "signal": "static inline int demo_abort(void) { assert(false); return 0; }",
             "analysis_focus": (
-                "分别重放 Debug 与 Release：Debug 会在后续清理前终止，不能用 assert 后的清理或返回"
-                "排除该模式；Release 继续核对清理后的最终状态。"
+                "先定位直接支配 assert 的失败条件，再分别重放 Debug 与 Release。受支持模式中的底层"
+                "操作若可返回失败，且公开契约或入口没有阻断，Debug 终止必须保留为风险；不能用"
+                " assert 后的清理或返回排除，Release 继续核对清理后的最终状态。"
             ),
             "related_state_context": [],
         },
@@ -565,6 +567,29 @@ def _bounded_scope_expansion() -> None:
     assert "test/e2e/demo.sh" in task["unit"]["context_scope"]
     assert len(task["unit"]["context_scope"]) <= 10
     assert task["max_parallel_workers"] == 4 and task["may_spawn_workers"] is False
+
+
+def _state_context_balances_lifecycle_and_reconfiguration() -> None:
+    lines = [
+        *(f"sock->pending_recv = {'true' if index % 2 else 'false'};" for index in range(8)),
+        *(f"set_recv_pipe_{index}();" for index in range(8)),
+    ]
+    context = _related_state_context(
+        "module/demo.c", lines, "assert(sock->pending_recv == false);"
+    )
+    assert len(context) == 12
+    assert context[:3] == [
+        "module/demo.c:1: sock->pending_recv = false;",
+        "module/demo.c:2: sock->pending_recv = true;",
+        "module/demo.c:3: sock->pending_recv = false;",
+    ]
+    assert context[3:6] == [
+        "module/demo.c:6: sock->pending_recv = true;",
+        "module/demo.c:7: sock->pending_recv = false;",
+        "module/demo.c:8: sock->pending_recv = true;",
+    ]
+    assert context[6] == "module/demo.c:9: set_recv_pipe_0();"
+    assert context[-1] == "module/demo.c:16: set_recv_pipe_7();"
 
 
 def _expected_behavior_not_risk() -> None:
@@ -707,6 +732,7 @@ SCENARIOS: tuple[tuple[str, Scenario], ...] = (
     ("多 repo 单元隔离", _multi_repo_isolation),
     ("返工期间未返工结果编辑不阻塞", _unchanged_result_edit_does_not_block),
     ("范围只扩到直接调用与相关上下文", _bounded_scope_expansion),
+    ("状态上下文均衡保留生命周期与重配置", _state_context_balances_lifecycle_and_reconfiguration),
     ("预期行为不能列为风险", _expected_behavior_not_risk),
     ("无法确认源码版本时只出样本报告", _unversioned_source_is_sample),
     ("SOURCE_READY 恢复只使用冻结输入", _source_checkpoint_uses_frozen_inputs),
