@@ -19,6 +19,7 @@ tools:
 - `may_spawn_workers` 必须为 `false`，`review_round` 必须为 `1`。
 - `repositories` 的 canonical `repo_id`、`inventory_path` 和 `source_manifest_path`。
 - review task 绑定的 worker task 中的 SQLite `index_path`，以及 source manifest 中的附件、解析告警和不完整项。
+- worker task 的 `context_scope` 中若包含函数指针直接实现，必须用它核对回调失败前后的部分副作用；不得只凭公共接口或需求允许返回失败就判定状态安全。
 - 每个 `analysis_results[].result_path`。路径和摘要绑定由 PANGEA 的 Python 流程校验；只复核绑定结果的语义内容，不自行计算、比较或汇报 digest。
 - `schemas/review_result.schema.json`、`schemas/review_issue.schema.json`、worker 结果及其直接引用的 schema。
 - `src/pangea_agent/rubrics/builtin/` 中有关方法；六维 DFX、C/C++、风险可复现性和测试用例规则必读。

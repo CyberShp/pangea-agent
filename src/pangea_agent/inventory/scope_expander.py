@@ -11,6 +11,11 @@ IGNORED_PARTS = {".git", "build", "dist", "third_party", "node_modules", "__pyca
 COMMON_FUNCTIONS = {"main", "free", "calloc", "malloc", "memcpy", "memset", "strcmp", "strlen"}
 GENERIC_TERMS = {"analysis", "feature", "include", "module", "source", "test", "功能", "模块", "分析"}
 _CALL_RE = re.compile(r"\b([A-Za-z_]\w{5,})\s*\(")
+_MEMBER_CALL_RE = re.compile(r"(?:->|\.)\s*([A-Za-z_]\w*)\s*\(")
+_FUNCTION_POINTER_RE = re.compile(r"\(\s*\*\s*([A-Za-z_]\w*)\s*\)\s*\(")
+_STRUCT_START_RE = re.compile(r"\bstruct\s+([A-Za-z_]\w*)\s*\{")
+_STRUCT_INITIALIZER_RE = re.compile(r"\bstruct\s+([A-Za-z_]\w*)\s+[A-Za-z_]\w*\s*=\s*\{")
+_DESIGNATED_ASSIGNMENT_RE = re.compile(r"\.\s*([A-Za-z_]\w*)\s*=")
 _DECL_RE = re.compile(r"^[ \t]*(?:extern[ \t]+)?(?:[A-Za-z_]\w*[ \t*]+)+([A-Za-z_]\w*)[ \t]*\([^;{}]*\)[ \t]*;", re.MULTILINE)
 _DEF_RE = re.compile(r"^[ \t]*(?!if\b|for\b|while\b|switch\b)(?:[A-Za-z_]\w*[ \t*]+)+([A-Za-z_]\w*)[ \t]*\([^;{}]*\)[ \t\n]*\{", re.MULTILINE)
 
@@ -28,6 +33,7 @@ def expand_analysis_scope(repositories: list[dict], requested_scopes: list[str],
         root = Path(repository["source_root"])
         code_files = list(_iter_files(root, CODE_SUFFIXES))
         code_paths = {path: _relative(path, root) for path in code_files}
+        function_pointer_implementations = _function_pointer_implementation_index(code_paths)
         explicit_paths = {relative for relative in code_paths.values() if any(_inside_scope(relative, scope) for scope in normalized_scopes)}
         declarations_by_group = [_declared_symbols(scopes, root) for scopes in requested_groups]
         wanted_definitions = set().union(*declarations_by_group) if declarations_by_group else set()
@@ -50,7 +56,26 @@ def expand_analysis_scope(repositories: list[dict], requested_scopes: list[str],
                     added_files.append({"repo_id": repo_id, "path": relative, "reason": f"declared_definition:{','.join(symbols[:5])}"})
             paths.update(companions)
             paths.update(definitions)
-            repo_groups.append({"repo_id": repo_id, "requested_scope": list(scopes), "code_paths": sorted(paths), "context_paths": []})
+            pointer_implementations = _called_function_pointer_implementations(
+                (root / relative for relative in paths),
+                function_pointer_implementations,
+            )
+            for relative, members in sorted(pointer_implementations.items()):
+                ordered_members = sorted(
+                    members,
+                    key=lambda member: ("remove" not in member, not member.startswith("group_impl_"), member),
+                )
+                context_files.append({
+                    "repo_id": repo_id,
+                    "path": relative,
+                    "reason": f"function_pointer_implementation:{','.join(ordered_members[:5])}",
+                })
+            repo_groups.append({
+                "repo_id": repo_id,
+                "requested_scope": list(scopes),
+                "code_paths": sorted(paths),
+                "context_paths": sorted(pointer_implementations),
+            })
 
         repo_groups = _merge_overlapping_groups(repo_groups)
         owned = {path for group in repo_groups for path in group["code_paths"]}
@@ -90,7 +115,7 @@ def expand_analysis_scope(repositories: list[dict], requested_scopes: list[str],
         "groups": groups,
         "context_files": _unique_records(context_files),
         "added_files": _unique_records(added_files),
-        "boundary": "source_scope = explicit scope + declared implementations; context_scope = direct callers + target-related config/docs/tests",
+        "boundary": "source_scope = explicit scope + declared implementations; context_scope = direct function-pointer implementations + callers + target-related config/docs/tests",
     }
 
 
@@ -149,6 +174,55 @@ def _definition_symbols_by_path(wanted: set[str], code_paths: dict[Path, str]) -
         if matched:
             definitions[relative] = matched
     return definitions
+
+
+def _struct_bodies(text: str):
+    for match in _STRUCT_START_RE.finditer(text):
+        depth = 1
+        index = match.end()
+        while index < len(text) and depth:
+            if text[index] == "{":
+                depth += 1
+            elif text[index] == "}":
+                depth -= 1
+            index += 1
+        if depth == 0:
+            yield match.group(1), text[match.end():index - 1]
+
+
+def _function_pointer_implementation_index(code_paths: dict[Path, str]) -> dict[str, set[str]]:
+    owners: dict[str, set[str]] = {}
+    texts: dict[Path, str] = {}
+    for path in code_paths:
+        text = path.read_text(encoding="utf-8", errors="replace")
+        texts[path] = text
+        for struct_name, body in _struct_bodies(text):
+            for member in _FUNCTION_POINTER_RE.findall(body):
+                owners.setdefault(member, set()).add(struct_name)
+
+    implementations: dict[str, set[str]] = {}
+    for path, relative in code_paths.items():
+        if path.suffix.lower() not in SOURCE_SUFFIXES or PurePosixPath(relative).parts[0] in {"test", "examples"}:
+            continue
+        text = texts[path]
+        initialized_structs = set(_STRUCT_INITIALIZER_RE.findall(text))
+        assigned_members = set(_DESIGNATED_ASSIGNMENT_RE.findall(text))
+        for member in assigned_members & owners.keys():
+            if len(owners[member]) == 1 and initialized_structs & owners[member]:
+                implementations.setdefault(member, set()).add(relative)
+    return implementations
+
+
+def _called_function_pointer_implementations(paths, index: dict[str, set[str]]) -> dict[str, set[str]]:
+    members: set[str] = set()
+    for path in paths:
+        if path.is_file():
+            members.update(_MEMBER_CALL_RE.findall(path.read_text(encoding="utf-8", errors="replace")))
+    implementations: dict[str, set[str]] = {}
+    for member in members:
+        for relative in index.get(member, set()):
+            implementations.setdefault(relative, set()).add(member)
+    return implementations
 
 
 def _merge_overlapping_groups(groups: list[dict]) -> list[dict]:

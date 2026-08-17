@@ -23,7 +23,7 @@ python -m pangea_agent.cli.main prepare-worker-result --task "<worker task JSON>
 然后读取 task 的以下输入：
 
 - `unit.source_scope`：必须逐文件分析的源码，已经包含 PANGEA 确定性找到的接口实现和必要源码。
-- `unit.context_scope`：调用入口、配置、规格和测试等上游语义范围。
+- `unit.context_scope`：函数指针的直接实现，以及调用入口、配置、规格和测试等语义范围。直接实现用于核对回调的部分副作用，不要求像 `source_scope` 一样逐文件完整分析，也不得继续递归扩展。
 - `coverage_context`：当前单元能唯一匹配到的函数与分支覆盖率线索。分支记录包含
   `branch_id`、`condition`、`true_count` 和 `false_count`。
 - `index_path`、`inventory_path`、`source_manifest_path`：冻结的证据、结构和资料输入。
