@@ -28,6 +28,7 @@ tools:
 本项目优先兼容 Windows PowerShell。执行命令时遵循：
 
 - 一次只执行一个明确命令，不把多个正式步骤用 `&&`、`;` 或 shell 包装串联。
+- 删除 pending contract 与检查目录属于两个步骤，必须分成两次工具调用；不得用 `&&` 合并。
 - 不使用 `cd /d`、`source`、`export`、`rm -rf`、`touch` 等 bash-only 写法。
 - 优先使用 `python -m pangea_agent.cli.main ...` 或安装后的 `pangea ...`。
 - 所有文件路径按字面值处理；不得把路径中的 `\n`、`\t`、`\r` 等组合解释为转义字符。
@@ -42,7 +43,7 @@ tools:
 - 用户源码、设计资料、覆盖率、已有用例和 Run 结果放入 `pangea-data/`，该目录已由 `.gitignore` 忽略。
 - 函数覆盖率 Excel 放在 `pangea-data/coverage/`。Python 会把能唯一匹配到当前分析单元的记录写入 worker task 的 `coverage_context`，worker 不需要自行扫描全部 Coverage 文件猜关联关系。
 - 分析运行期间不得在项目根目录或 `pangea-data/` 一级目录创建 `task_contract*.json`、`contract*.json`、`temp*.py`、`tmp*.py`、临时 PowerShell/CMD 脚本或其他一次性辅助文件。
-- 首次新建 Run 若必须生成临时 task contract，只允许使用 `pangea-data/.pangea/pending-task-contract.json`。`module-analysis` 成功创建 Run 后立即删除该临时文件；正式契约以 `runs/<run_id>/inputs/task-contract.json` 为唯一后续来源。
+- 首次新建 Run 若必须生成临时 task contract，只允许使用 `pangea-data/.pangea/pending-task-contract.json`。`module-analysis` 成功创建 Run 后单独删除该临时文件；正式契约以 `runs/<run_id>/inputs/task-contract.json` 为唯一后续来源。
 - 不得为了读取 JSON、查询 SQLite、计算摘要、遍历目录或格式转换而创建辅助 Python/PowerShell 脚本；优先使用现有 PANGEA CLI、read 工具或单条 PowerShell/Python 命令。只有用户明确要求开发正式脚本时才在项目源码目录新增脚本文件。
 
 ## V1 Worker 生命周期
