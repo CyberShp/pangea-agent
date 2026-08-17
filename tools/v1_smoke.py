@@ -482,7 +482,8 @@ def _bounded_scope_expansion() -> None:
     repo = Path(read_json(contract)["data_root"]) / "repositories" / "demo"
     (repo / "module" / "demo_internal.h").write_text(
         "static inline int demo_abort(void) { assert(false); return 0; }\n"
-        "static inline void demo_remove(void) { assert(STAILQ_EMPTY(&recv_stream)); }\n",
+        "static inline void demo_remove(void) { assert(STAILQ_EMPTY(&recv_stream)); }\n"
+        "static inline void demo_release(void) { assert(entry->ref > 0); }\n",
         encoding="utf-8",
     )
     (repo / "module" / "unused_internal.h").write_text(
@@ -528,6 +529,15 @@ def _bounded_scope_expansion() -> None:
             "analysis_focus": (
                 "追踪容器元素的产生、归还和公开移除入口；实现注释或 assert 本身不是调用方契约，"
                 "只有公开契约或入口强制检查才能证明该状态不可达。"
+            ),
+        },
+        {
+            "path": "module/demo_internal.h",
+            "line": 3,
+            "signal": "static inline void demo_release(void) { assert(entry->ref > 0); }",
+            "analysis_focus": (
+                "按任务提供的每个直接调用实现分别核对引用增加与减少；一个实现安全或未确认，不能"
+                "覆盖另一个实现的可达风险。尤其检查增加失败后该实现是否仍继续并执行减少。"
             ),
         },
     ]
