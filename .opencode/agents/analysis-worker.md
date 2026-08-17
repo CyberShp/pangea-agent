@@ -38,6 +38,7 @@ python -m pangea_agent.cli.main prepare-worker-result --task "<worker task JSON>
 
 1. 源码优先。先逐文件读取 `source_scope`，再读取 `context_scope`，建立入口、生命周期、状态、资源、副作用、错误处理、清理与恢复关系。此时不要先看设计、历史用例或 Coverage 来猜结论。
 2. 对每条候选异常路径按固定顺序重放：触发前状态 → 已发生副作用 → 失败点 → 调用方处理 → 最终状态 → 重试/关闭/恢复 → 外部观测。把过程持续写入结果骨架的 `analysis_checkpoint.failure_paths`，并记录 disposition；没有可信信号时不为凑数制造风险。
+   `excluded` 必须有源码支持的不可达条件、调用方保证或明确不支持的运行模式。不能仅因问题只发生在 Debug、特定构建或特定受支持模式就排除；若最终状态是进程终止、数据丢失、资源泄漏或无法恢复，必须分别核对该模式并保留风险或给出可验证的不可达证据。
 3. 源码候选形成后，按 `source_manifest.material_catalog` 逐项读取已解析资料，只查询目录列出的 index location，不遍历整个 SQLite，也不重新解压原始文档。在 `material_decisions` 记录采用、仅作上下文或排除及原因。
 4. 最后读取 `coverage_context`。它只决定补测优先级：低执行函数、单侧未执行分支优先；缺少记录表示未知，不能写成未覆盖。把采用的优先级写入 `coverage_priorities`，不得用 Coverage 证明风险成立。
 5. 按六个 DFX 维度和初始化、运行、停止、恢复、卸载生命周期检查候选问题；风险必须说明复现条件、系统结果、外部观测、排除条件、严重度、置信度和真实源码证据。首次分析产生的新风险 `status` 固定为 `pending`。
