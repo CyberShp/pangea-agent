@@ -236,6 +236,7 @@ def _prepare_rework(state: PangeaState, progress: RunProgress, review) -> None:
             source_manifest_path=original_task.source_manifest_path,
             coverage_context=original_task.coverage_context,
             failure_signal_context=original_task.failure_signal_context,
+            semantic_check_items=original_task.semantic_check_items,
             attempt=1,
             result_path=str(analysis_result_path(state, unit_id, 1)),
             preferred_worker_id=original_result.worker_id,

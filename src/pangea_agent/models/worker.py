@@ -58,6 +58,14 @@ class FailureSignalContext(StrictModel):
     related_state_context: list[str] = Field(default_factory=list)
 
 
+class SemanticCheckItem(StrictModel):
+    check_id: str = Field(min_length=1)
+    kind: Literal["assertion_reachability", "resource_reconfiguration", "paired_operation"]
+    subject_path: str = Field(min_length=1)
+    instruction: str = Field(min_length=1)
+    context_paths: list[str] = Field(min_length=1)
+
+
 class BusinessFlow(StrictModel):
     title: str = Field(min_length=1)
     description: str = Field(min_length=1)
@@ -111,6 +119,7 @@ class WorkerTask(StrictModel):
     source_manifest_path: str = Field(min_length=1)
     coverage_context: list[CoverageContext] = Field(default_factory=list)
     failure_signal_context: list[FailureSignalContext] = Field(default_factory=list)
+    semantic_check_items: list[SemanticCheckItem] = Field(default_factory=list)
     attempt: Literal[0, 1]
     result_path: str = Field(min_length=1)
     max_parallel_workers: Literal[4] = 4

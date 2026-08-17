@@ -21,6 +21,7 @@ python -m pangea_agent.cli.main prepare-review-result --task "<review task JSON>
 - `may_spawn_workers` 必须为 `false`，`review_round` 必须为 `1`。
 - `repositories` 的 canonical `repo_id`、`inventory_path` 和 `source_manifest_path`。
 - review task 绑定的 worker task 中的 SQLite `index_path`，以及 source manifest 中的附件、解析告警和不完整项。
+- worker task 的 `semantic_check_items`。读取 worker result 前逐项独立完成，每个 `check_id` 单独形成结论；不同实现、断言可达性和资源重配置不得合并。
 - 每个 `analysis_results[].result_path`；路径绑定由 PANGEA 校验。
 - `schemas/review_result.schema.json`、`schemas/review_issue.schema.json`、worker 结果及其直接引用的 schema。
 - `src/pangea_agent/rubrics/builtin/` 中有关方法；六维 DFX、C/C++、风险可复现性和测试用例规则必读。
@@ -29,7 +30,7 @@ python -m pangea_agent.cli.main prepare-review-result --task "<review task JSON>
 
 ## 独立复核内容
 
-先不要读取 worker result。先按 task 的源码范围、上下文和 `source_manifest.material_catalog` 独立检查入口、生命周期、状态、副作用、失败、调用方处理、最终状态与恢复，并形成 `independent_findings`；之后才读取 worker result 填写 `worker_disposition`。`reviewed_units` 必须记录全部实际复核单元。
+先不要读取 worker result。先按顺序完成各 worker task 的 `semantic_check_items`，再按源码范围、上下文和 `source_manifest.material_catalog` 独立检查入口、生命周期、状态、副作用、失败、调用方处理、最终状态与恢复，并形成 `independent_findings`；之后才读取 worker result，逐项核对同 `check_id` 的 failure path。缺项、源码结论不一致或把不同实现合并时必须形成 issue。`reviewed_units` 必须记录全部实际复核单元。
 
 - 完整性：每个 task 单元都有可读取且包含实质分析内容的 worker result，没有截断、空结果或外层“完成”代替真实结果。机械字段、路径、编号和格式由 PANGEA 处理，不作为语义返工理由。
 - 范围：`analyzed_scope`、`analyzed_context_scope` 与 inventory、source manifest 和单元边界一致；解析失败、缺依赖、未读图片或排除文件没有被隐藏。

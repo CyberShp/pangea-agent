@@ -495,12 +495,18 @@ def _bounded_scope_expansion() -> None:
         encoding="utf-8",
     )
     (repo / "module" / "entry.c").write_text(
-        '#include "demo_internal.h"\n#include "unused_internal.h"\nint demo_feature_start(void) { return demo_abort(); }\n',
+        '#include "demo_internal.h"\n#include "unused_internal.h"\n'
+        "int demo_feature_start(void) { return demo_abort(); }\n"
+        "int demo_add(void) { return spdk_sock_map_insert(); }\n"
+        "void demo_drop(void) { spdk_sock_map_release(); }\n",
         encoding="utf-8",
     )
     (repo / "app").mkdir()
     (repo / "app" / "rpc.c").write_text(
-        "int demo_feature_start(void);\nint rpc_start(void) { return demo_feature_start(); }\n",
+        "int demo_feature_start(void);\n"
+        "int rpc_start(void) { return demo_feature_start(); }\n"
+        "int rpc_add(void) { return spdk_sock_map_insert(); }\n"
+        "void rpc_drop(void) { spdk_sock_map_release(); }\n",
         encoding="utf-8",
     )
     (repo / "unrelated").mkdir()
@@ -570,6 +576,18 @@ def _bounded_scope_expansion() -> None:
     assert "test/e2e/demo.sh" in task["unit"]["context_scope"]
     assert len(task["unit"]["context_scope"]) <= 10
     assert task["max_parallel_workers"] == 4 and task["may_spawn_workers"] is False
+    semantic_checks = task["semantic_check_items"]
+    assert [item["kind"] for item in semantic_checks] == [
+        "paired_operation",
+        "paired_operation",
+        "assertion_reachability",
+        "resource_reconfiguration",
+    ]
+    assert [item["subject_path"] for item in semantic_checks[:2]] == [
+        "app/rpc.c",
+        "module/entry.c",
+    ]
+    assert len({item["check_id"] for item in semantic_checks}) == len(semantic_checks)
 
 
 def _state_context_balances_lifecycle_and_reconfiguration() -> None:

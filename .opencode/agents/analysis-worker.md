@@ -26,6 +26,7 @@ python -m pangea_agent.cli.main prepare-worker-result --task "<worker task JSON>
 - `unit.context_scope`：函数指针的直接实现，以及调用入口、配置、规格和测试等语义范围。直接实现用于核对回调的部分副作用，不要求像 `source_scope` 一样逐文件完整分析，也不得继续递归扩展。
 - `coverage_context`：当前单元能唯一匹配到的函数与分支覆盖率线索。分支记录包含 `branch_id`、`condition`、`true_count` 和 `false_count`。
 - `failure_signal_context`：Python 从当前任务已经提供的 C/C++ 文件中定位出的少量高影响断言/终止信号。它只告诉你位置，不证明可达、危害或风险成立；必须逐项读取源码上下文，并按新任务中每项附带的 `analysis_focus` 做语义判断。状态断言还会附少量 `related_state_context`，列出同文件的状态写入和重配置候选；必须打开这些位置判断真实时序，不能把候选本身当成风险结论。
+- `semantic_check_items`：本轮必须逐项完成的短任务清单。每项只要求一个明确结论；用它的 `check_id` 作为对应 `analysis_checkpoint.failure_paths[].path_id`，不要合并不同实现，也不要让断言结论替代资源重配置结论。这是分析顺序，不是自动风险判定。
 - `index_path`、`inventory_path`、`source_manifest_path`：冻结的证据、结构和资料输入。
 - `source_manifest.material_catalog`：本 Run 的资料目录，给出资料类型、解析状态、索引位置和附件状态。
 - `schemas/worker_result.schema.json` 及其直接引用的对象 schema。
@@ -38,7 +39,7 @@ python -m pangea_agent.cli.main prepare-worker-result --task "<worker task JSON>
 ## 分析要求
 
 1. 源码优先。先逐文件读取 `source_scope`，再读取 `context_scope`，建立入口、生命周期、状态、资源、副作用、错误处理、清理与恢复关系。此时不要先看设计、历史用例或 Coverage 来猜结论。
-2. 入口和状态关系明确后，先逐项处理 `failure_signal_context`，再写宽泛的正常流程总结。打开信号附近源码并按 `analysis_focus` 反向追触发条件、Debug/Release、调用方和最终状态；实现内的注释只能解释实现意图，不能单独证明公开调用方承担了前置条件。调用方保证必须来自公开契约或入口处实际执行的阻断检查。之后再独立反向扫描 `source_scope` 及任务已提供的 C/C++ 直接实现和内联头文件，查找会导致进程终止、数据丢失、资源遗失或不可恢复状态的明确终点。定位清单不是风险结论；不要递归寻找新文件，普通且状态安全的错误返回也不需要为凑完整性而逐项登记。
+2. 入口和状态关系明确后，先按顺序完成 `semantic_check_items`，把每项结论立即写入同 `check_id` 的 failure path；再处理其余 `failure_signal_context`，最后写正常流程总结。打开信号附近源码并按 `analysis_focus` 反向追触发条件、Debug/Release、调用方和最终状态；实现内的注释只能解释实现意图，不能单独证明公开调用方承担了前置条件。调用方保证必须来自公开契约或入口处实际执行的阻断检查。之后再独立反向扫描 `source_scope` 及任务已提供的 C/C++ 直接实现和内联头文件，查找会导致进程终止、数据丢失、资源遗失或不可恢复状态的明确终点。定位清单不是风险结论；不要递归寻找新文件，普通且状态安全的错误返回也不需要为凑完整性而逐项登记。
    信号位于共享 helper、引用计数或公共状态时，必须把 task 已提供的每个直接调用实现分别重放；不同实现的错误处理不同就分开写 failure path。一个实现安全、不可达或未确认，不能覆盖另一个实现已经可达的严重路径。
    对 insert/lookup/release、acquire/use/free 等配对操作，failure path 必须写出一条真实调用序列。看到错误日志或“继续运行”注释后仍要追踪当前函数最终返回值，以及上层是否真正完成绑定、入队或状态提交；lookup 不增加引用、单个函数看起来不对称，都不能代替“某次减少前没有成功增加”的完整证明。
    信号断言某状态与资源一致时，不只检查断言所在分支；按时间顺序追踪“资源存在时状态置位 → 公开重配置/禁用/销毁资源 → 状态是否同步清除 → 后续入口”。不能用“资源已为空时没有置位代码”排除之前遗留的状态。

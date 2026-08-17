@@ -27,6 +27,7 @@ python -m pangea_agent.cli.main prepare-review-result --task "<review task JSON>
 - review task 绑定的 worker task 中的 SQLite `index_path`，以及 source manifest 中的附件、解析告警和不完整项。
 - worker task 的 `context_scope` 中若包含函数指针直接实现，必须用它核对回调失败前后的部分副作用；不得只凭公共接口或需求允许返回失败就判定状态安全。
 - worker task 的 `failure_signal_context` 是定位线索，不是风险判定。独立复核时逐项打开这些位置，按新任务中每项附带的 `analysis_focus` 确认 worker 是否正确判定可达性、Debug/Release、最终状态和 disposition。状态断言附带的 `related_state_context` 是需要打开核对的状态写入和重配置候选，不是自动风险结论。
+- worker task 的 `semantic_check_items` 是独立复核顺序。读取 worker result 前逐项完成，每个 `check_id` 单独形成结论；之后检查 worker 的 `analysis_checkpoint.failure_paths` 是否有同 ID 且源码结论一致。缺项或把不同实现合并时必须形成 issue，不能用“总体风险已覆盖”放行。
 - 每个 `analysis_results[].result_path`。路径绑定由 PANGEA 的 Python 流程校验。
 - `schemas/review_result.schema.json`、`schemas/review_issue.schema.json`、worker 结果及其直接引用的 schema。
 - `src/pangea_agent/rubrics/builtin/` 中有关方法；六维 DFX、C/C++、风险可复现性和测试用例规则必读。
@@ -37,7 +38,7 @@ python -m pangea_agent.cli.main prepare-review-result --task "<review task JSON>
 
 ## 独立复核内容
 
-先不要读取 worker result。先处理各 worker task 的 `failure_signal_context`：逐项打开位置，按 `analysis_focus` 独立判断入口、触发条件、Debug/Release 和最终状态，再检查 `source_scope`、`context_scope` 的正常生命周期。实现注释描述“无法处理”或 assert 某状态，不等于公开调用方已经承担该前置条件；只有公开契约或入口强制检查才能证明调用方保证。随后从任务已提供的 C/C++ 直接实现、内联头文件里，对进程终止、数据丢失、资源遗失和不可恢复状态再反向追一次，避免只验证 worker 已经列出的候选。不得为此递归扩大文件范围。形成 `independent_findings` 后才读取 worker result 并填写每项的 `worker_disposition`。没有发现缺口时允许 findings 为空，但 `reviewed_units` 必须列出实际完成独立检查的全部单元。
+先不要读取 worker result。先按顺序完成各 worker task 的 `semantic_check_items`，再处理其余 `failure_signal_context`：逐项打开位置，按 `analysis_focus` 独立判断入口、触发条件、Debug/Release 和最终状态，再检查 `source_scope`、`context_scope` 的正常生命周期。实现注释描述“无法处理”或 assert 某状态，不等于公开调用方已经承担该前置条件；只有公开契约或入口强制检查才能证明调用方保证。随后从任务已提供的 C/C++ 直接实现、内联头文件里，对进程终止、数据丢失、资源遗失和不可恢复状态再反向追一次，避免只验证 worker 已经列出的候选。不得为此递归扩大文件范围。形成 `independent_findings` 后才读取 worker result，并逐项对照同 `check_id` 的 failure path；没有真实完成的 check 必须形成 issue。没有发现缺口时允许 findings 为空，但 `reviewed_units` 必须列出实际完成独立检查的全部单元。
 
 共享 helper、引用计数或公共状态存在多个 task 已提供的直接调用实现时，逐个实现独立判断。不得用一个实现的安全、不可达或未确认结论代表其他实现；错误处理不同就分别形成 finding，再与 worker disposition 对照。
 

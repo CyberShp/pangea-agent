@@ -20,6 +20,9 @@ _STATE_ASSERT_RE = re.compile(
     r"\bassert\s*\(\s*(?P<state>[A-Za-z_]\w*(?:(?:->|\.)[A-Za-z_]\w*)+)\s*==\s*false"
 )
 _CODE_SUFFIXES = {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp"}
+_IMPLEMENTATION_SUFFIXES = {".c", ".cc", ".cpp", ".cxx"}
+_MAP_INSERT_CALL_RE = re.compile(r"\bspdk_sock_map_insert\s*\([^;{}]*\)\s*;", re.DOTALL)
+_MAP_RELEASE_CALL_RE = re.compile(r"\bspdk_sock_map_release\s*\([^;{}]*\)\s*;", re.DOTALL)
 
 
 def _failure_signal_focus(signal: str) -> str:
@@ -155,6 +158,72 @@ def _failure_signal_context(unit: AnalysisUnit, repositories: list[dict]) -> lis
     return signals
 
 
+def _semantic_check_items(
+    unit: AnalysisUnit,
+    repositories: list[dict],
+    signals: list[dict],
+) -> list[dict]:
+    repository = next((item for item in repositories if item["repo_id"] == unit.repo_id), None)
+    if repository is None:
+        return []
+    root = Path(repository["source_root"])
+    paths = sorted(dict.fromkeys([*unit.source_scope, *unit.context_scope]))
+    paired_paths: list[str] = []
+    for relative in paths:
+        path = root / relative
+        if path.suffix.lower() not in _IMPLEMENTATION_SUFFIXES or not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        if _MAP_INSERT_CALL_RE.search(text) and _MAP_RELEASE_CALL_RE.search(text):
+            paired_paths.append(relative)
+
+    checks: list[dict] = []
+    state_reconfiguration_keys: set[tuple[str, str]] = set()
+    for signal_index, signal in enumerate(signals, 1):
+        state_match = _STATE_ASSERT_RE.search(signal["signal"])
+        if state_match is not None:
+            state = state_match.group("state")
+            checks.append({
+                "check_id": f"SC-{signal_index:02d}-ASSERT",
+                "kind": "assertion_reachability",
+                "subject_path": signal["path"],
+                "instruction": (
+                    f"单独判断 {signal['path']}:{signal['line']} 的断言是否能从公开入口到达，"
+                    "分别写明 Debug 与 Release 的最终状态；不要用资源重配置结论替代本项。"
+                ),
+                "context_paths": [signal["path"]],
+            })
+            reconfiguration_key = (signal["path"], state)
+            if signal["related_state_context"] and reconfiguration_key not in state_reconfiguration_keys:
+                state_reconfiguration_keys.add(reconfiguration_key)
+                checks.append({
+                    "check_id": f"SC-{signal_index:02d}-RECONFIG",
+                    "kind": "resource_reconfiguration",
+                    "subject_path": signal["path"],
+                    "instruction": (
+                        f"从 {state} 的置位位置重放 related_state_context 中的 destroy、NULL 与 setter，"
+                        "单独判断数据丢失、虚假通知或残留状态；即使断言不可达也必须完成本项。"
+                    ),
+                    "context_paths": [signal["path"]],
+                })
+
+        if re.search(r"\bref\s*>\s*0", signal["signal"]):
+            candidates = paired_paths or [signal["path"]]
+            for path_index, relative in enumerate(candidates, 1):
+                checks.append({
+                    "check_id": f"SC-{signal_index:02d}-PAIR-{path_index:02d}",
+                    "kind": "paired_operation",
+                    "subject_path": relative,
+                    "instruction": (
+                        f"只重放 {relative} 的配对操作链：从增加操作的返回值追到当前函数最终返回，"
+                        "再追到上层是否真正完成绑定、入队或状态提交，最后核对减少操作。"
+                        "给出本实现的独立结论，不与其他实现合并。"
+                    ),
+                    "context_paths": list(dict.fromkeys([signal["path"], relative])),
+                })
+    return checks
+
+
 def prepare_worker_tasks(state: PangeaState) -> PangeaState:
     units = state.get("analysis_units", [])
     if not units:
@@ -199,6 +268,7 @@ def prepare_worker_tasks(state: PangeaState) -> PangeaState:
     for raw_unit in units:
         unit = AnalysisUnit.model_validate(raw_unit)
         unit_repositories = [repo for repo in repositories if repo["repo_id"] == unit.repo_id]
+        failure_signal_context = _failure_signal_context(unit, unit_repositories)
         task = WorkerTask(
             task_type="analysis",
             run_id=state["run_id"],
@@ -209,7 +279,8 @@ def prepare_worker_tasks(state: PangeaState) -> PangeaState:
             inventory_path=str(inventory_path),
             source_manifest_path=str(source_manifest_path),
             coverage_context=_coverage_context(unit, coverage_report),
-            failure_signal_context=_failure_signal_context(unit, unit_repositories),
+            failure_signal_context=failure_signal_context,
+            semantic_check_items=_semantic_check_items(unit, unit_repositories, failure_signal_context),
             attempt=0,
             result_path=str(analysis_result_path(state, unit.unit_id, 0)),
         )
