@@ -5,6 +5,7 @@ import json
 import logging
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from typing import Callable
@@ -572,6 +573,31 @@ def _index_checkpoint_resumes_without_live_source() -> None:
     assert Path(state["agent_task_paths"][0]).is_file()
 
 
+def _agent_start_checkpoint() -> None:
+    _, data_root, contract = _workspace()
+    state = run_module_analysis(str(contract))
+    task_path = Path(state["agent_task_paths"][0])
+    subprocess.run(
+        [sys.executable, "-m", "pangea_agent.cli.main", "prepare-worker-result", "--task", str(task_path)],
+        check=True,
+        capture_output=True,
+    )
+    progress_path = data_root / "runs" / "smoke-01" / "progress.json"
+    assert read_json(progress_path)["agent_sessions"]["analysis:U00"]["status"] == "dispatched"
+    task = read_json(task_path)
+    write_json(Path(task["result_path"]), _task_result(task))
+    state = run_module_analysis(str(contract))
+    review_path = data_root / "runs" / "smoke-01" / "agent-tasks" / "review.json"
+    subprocess.run(
+        [sys.executable, "-m", "pangea_agent.cli.main", "prepare-review-result", "--task", str(review_path)],
+        check=True,
+        capture_output=True,
+    )
+    progress = read_json(progress_path)
+    assert state["phase"] == "WAITING_REVIEW"
+    assert progress["agent_sessions"]["review"]["status"] == "dispatched"
+
+
 SCENARIOS: tuple[tuple[str, Scenario], ...] = (
     ("PASS 到双报告", _pass_report),
     ("REWORK 同 reviewer 通过", _rework_same_reviewer),
@@ -592,6 +618,7 @@ SCENARIOS: tuple[tuple[str, Scenario], ...] = (
     ("无法确认源码版本时只出样本报告", _unversioned_source_is_sample),
     ("SOURCE_READY 恢复只使用冻结输入", _source_checkpoint_uses_frozen_inputs),
     ("INDEX_READY 恢复不再读取活动源码", _index_checkpoint_resumes_without_live_source),
+    ("Agent 启动状态写入 Run checkpoint", _agent_start_checkpoint),
     ("已知 C 宏解析误报不冒充真实缺口", _known_c_macro_parse_artifacts),
 )
 

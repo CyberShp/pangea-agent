@@ -142,6 +142,20 @@ def worker_result_skeleton(task: WorkerTask) -> dict:
     }
 
 
+def review_result_skeleton(task: ReviewTask) -> dict:
+    return {
+        "schema_version": "1.0",
+        "run_id": task.run_id,
+        "reviewer_id": "",
+        "finish_reason": "stop",
+        "status": "PASS",
+        "summary": "",
+        "issues": [],
+        "reviewed_units": [item.unit_id for item in task.analysis_results],
+        "independent_findings": [],
+    }
+
+
 def load_review_task(path: Path) -> ReviewTask:
     return ReviewTask.model_validate(read_json(path))
 

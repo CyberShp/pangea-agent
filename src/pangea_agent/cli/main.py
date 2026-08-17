@@ -6,9 +6,12 @@ from pathlib import Path
 from pangea_agent.agent_io import write_json
 from pangea_agent.graph.run_store import (
     load_progress,
+    load_review_task,
     load_worker_result,
     load_worker_task,
     normalize_worker_result_path,
+    normalize_review_result_path,
+    review_result_skeleton,
     save_progress,
     worker_result_skeleton,
 )
@@ -31,6 +34,19 @@ def _print_run_result(result: dict) -> None:
         print(task_path)
 
 
+def _mark_session_started(task_path: Path, key: str) -> None:
+    agent_tasks = next((parent for parent in task_path.resolve().parents if parent.name == "agent-tasks"), None)
+    if agent_tasks is None:
+        raise ValueError(f"Agent task 不在 Run 的 agent-tasks 目录中：{task_path}")
+    run_dir = agent_tasks.parent
+    state = {"run_id": run_dir.name, "data_root": str(run_dir.parent.parent)}
+    progress = load_progress(state)
+    if progress is None or key not in progress.agent_sessions:
+        raise ValueError(f"progress.json 中没有待启动会话：{key}")
+    progress.agent_sessions[key].status = "dispatched"
+    save_progress(state, progress)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="pangea")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -43,6 +59,8 @@ def main() -> None:
     resume.add_argument("--data-root", default="pangea-data")
     prepare = sub.add_parser("prepare-worker-result")
     prepare.add_argument("--task", required=True)
+    prepare_review = sub.add_parser("prepare-review-result")
+    prepare_review.add_argument("--task", required=True)
     validate = sub.add_parser("validate-worker-result")
     validate.add_argument("--task", required=True)
     session = sub.add_parser("record-agent-session")
@@ -68,6 +86,16 @@ def main() -> None:
         result_path = normalize_worker_result_path(task_path, task)
         if not result_path.exists():
             write_json(result_path, worker_result_skeleton(task))
+        role = "analysis" if task.task_type == "analysis" else "rework"
+        _mark_session_started(task_path, f"{role}:{task.unit.unit_id}")
+        print(result_path)
+    elif args.command == "prepare-review-result":
+        task_path = Path(args.task)
+        task = load_review_task(task_path)
+        result_path = normalize_review_result_path(task_path, task)
+        if not result_path.exists():
+            write_json(result_path, review_result_skeleton(task))
+        _mark_session_started(task_path, "review")
         print(result_path)
     elif args.command == "validate-worker-result":
         try:

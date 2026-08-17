@@ -15,6 +15,12 @@ tools:
 
 主 Agent 会给你一个 `review task JSON` 路径。先读取并确认：
 
+```powershell
+python -m pangea_agent.cli.main prepare-review-result --task "<review task JSON>"
+```
+
+再读取命令返回的结果骨架并填写，不从零新建 review result。
+
 - `run_id`、`stage`、`result_path`、`analysis_results`。
 - `may_spawn_workers` 必须为 `false`，`review_round` 必须为 `1`。
 - `repositories` 的 canonical `repo_id`、`inventory_path` 和 `source_manifest_path`。
