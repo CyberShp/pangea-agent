@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from pangea_agent.agent_io import write_json
@@ -9,6 +10,13 @@ from pangea_agent.graph.state import PangeaState
 from pangea_agent.graph.validation import validate_nonoverlapping_units
 from pangea_agent.models.run import AgentSession, RunProgress
 from pangea_agent.models.worker import AnalysisUnit, WorkerTask
+
+
+_HIGH_IMPACT_ASSERT_RE = re.compile(
+    r"\bassert\s*\([^\n]*(?:\bfalse\b|(?:STAILQ|TAILQ|SLIST|LIST)_EMPTY|\bref\s*>\s*0)[^\n]*\)"
+)
+_ABORT_RE = re.compile(r"\babort\s*\(")
+_CODE_SUFFIXES = {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp"}
 
 
 def _coverage_context(unit: AnalysisUnit, coverage_report: dict) -> list[dict]:
@@ -40,6 +48,23 @@ def _coverage_context(unit: AnalysisUnit, coverage_report: dict) -> list[dict]:
             item["path"], item["line"] or 0, item["function"], item.get("branch_id") or ""
         ),
     )
+
+
+def _failure_signal_context(unit: AnalysisUnit, repositories: list[dict]) -> list[dict]:
+    repository = next((item for item in repositories if item["repo_id"] == unit.repo_id), None)
+    if repository is None:
+        return []
+    root = Path(repository["source_root"])
+    signals: list[dict] = []
+    for relative in sorted(dict.fromkeys([*unit.source_scope, *unit.context_scope])):
+        path = root / relative
+        if path.suffix.lower() not in _CODE_SUFFIXES or not path.is_file():
+            continue
+        for line_number, line in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
+            match = _HIGH_IMPACT_ASSERT_RE.search(line) or _ABORT_RE.search(line)
+            if match:
+                signals.append({"path": relative, "line": line_number, "signal": line.strip()})
+    return signals
 
 
 def prepare_worker_tasks(state: PangeaState) -> PangeaState:
@@ -96,6 +121,7 @@ def prepare_worker_tasks(state: PangeaState) -> PangeaState:
             inventory_path=str(inventory_path),
             source_manifest_path=str(source_manifest_path),
             coverage_context=_coverage_context(unit, coverage_report),
+            failure_signal_context=_failure_signal_context(unit, unit_repositories),
             attempt=0,
             result_path=str(analysis_result_path(state, unit.unit_id, 0)),
         )

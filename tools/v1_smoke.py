@@ -481,7 +481,7 @@ def _bounded_scope_expansion() -> None:
     _, _, contract = _workspace()
     repo = Path(read_json(contract)["data_root"]) / "repositories" / "demo"
     (repo / "module" / "demo_internal.h").write_text(
-        "static inline int demo_abort(void) { return 0; }\n",
+        "static inline int demo_abort(void) { assert(false); return 0; }\n",
         encoding="utf-8",
     )
     (repo / "module" / "unused_internal.h").write_text(
@@ -510,6 +510,11 @@ def _bounded_scope_expansion() -> None:
     assert "module/entry.c" in task["unit"]["source_scope"]
     assert "module/demo_internal.h" in task["unit"]["context_scope"]
     assert "module/unused_internal.h" not in task["unit"]["context_scope"]
+    assert task["failure_signal_context"] == [{
+        "path": "module/demo_internal.h",
+        "line": 1,
+        "signal": "static inline int demo_abort(void) { assert(false); return 0; }",
+    }]
     assert "app/rpc.c" in task["unit"]["context_scope"]
     assert "unrelated/noise.c" not in task["unit"]["source_scope"]
     assert "test/e2e/demo.sh" in task["unit"]["context_scope"]

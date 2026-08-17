@@ -26,6 +26,7 @@ python -m pangea_agent.cli.main prepare-review-result --task "<review task JSON>
 - `repositories` 的 canonical `repo_id`、`inventory_path` 和 `source_manifest_path`。
 - review task 绑定的 worker task 中的 SQLite `index_path`，以及 source manifest 中的附件、解析告警和不完整项。
 - worker task 的 `context_scope` 中若包含函数指针直接实现，必须用它核对回调失败前后的部分副作用；不得只凭公共接口或需求允许返回失败就判定状态安全。
+- worker task 的 `failure_signal_context` 是定位线索，不是风险判定。独立复核时逐项打开这些位置，确认 worker 是否正确判定可达性、Debug/Release、最终状态和 disposition。
 - 每个 `analysis_results[].result_path`。路径绑定由 PANGEA 的 Python 流程校验。
 - `schemas/review_result.schema.json`、`schemas/review_issue.schema.json`、worker 结果及其直接引用的 schema。
 - `src/pangea_agent/rubrics/builtin/` 中有关方法；六维 DFX、C/C++、风险可复现性和测试用例规则必读。
@@ -47,7 +48,7 @@ python -m pangea_agent.cli.main prepare-review-result --task "<review task JSON>
 - 用例：必须关联真实风险，步骤和预期结果一一对应，观测与清理可执行。故障环境只制造触发条件，不能预先制造待验证结果；失败原因必须对应真实对象状态，资源释放或进程退出后不得继续操作失效对象，必须显式重建后再验证恢复。同一条 TestCase 只能有一种构建类型和一种运行模式；如果步骤中从 Debug 切到 Release、从 epoll 切到 kevent，必须 `REWORK` 并拆成不同用例，不能把它当成预期唯一的普通对照步骤。
 - 返工边界：只有缺少关键业务流程、异常/生命周期路径，遗漏明显必须的风险或测试用例时，才允许 `REWORK`。JSON 字段、命令格式、路径格式、ID 冲突、证据待确认和纯措辞问题不得触发正式返工。
 - 历史用例与 Coverage：历史用例仅能作为表达/环境参考；函数执行次数不能证明分支或风险已经覆盖。Coverage 中没有某函数或分支记录表示“未提供/未知”，不得写成执行次数为 0 或未覆盖。
-- 资料处理：确认 worker 读取了全部 material，引用当前需求/设计的实际 location，并显式说明
+- 资料处理：确认 worker 读取了全部 material；每份用于结论或排除理由的资料都在顶层 evidence 保留真实 chunk_id/location，且报告可展示引用；显式说明
   旧版、冲突或无关资料为何未进入当前结论。漏读或把冲突资料当成现行规格属于语义问题。
 - 图片：`visual_findings` 必须指向 manifest 中真实附件，观察内容须来自实际可见图像。无法查看的图片及其影响必须显式保留为不完整，不能由文件名、正文或模型常识代替。
 

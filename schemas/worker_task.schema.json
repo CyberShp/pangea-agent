@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "WorkerTask",
   "type": "object",
-  "required": ["schema_version", "task_type", "run_id", "target", "unit", "repositories", "index_path", "inventory_path", "source_manifest_path", "coverage_context", "attempt", "result_path", "max_parallel_workers", "may_spawn_workers", "replacement_allowed", "prior_result_path", "review_issues"],
+  "required": ["schema_version", "task_type", "run_id", "target", "unit", "repositories", "index_path", "inventory_path", "source_manifest_path", "coverage_context", "failure_signal_context", "attempt", "result_path", "max_parallel_workers", "may_spawn_workers", "replacement_allowed", "prior_result_path", "review_issues"],
   "properties": {
     "schema_version": {"const": "1.0"},
     "task_type": {"enum": ["analysis", "rework"]},
@@ -30,6 +30,19 @@
           "condition": {"type": ["string", "null"]},
           "true_count": {"type": ["integer", "null"]},
           "false_count": {"type": ["integer", "null"]}
+        },
+        "additionalProperties": false
+      }
+    },
+    "failure_signal_context": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "line", "signal"],
+        "properties": {
+          "path": {"type": "string", "minLength": 1},
+          "line": {"type": "integer", "minimum": 1},
+          "signal": {"type": "string", "minLength": 1}
         },
         "additionalProperties": false
       }

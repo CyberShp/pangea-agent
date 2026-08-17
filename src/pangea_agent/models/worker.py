@@ -50,6 +50,12 @@ class CoverageContext(StrictModel):
     false_count: int | None = None
 
 
+class FailureSignalContext(StrictModel):
+    path: str = Field(min_length=1)
+    line: int = Field(gt=0)
+    signal: str = Field(min_length=1)
+
+
 class BusinessFlow(StrictModel):
     title: str = Field(min_length=1)
     description: str = Field(min_length=1)
@@ -102,6 +108,7 @@ class WorkerTask(StrictModel):
     inventory_path: str = Field(min_length=1)
     source_manifest_path: str = Field(min_length=1)
     coverage_context: list[CoverageContext] = Field(default_factory=list)
+    failure_signal_context: list[FailureSignalContext] = Field(default_factory=list)
     attempt: Literal[0, 1]
     result_path: str = Field(min_length=1)
     max_parallel_workers: Literal[4] = 4
