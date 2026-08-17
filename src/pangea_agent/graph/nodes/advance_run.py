@@ -44,6 +44,16 @@ from pangea_agent.documents.coverage import match_coverage_records
 from pangea_agent.report import reports_are_complete
 
 
+ACTIVE_RESULT_ERROR_KINDS = {
+    "analysis_result_rejected",
+    "analysis_results_rejected",
+    "review_result_rejected",
+    "rework_result_rejected",
+    "rework_results_rejected",
+    "rework_review_rejected",
+}
+
+
 def _hydrate_run_context(state: PangeaState, progress: RunProgress) -> PangeaState:
     run_dir = run_directory(state)
     tasks = [load_worker_task(analysis_task_path(state, unit_id)) for unit_id in progress.analysis_units]
@@ -64,15 +74,7 @@ def _hydrate_run_context(state: PangeaState, progress: RunProgress) -> PangeaSta
         {"kind": "missing_dependency", "package": package, "scope": "C/C++ structural parsing"}
         for package in inventory.get("missing_dependencies", [])
     )
-    active_kinds = {
-        "analysis_result_rejected",
-        "analysis_results_rejected",
-        "review_result_rejected",
-        "rework_result_rejected",
-        "rework_results_rejected",
-        "rework_review_rejected",
-    }
-    progress.errors = [error for error in progress.errors if error.get("kind") in active_kinds]
+    progress.errors = [error for error in progress.errors if error.get("kind") in ACTIVE_RESULT_ERROR_KINDS]
     for error in environment_errors:
         if error not in progress.error_history:
             progress.error_history.append(error)
@@ -112,6 +114,14 @@ def _clear_error(progress: RunProgress, kind: str, artifact: Path) -> None:
         error for error in progress.errors
         if error.get("kind") != kind or error.get("artifact") != str(artifact)
     ]
+
+
+def _sync_state_errors(state: PangeaState, progress: RunProgress) -> PangeaState:
+    environment_errors = [
+        error for error in state.get("errors", [])
+        if error.get("kind") not in ACTIVE_RESULT_ERROR_KINDS
+    ]
+    return {**state, "errors": list(progress.errors) + environment_errors}
 
 
 def _load_analysis_results(state: PangeaState, progress: RunProgress) -> list[WorkerResult] | None:
@@ -354,6 +364,7 @@ def _ready_to_finalize(
     status: str,
     unresolved: list[dict],
 ) -> PangeaState:
+    state = _sync_state_errors(state, progress)
     final = _state_with_results(state, results, status, unresolved)
     completeness = _completeness_issues(final)
     if completeness:
