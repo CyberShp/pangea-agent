@@ -120,7 +120,7 @@ def _extract_preprocessor(lines: list[str]) -> list[dict]:
 
 
 def _known_macro_parse_artifact(item: dict, lines: list[str]) -> bool:
-    """Ignore only recognizable SPDK/C macro-extension parser artifacts."""
+    """Ignore only recognizable project/compiler macro artifacts near the reported error."""
     line_number = item.get("line")
     if not isinstance(line_number, int) or line_number < 1 or line_number > len(lines):
         return False
@@ -133,6 +133,8 @@ def _known_macro_parse_artifact(item: dict, lines: list[str]) -> bool:
     if current.lstrip().startswith("IOBUF_FOREACH_NUMA_ID("):
         return True
     if "SPDK_CONTAINEROF(" in nearby:
+        return True
+    if "ntt_list_first_entry(" in nearby:
         return True
     if "__attribute__((" in current or "__spdk_nonstring" in current:
         return True

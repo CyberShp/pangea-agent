@@ -69,7 +69,14 @@ def main() -> None:
             validate_worker_result(task, result)
             write_json(result_path, result.model_dump(mode="json"))
         except Exception as exc:
-            parser.exit(1, f"FAIL {validation_message(exc)}\n")
+            detail = validation_message(exc)
+            parser.exit(
+                1,
+                "FAIL 当前 worker result 尚未满足提交契约。"
+                "PANGEA 只会自动恢复 run_id/unit_id/attempt/analyzed_scope/analyzed_context_scope "
+                "以及可确定的 evidence 位置；business_flows、visual_findings、risks、test_cases 的结构和实质内容不会自动补写。"
+                f"请在当前 Worker 内一次处理下列全部错误后重新执行 validate-worker-result：{detail}\n",
+            )
         print("PASS")
 
 

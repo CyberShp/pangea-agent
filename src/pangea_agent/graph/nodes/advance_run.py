@@ -44,6 +44,16 @@ from pangea_agent.documents.coverage import match_coverage_records
 from pangea_agent.report import reports_are_complete
 
 
+ACTIVE_RESULT_ERROR_KINDS = {
+    "analysis_result_rejected",
+    "analysis_results_rejected",
+    "review_result_rejected",
+    "rework_result_rejected",
+    "rework_results_rejected",
+    "rework_review_rejected",
+}
+
+
 def _hydrate_run_context(state: PangeaState, progress: RunProgress) -> PangeaState:
     run_dir = run_directory(state)
     tasks = [load_worker_task(analysis_task_path(state, unit_id)) for unit_id in progress.analysis_units]
@@ -64,15 +74,7 @@ def _hydrate_run_context(state: PangeaState, progress: RunProgress) -> PangeaSta
         {"kind": "missing_dependency", "package": package, "scope": "C/C++ structural parsing"}
         for package in inventory.get("missing_dependencies", [])
     )
-    active_kinds = {
-        "analysis_result_rejected",
-        "analysis_results_rejected",
-        "review_result_rejected",
-        "rework_result_rejected",
-        "rework_results_rejected",
-        "rework_review_rejected",
-    }
-    progress.errors = [error for error in progress.errors if error.get("kind") in active_kinds]
+    progress.errors = [error for error in progress.errors if error.get("kind") in ACTIVE_RESULT_ERROR_KINDS]
     for error in environment_errors:
         if error not in progress.error_history:
             progress.error_history.append(error)
@@ -112,6 +114,14 @@ def _clear_error(progress: RunProgress, kind: str, artifact: Path) -> None:
         error for error in progress.errors
         if error.get("kind") != kind or error.get("artifact") != str(artifact)
     ]
+
+
+def _sync_state_errors(state: PangeaState, progress: RunProgress) -> PangeaState:
+    environment_errors = [
+        error for error in state.get("errors", [])
+        if error.get("kind") not in ACTIVE_RESULT_ERROR_KINDS
+    ]
+    return {**state, "errors": list(progress.errors) + environment_errors}
 
 
 def _load_analysis_results(state: PangeaState, progress: RunProgress) -> list[WorkerResult] | None:
@@ -354,6 +364,7 @@ def _ready_to_finalize(
     status: str,
     unresolved: list[dict],
 ) -> PangeaState:
+    state = _sync_state_errors(state, progress)
     final = _state_with_results(state, results, status, unresolved)
     completeness = _completeness_issues(final)
     if completeness:
@@ -393,7 +404,12 @@ def _terminate_if_requested(state: PangeaState, progress: RunProgress) -> Pangea
 def _validate_review_inputs(state: PangeaState, task: ReviewTask) -> None:
     for reference in task.analysis_results:
         attempt = 1 if task.stage == "rework_verification" and rework_task_path(state, reference.unit_id).exists() else 0
-        load_worker_result(analysis_result_path(state, reference.unit_id, attempt))
+        task_path = rework_task_path(state, reference.unit_id) if attempt == 1 else analysis_task_path(state, reference.unit_id)
+        worker_task = load_worker_task(task_path)
+        result_path = analysis_result_path(state, reference.unit_id, attempt)
+        result = load_worker_result(result_path, worker_task)
+        validate_worker_result(worker_task, result)
+        write_json(result_path, result.model_dump(mode="json"))
 
 
 def _rebuild_terminal_state(state: PangeaState, progress: RunProgress) -> PangeaState:
@@ -477,6 +493,8 @@ def advance_run(state: PangeaState) -> PangeaState:
         task_path = review_task_path(state)
         result_path = review_result_path(state)
         if not result_path.exists():
+            task = load_review_task(task_path)
+            _validate_review_inputs(state, task)
             return {**state, "phase": progress.phase}
         try:
             task = load_review_task(task_path)
@@ -521,6 +539,8 @@ def advance_run(state: PangeaState) -> PangeaState:
             unresolved = [{"reason": unavailable.reason, "reviewer_id": unavailable.reviewer_id}]
             return _ready_to_finalize(state, progress, results, "UNRESOLVED", unresolved)
         if not result_path.exists():
+            task = load_review_task(task_path)
+            _validate_review_inputs(state, task)
             return {**state, "phase": progress.phase}
         try:
             task = load_review_task(task_path)

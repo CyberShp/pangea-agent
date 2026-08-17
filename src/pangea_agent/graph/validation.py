@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 import sqlite3
 
@@ -21,6 +22,81 @@ def _all_evidence(result: WorkerResult):
         yield from risk.evidence
 
 
+def _row_record(row) -> dict:
+    prefix = f"{row[2]}:" if row[2] else ""
+    path = row[3].replace("\\", "/")
+    location = (
+        f"{prefix}{path}:{row[4]}-{row[5]}"
+        if row[4] is not None and row[5] is not None
+        else f"{prefix}{path}"
+    )
+    return {
+        "chunk_id": row[0],
+        "source_type": row[1],
+        "repo_id": row[2],
+        "path": path,
+        "line_start": row[4],
+        "line_end": row[5],
+        "tags": set(json.loads(row[6] or "[]")),
+        "location": location,
+    }
+
+
+def _parse_evidence_reference(value: str, task: WorkerTask) -> dict | None:
+    match = re.match(r"^(?P<prefix>.+):(?P<start>\d+)(?:-(?P<end>\d+))?$", value.strip())
+    if match is None:
+        return None
+    prefix = match.group("prefix").replace("\\", "/")
+    repo_id = None
+    repo_prefix = f"{task.unit.repo_id}:"
+    if prefix.startswith(repo_prefix):
+        repo_id = task.unit.repo_id
+        prefix = prefix[len(repo_prefix):]
+    start = int(match.group("start"))
+    end = int(match.group("end") or start)
+    if end < start:
+        start, end = end, start
+    return {"repo_id": repo_id, "path": prefix.strip("/"), "start": start, "end": end}
+
+
+def _fallback_evidence_row(task: WorkerTask, chunk_id: str, rows: list[dict]) -> tuple[dict | None, str]:
+    reference = _parse_evidence_reference(chunk_id, task)
+    if reference is None:
+        return None, "chunk_id 格式无法解析，且未在当前运行的 SQLite 索引中精确匹配"
+
+    candidates: list[tuple[tuple[int, int, int, int], dict]] = []
+    for row in rows:
+        if row["line_start"] is None or row["line_end"] is None:
+            continue
+        if reference["repo_id"] is not None and row["repo_id"] != reference["repo_id"]:
+            continue
+        if reference["repo_id"] is None and row["source_type"] in {"code", "source_context"} and row["repo_id"] != task.unit.repo_id:
+            continue
+
+        row_path = row["path"].strip("/")
+        ref_path = reference["path"]
+        exact_path = row_path == ref_path
+        suffix_path = row_path.endswith(f"/{ref_path}") or ref_path.endswith(f"/{row_path}")
+        if not exact_path and not suffix_path:
+            continue
+
+        overlap = min(reference["end"], row["line_end"]) - max(reference["start"], row["line_start"]) + 1
+        if overlap <= 0:
+            continue
+        exact_range = reference["start"] == row["line_start"] and reference["end"] == row["line_end"]
+        contains_range = row["line_start"] <= reference["start"] and row["line_end"] >= reference["end"]
+        score = (int(exact_path), int(exact_range), int(contains_range), overlap)
+        candidates.append((score, row))
+
+    if not candidates:
+        return None, "chunk_id 未在当前运行的 SQLite 索引中匹配到对应路径和行号"
+    best_score = max(score for score, _ in candidates)
+    best = [row for score, row in candidates if score == best_score]
+    if len(best) != 1:
+        return None, "chunk_id 可匹配多个源码片段，无法唯一确认"
+    return best[0], ""
+
+
 def _evidence_rows(task: WorkerTask, result: WorkerResult) -> dict[str, dict]:
     index_path = Path(task.index_path)
     evidence_refs = list(_all_evidence(result))
@@ -38,37 +114,30 @@ def _evidence_rows(task: WorkerTask, result: WorkerResult) -> dict[str, dict]:
                 f"FROM chunks WHERE chunk_id IN ({placeholders})",
                 chunk_ids,
             ).fetchall()
+            all_rows = []
+            if len(rows) < len(chunk_ids):
+                all_rows = connection.execute(
+                    "SELECT chunk_id, source_type, repo_id, path, line_start, line_end, tags FROM chunks"
+                ).fetchall()
     except sqlite3.Error as exc:
         for evidence in evidence_refs:
             evidence.status = "pending_confirmation"
             evidence.pending_reason = f"当前运行无法查询证据索引：{exc}"
         return {}
-    found = {}
-    for row in rows:
-        prefix = f"{row[2]}:" if row[2] else ""
-        path = row[3].replace("\\", "/")
-        location = (
-            f"{prefix}{path}:{row[4]}-{row[5]}"
-            if row[4] is not None and row[5] is not None
-            else f"{prefix}{path}"
-        )
-        found[row[0]] = {
-            "source_type": row[1],
-            "repo_id": row[2],
-            "path": path,
-            "line_start": row[4],
-            "line_end": row[5],
-            "tags": set(json.loads(row[6] or "[]")),
-            "location": location,
-        }
+    found = {row[0]: _row_record(row) for row in rows}
+    fallback_rows = [_row_record(row) for row in all_rows]
     scopes = [scope.replace("\\", "/").strip("/") or "." for scope in task.unit.source_scope]
     context_scopes = [scope.replace("\\", "/").strip("/") or "." for scope in task.unit.context_scope]
     for evidence in evidence_refs:
         row = found.get(evidence.chunk_id)
         if row is None:
-            evidence.status = "pending_confirmation"
-            evidence.pending_reason = "chunk_id 未在当前运行的 SQLite 索引中匹配到"
-            continue
+            row, reason = _fallback_evidence_row(task, evidence.chunk_id, fallback_rows)
+            if row is None:
+                evidence.status = "pending_confirmation"
+                evidence.pending_reason = reason
+                continue
+            evidence.chunk_id = row["chunk_id"]
+            found[evidence.chunk_id] = row
         evidence.location = row["location"]
         pending_reason = None
         if row["source_type"] == "code":
