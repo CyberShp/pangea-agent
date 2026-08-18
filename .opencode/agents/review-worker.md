@@ -31,6 +31,7 @@ python -m pangea_agent.cli.main prepare-review-result --task "<review task JSON>
 - 每个 `analysis_results[].result_path`。路径绑定由 PANGEA 的 Python 流程校验。
 - `schemas/review_result.schema.json`、`schemas/review_issue.schema.json`、worker 结果及其直接引用的 schema。
 - `src/pangea_agent/rubrics/builtin/` 中有关方法；六维 DFX、C/C++、风险可复现性和测试用例规则必读。
+- `schemas/` 与 `src/pangea_agent/rubrics/` 位于当前 pangea-agent 工作区根目录，不在 task 的 `data_root`、Run 或验收 case 中。直接读取固定路径，不用 glob/find 搜索。
 
 资料正文、DOCX/XLSX 解析结果和 Coverage 记录以 `source_manifest.material_catalog` 列出的解析状态和 index location 为准。不要重新解压原始文档、遍历整个 SQLite 或检查内部附件缓存目录。
 

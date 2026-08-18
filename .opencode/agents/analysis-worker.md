@@ -31,6 +31,7 @@ python -m pangea_agent.cli.main prepare-worker-result --task "<worker task JSON>
 - `source_manifest.material_catalog`：本 Run 的资料目录，给出资料类型、解析状态、索引位置和附件状态。
 - `schemas/worker_result.schema.json` 及其直接引用的对象 schema。
 - `src/pangea_agent/rubrics/builtin/` 中与当前单元有关的方法文件；`dfx.md`、`c_cpp_analysis.md`、`risk_reproducibility.md` 和 `test_case_generation.md` 必读。
+- 上述 `schemas/` 与 `src/pangea_agent/rubrics/` 都位于当前 pangea-agent 工作区根目录，不在 task 的 `data_root`、Run 或验收 case 中。直接读取这里列出的固定路径，不使用 glob/find 搜索 schema 或 rubric。
 
 再读取 task 指定的 `result_path`。PANGEA 已经生成固定结果骨架；只填写分析内容，不从零重建 WorkerResult，不修改 task。
 
