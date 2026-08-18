@@ -22,17 +22,16 @@ task 提供以下可用输入。先按后文 summary 标记确定当前阶段，
 - `coverage_context`：当前单元能唯一匹配到的函数覆盖率线索。
 - `failure_signal_context`：高影响断言/终止信号及少量相关状态上下文，只用于定位，不自动证明风险。
 - `semantic_check_items`：本轮必须逐项完成的短任务清单。每项只给一个结论，并用它的 `check_id` 作为对应 `analysis_checkpoint.failure_paths[].path_id`；该 path 用 `linked_risk_ids` 关联风险，风险的 `affected_paths` 必须包含本项 `subject_path`。不同实现、断言可达性和资源重配置不得合并。
-- `index_path`、`inventory_path`、`source_manifest_path`：冻结的证据、结构和资料输入。
+- `index_path`、`source_manifest_path`：risks 阶段使用的冻结证据和资料目录；`inventory_path` 由 Python 校验，worker 不整份读取，task scope 已是权威范围。
 - `source_manifest.material_catalog`：本 Run 的资料目录，给出资料类型、解析状态、索引位置和附件状态。
-- `schemas/worker_result.schema.json` 及其直接引用的对象 schema。
-- `src/pangea_agent/rubrics/builtin/` 中与当前单元有关的方法文件；`dfx.md`、`c_cpp_analysis.md`、`risk_reproducibility.md` 和 `test_case_generation.md` 必读。
+- schema/rubric 按阶段读取：checkpoint 只读 worker_result 与 C/C++ 规则；risks 再读 evidence/business/risk、DFX 和风险规则；tests 最后读 testcase 规则，不得提前加载后续阶段。
 - `schemas/` 与 `src/pangea_agent/rubrics/` 位于当前 pangea-agent 工作区根目录，不在 task 的 data_root、Run 或验收 case 中；直接读取固定路径，不用 glob/find 搜索。
 
 再读取 task 指定的 `result_path`。PANGEA 已经生成固定结果骨架；只填写分析内容，不从零重建 WorkerResult，不修改 task。
 
 若 `task_type` 是 `rework`，还必须读取 `prior_result_path` 和 `review_issues`，只修复列出的复核问题。
 
-`task_type=analysis` 必须按结果 summary 分三次 task 调用完成，一次只做一个阶段并主动结束：空 summary 时完成源码与 failure paths，写 `[STAGE:checkpoint]`；恢复后读取资料/Coverage，写 evidence、flows、risks 和链接，冻结风险集合并写 `[STAGE:risks]`；再次恢复后生成 tests、反例检查和最终 summary，执行校验到 PASS。主 Agent 未恢复同一会话前不得进入下一阶段。`task_type=rework` 直接按 issue 定向修正并校验。
+`task_type=analysis` 必须按结果 summary 分三次 task 调用完成，一次只做一个阶段并主动结束：空 summary 时只读 task、骨架、worker_result/C++规则、完整 source_scope 和相关 context 片段，禁止 inventory、manifest、index、资料、Coverage、CLI/历史测试及其他 rubric，完成 failure paths 后写 `[STAGE:checkpoint]`；恢复后才读取资料/Coverage和风险规则，写 evidence、flows、risks 和链接，冻结风险集合并写 `[STAGE:risks]`，且不重读源码/inventory；再次恢复后生成 tests、反例检查和最终 summary，执行校验到 PASS。主 Agent 未恢复同一会话前不得进入下一阶段。`task_type=rework` 直接按 issue 定向修正并校验。
 
 ## 分析要求
 

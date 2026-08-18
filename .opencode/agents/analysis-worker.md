@@ -27,10 +27,9 @@ task 提供以下可用输入。先按后文 summary 标记确定当前阶段，
 - `coverage_context`：当前单元能唯一匹配到的函数与分支覆盖率线索。分支记录包含 `branch_id`、`condition`、`true_count` 和 `false_count`。
 - `failure_signal_context`：Python 从当前任务已经提供的 C/C++ 文件中定位出的少量高影响断言/终止信号。它只告诉你位置，不证明可达、危害或风险成立；必须逐项读取源码上下文，并按新任务中每项附带的 `analysis_focus` 做语义判断。状态断言还会附少量 `related_state_context`，列出同文件的状态写入和重配置候选；必须打开这些位置判断真实时序，不能把候选本身当成风险结论。
 - `semantic_check_items`：本轮必须逐项完成的短任务清单。每项只要求一个明确结论；用它的 `check_id` 作为对应 `analysis_checkpoint.failure_paths[].path_id`。该 failure path 用 `linked_risk_ids` 指向由本项支撑的风险；风险的 `affected_paths` 必须包含本项 `subject_path`。不要合并不同实现，也不要让断言结论替代资源重配置结论。这是分析顺序，不是自动风险判定。
-- `index_path`、`inventory_path`、`source_manifest_path`：冻结的证据、结构和资料输入。
+- `index_path`、`source_manifest_path`：risks 阶段使用的冻结证据与资料目录。`inventory_path` 由 Python 用于范围冻结和校验，worker 不整份读取；task 中的 scope 已是本单元权威范围。
 - `source_manifest.material_catalog`：本 Run 的资料目录，给出资料类型、解析状态、索引位置和附件状态。
-- `schemas/worker_result.schema.json` 及其直接引用的对象 schema。
-- `src/pangea_agent/rubrics/builtin/` 中与当前单元有关的方法文件；`dfx.md`、`c_cpp_analysis.md`、`risk_reproducibility.md` 和 `test_case_generation.md` 必读。
+- schema 和 rubric 按阶段读取：checkpoint 只读 `worker_result.schema.json` 与 `c_cpp_analysis.md`；risks 再读 evidence/business/risk schema、`dfx.md` 与 `risk_reproducibility.md`；tests 最后读 test_case schema 与 `test_case_generation.md`。不得提前读取后续阶段规则。
 - 上述 `schemas/` 与 `src/pangea_agent/rubrics/` 都位于当前 pangea-agent 工作区根目录，不在 task 的 `data_root`、Run 或验收 case 中。直接读取这里列出的固定路径，不使用 glob/find 搜索 schema 或 rubric。
 
 再读取 task 指定的 `result_path`。PANGEA 已经生成固定结果骨架；只填写分析内容，不从零重建 WorkerResult，不修改 task。
@@ -39,8 +38,8 @@ task 提供以下可用输入。先按后文 summary 标记确定当前阶段，
 
 若 `task_type=analysis`，必须先看结果文件的 `summary`，一次 task 调用只完成下面一个阶段，写入后主动结束，不得在同一次调用继续下一阶段：
 
-1. 空 summary → `checkpoint`：只完成源码、`semantic_check_items`、`failure_signal_context` 和正常生命周期重放；写入 `worker_id`、`analysis_checkpoint.source_paths_reviewed/lifecycle_stages_checked/failure_paths`，summary 以 `[STAGE:checkpoint]` 开头，返回 `STAGE checkpoint`。
-2. `[STAGE:checkpoint]` → `risks`：读取资料、Coverage 和索引，补齐 evidence、business_flows、material_decisions、coverage_priorities、risks，并把 failure path 的 `linked_risk_ids` 与风险 `affected_paths` 对齐；冻结风险集合，summary 改以 `[STAGE:risks]` 开头，返回 `STAGE risks`。
+1. 空 summary → `checkpoint`：只允许读取 task、结果骨架、`worker_result.schema.json`、`c_cpp_analysis.md`、完整 `source_scope` 和相关 `context_scope` 片段；禁止读取 inventory、source manifest、index/materials、Coverage、资料、CLI/历史测试和其他 rubric。完成 `semantic_check_items`、`failure_signal_context` 与源码正常生命周期重放，写入 `worker_id`、`analysis_checkpoint.source_paths_reviewed/lifecycle_stages_checked/failure_paths`，summary 以 `[STAGE:checkpoint]` 开头，返回 `STAGE checkpoint`。
+2. `[STAGE:checkpoint]` → `risks`：读取 source manifest、资料索引、Coverage、CLI/历史测试及本阶段 schema/rubric；不再重读源码和 inventory。补齐 evidence、business_flows、material_decisions、coverage_priorities、risks，并把 failure path 的 `linked_risk_ids` 与风险 `affected_paths` 对齐；冻结风险集合，summary 改以 `[STAGE:risks]` 开头，返回 `STAGE risks`。
 3. `[STAGE:risks]` → `tests`：生成 test_cases、完成反例检查，改写最终 summary，执行 `validate-worker-result` 直到 PASS，只返回简短 PASS 与风险/用例数量。
 
 主 Agent 恢复同一会话后才进入下一阶段。任何阶段都不得提前读取并生成后续阶段的大段内容。`task_type=rework` 已有完整 prior result，不使用三阶段，按 review issues 定向修正后直接校验。
