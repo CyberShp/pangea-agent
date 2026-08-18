@@ -281,6 +281,35 @@ def _pass_report() -> None:
     assert "质量门禁已通过。完成" in markdown and "质量门禁已通过。完成" in html
 
 
+def _review_missing_finding_cannot_pass() -> None:
+    _, data_root, contract = _workspace()
+    state = run_module_analysis(str(contract))
+    _write_all_analysis(state)
+    state = run_module_analysis(str(contract))
+    assert state["phase"] == "WAITING_REVIEW"
+    task = read_json(data_root / "runs" / "smoke-01" / "agent-tasks" / "review.json")
+    write_json(Path(task["result_path"]), {
+        "schema_version": "1.0",
+        "run_id": "smoke-01",
+        "reviewer_id": "reviewer-1",
+        "finish_reason": "stop",
+        "status": "PASS",
+        "summary": "发现遗漏但错误放行",
+        "issues": [],
+        "reviewed_units": [item["unit_id"] for item in task["analysis_results"]],
+        "independent_findings": [{
+            "unit_id": task["analysis_results"][0]["unit_id"],
+            "finding": "worker 遗漏一条可达失败路径",
+            "evidence": ["demo:module/entry.c:1"],
+            "worker_disposition": "missing",
+        }],
+    })
+    state = run_module_analysis(str(contract))
+    assert state["phase"] == "WAITING_REVIEW"
+    progress = read_json(data_root / "runs" / "smoke-01" / "progress.json")
+    assert any("PASS 不能包含 missing" in item["reason"] for item in progress["errors"])
+
+
 def _rework_same_reviewer() -> None:
     _, data_root, contract = _workspace()
     state = run_module_analysis(str(contract))
@@ -816,6 +845,7 @@ def _agent_start_checkpoint() -> None:
 
 SCENARIOS: tuple[tuple[str, Scenario], ...] = (
     ("PASS 到双报告", _pass_report),
+    ("reviewer 发现遗漏时不能 PASS", _review_missing_finding_cannot_pass),
     ("REWORK 同 reviewer 通过", _rework_same_reviewer),
     ("截断结果覆盖修正", _truncated_correction),
     ("黑盒步骤与预期必须逐项对应", _mismatched_step_results_rejected),

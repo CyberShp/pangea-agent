@@ -225,6 +225,13 @@ class ReviewResult(StrictModel):
     def validate_status(self) -> "ReviewResult":
         if self.status == "PASS" and self.issues:
             raise ValueError("PASS 不能包含待处理问题")
+        blocking_findings = [
+            finding.worker_disposition
+            for finding in self.independent_findings
+            if finding.worker_disposition in {"missing", "contradiction"}
+        ]
+        if self.status == "PASS" and blocking_findings:
+            raise ValueError("PASS 不能包含 missing 或 contradiction 独立发现")
         if self.status in {"REWORK", "UNRESOLVED"} and not self.issues:
             raise ValueError(f"{self.status} 必须说明问题")
         if self.finish_reason != "stop" and self.status != "UNRESOLVED":
