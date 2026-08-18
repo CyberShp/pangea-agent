@@ -37,7 +37,8 @@ task 提供以下可用输入。先按后文 summary 标记确定当前阶段，
 若 `task_type` 是 `rework`，还必须读取 `prior_result_path` 和 `review_issues`，只修复列出的复核问题。
 以 prior result 作为内容基础时，每个 issue 都要沿同一结论链同步修改：先改对应
 `analysis_checkpoint.failure_paths`，再改关联 risk 的 trigger/system_result/external_observation/
-exclusion_condition，最后改关联 test case 的前置、步骤、预期、观测和清理。issue 只要求新增用例时，
+exclusion_condition，同时改顶层 evidence observation、business_flows 和其他仍复述旧机制的 checkpoint
+文字，最后改关联 test case 的前置、步骤、预期、观测和清理。issue 只要求新增用例时，
 不得顺带重写无关风险。不要只改风险卡或测试用例而保留 checkpoint 中已经被 reviewer 否定的旧
 机制；failure path 是下游风险和用例的根因记录，三处必须描述同一触发链和唯一终态。
 
@@ -65,8 +66,8 @@ exclusion_condition，最后改关联 test case 的前置、步骤、预期、�
 issues 定向修正后直接校验。
 
 `task_type=rework` 在校验前，逐个 `review_issues[].issue_id` 做一次定向回看：用 issue 中出现的
-check ID、risk ID、test ID 和被否定的关键短语查询当前 rework result，确认 checkpoint、risk、
-test 三层均已更新且没有残留的旧终态；然后才把该 issue ID 加入
+check ID、risk ID、test ID 和被否定的关键短语查询当前 rework result，确认 checkpoint、evidence、
+business flow、risk、test 各层均已更新且没有残留的旧终态；然后才把该 issue ID 加入
 `addressed_review_issue_ids`。这只检查本次四周明确列出的改动，不扩大到全项目或无关结论。
 
 ## 分析要求
@@ -94,6 +95,7 @@ test 三层均已更新且没有残留的旧终态；然后才把该 issue ID �
 7. 在生成测试用例前完成上游约束和反证检查，把最终风险集合固定下来，并将 `risk_set_frozen=true`。之后不得为了凑用例临时新增风险。
 8. 写入 `test_cases` 前调用 `product-blackbox-test-case` Skill，并执行 `test_case_generation.md` 的转换步骤。风险验证用例填写真实 `linked_risk_ids`；仅由当前需求或 Coverage 缺口产生、并不验证某项风险的用例，保持 `linked_risk_ids=[]`，改填文档中的真实 `linked_requirement_ids`，禁止为了过 schema 挂到相邻风险。先为每条风险列出测试变体，每个变体只含一种构建、一种运行模式和一个唯一终态，再逐行生成独立 TestCase；Debug 与 Release 等对照必须在生成步骤前拆开。某个变体的终态是进程/服务崩溃、退出或停止时，若还要验证恢复，下一步先写“重启并等待服务恢复”，再写后续业务操作。每个步骤与预期结果一一对应；故障注入只制造触发条件，测试人员仍从业务入口执行、观察并恢复。
    用例依赖大小、计数、队列深度或批量阈值进入某分支时，把源码比较式转成明确的测试取值范围，例如 `< MIN_SOCK_PIPE_SIZE`，不能只写“小于缓冲区”或“一批”。用例依赖异步完成回调时，步骤必须包含真实触发发送、flush、poll 或 completion 的公开动作及其门槛；“已提交异步请求”本身不等于回调会执行。
+   配置枚举优先使用源码符号名。只有冻结输入中存在该入口的权威数值映射时才能同时写数字；不同入口只支持部分枚举时，不得把 CLI 数字映射套到实现内部的另一枚举值。
 9. 提交前至少记录一项针对核心结论的反例检查到 `counterexamples_checked`。反例检查先问“关闭、销毁、注销或释放是否已经自动消除所声称的残留状态”，再确认最终状态、外部观测和恢复步骤没有互相矛盾；若只有并发、重复句柄或缓存事件才能绕过清理，就必须补进触发条件并重新核对用例。不输出安全专项、SFMEA、代码改进建议或无证据配置组合。
 
 ## 证据

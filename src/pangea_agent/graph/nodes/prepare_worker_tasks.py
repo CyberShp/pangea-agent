@@ -30,7 +30,8 @@ def _failure_signal_focus(signal: str) -> str:
         return (
             "先定位直接支配 assert 的失败条件，再分别重放 Debug 与 Release。受支持模式中的底层"
             "操作若可返回失败，且公开契约或入口没有阻断，Debug 终止必须保留为风险；不能用"
-            " assert 后的清理或返回排除，Release 继续核对清理后的最终状态。"
+            " assert 后的清理或返回排除，Release 继续核对清理后的最终状态。条件含数值句柄时，"
+            "必须从创建函数的失败返回值确认哨兵，并把 0 作为独立边界重放。"
         )
     if re.search(r"(?:STAILQ|TAILQ|SLIST|LIST)_EMPTY", signal):
         return (
@@ -207,6 +208,20 @@ def _semantic_check_items(
                     "context_paths": [signal["path"]],
                 })
 
+        elif not re.search(r"\bref\s*>\s*0", signal["signal"]):
+            check_suffix = "TERMINATION" if _ABORT_RE.search(signal["signal"]) else "ASSERT"
+            checks.append({
+                "check_id": f"SC-{signal_index:02d}-{check_suffix}",
+                "kind": "assertion_reachability",
+                "subject_path": signal["path"],
+                "instruction": (
+                    f"单独核对 {signal['path']}:{signal['line']} 的高影响终点。"
+                    f"{signal['analysis_focus']} 必须写入同 check_id 的 failure path，"
+                    "不得只在正常流程摘要中提到或由另一条相邻断言代替。"
+                ),
+                "context_paths": [signal["path"]],
+            })
+
         if re.search(r"\bref\s*>\s*0", signal["signal"]):
             candidates = paired_paths or [signal["path"]]
             for path_index, relative in enumerate(candidates, 1):
@@ -217,6 +232,8 @@ def _semantic_check_items(
                     "instruction": (
                         f"只重放 {relative} 的配对操作链：从增加操作的返回值追到当前函数最终返回，"
                         "再追到上层是否真正完成绑定、入队或状态提交，最后核对减少操作。"
+                        "声称增加操作失败前，先证明分支实际调用了该操作；被 guard 跳过与调用后失败"
+                        "是不同路径，不能混写。"
                         "增加操作返回失败时，只追公开契约允许的正常恢复、关闭和清理，不用无效状态下的成员操作制造风险。"
                         "给出本实现的独立结论，不与其他实现合并；若形成风险，风险 affected_paths "
                         f"必须明确包含且仅就本项声称 {relative} 受影响。"

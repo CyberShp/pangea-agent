@@ -81,7 +81,7 @@ python -m pangea_agent.cli.main prepare-review-result --task "<review task JSON>
 返工验证 `stage=rework_verification`：
 
 - 只能输出 `PASS` 或 `UNRESOLVED`，不得再次输出 `REWORK`。
-- 逐项检查 `prior_issues` 是否真实修复，并确认修改没有破坏其他已经通过的内容。
+- 逐项检查 `prior_issues` 是否真实修复，并确认 failure path、顶层 evidence observation、business flow、风险与用例中都没有残留被否定的旧机制；同时确认修改没有破坏其他已经通过的内容。
 - 任一语义问题未修复、产生新的必需语义修复项或 reviewer 身份不一致，均为 `UNRESOLVED`。仅存在“证据待确认”不影响正常结论。
 
 ## 写入结果

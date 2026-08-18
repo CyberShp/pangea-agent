@@ -636,7 +636,8 @@ def _bounded_scope_expansion() -> None:
             "analysis_focus": (
                 "先定位直接支配 assert 的失败条件，再分别重放 Debug 与 Release。受支持模式中的底层"
                 "操作若可返回失败，且公开契约或入口没有阻断，Debug 终止必须保留为风险；不能用"
-                " assert 后的清理或返回排除，Release 继续核对清理后的最终状态。"
+                " assert 后的清理或返回排除，Release 继续核对清理后的最终状态。条件含数值句柄时，"
+                "必须从创建函数的失败返回值确认哨兵，并把 0 作为独立边界重放。"
             ),
             "related_state_context": [],
         },
@@ -684,12 +685,14 @@ def _bounded_scope_expansion() -> None:
     assert task["max_parallel_workers"] == 4 and task["may_spawn_workers"] is False
     semantic_checks = task["semantic_check_items"]
     assert [item["kind"] for item in semantic_checks] == [
+        "assertion_reachability",
+        "assertion_reachability",
         "paired_operation",
         "paired_operation",
         "assertion_reachability",
         "resource_reconfiguration",
     ]
-    assert [item["subject_path"] for item in semantic_checks[:2]] == [
+    assert [item["subject_path"] for item in semantic_checks[2:4]] == [
         "app/rpc.c",
         "module/entry.c",
     ]
