@@ -60,6 +60,7 @@ tools:
 - `validate-worker-result` 返回 JSON/schema 错误时，不进入正式 rework，也不增加 `attempt`。优先恢复同一个 analysis-worker 会话，让它根据本次完整错误列表和当前 schema 修正同一 `result_path`，直到 `PASS`。不得由主 Agent 编写 `fix_all.py`、临时脚本或手工拼 JSON 代替 Worker 修复实质分析内容。
 - PANGEA 只自动恢复 `run_id`、`unit_id`、`attempt`、分析范围等机械字段，以及能够确定性定位的 evidence 引用；**不会自动补写** `business_flows`、`visual_findings`、`risks`、`test_cases` 的缺失字段、空步骤、空证据或旧字段体系。不得再以“字段问题会自动规范化”为理由跳过校验失败。
 - 若 Worker 会话在未 `PASS` 时结束，主 Agent 不得执行 `resume-run` 期待 graph 接收该结果；必须先恢复该 Worker 完成提交。如果原 Worker 无法恢复，可重新启动同一个 analysis task 继续修改同一 attempt=0 结果，但不得创建新 Run 或占用正式 rework 次数。
+- Worker 返回空 task_result 且结果仍是空骨架时，优先恢复同一会话，要求按“checkpoint → 风险与证据 → 测试用例”分阶段写入既定结果文件，每阶段确认落盘，最后只返回简短 PASS 摘要。连续两次空返回才允许替换 worker；替代 worker 仍处理同一 task、同一 attempt 和同一结果路径。
 - `WAITING_REVIEW`：只有全部 analysis unit 都已被 graph 接受后，才启动 1 个 `review-worker` 做独立复核，并用 `record-agent-session --role review` 保存 task 工具返回的 `task_id`。
 - `WAITING_REWORK`：只有 graph 已生成 `agent-tasks/rework/*.json` 时才进入正式返工；原 worker 优先处理，不可恢复时可替代，但返工仍只有一次。返工 Worker 同样必须 `validate-worker-result=PASS` 后才能结束。
 - `WAITING_REWORK_REVIEW`：从 `progress.agent_sessions.review.task_id` 取得初审会话并恢复原 `review-worker`，让它读取 rework review task JSON；不得新建 reviewer 会话。`task_id` 缺失或恢复失败时标记 `UNRESOLVED`，不换 reviewer。

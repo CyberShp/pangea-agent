@@ -57,6 +57,7 @@ This repository also includes `AGENTS.md` for OpenCode and other agent clients. 
 - Dispatch at most four non-overlapping `analysis-worker` tasks concurrently. Workers must not spawn child workers.
 - Use one `review-worker` after analysis. Initial review and rework verification are one review lifecycle; allow at most one rework and require the same reviewer for verification.
 - After each Agent dispatch, record the returned task ID with `record-agent-session`. Restore task IDs from `progress.agent_sessions` after a main-session restart.
+- If an analysis worker returns an empty task result and the result file is still the empty skeleton, resume the same session and require staged writes for checkpoint, risks/evidence, and test cases. Replace it only after two empty returns, while keeping the same task, attempt, and result path.
 - Re-run the same contract after completing the tasks for the current `phase`. Never replace missing worker output with placeholder risks.
 
 ## Initialization contract

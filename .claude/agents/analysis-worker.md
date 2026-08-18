@@ -35,12 +35,18 @@ python -m pangea_agent.cli.main prepare-worker-result --task "<worker task JSON>
 
 1. 先逐文件读取 `source_scope`，再读取 `context_scope`，建立入口、生命周期、状态、资源、副作用、错误处理、清理与恢复关系；不要先让设计、历史用例或 Coverage 引导源码结论。
 2. 先按顺序完成 `semantic_check_items`，再处理其余候选异常路径。每项都按“触发前状态 → 已发生副作用 → 失败点 → 调用方处理 → 最终状态 → 重试/关闭/恢复 → 外部观测”重放，并立即填写同 `check_id` 的 `analysis_checkpoint.failure_paths`；`disposition=risk` 时填写真实 `linked_risk_ids`，其他实现不得写进本项结论或风险的 `affected_paths`。
+   失败返回后只分析公开契约允许的正常恢复、重试、关闭和清理；不得让调用方忽略失败，再调用只适用于成功状态或已绑定成员的 API 来制造风险或测试。
    候选路径只有在有源码支持的不可达条件、调用方保证或明确不支持的运行模式时才能标记 `excluded`；不能仅因问题只出现在 Debug 或特定受支持模式而排除进程终止、数据丢失、资源泄漏或无法恢复。
 3. 源码候选形成后，按 `source_manifest.material_catalog` 读取资料并在 `material_decisions` 记录采用或排除原因；只使用目录中的 index location，不遍历整个 SQLite，不重新解压原始文档。
 4. 最后读取 `coverage_context`，只把它用于补测优先级并记录到 `coverage_priorities`；缺少记录表示未知，Coverage 不能证明风险成立。
 5. 按六个 DFX 维度及初始化、运行、停止、恢复、卸载生命周期检查候选。风险必须包含复现条件、系统结果、外部观测、排除条件、严重度、置信度和源码证据。
 6. 完成上游限制和反证检查后冻结风险集合，写入 `risk_set_frozen=true`，再按 `test_case_generation.md` 生成步骤与预期一一对应的测试用例。风险用例填写真实 `linked_risk_ids`；只验证当前需求或 Coverage 缺口的用例使用 `linked_requirement_ids`，不得挂到不相关风险。
 7. 提交前在 `counterexamples_checked` 至少记录一项核心结论反例检查，确认最终状态、外部观测和恢复步骤不矛盾。不输出安全专项、SFMEA、实现评价、代码建议或无证据配置组合。
+
+## Flash 长结果写入
+
+- 不把整份 WorkerResult 留到最后一次长生成。完成源码与 semantic checks、完成风险与证据、完成测试用例后，分三个阶段写回既定 `result_path`，每次继续前确认内容已落盘。
+- 最终 task 返回只简短报告校验 PASS 和风险/用例数量，不复制整份分析。
 
 ## 证据
 

@@ -45,6 +45,7 @@ python -m pangea_agent.cli.main prepare-worker-result --task "<worker task JSON>
    信号断言某状态与资源一致时，不只检查断言所在分支；按时间顺序追踪“资源存在时状态置位 → 公开重配置/禁用/销毁资源 → 状态是否同步清除 → 后续入口”。不能用“资源已为空时没有置位代码”排除之前遗留的状态。
    对这种状态信号必须形成两条互不替代的 failure path：一条只判断断言本身是否可达，另一条从 `related_state_context` 的置位位置出发，逐个打开 destroy、NULL 和 setter 候选，判断资源重配置后的数据与状态。断言路径可排除，不代表重配置路径也能排除；若后者导致数据丢失、虚假通知或残留状态，必须单独保留风险。
 3. 对每条候选异常路径按固定顺序重放：触发前状态 → 已发生副作用 → 失败点 → 调用方处理 → 最终状态 → 重试/关闭/恢复 → 外部观测。把过程持续写入结果骨架的 `analysis_checkpoint.failure_paths`，并记录 disposition；没有可信信号时不为凑数制造风险。
+   被调用函数返回失败后，只继续分析公开契约允许的正常恢复、重试、关闭和清理。不得让测试应用忽略失败结果，再调用只适用于成功状态或已绑定成员的 API，以此制造断言或链表破坏；这种调用只能作为排除反例，不能成为风险和测试的主路径。
    `excluded` 必须有源码支持的不可达条件、调用方保证或明确不支持的运行模式。不能仅因问题只发生在 Debug、特定构建或特定受支持模式就排除；若最终状态是进程终止、数据丢失、资源泄漏或无法恢复，必须分别核对该模式并保留风险或给出可验证的不可达证据。
    在固定风险集合前，对每条 `excluded` 再做一次反证：在 `caller_handling` 中指出公开契约或入口阻断的具体源码位置。若只能找到实现注释、assert、`fail-fast` 或“调用方误用”的说法，没有实际阻断位置，就不能写 `excluded`，应按已确认的最终状态写成 risk，证据不足时写 unresolved。
 4. 源码候选形成后，按 `source_manifest.material_catalog` 逐项读取已解析资料，只查询目录列出的 index location，不遍历整个 SQLite，也不重新解压原始文档。在 `material_decisions` 记录采用、仅作上下文或排除及原因；每份用于结论或排除理由的资料，都要在顶层 `evidence` 保留至少一条真实 `chunk_id`，让最终报告展示实际引用位置。
@@ -53,6 +54,11 @@ python -m pangea_agent.cli.main prepare-worker-result --task "<worker task JSON>
 7. 在生成测试用例前完成上游约束和反证检查，把最终风险集合固定下来，并将 `risk_set_frozen=true`。之后不得为了凑用例临时新增风险。
 8. 写入 `test_cases` 前调用 `product-blackbox-test-case` Skill，并执行 `test_case_generation.md` 的转换步骤。风险验证用例填写真实 `linked_risk_ids`；仅由当前需求或 Coverage 缺口产生、并不验证某项风险的用例，保持 `linked_risk_ids=[]`，改填文档中的真实 `linked_requirement_ids`，禁止为了过 schema 挂到相邻风险。先为每条风险列出测试变体，每个变体只含一种构建、一种运行模式和一个唯一终态，再逐行生成独立 TestCase；Debug 与 Release 等对照必须在生成步骤前拆开。某个变体的终态是进程/服务崩溃、退出或停止时，若还要验证恢复，下一步先写“重启并等待服务恢复”，再写后续业务操作。每个步骤与预期结果一一对应；故障注入只制造触发条件，测试人员仍从业务入口执行、观察并恢复。
 9. 提交前至少记录一项针对核心结论的反例检查到 `counterexamples_checked`，确认最终状态、外部观测和恢复步骤没有互相矛盾。不输出安全专项、SFMEA、代码改进建议或无证据配置组合。
+
+## Flash 长结果写入
+
+- 不得读完全部输入后把整份 WorkerResult 留到最后一次长生成。完成源码与 semantic checks 后先把 checkpoint 写回既定 `result_path`；完成风险与证据后再次写回；生成测试用例后再完成最终写入和校验。
+- 每次继续前先确认上一阶段内容已经在结果文件中。最终 task 返回只简短报告 `validate-worker-result: PASS` 和风险/用例数量，不在返回消息中复制整份分析。
 
 ## 证据
 
