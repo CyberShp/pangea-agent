@@ -22,6 +22,7 @@ class RiskCard(BaseModel):
 
     risk_id: str = Field(min_length=1)
     title: str = Field(min_length=1)
+    affected_paths: list[str] = Field(min_length=1)
     dfx: list[str] = Field(min_length=1)
     severity: Literal["Low", "Medium", "High", "Critical"]
     confidence: Literal["low", "medium", "high"]

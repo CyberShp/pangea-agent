@@ -99,6 +99,7 @@ def _task_result(task: dict, *, finish_reason: str = "stop", fake_location: bool
             "lifecycle_stages_checked": ["初始化", "运行", "停止", "恢复"],
             "failure_paths": [{
                 "path_id": "F-001",
+                "linked_risk_ids": [],
                 "trigger": "入口调用",
                 "side_effects": "进入模块逻辑",
                 "failure": "无已确认故障",
@@ -122,6 +123,7 @@ def _mismatched_step_results_rejected() -> None:
     result["risks"] = [{
         "risk_id": "U00-R1",
         "title": "可执行风险",
+        "affected_paths": task["unit"]["source_scope"],
         "dfx": ["功能与状态"],
         "severity": "Medium",
         "confidence": "high",
@@ -145,6 +147,7 @@ def _mismatched_step_results_rejected() -> None:
         "title": "步骤与预期错位",
         "case_type": "功能",
         "linked_risk_ids": ["U00-R1"],
+        "linked_requirement_ids": [],
         "preconditions": ["环境就绪"],
         "steps": ["准备环境", "触发业务"],
         "expected_results": ["系统异常"],
@@ -155,6 +158,79 @@ def _mismatched_step_results_rejected() -> None:
     assert run_module_analysis(str(contract))["phase"] == "WAITING_ANALYSIS"
     errors = read_json(data_root / "runs" / "smoke-01" / "progress.json")["errors"]
     assert any("每个测试步骤必须有且只有一个对应的预期结果" in item["reason"] for item in errors)
+
+
+def _requirement_only_test_case_is_accepted() -> None:
+    _, _, contract = _workspace()
+    state = run_module_analysis(str(contract))
+    task = read_json(Path(state["agent_task_paths"][0]))
+    result = _task_result(task)
+    result["test_cases"] = [{
+        "test_case_id": "U00-REQ-TC1",
+        "title": "需求行为补测",
+        "case_type": "功能",
+        "linked_risk_ids": [],
+        "linked_requirement_ids": ["REQ-DEMO-01"],
+        "preconditions": ["环境就绪"],
+        "steps": ["执行需求规定的业务操作"],
+        "expected_results": ["系统表现符合当前需求"],
+        "observability": ["业务结果"],
+        "cleanup": ["恢复环境"],
+    }]
+    write_json(Path(task["result_path"]), result)
+    assert run_module_analysis(str(contract))["phase"] == "WAITING_REVIEW"
+
+
+def _semantic_check_risk_scope_is_enforced() -> None:
+    _, data_root, contract = _workspace()
+    state = run_module_analysis(str(contract))
+    task_path = Path(state["agent_task_paths"][0])
+    task = read_json(task_path)
+    task["semantic_check_items"] = [{
+        "check_id": "SC-DEMO-PAIR-01",
+        "kind": "paired_operation",
+        "subject_path": "module/entry.c",
+        "instruction": "只检查当前实现",
+        "context_paths": ["module/entry.c"],
+    }]
+    write_json(task_path, task)
+    result = _task_result(task)
+    result["risks"] = [{
+        "risk_id": "U00-R-SCOPE",
+        "title": "错误实现范围",
+        "affected_paths": ["module/other.c"],
+        "dfx": ["功能与状态"],
+        "severity": "Medium",
+        "confidence": "high",
+        "trigger": "业务触发",
+        "system_result": "系统异常",
+        "external_observation": "外部可观测",
+        "exclusion_condition": "排除条件",
+        "upstream_semantics": {
+            "reachability": "业务入口可达",
+            "caller_constraints": "调用方未消除",
+            "documented_behavior": "资料未定义为预期",
+            "existing_tests": "已有测试未覆盖",
+            "conclusion": "risk_remains",
+        },
+        "translation_status": "Developer-confirm",
+        "status": "pending",
+        "evidence": result["evidence"],
+    }]
+    result["analysis_checkpoint"]["failure_paths"] = [{
+        "path_id": "SC-DEMO-PAIR-01",
+        "linked_risk_ids": ["U00-R-SCOPE"],
+        "trigger": "入口调用",
+        "side_effects": "进入模块逻辑",
+        "failure": "配对失败",
+        "caller_handling": "调用方继续",
+        "final_states": "系统异常",
+        "disposition": "risk",
+    }]
+    write_json(Path(task["result_path"]), result)
+    assert run_module_analysis(str(contract))["phase"] == "WAITING_ANALYSIS"
+    errors = read_json(data_root / "runs" / "smoke-01" / "progress.json")["errors"]
+    assert any("未声明 semantic check" in item["reason"] for item in errors)
 
 
 def _write_all_analysis(state: dict) -> None:
@@ -272,6 +348,7 @@ def _duplicate_ids_correction() -> None:
         result["risks"] = [{
             "risk_id": "DUP-R01",
             "title": "重复风险编号",
+            "affected_paths": task["unit"]["source_scope"],
             "dfx": ["功能与状态"],
             "severity": "Medium",
             "confidence": "high",
@@ -621,6 +698,7 @@ def _expected_behavior_not_risk() -> None:
     result["risks"] = [{
         "risk_id": "R-EXPECTED",
         "title": "规格已经定义的行为",
+        "affected_paths": task["unit"]["source_scope"],
         "dfx": ["功能与状态"],
         "severity": "Low",
         "confidence": "high",
@@ -741,6 +819,8 @@ SCENARIOS: tuple[tuple[str, Scenario], ...] = (
     ("REWORK 同 reviewer 通过", _rework_same_reviewer),
     ("截断结果覆盖修正", _truncated_correction),
     ("黑盒步骤与预期必须逐项对应", _mismatched_step_results_rejected),
+    ("需求补测无需伪造风险关联", _requirement_only_test_case_is_accepted),
+    ("semantic check 约束风险实现范围", _semantic_check_risk_scope_is_enforced),
     ("无法关联证据标记待确认", _unmatched_evidence_is_pending),
     ("跨单元重复 ID 自动修正", _duplicate_ids_correction),
     ("机械路径变化自动修正", _mechanical_task_change_does_not_block),

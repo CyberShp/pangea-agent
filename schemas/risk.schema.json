@@ -2,10 +2,11 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "RiskCard",
   "type": "object",
-  "required": ["risk_id", "title", "dfx", "severity", "confidence", "trigger", "system_result", "external_observation", "exclusion_condition", "upstream_semantics", "translation_status", "status", "evidence"],
+  "required": ["risk_id", "title", "affected_paths", "dfx", "severity", "confidence", "trigger", "system_result", "external_observation", "exclusion_condition", "upstream_semantics", "translation_status", "status", "evidence"],
   "properties": {
     "risk_id": {"type": "string"},
     "title": {"type": "string"},
+    "affected_paths": {"type": "array", "minItems": 1, "items": {"type": "string"}},
     "dfx": {"type": "array", "items": {"type": "string"}},
     "severity": {"enum": ["Low", "Medium", "High", "Critical"]},
     "confidence": {"enum": ["low", "medium", "high"]},

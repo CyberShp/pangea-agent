@@ -83,6 +83,7 @@ class VisualFinding(StrictModel):
 
 class FailurePathCheck(StrictModel):
     path_id: str = Field(min_length=1)
+    linked_risk_ids: list[str] = Field(default_factory=list)
     trigger: str = Field(min_length=1)
     side_effects: str = Field(min_length=1)
     failure: str = Field(min_length=1)

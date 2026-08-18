@@ -217,7 +217,8 @@ def _semantic_check_items(
                     "instruction": (
                         f"只重放 {relative} 的配对操作链：从增加操作的返回值追到当前函数最终返回，"
                         "再追到上层是否真正完成绑定、入队或状态提交，最后核对减少操作。"
-                        "给出本实现的独立结论，不与其他实现合并。"
+                        "给出本实现的独立结论，不与其他实现合并；若形成风险，风险 affected_paths "
+                        f"必须明确包含且仅就本项声称 {relative} 受影响。"
                     ),
                     "context_paths": list(dict.fromkeys([signal["path"], relative])),
                 })

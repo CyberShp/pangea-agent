@@ -21,7 +21,7 @@ python -m pangea_agent.cli.main prepare-worker-result --task "<worker task JSON>
 - `unit.context_scope`：调用入口、配置、规格和测试等上游语义范围。
 - `coverage_context`：当前单元能唯一匹配到的函数覆盖率线索。
 - `failure_signal_context`：高影响断言/终止信号及少量相关状态上下文，只用于定位，不自动证明风险。
-- `semantic_check_items`：本轮必须逐项完成的短任务清单。每项只给一个结论，并用它的 `check_id` 作为对应 `analysis_checkpoint.failure_paths[].path_id`；不同实现、断言可达性和资源重配置不得合并。
+- `semantic_check_items`：本轮必须逐项完成的短任务清单。每项只给一个结论，并用它的 `check_id` 作为对应 `analysis_checkpoint.failure_paths[].path_id`；该 path 用 `linked_risk_ids` 关联风险，风险的 `affected_paths` 必须包含本项 `subject_path`。不同实现、断言可达性和资源重配置不得合并。
 - `index_path`、`inventory_path`、`source_manifest_path`：冻结的证据、结构和资料输入。
 - `source_manifest.material_catalog`：本 Run 的资料目录，给出资料类型、解析状态、索引位置和附件状态。
 - `schemas/worker_result.schema.json` 及其直接引用的对象 schema。
@@ -34,12 +34,12 @@ python -m pangea_agent.cli.main prepare-worker-result --task "<worker task JSON>
 ## 分析要求
 
 1. 先逐文件读取 `source_scope`，再读取 `context_scope`，建立入口、生命周期、状态、资源、副作用、错误处理、清理与恢复关系；不要先让设计、历史用例或 Coverage 引导源码结论。
-2. 先按顺序完成 `semantic_check_items`，再处理其余候选异常路径。每项都按“触发前状态 → 已发生副作用 → 失败点 → 调用方处理 → 最终状态 → 重试/关闭/恢复 → 外部观测”重放，并立即填写同 `check_id` 的 `analysis_checkpoint.failure_paths`。
+2. 先按顺序完成 `semantic_check_items`，再处理其余候选异常路径。每项都按“触发前状态 → 已发生副作用 → 失败点 → 调用方处理 → 最终状态 → 重试/关闭/恢复 → 外部观测”重放，并立即填写同 `check_id` 的 `analysis_checkpoint.failure_paths`；`disposition=risk` 时填写真实 `linked_risk_ids`，其他实现不得写进本项结论或风险的 `affected_paths`。
    候选路径只有在有源码支持的不可达条件、调用方保证或明确不支持的运行模式时才能标记 `excluded`；不能仅因问题只出现在 Debug 或特定受支持模式而排除进程终止、数据丢失、资源泄漏或无法恢复。
 3. 源码候选形成后，按 `source_manifest.material_catalog` 读取资料并在 `material_decisions` 记录采用或排除原因；只使用目录中的 index location，不遍历整个 SQLite，不重新解压原始文档。
 4. 最后读取 `coverage_context`，只把它用于补测优先级并记录到 `coverage_priorities`；缺少记录表示未知，Coverage 不能证明风险成立。
 5. 按六个 DFX 维度及初始化、运行、停止、恢复、卸载生命周期检查候选。风险必须包含复现条件、系统结果、外部观测、排除条件、严重度、置信度和源码证据。
-6. 完成上游限制和反证检查后冻结风险集合，写入 `risk_set_frozen=true`，再按 `test_case_generation.md` 生成步骤与预期一一对应的测试用例。
+6. 完成上游限制和反证检查后冻结风险集合，写入 `risk_set_frozen=true`，再按 `test_case_generation.md` 生成步骤与预期一一对应的测试用例。风险用例填写真实 `linked_risk_ids`；只验证当前需求或 Coverage 缺口的用例使用 `linked_requirement_ids`，不得挂到不相关风险。
 7. 提交前在 `counterexamples_checked` 至少记录一项核心结论反例检查，确认最终状态、外部观测和恢复步骤不矛盾。不输出安全专项、SFMEA、实现评价、代码建议或无证据配置组合。
 
 ## 证据
@@ -58,7 +58,8 @@ python -m pangea_agent.cli.main prepare-worker-result --task "<worker task JSON>
 - `evidence[]`：至少包含 `chunk_id`、`observation`；可选 `location`、`status`、`pending_reason`。不得使用 `content`、`type`、`tags`、`description`、`file`、`line`、`code` 代替。
 - `business_flows[]`：必须包含非空 `title`、非空 `description`、至少 1 条字符串 `steps`、至少 1 条合法 `evidence`；可选 `mermaid`。`steps` 每一项必须是字符串。
 - `visual_findings[]`：只允许 `attachment_path`、`observation`，以及可选 `status`、`pending_reason`。没有真实图片附件时保持空数组；不得写 `type`、`title`、`description`、`structure`、`states`、`transitions`、`ownership`、`key_invariants` 等额外字段。
-- `risks[]`：必须使用 `risk_id`、`title`、`dfx`、`severity`、`confidence`、`trigger`、`system_result`、`external_observation`、`exclusion_condition`、`upstream_semantics`、`translation_status`、`status`、`evidence`。`dfx` 是数组；`severity` 只能是 `Low/Medium/High/Critical`；`confidence` 只能是 `low/medium/high`；首次分析 `status=pending`。不得使用 `dfx_dimension`、`category`、`reproducibility`、`reproduction_conditions`、`exclusion_conditions` 等旧字段。
+- `risks[]`：必须使用 `risk_id`、`title`、`affected_paths`、`dfx`、`severity`、`confidence`、`trigger`、`system_result`、`external_observation`、`exclusion_condition`、`upstream_semantics`、`translation_status`、`status`、`evidence`。`affected_paths` 只列真实发生风险的实现路径；`dfx` 是数组；`severity` 只能是 `Low/Medium/High/Critical`；`confidence` 只能是 `low/medium/high`；首次分析 `status=pending`。不得使用 `dfx_dimension`、`category`、`reproducibility`、`reproduction_conditions`、`exclusion_conditions` 等旧字段。
+- `test_cases[]`：保留 `linked_risk_ids` 与 `linked_requirement_ids` 两个数组，至少一个非空；不得为了满足结构把正常需求用例挂到相邻风险。
 - `upstream_semantics` 必须包含 `reachability`、`caller_constraints`、`documented_behavior`、`existing_tests`、`conclusion`，其中 `conclusion` 只能是 `risk_remains/expected_behavior/unresolved`。
 - `risks`、`test_cases` 可以为空，但已经写入的对象必须完整符合 schema；不得用空字符串、空步骤、空 evidence 或占位文本绕过校验。
 - `analysis_checkpoint` 必须边分析边更新，记录已读源码、生命周期检查、候选失败路径、资料决策、Coverage 优先级、风险冻结状态和反例检查。

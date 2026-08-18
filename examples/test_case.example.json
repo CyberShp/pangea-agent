@@ -3,9 +3,10 @@
   "title": "超规格后回落恢复测试",
   "case_type": "可靠性",
   "linked_risk_ids": ["R-U00-001"],
+  "linked_requirement_ids": [],
   "preconditions": ["准备可观测资源余量和业务能力的测试环境"],
   "steps": ["逐步增加并发超过规格上限", "回落到规格内并持续观察"],
-  "expected_results": ["压力解除后资源余量和业务能力恢复"],
+  "expected_results": ["系统进入已定义的超规格处理状态", "压力解除后资源余量和业务能力恢复"],
   "observability": ["CLI、日志、指标、业务建立结果"],
   "cleanup": ["停止压力并恢复环境"]
 }

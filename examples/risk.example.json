@@ -1,6 +1,7 @@
 {
   "risk_id": "R-U00-001",
   "title": "超规格后资源能力未恢复",
+  "affected_paths": ["src/nvme/tcp/example.c"],
   "dfx": ["资源与规格", "可靠性与一致性"],
   "severity": "High",
   "confidence": "medium",

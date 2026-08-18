@@ -21,7 +21,7 @@ python -m pangea_agent.cli.main prepare-review-result --task "<review task JSON>
 - `may_spawn_workers` 必须为 `false`，`review_round` 必须为 `1`。
 - `repositories` 的 canonical `repo_id`、`inventory_path` 和 `source_manifest_path`。
 - review task 绑定的 worker task 中的 SQLite `index_path`，以及 source manifest 中的附件、解析告警和不完整项。
-- worker task 的 `semantic_check_items`。读取 worker result 前逐项独立完成，每个 `check_id` 单独形成结论；不同实现、断言可达性和资源重配置不得合并。
+- worker task 的 `semantic_check_items`。读取 worker result 前逐项独立完成，每个 `check_id` 单独形成结论；之后沿 failure path 的 `linked_risk_ids` 核对风险 `affected_paths` 和正文没有越出本项 `subject_path`。不同实现、断言可达性和资源重配置不得合并。
 - 每个 `analysis_results[].result_path`；路径绑定由 PANGEA 校验。
 - `schemas/review_result.schema.json`、`schemas/review_issue.schema.json`、worker 结果及其直接引用的 schema。
 - `src/pangea_agent/rubrics/builtin/` 中有关方法；六维 DFX、C/C++、风险可复现性和测试用例规则必读。
@@ -30,16 +30,16 @@ python -m pangea_agent.cli.main prepare-review-result --task "<review task JSON>
 
 ## 独立复核内容
 
-先不要读取 worker result。先按顺序完成各 worker task 的 `semantic_check_items`，再按源码范围、上下文和 `source_manifest.material_catalog` 独立检查入口、生命周期、状态、副作用、失败、调用方处理、最终状态与恢复，并形成 `independent_findings`；之后才读取 worker result，逐项核对同 `check_id` 的 failure path。缺项、源码结论不一致或把不同实现合并时必须形成 issue。`reviewed_units` 必须记录全部实际复核单元。
+先不要读取 worker result。先按顺序完成各 worker task 的 `semantic_check_items`，再按源码范围、上下文和 `source_manifest.material_catalog` 独立检查入口、生命周期、状态、副作用、失败、调用方处理、最终状态与恢复，并形成 `independent_findings`；之后才读取 worker result，逐项核对同 `check_id` 的 failure path、`linked_risk_ids` 及对应风险的 `affected_paths`、标题、触发条件和调用方处理。缺项、源码结论不一致或把不同实现合并时必须形成 issue。`reviewed_units` 必须记录全部实际复核单元。
 
 - 完整性：每个 task 单元都有可读取且包含实质分析内容的 worker result，没有截断、空结果或外层“完成”代替真实结果。机械字段、路径、编号和格式由 PANGEA 处理，不作为语义返工理由。
 - 范围：`analyzed_scope`、`analyzed_context_scope` 与 inventory、source manifest 和单元边界一致；解析失败、缺依赖、未读图片或排除文件没有被隐藏。
 - 源码证据：确认 observation 与可读取源码不矛盾。PANGEA 已将无法自动关联的条目标成“证据待确认”；该状态可以随正常报告交付，不得仅因 `chunk_id`、location、路径格式或摘要值不一致要求返工。
 - 方法覆盖：核对六个 DFX 维度、业务正常/异常/分支流程，以及初始化、运行、停止、恢复、卸载生命周期。没有实现信号可以不生成风险，但必须是查证后的结论，不能因为已有用例看似覆盖就跳过。
 - 候选排除：逐项复核 `analysis_checkpoint.failure_paths` 中标为 `excluded` 的路径。进程终止、数据丢失、资源泄漏或无法恢复只有在源码证明不可达、调用方必然阻断或模式明确不受支持时才能排除；仅因发生在 Debug 或特定构建不能排除。
-- 风险：先核对 `upstream_semantics` 中的入口可达性、调用方限制/补救、规格或高层 API 定义、已有测试实际覆盖；已被上游定义为预期行为的结论不得保留为风险。再检查复现条件、系统结果、外部观测、排除条件、严重度、置信度和证据是否一致。
-- 用例：必须关联真实风险，并按测试人员实际执行来判断。黑盒用例必须写清业务触发条件、对外入口或操作、预期系统结果、真实可观察现象以及清理/恢复；不得把函数调用、字段赋值、对象构造、内部返回值或源码行号当成测试步骤。确实无法纯黑盒触发时，必须诚实标成灰盒，并明确开发协助只负责制造什么条件，测试人员仍从哪个业务入口执行、观察什么、如何恢复。
-- 用例逐条核对：`steps` 与 `expected_results` 数量必须相同，并按数组位置逐项对应；准备动作的预期不能写成最终风险结论。对每个 `linked_risk_id` 反查业务触发条件、预期异常与观测现象，确认该用例确实能验证该风险，而不是普通异常或无关基线。任一不满足都属于实质黑盒语义缺口。
+- 风险：先核对 `upstream_semantics` 中的入口可达性、调用方限制/补救、规格或高层 API 定义、已有测试实际覆盖；已被上游定义为预期行为的结论不得保留为风险。再检查 `affected_paths`、复现条件、系统结果、外部观测、排除条件、严重度、置信度和证据是否一致；正文声称受影响的实现必须由对应 risk failure path 支撑。
+- 用例：风险验证用例必须关联真实风险；正常流程、需求行为或 Coverage 补测可以只关联当前资料中的真实需求 ID。不得用“同一调用链”或“回归对照”把无关风险挂到需求用例上。按测试人员实际执行来判断。黑盒用例必须写清业务触发条件、对外入口或操作、预期系统结果、真实可观察现象以及清理/恢复；不得把函数调用、字段赋值、对象构造、内部返回值或源码行号当成测试步骤。确实无法纯黑盒触发时，必须诚实标成灰盒，并明确开发协助只负责制造什么条件，测试人员仍从哪个业务入口执行、观察什么、如何恢复。
+- 用例逐条核对：`steps` 与 `expected_results` 数量必须相同，并按数组位置逐项对应；准备动作的预期不能写成最终风险结论。对每个 `linked_risk_id` 反查业务触发条件、预期异常与观测现象，对每个 `linked_requirement_id` 反查当前资料中的真实条目，确认用例确实验证所关联对象，而不是普通异常或无关基线。任一不满足都属于实质黑盒语义缺口。
 - 返工边界：只有缺少关键业务流程、异常/生命周期路径，遗漏明显必须的风险或测试用例，或黑盒/灰盒用例实质不可执行时，才允许 `REWORK`。JSON 字段、路径、编号、证据待确认和纯措辞问题不得触发正式返工。
 - 历史用例与 Coverage：历史用例仅能作为表达/环境参考；函数执行次数不能证明分支或风险已经覆盖。
 - 图片：`visual_findings` 必须指向 manifest 中真实附件，观察内容须来自实际可见图像。无法查看的图片及其影响必须显式保留为不完整，不能由文件名、正文或模型常识代替。

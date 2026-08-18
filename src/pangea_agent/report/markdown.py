@@ -418,6 +418,7 @@ def render_report(state: "PangeaState | Mapping[str, Any]") -> str:
             [
                 f"#### {risk_id} · {_text(risk.get('title'))}",
                 "",
+                f"- **受影响路径**：{'、'.join(_text(item) for item in _items(risk.get('affected_paths'))) or '未提供'}",
                 f"- **DFX 维度**：{'、'.join(_text(item) for item in _items(risk.get('dfx'))) or '未提供'}",
                 f"- **严重度**：{_text(risk.get('severity'))}",
                 f"- **置信度**：{_text(risk.get('confidence'))}",
@@ -471,6 +472,7 @@ def render_report(state: "PangeaState | Mapping[str, Any]") -> str:
                 "",
                 f"- **用例类型**：{_text(case.get('case_type') or case.get('type') or case.get('test_type'))}",
                 f"- **关联风险**：{', '.join(_text(item) for item in _items(case.get('linked_risk_ids'))) or '无'}",
+                f"- **关联需求**：{', '.join(_text(item) for item in _items(case.get('linked_requirement_ids'))) or '无'}",
                 "- **前置条件**：",
             ]
         )

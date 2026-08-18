@@ -214,6 +214,41 @@ def validate_worker_result(task: WorkerTask, result: WorkerResult) -> None:
         raise ArtifactRejected("worker 尚未冻结风险集合，不能开始生成或提交测试用例")
     if not checkpoint.counterexamples_checked:
         raise ArtifactRejected("worker 尚未记录提交前的反例检查")
+    risk_by_id = {risk.risk_id: risk for risk in result.risks}
+    check_by_id = {check.check_id: check for check in task.semantic_check_items}
+    failure_by_id: dict[str, list] = {}
+    for failure_path in checkpoint.failure_paths:
+        failure_by_id.setdefault(failure_path.path_id, []).append(failure_path)
+        unknown_risks = set(failure_path.linked_risk_ids) - set(risk_by_id)
+        if unknown_risks:
+            raise ArtifactRejected(
+                f"failure path {failure_path.path_id} 引用了不存在的风险：{sorted(unknown_risks)}"
+            )
+    for check_id, check in check_by_id.items():
+        matches = failure_by_id.get(check_id, [])
+        if len(matches) != 1:
+            raise ArtifactRejected(f"semantic check {check_id} 必须有且只有一条同 ID failure path")
+        failure_path = matches[0]
+        if failure_path.disposition == "risk" and not failure_path.linked_risk_ids:
+            raise ArtifactRejected(f"semantic check {check_id} 判定为 risk 时必须关联对应风险")
+        for risk_id in failure_path.linked_risk_ids:
+            if check.subject_path not in risk_by_id[risk_id].affected_paths:
+                raise ArtifactRejected(
+                    f"风险 {risk_id} 未声明 semantic check {check_id} 的受影响路径 {check.subject_path}"
+                )
+    semantic_subjects = {check.subject_path for check in task.semantic_check_items}
+    supported_pairs = {
+        (risk_id, check_by_id[path.path_id].subject_path)
+        for path in checkpoint.failure_paths
+        if path.path_id in check_by_id and path.disposition == "risk"
+        for risk_id in path.linked_risk_ids
+    }
+    for risk in result.risks:
+        for affected_path in set(risk.affected_paths) & semantic_subjects:
+            if (risk.risk_id, affected_path) not in supported_pairs:
+                raise ArtifactRejected(
+                    f"风险 {risk.risk_id} 声明受影响路径 {affected_path}，但对应 semantic check 未判定并关联该风险"
+                )
     _evidence_rows(task, result)
     _validate_visual_findings(task, result)
     if task.task_type == "rework":

@@ -220,6 +220,7 @@ def render_html_report(state: Mapping[str, Any]) -> str:
             cards.append(f"<p>{_escape(risk)}</p>")
             continue
         fields = (
+            ("受影响路径", "、".join(_text(item) for item in _items(risk.get("affected_paths"))) or "未提供"),
             ("DFX 维度", "、".join(_text(item) for item in _items(risk.get("dfx"))) or "未提供"),
             ("严重度", risk.get("severity")), ("置信度", risk.get("confidence")),
             ("风险状态", risk.get("status")), ("测试转化状态", risk.get("translation_status")),
@@ -255,7 +256,7 @@ def render_html_report(state: Mapping[str, Any]) -> str:
             )
         else:
             rows = "".join(f"<tr><td>{index}</td><td>{_escape(step)}</td><td>{_escape(expected[index-1] if index-1 < len(expected) else '未提供对应预期结果（语义缺口）')}</td></tr>" for index, step in enumerate(steps, 1))
-        case_parts.append(f'<details><summary>{_escape(case.get("test_case_id"), "未编号")} · {_escape(case.get("title"))}</summary><div class="detail-body"><dl><dt>用例类型</dt><dd>{_escape(case.get("case_type") or case.get("type") or case.get("test_type"))}</dd><dt>关联风险</dt><dd>{_escape("、".join(str(v) for v in _items(case.get("linked_risk_ids"))) or "无")}</dd><dt>前置条件</dt><dd>{_list(case.get("preconditions"))}</dd></dl><table><thead><tr><th>#</th><th>操作目标</th><th>预期结果</th></tr></thead><tbody>{rows}</tbody></table><h4>观测方式</h4>{_list(case.get("observability"))}<h4>清理/恢复</h4>{_list(case.get("cleanup"))}</div></details>')
+        case_parts.append(f'<details><summary>{_escape(case.get("test_case_id"), "未编号")} · {_escape(case.get("title"))}</summary><div class="detail-body"><dl><dt>用例类型</dt><dd>{_escape(case.get("case_type") or case.get("type") or case.get("test_type"))}</dd><dt>关联风险</dt><dd>{_escape("、".join(str(v) for v in _items(case.get("linked_risk_ids"))) or "无")}</dd><dt>关联需求</dt><dd>{_escape("、".join(str(v) for v in _items(case.get("linked_requirement_ids"))) or "无")}</dd><dt>前置条件</dt><dd>{_list(case.get("preconditions"))}</dd></dl><table><thead><tr><th>#</th><th>操作目标</th><th>预期结果</th></tr></thead><tbody>{rows}</tbody></table><h4>观测方式</h4>{_list(case.get("observability"))}<h4>清理/恢复</h4>{_list(case.get("cleanup"))}</div></details>')
     rendered_cases = "".join(case_parts) or '<p class="muted">未生成测试用例。</p>'
     body.append(f'<section id="cases"><a class="back" href="#top">回到顶部</a><h2>6. 测试用例与风险映射</h2>{rendered_cases}</section>')
 
