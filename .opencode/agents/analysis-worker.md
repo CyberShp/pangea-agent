@@ -35,6 +35,11 @@ task 提供以下可用输入。先按后文 summary 标记确定当前阶段，
 再读取 task 指定的 `result_path`。PANGEA 已经生成固定结果骨架；只填写分析内容，不从零重建 WorkerResult，不修改 task。
 
 若 `task_type` 是 `rework`，还必须读取 `prior_result_path` 和 `review_issues`，只修复列出的复核问题。
+以 prior result 作为内容基础时，每个 issue 都要沿同一结论链同步修改：先改对应
+`analysis_checkpoint.failure_paths`，再改关联 risk 的 trigger/system_result/external_observation/
+exclusion_condition，最后改关联 test case 的前置、步骤、预期、观测和清理。issue 只要求新增用例时，
+不得顺带重写无关风险。不要只改风险卡或测试用例而保留 checkpoint 中已经被 reviewer 否定的旧
+机制；failure path 是下游风险和用例的根因记录，三处必须描述同一触发链和唯一终态。
 
 若 `task_type=analysis`，必须先看结果文件的 `summary`。checkpoint 还要以
 `analysis_checkpoint.source_paths_reviewed` 作为已经完成的文件游标。一次 task 调用只完成下面
@@ -58,6 +63,11 @@ task 提供以下可用输入。先按后文 summary 标记确定当前阶段，
 主 Agent 恢复同一会话后才处理下一个 checkpoint 文件或进入下一阶段。任何阶段都不得提前读取
 并生成后续阶段的大段内容。`task_type=rework` 已有完整 prior result，不使用分段流程，按 review
 issues 定向修正后直接校验。
+
+`task_type=rework` 在校验前，逐个 `review_issues[].issue_id` 做一次定向回看：用 issue 中出现的
+check ID、risk ID、test ID 和被否定的关键短语查询当前 rework result，确认 checkpoint、risk、
+test 三层均已更新且没有残留的旧终态；然后才把该 issue ID 加入
+`addressed_review_issue_ids`。这只检查本次四周明确列出的改动，不扩大到全项目或无关结论。
 
 ## 分析要求
 
