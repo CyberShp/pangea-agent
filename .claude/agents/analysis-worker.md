@@ -15,7 +15,7 @@ tools: Read, Write, Bash
 python -m pangea_agent.cli.main prepare-worker-result --task "<worker task JSON>"
 ```
 
-然后读取 task 的以下输入：
+task 提供以下可用输入。先按后文 summary 标记确定当前阶段，只读取该阶段需要的内容，不要在第一次调用把全部资料、Coverage 和测试规则一起读完：
 
 - `unit.source_scope`：必须逐文件分析的源码，已经包含 PANGEA 确定性找到的接口实现和必要源码。
 - `unit.context_scope`：调用入口、配置、规格和测试等上游语义范围。
@@ -32,6 +32,8 @@ python -m pangea_agent.cli.main prepare-worker-result --task "<worker task JSON>
 
 若 `task_type` 是 `rework`，还必须读取 `prior_result_path` 和 `review_issues`，只修复列出的复核问题。
 
+`task_type=analysis` 必须按结果 summary 分三次 task 调用完成，一次只做一个阶段并主动结束：空 summary 时完成源码与 failure paths，写 `[STAGE:checkpoint]`；恢复后读取资料/Coverage，写 evidence、flows、risks 和链接，冻结风险集合并写 `[STAGE:risks]`；再次恢复后生成 tests、反例检查和最终 summary，执行校验到 PASS。主 Agent 未恢复同一会话前不得进入下一阶段。`task_type=rework` 直接按 issue 定向修正并校验。
+
 ## 分析要求
 
 1. 先逐文件读取 `source_scope`，再读取 `context_scope`，建立入口、生命周期、状态、资源、副作用、错误处理、清理与恢复关系；不要先让设计、历史用例或 Coverage 引导源码结论。
@@ -43,11 +45,6 @@ python -m pangea_agent.cli.main prepare-worker-result --task "<worker task JSON>
 5. 按六个 DFX 维度及初始化、运行、停止、恢复、卸载生命周期检查候选。风险必须包含复现条件、系统结果、外部观测、排除条件、严重度、置信度和源码证据。
 6. 完成上游限制和反证检查后冻结风险集合，写入 `risk_set_frozen=true`，再按 `test_case_generation.md` 生成步骤与预期一一对应的测试用例。风险用例填写真实 `linked_risk_ids`；只验证当前需求或 Coverage 缺口的用例使用 `linked_requirement_ids`，不得挂到不相关风险。
 7. 提交前在 `counterexamples_checked` 至少记录一项核心结论反例检查，确认最终状态、外部观测和恢复步骤不矛盾。不输出安全专项、SFMEA、实现评价、代码建议或无证据配置组合。
-
-## Flash 长结果写入
-
-- 不把整份 WorkerResult 留到最后一次长生成。完成源码与 semantic checks、完成风险与证据、完成测试用例后，分三个阶段写回既定 `result_path`，每次继续前确认内容已落盘。
-- 最终 task 返回只简短报告校验 PASS 和风险/用例数量，不复制整份分析。
 
 ## 证据
 

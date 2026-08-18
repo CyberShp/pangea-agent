@@ -20,7 +20,7 @@ tools:
 python -m pangea_agent.cli.main prepare-worker-result --task "<worker task JSON>"
 ```
 
-然后读取 task 的以下输入：
+task 提供以下可用输入。先按后文 summary 标记确定当前阶段，只读取该阶段需要的内容，不要在第一次调用把全部资料、Coverage 和测试规则一起读完：
 
 - `unit.source_scope`：必须逐文件分析的源码，已经包含 PANGEA 确定性找到的接口实现和必要源码。
 - `unit.context_scope`：函数指针的直接实现，以及调用入口、配置、规格和测试等语义范围。直接实现用于核对回调的部分副作用，不要求像 `source_scope` 一样逐文件完整分析，也不得继续递归扩展。
@@ -36,6 +36,14 @@ python -m pangea_agent.cli.main prepare-worker-result --task "<worker task JSON>
 再读取 task 指定的 `result_path`。PANGEA 已经生成固定结果骨架；只填写分析内容，不从零重建 WorkerResult，不修改 task。
 
 若 `task_type` 是 `rework`，还必须读取 `prior_result_path` 和 `review_issues`，只修复列出的复核问题。
+
+若 `task_type=analysis`，必须先看结果文件的 `summary`，一次 task 调用只完成下面一个阶段，写入后主动结束，不得在同一次调用继续下一阶段：
+
+1. 空 summary → `checkpoint`：只完成源码、`semantic_check_items`、`failure_signal_context` 和正常生命周期重放；写入 `worker_id`、`analysis_checkpoint.source_paths_reviewed/lifecycle_stages_checked/failure_paths`，summary 以 `[STAGE:checkpoint]` 开头，返回 `STAGE checkpoint`。
+2. `[STAGE:checkpoint]` → `risks`：读取资料、Coverage 和索引，补齐 evidence、business_flows、material_decisions、coverage_priorities、risks，并把 failure path 的 `linked_risk_ids` 与风险 `affected_paths` 对齐；冻结风险集合，summary 改以 `[STAGE:risks]` 开头，返回 `STAGE risks`。
+3. `[STAGE:risks]` → `tests`：生成 test_cases、完成反例检查，改写最终 summary，执行 `validate-worker-result` 直到 PASS，只返回简短 PASS 与风险/用例数量。
+
+主 Agent 恢复同一会话后才进入下一阶段。任何阶段都不得提前读取并生成后续阶段的大段内容。`task_type=rework` 已有完整 prior result，不使用三阶段，按 review issues 定向修正后直接校验。
 
 ## 分析要求
 
@@ -55,11 +63,6 @@ python -m pangea_agent.cli.main prepare-worker-result --task "<worker task JSON>
 7. 在生成测试用例前完成上游约束和反证检查，把最终风险集合固定下来，并将 `risk_set_frozen=true`。之后不得为了凑用例临时新增风险。
 8. 写入 `test_cases` 前调用 `product-blackbox-test-case` Skill，并执行 `test_case_generation.md` 的转换步骤。风险验证用例填写真实 `linked_risk_ids`；仅由当前需求或 Coverage 缺口产生、并不验证某项风险的用例，保持 `linked_risk_ids=[]`，改填文档中的真实 `linked_requirement_ids`，禁止为了过 schema 挂到相邻风险。先为每条风险列出测试变体，每个变体只含一种构建、一种运行模式和一个唯一终态，再逐行生成独立 TestCase；Debug 与 Release 等对照必须在生成步骤前拆开。某个变体的终态是进程/服务崩溃、退出或停止时，若还要验证恢复，下一步先写“重启并等待服务恢复”，再写后续业务操作。每个步骤与预期结果一一对应；故障注入只制造触发条件，测试人员仍从业务入口执行、观察并恢复。
 9. 提交前至少记录一项针对核心结论的反例检查到 `counterexamples_checked`，确认最终状态、外部观测和恢复步骤没有互相矛盾。不输出安全专项、SFMEA、代码改进建议或无证据配置组合。
-
-## Flash 长结果写入
-
-- 不得读完全部输入后把整份 WorkerResult 留到最后一次长生成。完成源码与 semantic checks 后先把 checkpoint 写回既定 `result_path`；完成风险与证据后再次写回；生成测试用例后再完成最终写入和校验。
-- 每次继续前先确认上一阶段内容已经在结果文件中。最终 task 返回只简短报告 `validate-worker-result: PASS` 和风险/用例数量，不在返回消息中复制整份分析。
 
 ## 证据
 
