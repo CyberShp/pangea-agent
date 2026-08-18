@@ -22,6 +22,7 @@ python -m pangea_agent.cli.main prepare-review-result --task "<review task JSON>
 - `repositories` 的 canonical `repo_id`、`inventory_path` 和 `source_manifest_path`。
 - review task 绑定的 worker task 中的 SQLite `index_path`，以及 source manifest 中的附件、解析告警和不完整项。
 - worker task 的 `semantic_check_items`。读取 worker result 前逐项独立完成，每个 `check_id` 单独形成结论；之后沿 failure path 的 `linked_risk_ids` 核对风险 `affected_paths` 和正文没有越出本项 `subject_path`。不同实现、断言可达性和资源重配置不得合并。
+- 大型 `context_scope` 实现文件不能整文件读取；先用 `rg -n` 定位 semantic check、failure signal 和相关 setter/close/add/remove/create，再用 offset/limit 读取每段不超过 240 行的非重叠片段，不得 find/glob 扩展冻结范围。
 - 每个 `analysis_results[].result_path`；路径绑定由 PANGEA 校验。
 - `schemas/review_result.schema.json`、`schemas/review_issue.schema.json`、worker 结果及其直接引用的 schema。
 - `src/pangea_agent/rubrics/builtin/` 中有关方法；六维 DFX、C/C++、风险可复现性和测试用例规则必读。

@@ -26,6 +26,7 @@ python -m pangea_agent.cli.main prepare-review-result --task "<review task JSON>
 - `repositories` 的 canonical `repo_id`、`inventory_path` 和 `source_manifest_path`。
 - review task 绑定的 worker task 中的 SQLite `index_path`，以及 source manifest 中的附件、解析告警和不完整项。
 - worker task 的 `context_scope` 中若包含函数指针直接实现，必须用它核对回调失败前后的部分副作用；不得只凭公共接口或需求允许返回失败就判定状态安全。
+- 大型 `context_scope` 实现文件不得整文件读取。先用 `rg -n` 定位 semantic check、failure signal 和相关 setter/close/add/remove/create，再用 offset/limit 读取每段不超过 240 行的非重叠片段；不得 find/glob 扩展 task 未冻结的源码范围。
 - worker task 的 `failure_signal_context` 是定位线索，不是风险判定。独立复核时逐项打开这些位置，按新任务中每项附带的 `analysis_focus` 确认 worker 是否正确判定可达性、Debug/Release、最终状态和 disposition。状态断言附带的 `related_state_context` 是需要打开核对的状态写入和重配置候选，不是自动风险结论。
 - worker task 的 `semantic_check_items` 是独立复核顺序。读取 worker result 前逐项完成，每个 `check_id` 单独形成结论；之后检查 worker 的 `analysis_checkpoint.failure_paths` 是否有同 ID 且源码结论一致，并沿 `linked_risk_ids` 核对风险的 `affected_paths`、标题、触发条件和调用方处理都没有越出本项 `subject_path`。缺项或把不同实现合并时必须形成 issue，不能用“总体风险已覆盖”放行。
 - 每个 `analysis_results[].result_path`。路径绑定由 PANGEA 的 Python 流程校验。
