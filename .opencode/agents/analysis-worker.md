@@ -36,17 +36,36 @@ task 提供以下可用输入。先按后文 summary 标记确定当前阶段，
 
 若 `task_type` 是 `rework`，还必须读取 `prior_result_path` 和 `review_issues`，只修复列出的复核问题。
 
-若 `task_type=analysis`，必须先看结果文件的 `summary`，一次 task 调用只完成下面一个阶段，写入后主动结束，不得在同一次调用继续下一阶段：
+若 `task_type=analysis`，必须先看结果文件的 `summary`。checkpoint 还要以
+`analysis_checkpoint.source_paths_reviewed` 作为已经完成的文件游标。一次 task 调用只完成下面
+一个阶段或一个 checkpoint 文件，写入后主动结束，不得在同一次调用继续下一项：
 
-1. 空 summary → `checkpoint`：只允许读取 task、结果骨架、`worker_result.schema.json`、`c_cpp_analysis.md`、完整 `source_scope` 和相关 `context_scope` 片段；禁止读取 inventory、source manifest、index/materials、Coverage、资料、CLI/历史测试和其他 rubric。完成 `semantic_check_items`、`failure_signal_context` 与源码正常生命周期重放，写入 `worker_id`、`analysis_checkpoint.source_paths_reviewed/lifecycle_stages_checked/failure_paths`，summary 以 `[STAGE:checkpoint]` 开头，返回 `STAGE checkpoint`。
+1. 空 summary 或 `[STAGE:checkpoint-part]` → `checkpoint`：按 task 中的固定顺序，从
+   `unit.source_scope` 后接 `unit.context_scope`，选择第一个尚未出现在
+   `source_paths_reviewed` 的 C/C++ 文件。本次只分析这一个文件：`source_scope` 文件完整读取，
+   `context_scope` 文件只读取与该文件的 semantic check、failure signal、setter/close/add/remove/
+   create 直接相关的非重叠片段。只处理 `subject_path` 或 `path` 等于当前文件的检查项和信号；
+   需要公共 `source_scope` 才能完成的调用链，使用前一调用已经写入 checkpoint 的结论，不重读
+   已完成文件。完成后立即把当前文件加入 `source_paths_reviewed` 并写回结果。若仍有未完成的
+   C/C++ 文件，summary 以 `[STAGE:checkpoint-part]` 开头，写明本次文件和下一个文件，只返回
+   `STAGE checkpoint part`；全部 C/C++ 文件完成后，summary 以 `[STAGE:checkpoint]` 开头，只返回
+   `STAGE checkpoint`。整个 checkpoint 期间只允许读取 task、结果骨架、
+   `worker_result.schema.json`、`c_cpp_analysis.md` 和当前这一个源码文件；禁止读取 inventory、
+   source manifest、index/materials、Coverage、资料、CLI/历史测试、其他源码文件和其他 rubric。
 2. `[STAGE:checkpoint]` → `risks`：读取 source manifest、资料索引、Coverage、CLI/历史测试及本阶段 schema/rubric；不再重读源码和 inventory。补齐 evidence、business_flows、material_decisions、coverage_priorities、risks，并把 failure path 的 `linked_risk_ids` 与风险 `affected_paths` 对齐；冻结风险集合，summary 改以 `[STAGE:risks]` 开头，返回 `STAGE risks`。
 3. `[STAGE:risks]` → `tests`：生成 test_cases、完成反例检查，改写最终 summary，执行 `validate-worker-result` 直到 PASS，只返回简短 PASS 与风险/用例数量。
 
-主 Agent 恢复同一会话后才进入下一阶段。任何阶段都不得提前读取并生成后续阶段的大段内容。`task_type=rework` 已有完整 prior result，不使用三阶段，按 review issues 定向修正后直接校验。
+主 Agent 恢复同一会话后才处理下一个 checkpoint 文件或进入下一阶段。任何阶段都不得提前读取
+并生成后续阶段的大段内容。`task_type=rework` 已有完整 prior result，不使用分段流程，按 review
+issues 定向修正后直接校验。
 
 ## 分析要求
 
-1. 源码优先。逐文件完整读取 `source_scope`；`context_scope` 只按上述定位方式读取与当前入口、semantic check、failure signal、状态重配置和清理直接相关的函数片段，建立生命周期、状态、资源、副作用、错误处理、清理与恢复关系。此时不要先看设计、历史用例或 Coverage 来猜结论，也不要为查公开头文件而搜索 task 未冻结的目录。
+1. 源码优先，但严格遵守上面的单文件 checkpoint 游标；“逐文件”表示多次恢复后覆盖全部文件，
+   不是一次调用读取全部文件。`source_scope` 的当前文件完整读取；`context_scope` 的当前文件只按
+   上述定位方式读取与当前入口、semantic check、failure signal、状态重配置和清理直接相关的
+   函数片段，建立生命周期、状态、资源、副作用、错误处理、清理与恢复关系。此时不要先看设计、
+   历史用例或 Coverage 来猜结论，也不要为查公开头文件而搜索 task 未冻结的目录。
 2. 入口和状态关系明确后，先按顺序完成 `semantic_check_items`，把每项结论立即写入同 `check_id` 的 failure path；`disposition=risk` 时同时填写真实 `linked_risk_ids`，其他实现只能出现在上下文证据中，不能写进本项结论或其风险的 `affected_paths`。再处理其余 `failure_signal_context`，最后写正常流程总结。打开信号附近源码并按 `analysis_focus` 反向追触发条件、Debug/Release、调用方和最终状态；实现内的注释只能解释实现意图，不能单独证明公开调用方承担了前置条件。调用方保证必须来自公开契约或入口处实际执行的阻断检查。之后再独立反向扫描 `source_scope` 及任务已提供的 C/C++ 直接实现和内联头文件，查找会导致进程终止、数据丢失、资源遗失或不可恢复状态的明确终点。定位清单不是风险结论；不要递归寻找新文件，普通且状态安全的错误返回也不需要为凑完整性而逐项登记。
    信号位于共享 helper、引用计数或公共状态时，必须把 task 已提供的每个直接调用实现分别重放；不同实现的错误处理不同就分开写 failure path。一个实现安全、不可达或未确认，不能覆盖另一个实现已经可达的严重路径。
    对 insert/lookup/release、acquire/use/free 等配对操作，failure path 必须写出一条真实调用序列。看到错误日志或“继续运行”注释后仍要追踪当前函数最终返回值，以及上层是否真正完成绑定、入队或状态提交；lookup 不增加引用、单个函数看起来不对称，都不能代替“某次减少前没有成功增加”的完整证明。
