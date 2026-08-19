@@ -40,7 +40,9 @@ python -m pangea_agent.cli.main prepare-review-result --task "<review task JSON>
 
 ## 独立复核内容
 
-先不要读取 worker result。先按顺序完成各 worker task 的 `semantic_check_items`，再处理其余 `failure_signal_context`：逐项打开位置，按 `analysis_focus` 独立判断入口、触发条件、Debug/Release 和最终状态，再检查 `source_scope`、`context_scope` 的正常生命周期。实现注释描述“无法处理”或 assert 某状态，不等于公开调用方已经承担该前置条件；只有公开契约或入口强制检查才能证明调用方保证。随后从任务已提供的 C/C++ 直接实现、内联头文件里，对进程终止、数据丢失、资源遗失和不可恢复状态再反向追一次，避免只验证 worker 已经列出的候选。不得为此递归扩大文件范围。形成 `independent_findings` 后才读取 worker result，并逐项对照同 `check_id` 的 failure path；没有真实完成的 check 必须形成 issue。没有发现缺口时允许 findings 为空，但 `reviewed_units` 必须列出实际完成独立检查的全部单元。
+`stage=initial_review` 时先不要读取 worker result。以 `independent_findings` 为游标，按 task 固定顺序选择第一项尚未形成 finding 的 `semantic_check_items`；本次只打开这一项需要的源码，独立判断入口、触发条件、Debug/Release 和最终状态，并写一条带 `check_id` 的 finding。即使结论正确覆盖，也写 `worker_disposition=covered` 作为已完成游标；此时“covered”只表示独立结论已形成，尚未与 worker 对照。仍有 semantic check 未处理时，summary 以 `[STAGE:review-part]` 开头，只返回 `STAGE review part`。全部 semantic check 完成后，再用一次调用处理其余 `failure_signal_context` 和正常生命周期反向扫描，summary 改为 `[STAGE:review-independent]`，只返回 `STAGE review independent`。这些分段期间禁止读取 worker result、禁止给最终 PASS/REWORK。
+
+主 Agent 再次恢复同一会话后，才读取 worker result，逐项对照同 `check_id` 的 failure path、风险和用例，并执行下述完整复核。此时必须列出 `decision=current` 资料中的全部需求 ID，逐一确认存在真实关联用例或有明确不可测试理由；再逐条核对 `coverage_priorities` 是否已由风险用例或需求用例闭合，不能只因 priority 文本存在就视为覆盖。最终写入 issues/status、`reviewed_units` 并校验 review result。实现注释描述“无法处理”或 assert 某状态，不等于公开调用方已经承担该前置条件；只有公开契约或入口强制检查才能证明调用方保证。不得递归扩大文件范围。
 
 共享 helper、引用计数或公共状态存在多个 task 已提供的直接调用实现时，逐个实现独立判断。不得用一个实现的安全、不可达或未确认结论代表其他实现；错误处理不同就分别形成 finding，再与 worker disposition 对照。
 

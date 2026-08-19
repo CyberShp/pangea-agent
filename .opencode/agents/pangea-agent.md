@@ -55,14 +55,14 @@ tools:
 - `agent-results/` 中结果文件存在不代表已完成；只有 graph 接受后，`progress.completed_analysis_units` / `completed_rework_units` 中的单元才算完成。
 - `WAITING_ANALYSIS`：最多并发派发 4 个 `analysis-worker`，每个只处理一个互不重叠单元，禁止继续派生 Agent。向 worker 传对应 task JSON 路径，不由主 Agent 转述或重构任务字段。
 - 派发 analysis-worker 时消息只包含对应 task JSON 路径，不追加验收点、源码结论、风险猜测或文档摘要，避免主 Agent 转述替代 worker 读取冻结输入。
-- analysis-worker 返回 `STAGE checkpoint part` 时，记录其 task_id 并恢复同一会话，消息只写“继续同一 task 的下一个 checkpoint 文件”；不得提前进入 risks。只有结果 summary 已变成 `[STAGE:checkpoint]` 且 worker 返回 `STAGE checkpoint`，才恢复同一会话进入 risks；返回 `STAGE risks` 后再恢复同一会话进入 tests 并校验。这些计划内分段返回不是提交失败、schema 修正或正式返工；只有最终 `validate-worker-result=PASS` 才推进 graph。
+- analysis-worker 返回 `STAGE checkpoint part` 时，记录其 task_id 并恢复同一会话，消息只写“继续同一 task 的下一个 checkpoint 文件”；不得提前进入 risks。只有结果 summary 已变成 `[STAGE:checkpoint]` 且 worker 返回 `STAGE checkpoint`，才恢复同一会话进入 risks。返回 `STAGE risks part` 时恢复同一会话，消息只写“继续同一 task 的下一条 failure path 风险转化”；返回 `STAGE risks` 后进入 tests。返回 `STAGE tests part` 时恢复同一会话，消息只写“继续同一 task 的下一项风险或当前需求用例”；不得提前提交。上述计划内分段返回不是提交失败、schema 修正或正式返工；只有最终 `validate-worker-result=PASS` 才推进 graph。
 - 每次 task 工具成功返回后，立即执行 `record-agent-session`，按 `run_id`、角色、单元和返回的 `task_id` 写入 `progress.json`。Run 恢复时先读取 `agent_sessions`；已有 `task_id` 就恢复该会话，不重复新建。
 - Worker 必须在 Python 生成的结果骨架上填写分析内容，并在结束前执行 `validate-worker-result`。**只有该命令返回 `PASS`，这个 Worker 才算提交完成。**
 - `validate-worker-result` 返回 JSON/schema 错误时，不进入正式 rework，也不增加 `attempt`。优先恢复同一个 analysis-worker 会话，让它根据本次完整错误列表和当前 schema 修正同一 `result_path`，直到 `PASS`。不得由主 Agent 编写 `fix_all.py`、临时脚本或手工拼 JSON 代替 Worker 修复实质分析内容。
 - PANGEA 只自动恢复 `run_id`、`unit_id`、`attempt`、分析范围等机械字段，以及能够确定性定位的 evidence 引用；**不会自动补写** `business_flows`、`visual_findings`、`risks`、`test_cases` 的缺失字段、空步骤、空证据或旧字段体系。不得再以“字段问题会自动规范化”为理由跳过校验失败。
 - 若 Worker 会话在未 `PASS` 时结束，主 Agent 不得执行 `resume-run` 期待 graph 接收该结果；必须先恢复该 Worker 完成提交。如果原 Worker 无法恢复，可重新启动同一个 analysis task 继续修改同一 attempt=0 结果，但不得创建新 Run 或占用正式 rework 次数。
 - Worker 在应返回 `STAGE checkpoint part`、`STAGE checkpoint`、`STAGE risks` 或最终 PASS 时返回空 task_result，且对应阶段没有写入结果文件，才按提交失败处理：优先恢复同一会话；连续两次空返回才允许替换 worker。替代 worker 仍处理同一 task、同一 attempt、同一结果路径，并从 summary 与 `source_paths_reviewed` 标记的未完成位置继续。
-- `WAITING_REVIEW`：只有全部 analysis unit 都已被 graph 接受后，才启动 1 个 `review-worker` 做独立复核，并用 `record-agent-session --role review` 保存 task 工具返回的 `task_id`。
+- `WAITING_REVIEW`：只有全部 analysis unit 都已被 graph 接受后，才启动 1 个 `review-worker` 做独立复核，并用 `record-agent-session --role review` 保存 task 工具返回的 `task_id`。review-worker 返回 `STAGE review part` 时恢复同一会话，消息只写“继续下一项独立 semantic check”；返回 `STAGE review independent` 时恢复同一会话，消息只写“对照 worker 结果并完成需求、Coverage 与用例闭环复核”。只有最终 review result 校验通过后才执行 `resume-run`。
 - `WAITING_REWORK`：只有 graph 已生成 `agent-tasks/rework/*.json` 时才进入正式返工；原 worker 优先处理，不可恢复时可替代，但 graph 中的正式返工仍只有一次。analysis-worker 每次只处理 `review_issues` 中第一个尚未写入 `addressed_review_issue_ids` 的 issue；返回 `STAGE rework part` 时记录原 task_id，并恢复同一会话，消息只写“继续同一 rework task 的下一个 review issue”，不得执行 `resume-run`。全部 issue 都已处理且 `validate-worker-result=PASS` 后，才推进 graph。
 - `WAITING_REWORK_REVIEW`：从 `progress.agent_sessions.review.task_id` 取得初审会话并恢复原 `review-worker`，让它读取 rework review task JSON；不得新建 reviewer 会话。`task_id` 缺失或恢复失败时标记 `UNRESOLVED`，不换 reviewer。
 - 完成当前阶段产物后，用 `resume-run --run-id <run_id>` 推进。

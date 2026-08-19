@@ -60,8 +60,8 @@ case 的前置、步骤、预期、观测和清理。issue 只要求新增用例
    `STAGE checkpoint`。整个 checkpoint 期间只允许读取 task、结果骨架、
    `worker_result.schema.json`、`c_cpp_analysis.md` 和当前这一个源码文件；禁止读取 inventory、
    source manifest、index/materials、Coverage、资料、CLI/历史测试、其他源码文件和其他 rubric。
-2. `[STAGE:checkpoint]` → `risks`：读取 source manifest、资料索引、Coverage、CLI/历史测试及本阶段 schema/rubric；不再重读源码和 inventory。补齐 evidence、business_flows、material_decisions、coverage_priorities、risks，并把 failure path 的 `linked_risk_ids` 与风险 `affected_paths` 对齐；冻结风险集合，summary 改以 `[STAGE:risks]` 开头，返回 `STAGE risks`。
-3. `[STAGE:risks]` → `tests`：生成 test_cases、完成反例检查，改写最终 summary，执行 `validate-worker-result` 直到 PASS，只返回简短 PASS 与风险/用例数量。
+2. `[STAGE:checkpoint]` 或 `[STAGE:risks-part]` → `risks`：读取 source manifest、资料索引、Coverage、CLI/历史测试及本阶段 schema/rubric；不再重读源码和 inventory。首次进入时补齐 evidence、business_flows、material_decisions、coverage_priorities。随后只选择第一条尚未被现有 RiskCard 覆盖的 `disposition=risk/unresolved` failure path，本次只为它建立或修正 RiskCard，并对齐 `linked_risk_ids` 与 `affected_paths`；同一根因需要 Debug/Release 共用一张卡可以共用，但不得顺带处理下一条 failure path。仍有未转化路径时 summary 以 `[STAGE:risks-part]` 开头并返回 `STAGE risks part`；全部转化后才冻结风险集合，summary 改以 `[STAGE:risks]` 开头，返回 `STAGE risks`。
+3. `[STAGE:risks]` 或 `[STAGE:tests-part]` → `tests`：先选择第一张 `translation_status!=Developer-confirm` 且尚无任何关联用例的 RiskCard，本次生成该风险所需的全部构建/运行变体；可测试风险都有用例后，再从 `decision=current` 的资料中选择第一条尚无关联用例的当前需求，本次只生成该需求用例。仍有可测试风险或当前需求未处理时，summary 以 `[STAGE:tests-part]` 开头并返回 `STAGE tests part`。全部处理后完成反例检查，改写最终 summary，执行 `validate-worker-result` 直到 PASS，只返回简短 PASS 与风险/用例数量。Coverage priority 明确关联的需求同样必须在此闭合，不能只写在 priority 文本中。
 
 主 Agent 恢复同一会话后才处理下一个 checkpoint 文件或进入下一阶段。任何阶段都不得提前读取
 并生成后续阶段的大段内容。`task_type=rework` 已有完整 prior result，不重复 analysis 的三阶段，
