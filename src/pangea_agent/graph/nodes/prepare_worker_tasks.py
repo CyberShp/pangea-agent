@@ -207,6 +207,18 @@ def _semantic_check_items(
                     ),
                     "context_paths": [signal["path"]],
                 })
+                checks.append({
+                    "check_id": f"SC-{signal_index:02d}-CONTINUATION",
+                    "kind": "resource_reconfiguration",
+                    "subject_path": signal["path"],
+                    "instruction": (
+                        f"只检查 {state} 在资源重配置后的后续公开操作。若结论声称持续通知、"
+                        "持续阻塞、重复移除或容器破坏，按调用顺序证明每一步所依赖的第二状态、"
+                        "容器成员关系、计数器以及全局与对象配置可以同时成立；缺少状态转换时缩小"
+                        "结论，不得从残留标志直接推导持续或破坏性终态。"
+                    ),
+                    "context_paths": [signal["path"]],
+                })
 
         elif not re.search(r"\bref\s*>\s*0", signal["signal"]):
             check_suffix = "TERMINATION" if _ABORT_RE.search(signal["signal"]) else "ASSERT"
