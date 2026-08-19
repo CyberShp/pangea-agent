@@ -63,7 +63,7 @@ tools:
 - 若 Worker 会话在未 `PASS` 时结束，主 Agent 不得执行 `resume-run` 期待 graph 接收该结果；必须先恢复该 Worker 完成提交。如果原 Worker 无法恢复，可重新启动同一个 analysis task 继续修改同一 attempt=0 结果，但不得创建新 Run 或占用正式 rework 次数。
 - Worker 在应返回 `STAGE checkpoint part`、`STAGE checkpoint`、`STAGE risks` 或最终 PASS 时返回空 task_result，且对应阶段没有写入结果文件，才按提交失败处理：优先恢复同一会话；连续两次空返回才允许替换 worker。替代 worker 仍处理同一 task、同一 attempt、同一结果路径，并从 summary 与 `source_paths_reviewed` 标记的未完成位置继续。
 - `WAITING_REVIEW`：只有全部 analysis unit 都已被 graph 接受后，才启动 1 个 `review-worker` 做独立复核，并用 `record-agent-session --role review` 保存 task 工具返回的 `task_id`。
-- `WAITING_REWORK`：只有 graph 已生成 `agent-tasks/rework/*.json` 时才进入正式返工；原 worker 优先处理，不可恢复时可替代，但返工仍只有一次。返工 Worker 同样必须 `validate-worker-result=PASS` 后才能结束。
+- `WAITING_REWORK`：只有 graph 已生成 `agent-tasks/rework/*.json` 时才进入正式返工；原 worker 优先处理，不可恢复时可替代，但 graph 中的正式返工仍只有一次。analysis-worker 每次只处理 `review_issues` 中第一个尚未写入 `addressed_review_issue_ids` 的 issue；返回 `STAGE rework part` 时记录原 task_id，并恢复同一会话，消息只写“继续同一 rework task 的下一个 review issue”，不得执行 `resume-run`。全部 issue 都已处理且 `validate-worker-result=PASS` 后，才推进 graph。
 - `WAITING_REWORK_REVIEW`：从 `progress.agent_sessions.review.task_id` 取得初审会话并恢复原 `review-worker`，让它读取 rework review task JSON；不得新建 reviewer 会话。`task_id` 缺失或恢复失败时标记 `UNRESOLVED`，不换 reviewer。
 - 完成当前阶段产物后，用 `resume-run --run-id <run_id>` 推进。
 

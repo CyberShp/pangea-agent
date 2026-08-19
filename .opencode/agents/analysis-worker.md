@@ -35,12 +35,14 @@ task 提供以下可用输入。先按后文 summary 标记确定当前阶段，
 再读取 task 指定的 `result_path`。PANGEA 已经生成固定结果骨架；只填写分析内容，不从零重建 WorkerResult，不修改 task。
 
 若 `task_type` 是 `rework`，还必须读取 `prior_result_path` 和 `review_issues`，只修复列出的复核问题。
-以 prior result 作为内容基础时，每个 issue 都要沿同一结论链同步修改：先改对应
-`analysis_checkpoint.failure_paths`，再改关联 risk 的 trigger/system_result/external_observation/
-exclusion_condition，同时改顶层 evidence observation、business_flows 和其他仍复述旧机制的 checkpoint
-文字，最后改关联 test case 的前置、步骤、预期、观测和清理。issue 只要求新增用例时，
-不得顺带重写无关风险。不要只改风险卡或测试用例而保留 checkpoint 中已经被 reviewer 否定的旧
-机制；failure path 是下游风险和用例的根因记录，三处必须描述同一触发链和唯一终态。
+以 prior result 作为内容基础时，以 `addressed_review_issue_ids` 为游标，选择
+`review_issues` 中第一个尚未处理的 issue；本次调用只处理这一项，不同时展开后续 issue。沿同一
+结论链同步修改：先改对应 `analysis_checkpoint.failure_paths`，再改关联 risk 的
+trigger/system_result/external_observation/exclusion_condition 和该 risk 自身的 `evidence[]`，同时改
+顶层 evidence observation、business_flows 和其他仍复述旧机制的 checkpoint 文字，最后改关联 test
+case 的前置、步骤、预期、观测和清理。issue 只要求新增用例时，不得顺带重写无关风险。不要只改
+风险卡或测试用例而保留 checkpoint 或 risk.evidence 中已经被 reviewer 否定的旧机制；failure path
+是下游风险和用例的根因记录，各处必须描述同一触发链和唯一终态。
 
 若 `task_type=analysis`，必须先看结果文件的 `summary`。checkpoint 还要以
 `analysis_checkpoint.source_paths_reviewed` 作为已经完成的文件游标。一次 task 调用只完成下面
@@ -62,13 +64,16 @@ exclusion_condition，同时改顶层 evidence observation、business_flows 和�
 3. `[STAGE:risks]` → `tests`：生成 test_cases、完成反例检查，改写最终 summary，执行 `validate-worker-result` 直到 PASS，只返回简短 PASS 与风险/用例数量。
 
 主 Agent 恢复同一会话后才处理下一个 checkpoint 文件或进入下一阶段。任何阶段都不得提前读取
-并生成后续阶段的大段内容。`task_type=rework` 已有完整 prior result，不使用分段流程，按 review
-issues 定向修正后直接校验。
+并生成后续阶段的大段内容。`task_type=rework` 已有完整 prior result，不重复 analysis 的三阶段，
+但按 review issue 分次恢复同一会话。
 
-`task_type=rework` 在校验前，逐个 `review_issues[].issue_id` 做一次定向回看：用 issue 中出现的
-check ID、risk ID、test ID 和被否定的关键短语查询当前 rework result，确认 checkpoint、evidence、
-business flow、risk、test 各层均已更新且没有残留的旧终态；然后才把该 issue ID 加入
-`addressed_review_issue_ids`。这只检查本次四周明确列出的改动，不扩大到全项目或无关结论。
+`task_type=rework` 完成本次唯一 issue 后，用该 issue 中的 check ID、risk ID、test ID、
+`required_change` 和被否定的关键短语查询整个当前 rework result；逐项检查 checkpoint、顶层
+evidence、risk 自身的 `evidence[]`、business flow、risk 和 test，确认旧触发、旧终态和旧观测均
+已替换，再把这一项 issue ID 加入 `addressed_review_issue_ids`。若仍有未处理 issue，summary 以
+`[STAGE:rework-part]` 开头并只返回 `STAGE rework part`，等待主 Agent 恢复同一会话；全部 issue
+处理完才执行 `validate-worker-result`，通过后返回 PASS。这只回看 reviewer 明确列出的改动，不
+扩大到全项目或无关结论。
 
 ## 分析要求
 
