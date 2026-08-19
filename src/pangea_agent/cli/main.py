@@ -5,12 +5,13 @@ from pathlib import Path
 
 from pangea_agent.agent_io import write_json
 from pangea_agent.graph.run_store import (
+    independent_review_result_skeleton,
     load_progress,
     load_review_task,
     load_worker_result,
     load_worker_task,
-    normalize_worker_result_path,
     normalize_review_result_path,
+    normalize_worker_result_path,
     review_result_skeleton,
     save_progress,
     worker_result_skeleton,
@@ -94,7 +95,12 @@ def main() -> None:
         task = load_review_task(task_path)
         result_path = normalize_review_result_path(task_path, task)
         if not result_path.exists():
-            write_json(result_path, review_result_skeleton(task))
+            skeleton = (
+                independent_review_result_skeleton(task)
+                if task.stage == "independent_review"
+                else review_result_skeleton(task)
+            )
+            write_json(result_path, skeleton)
         _mark_session_started(task_path, "review")
         print(result_path)
     elif args.command == "validate-worker-result":

@@ -179,6 +179,11 @@ class ResultRef(StrictModel):
     result_path: str
 
 
+class TaskRef(StrictModel):
+    unit_id: str
+    task_path: str
+
+
 class ReviewTask(StrictModel):
     schema_version: Literal["1.0"] = "1.0"
     run_id: str = Field(min_length=1)
@@ -186,9 +191,16 @@ class ReviewTask(StrictModel):
     repositories: list[RepositoryRef] = Field(min_length=1)
     inventory_path: str = Field(min_length=1)
     source_manifest_path: str = Field(min_length=1)
-    stage: Literal["initial_review", "rework_verification"] = "initial_review"
+    stage: Literal[
+        "independent_review",
+        "comparison_review",
+        "initial_review",
+        "rework_verification",
+    ] = "initial_review"
     result_path: str = Field(min_length=1)
-    analysis_results: list[ResultRef] = Field(min_length=1)
+    analysis_tasks: list[TaskRef] = Field(default_factory=list)
+    analysis_results: list[ResultRef] = Field(default_factory=list)
+    independent_result_path: str | None = None
     may_spawn_workers: Literal[False] = False
     review_round: Literal[1] = 1
     same_reviewer_id: str | None = None
@@ -196,15 +208,53 @@ class ReviewTask(StrictModel):
 
     @model_validator(mode="after")
     def validate_stage(self) -> "ReviewTask":
-        if self.stage == "initial_review" and (self.same_reviewer_id is not None or self.prior_issues):
+        if self.stage == "independent_review" and (
+            not self.analysis_tasks
+            or self.analysis_results
+            or self.independent_result_path is not None
+            or self.same_reviewer_id is not None
+            or self.prior_issues
+        ):
+            raise ValueError("独立复核只能读取 analysis task，不能携带 worker result 或既有复核结论")
+        if self.stage == "comparison_review" and (
+            not self.analysis_tasks
+            or not self.analysis_results
+            or not self.independent_result_path
+            or not self.same_reviewer_id
+            or self.prior_issues
+        ):
+            raise ValueError("对照复核必须绑定独立复核结果、原 reviewer、analysis task 和 worker result")
+        if self.stage == "initial_review" and (
+            not self.analysis_results or self.same_reviewer_id is not None or self.prior_issues
+        ):
             raise ValueError("初审任务不能预设 reviewer 或 prior issues")
-        if self.stage == "rework_verification" and (not self.same_reviewer_id or not self.prior_issues):
+        if self.stage == "rework_verification" and (
+            not self.analysis_results or not self.same_reviewer_id or not self.prior_issues
+        ):
             raise ValueError("返工复核必须绑定原 reviewer 和初审问题")
         return self
 
 
+class IndependentReviewFinding(StrictModel):
+    unit_id: str = Field(min_length=1)
+    check_id: str = Field(min_length=1)
+    finding: str = Field(min_length=1)
+    evidence: list[str] = Field(min_length=1)
+
+
+class IndependentReviewResult(StrictModel):
+    schema_version: Literal["1.0"] = "1.0"
+    run_id: str = Field(min_length=1)
+    reviewer_id: str = Field(min_length=1)
+    finish_reason: Literal["stop", "truncated", "error"]
+    summary: str = Field(min_length=1)
+    reviewed_units: list[str] = Field(min_length=1)
+    findings: list[IndependentReviewFinding] = Field(default_factory=list)
+
+
 class IndependentFinding(StrictModel):
     unit_id: str = Field(min_length=1)
+    check_id: str | None = Field(default=None, min_length=1)
     finding: str = Field(min_length=1)
     evidence: list[str] = Field(min_length=1)
     worker_disposition: Literal["covered", "reasonably_excluded", "missing", "contradiction"]
@@ -250,6 +300,11 @@ class ReviewerUnavailable(StrictModel):
 class TerminationSignal(StrictModel):
     schema_version: Literal["1.0"] = "1.0"
     run_id: str = Field(min_length=1)
-    phase: Literal["WAITING_REVIEW", "WAITING_REWORK", "WAITING_REWORK_REVIEW"]
+    phase: Literal[
+        "WAITING_REVIEW",
+        "WAITING_REVIEW_COMPARISON",
+        "WAITING_REWORK",
+        "WAITING_REWORK_REVIEW",
+    ]
     reason: str = Field(min_length=1)
     status: Literal["UNRESOLVED"] = "UNRESOLVED"

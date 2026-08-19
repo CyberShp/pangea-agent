@@ -7,7 +7,13 @@ import sqlite3
 
 from pydantic import ValidationError
 
-from pangea_agent.models.worker import ReviewResult, ReviewTask, WorkerResult, WorkerTask
+from pangea_agent.models.worker import (
+    IndependentReviewResult,
+    ReviewResult,
+    ReviewTask,
+    WorkerResult,
+    WorkerTask,
+)
 
 
 class ArtifactRejected(ValueError):
@@ -290,7 +296,37 @@ def normalize_unique_ids(results: list[WorkerResult]) -> None:
             seen_cases.add(candidate)
 
 
-def validate_review_result(task: ReviewTask, result: ReviewResult, known_units: set[str]) -> None:
+def validate_independent_review_result(
+    task: ReviewTask,
+    result: IndependentReviewResult,
+    expected_checks: set[tuple[str, str]],
+) -> None:
+    result.run_id = task.run_id
+    if task.stage != "independent_review":
+        raise ArtifactRejected("独立复核结果只能绑定 independent_review task")
+    if result.finish_reason != "stop":
+        raise ArtifactRejected(f"独立复核输出不完整：finish_reason={result.finish_reason}")
+    known_units = {item.unit_id for item in task.analysis_tasks}
+    if set(result.reviewed_units) != known_units:
+        raise ArtifactRejected("独立复核未记录全部分析单元")
+    actual_checks = {(item.unit_id, item.check_id) for item in result.findings}
+    if len(actual_checks) != len(result.findings):
+        raise ArtifactRejected("独立复核 check_id 重复")
+    unknown_units = {item.unit_id for item in result.findings} - known_units
+    if unknown_units:
+        raise ArtifactRejected(f"独立复核引用了未知单元：{sorted(unknown_units)}")
+    missing_checks = expected_checks - actual_checks
+    if missing_checks:
+        formatted = [f"{unit_id}:{check_id}" for unit_id, check_id in sorted(missing_checks)]
+        raise ArtifactRejected(f"独立复核遗漏 semantic check：{formatted}")
+
+
+def validate_review_result(
+    task: ReviewTask,
+    result: ReviewResult,
+    known_units: set[str],
+    independent_result: IndependentReviewResult | None = None,
+) -> None:
     result.run_id = task.run_id
     if result.finish_reason != "stop":
         raise ArtifactRejected(f"review 输出不完整：finish_reason={result.finish_reason}")
@@ -304,6 +340,26 @@ def validate_review_result(task: ReviewTask, result: ReviewResult, known_units: 
     unknown_findings = {item.unit_id for item in result.independent_findings} - known_units
     if unknown_findings:
         raise ArtifactRejected(f"独立发现引用了未知单元：{sorted(unknown_findings)}")
+    if task.stage == "comparison_review":
+        if independent_result is None:
+            raise ArtifactRejected("对照复核缺少已完成的独立复核结果")
+        if result.reviewer_id != independent_result.reviewer_id:
+            raise ArtifactRejected("对照复核必须由原独立 reviewer 完成")
+        original = {
+            (item.unit_id, item.check_id): item
+            for item in independent_result.findings
+        }
+        compared = {
+            (item.unit_id, item.check_id): item
+            for item in result.independent_findings
+            if item.check_id is not None
+        }
+        if len(compared) != len(result.independent_findings) or set(compared) != set(original):
+            raise ArtifactRejected("对照复核必须逐项保留独立复核 findings")
+        for key, finding in original.items():
+            comparison = compared[key]
+            if comparison.finding != finding.finding or comparison.evidence != finding.evidence:
+                raise ArtifactRejected("对照复核不能改写独立复核结论或证据")
 
 
 def validation_message(exc: Exception) -> str:

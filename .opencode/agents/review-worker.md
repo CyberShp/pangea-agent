@@ -21,15 +21,20 @@ python -m pangea_agent.cli.main prepare-review-result --task "<review task JSON>
 
 再读取命令返回的结果骨架并填写，不从零新建 review result。
 
-- `run_id`、`stage`、`result_path`、`analysis_results`。
+- `run_id`、`stage`、`result_path`、`analysis_tasks`。
 - `may_spawn_workers` 必须为 `false`，`review_round` 必须为 `1`。
+- `stage=independent_review` 时，task 不会提供 `analysis_results`；只读取
+  `analysis_tasks[].task_path`、其中冻结的源码/资料/Coverage 输入以及独立复核规则。
+- `stage=comparison_review` 时，先确认自己的 reviewer 身份与 `same_reviewer_id` 一致，读取
+  `independent_result_path`，然后才读取 `analysis_results`。
 - `repositories` 的 canonical `repo_id`、`inventory_path` 和 `source_manifest_path`。
 - review task 绑定的 worker task 中的 SQLite `index_path`，以及 source manifest 中的附件、解析告警和不完整项。
 - worker task 的 `context_scope` 中若包含函数指针直接实现，必须用它核对回调失败前后的部分副作用；不得只凭公共接口或需求允许返回失败就判定状态安全。
 - 大型 `context_scope` 实现文件不得整文件读取。先用 `rg -n` 定位 semantic check、failure signal 和相关 setter/close/add/remove/create，再用 offset/limit 读取每段不超过 240 行的非重叠片段；不得 find/glob 扩展 task 未冻结的源码范围。
 - worker task 的 `failure_signal_context` 是定位线索，不是风险判定。独立复核时逐项打开这些位置，按新任务中每项附带的 `analysis_focus` 确认 worker 是否正确判定可达性、Debug/Release、最终状态和 disposition。状态断言附带的 `related_state_context` 是需要打开核对的状态写入和重配置候选，不是自动风险结论。
 - worker task 的 `semantic_check_items` 是独立复核顺序。读取 worker result 前逐项完成，每个 `check_id` 单独形成结论；之后检查 worker 的 `analysis_checkpoint.failure_paths` 是否有同 ID 且源码结论一致，并沿 `linked_risk_ids` 核对风险的 `affected_paths`、标题、触发条件和调用方处理都没有越出本项 `subject_path`。缺项或把不同实现合并时必须形成 issue，不能用“总体风险已覆盖”放行。
-- 每个 `analysis_results[].result_path`。路径绑定由 PANGEA 的 Python 流程校验。
+- 只有 `comparison_review` 和 `rework_verification` 才读取每个
+  `analysis_results[].result_path`。路径绑定由 PANGEA 的 Python 流程校验。
 - `schemas/review_result.schema.json`、`schemas/review_issue.schema.json`、worker 结果及其直接引用的 schema。
 - `src/pangea_agent/rubrics/builtin/` 中有关方法；六维 DFX、C/C++、风险可复现性和测试用例规则必读。
 - `schemas/` 与 `src/pangea_agent/rubrics/` 位于当前 pangea-agent 工作区根目录，不在 task 的 `data_root`、Run 或验收 case 中。直接读取固定路径，不用 glob/find 搜索。
@@ -40,9 +45,21 @@ python -m pangea_agent.cli.main prepare-review-result --task "<review task JSON>
 
 ## 独立复核内容
 
-`stage=initial_review` 时先不要读取 worker result。以 `independent_findings` 为游标，按 task 固定顺序选择第一项尚未形成 finding 的 `semantic_check_items`；本次只打开这一项需要的源码，独立判断入口、触发条件、Debug/Release 和最终状态，并写一条带 `check_id` 的 finding。即使结论正确覆盖，也写 `worker_disposition=covered` 作为已完成游标；此时“covered”只表示独立结论已形成，尚未与 worker 对照。仍有 semantic check 未处理时，summary 以 `[STAGE:review-part]` 开头，只返回 `STAGE review part`。全部 semantic check 完成后，再用一次调用处理其余 `failure_signal_context` 和正常生命周期反向扫描，summary 改为 `[STAGE:review-independent]`，只返回 `STAGE review independent`。这些分段期间禁止读取 worker result、禁止给最终 PASS/REWORK。
+`stage=independent_review` 时，在一次调用内按 task 固定顺序完成全部
+`semantic_check_items`、其余 `failure_signal_context` 和正常生命周期反向扫描。每个 semantic
+check 必须写一条同 `check_id` 的 finding；额外发现使用稳定且有含义的 check_id。finding 只写从
+源码、当前资料和 Coverage 独立得到的结论与证据，不写 worker 是否覆盖，也不读取、搜索或推测
+worker result 路径。结果写入 task 指定的独立复核结果文件，符合
+`schemas/independent_review_result.schema.json`，然后只返回 `STAGE review independent`。该阶段不输出
+PASS、REWORK 或 UNRESOLVED。
 
-主 Agent 再次恢复同一会话后，才读取 worker result，逐项对照同 `check_id` 的 failure path、风险和用例，并执行下述完整复核。此时必须列出 `decision=current` 资料中的全部需求 ID，逐一确认存在真实关联用例或有明确不可测试理由；再逐条核对 `coverage_priorities` 是否已由风险用例或需求用例闭合，不能只因 priority 文本存在就视为覆盖。最终写入 issues/status、`reviewed_units` 并校验 review result。实现注释描述“无法处理”或 assert 某状态，不等于公开调用方已经承担该前置条件；只有公开契约或入口强制检查才能证明调用方保证。不得递归扩大文件范围。
+主 Agent 恢复同一会话并提供 `stage=comparison_review` task 后，先读取已经冻结的独立 finding，
+再读取 worker result，逐项补充同 `check_id` 的 `worker_disposition`。不得改写独立 finding 正文或
+证据；差异写入 issue。随后执行下述完整复核：列出 `decision=current` 资料中的全部需求 ID，逐一
+确认存在真实关联用例或明确不可测试理由；再逐条核对 `coverage_priorities` 是否已由风险用例或
+需求用例闭合。最终写入 issues/status、`reviewed_units` 并校验 review result。实现注释描述“无法
+处理”或 assert 某状态，不等于公开调用方已经承担该前置条件；只有公开契约或入口强制检查才能
+证明调用方保证。不得递归扩大文件范围。
 
 共享 helper、引用计数或公共状态存在多个 task 已提供的直接调用实现时，逐个实现独立判断。不得用一个实现的安全、不可达或未确认结论代表其他实现；错误处理不同就分别形成 finding，再与 worker disposition 对照。
 
@@ -72,7 +89,7 @@ python -m pangea_agent.cli.main prepare-review-result --task "<review task JSON>
 
 ## 判定规则
 
-初审 `stage=initial_review`：
+初审对照 `stage=comparison_review`：
 
 - `PASS`：上述检查全部通过，且 `finish_reason=stop`。任何 independent finding 标为
   `missing` 或 `contradiction` 时都不得 PASS，必须为同一 finding 生成 issue 并转为 `REWORK`；
@@ -85,12 +102,19 @@ python -m pangea_agent.cli.main prepare-review-result --task "<review task JSON>
 
 - 只能输出 `PASS` 或 `UNRESOLVED`，不得再次输出 `REWORK`。
 - 逐项检查 `prior_issues` 是否真实修复，并确认 failure path、顶层 evidence observation、business flow、风险与用例中都没有残留被否定的旧机制；同时确认修改没有破坏其他已经通过的内容。
+- 对每个被修改的风险和 TestCase 重新重放完整状态链，确认配置切换、容器成员关系、故障注入、
+  唯一预期和观测位置仍能同时成立；再核对受影响需求与 Coverage priority 没有因返工重新缺失。
 - 任一语义问题未修复、产生新的必需语义修复项或 reviewer 身份不一致，均为 `UNRESOLVED`。仅存在“证据待确认”不影响正常结论。
 
 ## 写入结果
 
-- 结果必须完整符合 `schemas/review_result.schema.json`；不要复制或修改 schema。
-- 最终 JSON 顶层只允许 `schema_version`、`run_id`、`reviewer_id`、`finish_reason`、`status`、`summary`、`issues`、`reviewed_units`、`independent_findings`。
+- `independent_review` 结果必须完整符合 `schemas/independent_review_result.schema.json`；
+  `comparison_review` 和 `rework_verification` 结果必须完整符合
+  `schemas/review_result.schema.json`。不要复制或修改 schema。
+- 独立复核 JSON 顶层只允许 `schema_version`、`run_id`、`reviewer_id`、`finish_reason`、
+  `summary`、`reviewed_units`、`findings`。最终复核 JSON 顶层只允许 `schema_version`、`run_id`、
+  `reviewer_id`、`finish_reason`、`status`、`summary`、`issues`、`reviewed_units`、
+  `independent_findings`。
 - `run_id` 必须取自 review task，`reviewer_id` 在初审确定后保持不变。
 - 只把最终 JSON 写到 task 指定的 `result_path`。不得改 worker result、task、index、inventory、source manifest、源码或其他路径。
 - 正常复核只能写 `finish_reason=stop`。截断、异常或无法完成核验时不得伪装成 PASS。

@@ -63,6 +63,8 @@
   4 个互不重叠的 `analysis-worker`；worker 不得再派发子 Agent。
 - analysis 结果齐备后，只启动 1 个 `review-worker`。初审和返工验证属于同一轮
   review lifecycle，返工最多一次，且返工验证必须由原 reviewer 完成。
+- 初审固定为同一 reviewer 的两个 checkpoint：`independent_review` task 不提供 worker result；
+  graph 接受独立结论后才生成 `comparison_review` task。两个阶段各完成一次，不按检查项拆分调用。
 - 每次运行 `module-analysis` 后检查 `phase`：等待阶段由 Agent 完成对应 task 文件，
   再沿用同一 contract 继续运行；不得用占位风险冒充语义分析结果。
 

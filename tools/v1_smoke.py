@@ -239,8 +239,46 @@ def _write_all_analysis(state: dict) -> None:
         write_json(Path(task["result_path"]), _task_result(task))
 
 
+def _advance_to_review_comparison(
+    data_root: Path,
+    run_id: str,
+    *,
+    reviewer: str = "reviewer-1",
+    extra_findings: list[dict] | None = None,
+) -> tuple[dict, list[dict]]:
+    run_dir = data_root / "runs" / run_id
+    task = read_json(run_dir / "agent-tasks" / "review-independent.json")
+    assert task["stage"] == "independent_review"
+    assert task["analysis_results"] == []
+    findings = []
+    for reference in task["analysis_tasks"]:
+        worker_task = read_json(Path(reference["task_path"]))
+        findings.extend({
+            "unit_id": reference["unit_id"],
+            "check_id": item["check_id"],
+            "finding": f"独立核对 {item['check_id']} 未发现额外问题",
+            "evidence": [f"{worker_task['unit']['repo_id']}:{item['subject_path']}:1"],
+        } for item in worker_task["semantic_check_items"])
+    findings.extend(extra_findings or [])
+    write_json(Path(task["result_path"]), {
+        "schema_version": "1.0",
+        "run_id": run_id,
+        "reviewer_id": reviewer,
+        "finish_reason": "stop",
+        "summary": "独立复核完成",
+        "reviewed_units": [item["unit_id"] for item in task["analysis_tasks"]],
+        "findings": findings,
+    })
+    state = run_module_analysis(str(run_dir / "inputs" / "task-contract.json"))
+    assert state["phase"] == "WAITING_REVIEW_COMPARISON"
+    comparison = read_json(run_dir / "agent-tasks" / "review.json")
+    assert comparison["stage"] == "comparison_review"
+    assert comparison["same_reviewer_id"] == reviewer
+    return comparison, findings
+
+
 def _review(data_root: Path, run_id: str, *, status: str, reviewer: str = "reviewer-1") -> None:
-    task = read_json(data_root / "runs" / run_id / "agent-tasks" / "review.json")
+    task, findings = _advance_to_review_comparison(data_root, run_id, reviewer=reviewer)
     issues = [] if status == "PASS" else [{
         "issue_id": "I-001",
         "unit_id": task["analysis_results"][0]["unit_id"],
@@ -256,7 +294,10 @@ def _review(data_root: Path, run_id: str, *, status: str, reviewer: str = "revie
         "summary": "复核完成",
         "issues": issues,
         "reviewed_units": [item["unit_id"] for item in task["analysis_results"]],
-        "independent_findings": [],
+        "independent_findings": [
+            {**finding, "worker_disposition": "covered"}
+            for finding in findings
+        ],
     })
 
 
@@ -287,7 +328,17 @@ def _review_missing_finding_cannot_pass() -> None:
     _write_all_analysis(state)
     state = run_module_analysis(str(contract))
     assert state["phase"] == "WAITING_REVIEW"
-    task = read_json(data_root / "runs" / "smoke-01" / "agent-tasks" / "review.json")
+    extra = {
+        "unit_id": "U00",
+        "check_id": "LIFECYCLE-U00",
+        "finding": "独立复核发现一条可达失败路径",
+        "evidence": ["demo:module/entry.c:1"],
+    }
+    task, findings = _advance_to_review_comparison(
+        data_root,
+        "smoke-01",
+        extra_findings=[extra],
+    )
     write_json(Path(task["result_path"]), {
         "schema_version": "1.0",
         "run_id": "smoke-01",
@@ -297,17 +348,53 @@ def _review_missing_finding_cannot_pass() -> None:
         "summary": "发现遗漏但错误放行",
         "issues": [],
         "reviewed_units": [item["unit_id"] for item in task["analysis_results"]],
-        "independent_findings": [{
-            "unit_id": task["analysis_results"][0]["unit_id"],
-            "finding": "worker 遗漏一条可达失败路径",
-            "evidence": ["demo:module/entry.c:1"],
-            "worker_disposition": "missing",
-        }],
+        "independent_findings": [
+            {
+                **finding,
+                "worker_disposition": (
+                    "missing" if finding["check_id"] == "LIFECYCLE-U00" else "covered"
+                ),
+            }
+            for finding in findings
+        ],
     })
     state = run_module_analysis(str(contract))
-    assert state["phase"] == "WAITING_REVIEW"
+    assert state["phase"] == "WAITING_REVIEW_COMPARISON"
     progress = read_json(data_root / "runs" / "smoke-01" / "progress.json")
     assert any("PASS 不能包含 missing" in item["reason"] for item in progress["errors"])
+
+
+def _comparison_cannot_drop_independent_findings() -> None:
+    _, data_root, contract = _workspace()
+    state = run_module_analysis(str(contract))
+    _write_all_analysis(state)
+    assert run_module_analysis(str(contract))["phase"] == "WAITING_REVIEW"
+    extra = {
+        "unit_id": "U00",
+        "check_id": "LIFECYCLE-U00",
+        "finding": "独立复核记录正常生命周期",
+        "evidence": ["demo:module/entry.c:1"],
+    }
+    task, _ = _advance_to_review_comparison(
+        data_root,
+        "smoke-01",
+        extra_findings=[extra],
+    )
+    write_json(Path(task["result_path"]), {
+        "schema_version": "1.0",
+        "run_id": "smoke-01",
+        "reviewer_id": "reviewer-1",
+        "finish_reason": "stop",
+        "status": "PASS",
+        "summary": "错误丢弃独立 finding",
+        "issues": [],
+        "reviewed_units": ["U00"],
+        "independent_findings": [],
+    })
+    state = run_module_analysis(str(contract))
+    assert state["phase"] == "WAITING_REVIEW_COMPARISON"
+    progress = read_json(data_root / "runs" / "smoke-01" / "progress.json")
+    assert any("必须逐项保留独立复核 findings" in item["reason"] for item in progress["errors"])
 
 
 def _rework_same_reviewer() -> None:
@@ -422,6 +509,7 @@ def _mechanical_review_fields_do_not_block() -> None:
     _write_all_analysis(state)
     assert run_module_analysis(str(contract))["phase"] == "WAITING_REVIEW"
     run_dir = data_root / "runs" / "smoke-01"
+    _, findings = _advance_to_review_comparison(data_root, "smoke-01")
     task_path = run_dir / "agent-tasks" / "review.json"
     task = read_json(task_path)
     task["result_path"] = "Z:\\wrong\\review.json"
@@ -435,7 +523,10 @@ def _mechanical_review_fields_do_not_block() -> None:
         "summary": "语义复核通过",
         "issues": [],
         "reviewed_units": [item["unit_id"] for item in task["analysis_results"]],
-        "independent_findings": [],
+        "independent_findings": [
+            {**finding, "worker_disposition": "covered"}
+            for finding in findings
+        ],
     })
     state = run_module_analysis(str(contract))
     assert state["phase"] == "COMPLETE"
@@ -560,7 +651,9 @@ def _multi_repo_isolation() -> None:
     assert {task["repositories"][0]["repo_id"] for task in tasks} == {"repo-a", "repo-b"}
     _write_all_analysis(state)
     run_module_analysis(str(contract))
-    review_task = read_json(data_root / "runs" / "smoke-01" / "agent-tasks" / "review.json")
+    review_task = read_json(
+        data_root / "runs" / "smoke-01" / "agent-tasks" / "review-independent.json"
+    )
     assert {repo["repo_id"] for repo in review_task["repositories"]} == {"repo-a", "repo-b"}
 
 
@@ -684,14 +777,16 @@ def _bounded_scope_expansion() -> None:
     assert len(task["unit"]["context_scope"]) <= 10
     assert task["max_parallel_workers"] == 4 and task["may_spawn_workers"] is False
     semantic_checks = task["semantic_check_items"]
-    assert [item["kind"] for item in semantic_checks] == [
+    semantic_kinds = [item["kind"] for item in semantic_checks]
+    assert semantic_kinds == [
         "assertion_reachability",
         "assertion_reachability",
         "paired_operation",
         "paired_operation",
         "assertion_reachability",
         "resource_reconfiguration",
-    ]
+        "resource_reconfiguration",
+    ], semantic_kinds
     assert [item["subject_path"] for item in semantic_checks[2:4]] == [
         "app/rpc.c",
         "module/entry.c",
@@ -835,7 +930,7 @@ def _agent_start_checkpoint() -> None:
     task = read_json(task_path)
     write_json(Path(task["result_path"]), _task_result(task))
     state = run_module_analysis(str(contract))
-    review_path = data_root / "runs" / "smoke-01" / "agent-tasks" / "review.json"
+    review_path = data_root / "runs" / "smoke-01" / "agent-tasks" / "review-independent.json"
     subprocess.run(
         [sys.executable, "-m", "pangea_agent.cli.main", "prepare-review-result", "--task", str(review_path)],
         check=True,
@@ -844,11 +939,52 @@ def _agent_start_checkpoint() -> None:
     progress = read_json(progress_path)
     assert state["phase"] == "WAITING_REVIEW"
     assert progress["agent_sessions"]["review"]["status"] == "dispatched"
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pangea_agent.cli.main",
+            "record-agent-session",
+            "--run-id",
+            "smoke-01",
+            "--data-root",
+            str(data_root),
+            "--role",
+            "review",
+            "--task-id",
+            "review-task-1",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    _advance_to_review_comparison(data_root, "smoke-01")
+    progress = read_json(progress_path)
+    assert progress["agent_sessions"]["review"] == {
+        "role": "review",
+        "unit_id": None,
+        "stage": "comparison_review",
+        "task_id": "review-task-1",
+        "status": "pending",
+    }
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pangea_agent.cli.main",
+            "prepare-review-result",
+            "--task",
+            str(data_root / "runs" / "smoke-01" / "agent-tasks" / "review.json"),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    assert read_json(progress_path)["agent_sessions"]["review"]["status"] == "dispatched"
 
 
 SCENARIOS: tuple[tuple[str, Scenario], ...] = (
     ("PASS 到双报告", _pass_report),
     ("reviewer 发现遗漏时不能 PASS", _review_missing_finding_cannot_pass),
+    ("对照复核不能丢弃独立 finding", _comparison_cannot_drop_independent_findings),
     ("REWORK 同 reviewer 通过", _rework_same_reviewer),
     ("截断结果覆盖修正", _truncated_correction),
     ("黑盒步骤与预期必须逐项对应", _mismatched_step_results_rejected),

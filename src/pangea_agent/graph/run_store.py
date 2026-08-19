@@ -4,7 +4,15 @@ from pathlib import Path
 
 from pangea_agent.agent_io import read_json, write_json
 from pangea_agent.models.run import RunProgress
-from pangea_agent.models.worker import ReviewerUnavailable, ReviewResult, ReviewTask, TerminationSignal, WorkerResult, WorkerTask
+from pangea_agent.models.worker import (
+    IndependentReviewResult,
+    ReviewerUnavailable,
+    ReviewResult,
+    ReviewTask,
+    TerminationSignal,
+    WorkerResult,
+    WorkerTask,
+)
 
 
 def run_directory(state: dict) -> Path:
@@ -40,12 +48,20 @@ def rework_task_path(state: dict, unit_id: str) -> Path:
 
 
 def review_task_path(state: dict, phase: str = "initial") -> Path:
-    name = "review.json" if phase == "initial" else "rework-review.json"
+    name = {
+        "initial": "review.json",
+        "independent": "review-independent.json",
+        "rework": "rework-review.json",
+    }[phase]
     return run_directory(state) / "agent-tasks" / name
 
 
 def review_result_path(state: dict, phase: str = "initial") -> Path:
-    name = "review.json" if phase == "initial" else "rework-review.json"
+    name = {
+        "initial": "review.json",
+        "independent": "review-independent.json",
+        "rework": "rework-review.json",
+    }[phase]
     return run_directory(state) / "agent-results" / name
 
 
@@ -156,6 +172,18 @@ def review_result_skeleton(task: ReviewTask) -> dict:
     }
 
 
+def independent_review_result_skeleton(task: ReviewTask) -> dict:
+    return {
+        "schema_version": "1.0",
+        "run_id": task.run_id,
+        "reviewer_id": "",
+        "finish_reason": "stop",
+        "summary": "",
+        "reviewed_units": [item.unit_id for item in task.analysis_tasks],
+        "findings": [],
+    }
+
+
 def load_review_task(path: Path) -> ReviewTask:
     return ReviewTask.model_validate(read_json(path))
 
@@ -175,6 +203,22 @@ def load_review_result(path: Path, task: ReviewTask | None = None) -> ReviewResu
             "run_id": task.run_id,
         })
     return ReviewResult.model_validate(payload)
+
+
+def load_independent_review_result(
+    path: Path, task: ReviewTask | None = None
+) -> IndependentReviewResult:
+    payload = read_json(path)
+    if not isinstance(payload, dict):
+        raise ValueError(f"独立复核结果必须是 JSON 对象：{path}")
+    payload = dict(payload)
+    payload.setdefault("findings", [])
+    if task is not None:
+        payload.update({
+            "schema_version": "1.0",
+            "run_id": task.run_id,
+        })
+    return IndependentReviewResult.model_validate(payload)
 
 
 def normalize_review_result_path(task_path: Path, task: ReviewTask) -> Path:

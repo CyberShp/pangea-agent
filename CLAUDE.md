@@ -56,6 +56,7 @@ This repository also includes `AGENTS.md` for OpenCode and other agent clients. 
 - Python never calls a model API. Read the JSON tasks under the current run and write results to each declared `result_path`.
 - Dispatch at most four non-overlapping `analysis-worker` tasks concurrently. Workers must not spawn child workers.
 - Use one `review-worker` after analysis. Initial review and rework verification are one review lifecycle; allow at most one rework and require the same reviewer for verification.
+- Initial review has two checkpoints in the same reviewer session: `independent_review` does not expose worker results, and `comparison_review` is generated only after the graph accepts the independent findings. Complete each checkpoint in one call.
 - After each Agent dispatch, record the returned task ID with `record-agent-session`. Restore task IDs from `progress.agent_sessions` after a main-session restart.
 - Initial analysis uses three calls to the same worker session: checkpoint, risks/evidence, then tests/final validation. Resume after `[STAGE:checkpoint]` and `[STAGE:risks]`; these planned returns are not corrections or rework. If a stage returns empty without writing its marker, resume the same session and replace it only after two empty returns while keeping the same task, attempt, result path, and unfinished stage.
 - Re-run the same contract after completing the tasks for the current `phase`. Never replace missing worker output with placeholder risks.

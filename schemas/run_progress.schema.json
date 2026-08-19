@@ -26,6 +26,7 @@
         "PREPARING",
         "WAITING_ANALYSIS",
         "WAITING_REVIEW",
+        "WAITING_REVIEW_COMPARISON",
         "WAITING_REWORK",
         "WAITING_REWORK_REVIEW",
         "READY_TO_FINALIZE",
@@ -96,7 +97,7 @@
         "properties": {
           "role": {"enum": ["analysis", "review", "rework"]},
           "unit_id": {"type": ["string", "null"]},
-          "stage": {"enum": ["analysis", "initial_review", "rework", "rework_verification"]},
+          "stage": {"enum": ["analysis", "independent_review", "comparison_review", "initial_review", "rework", "rework_verification"]},
           "task_id": {"type": ["string", "null"]},
           "status": {"enum": ["pending", "dispatched", "completed"]}
         },

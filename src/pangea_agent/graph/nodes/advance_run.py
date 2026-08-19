@@ -8,6 +8,7 @@ from pangea_agent.graph.run_store import (
     analysis_result_path,
     analysis_task_path,
     load_final_state,
+    load_independent_review_result,
     load_progress,
     load_ready_state,
     load_reviewer_unavailable,
@@ -32,13 +33,21 @@ from pangea_agent.graph.state import PangeaState
 from pangea_agent.graph.validation import (
     ArtifactRejected,
     normalize_unique_ids,
+    validate_independent_review_result,
     validate_review_result,
     validate_worker_result,
     validation_message,
 )
 from pangea_agent.models.quality import QualityReport
 from pangea_agent.models.run import AgentSession, RunProgress
-from pangea_agent.models.worker import ResultRef, ReviewTask, WorkerResult, WorkerTask
+from pangea_agent.models.worker import (
+    IndependentReviewResult,
+    ResultRef,
+    ReviewTask,
+    TaskRef,
+    WorkerResult,
+    WorkerTask,
+)
 from pangea_agent.documents.coverage import match_coverage_records
 from pangea_agent.report import reports_are_complete
 
@@ -46,6 +55,7 @@ from pangea_agent.report import reports_are_complete
 ACTIVE_RESULT_ERROR_KINDS = {
     "analysis_result_rejected",
     "analysis_results_rejected",
+    "independent_review_rejected",
     "review_result_rejected",
     "rework_result_rejected",
     "rework_results_rejected",
@@ -159,11 +169,7 @@ def _load_analysis_results(state: PangeaState, progress: RunProgress) -> list[Wo
     return results
 
 
-def _prepare_review(state: PangeaState, progress: RunProgress, results: list[WorkerResult]) -> None:
-    refs = []
-    for result in results:
-        path = analysis_result_path(state, result.unit_id, 0)
-        refs.append(ResultRef(unit_id=result.unit_id, result_path=str(path)))
+def _prepare_review(state: PangeaState, progress: RunProgress) -> None:
     analysis_tasks = [
         load_worker_task(analysis_task_path(state, unit_id))
         for unit_id in progress.analysis_units
@@ -180,12 +186,68 @@ def _prepare_review(state: PangeaState, progress: RunProgress, results: list[Wor
         repositories=repositories,
         inventory_path=first_task.inventory_path,
         source_manifest_path=first_task.source_manifest_path,
+        stage="independent_review",
+        result_path=str(review_result_path(state, "independent")),
+        analysis_tasks=[
+            TaskRef(unit_id=unit_id, task_path=str(analysis_task_path(state, unit_id)))
+            for unit_id in progress.analysis_units
+        ],
+    )
+    write_json(review_task_path(state, "independent"), task.model_dump(mode="json"))
+    progress.agent_sessions["review"] = AgentSession(role="review", stage="independent_review")
+    progress.phase = "WAITING_REVIEW"
+
+
+def _expected_independent_checks(state: PangeaState, task: ReviewTask) -> set[tuple[str, str]]:
+    expected: set[tuple[str, str]] = set()
+    referenced_units = {reference.unit_id for reference in task.analysis_tasks}
+    known_units = {unit["unit_id"] for unit in state["analysis_units"]}
+    if referenced_units != known_units:
+        raise ArtifactRejected("独立复核 task 未绑定全部分析单元")
+    for reference in task.analysis_tasks:
+        expected_path = analysis_task_path(state, reference.unit_id)
+        if reference.task_path != str(expected_path):
+            raise ArtifactRejected(f"独立复核 task 路径与当前 Run 不一致：{reference.unit_id}")
+        worker_task = load_worker_task(expected_path)
+        expected.update(
+            (reference.unit_id, item.check_id)
+            for item in worker_task.semantic_check_items
+        )
+    return expected
+
+
+def _prepare_review_comparison(
+    state: PangeaState,
+    progress: RunProgress,
+    independent_task: ReviewTask,
+    reviewer_id: str,
+    results: list[WorkerResult],
+) -> None:
+    refs = [
+        ResultRef(
+            unit_id=result.unit_id,
+            result_path=str(analysis_result_path(state, result.unit_id, 0)),
+        )
+        for result in results
+    ]
+    task = ReviewTask(
+        run_id=state["run_id"],
+        target=independent_task.target,
+        repositories=independent_task.repositories,
+        inventory_path=independent_task.inventory_path,
+        source_manifest_path=independent_task.source_manifest_path,
+        stage="comparison_review",
         result_path=str(review_result_path(state)),
+        analysis_tasks=independent_task.analysis_tasks,
         analysis_results=refs,
+        independent_result_path=str(review_result_path(state, "independent")),
+        same_reviewer_id=reviewer_id,
     )
     write_json(review_task_path(state), task.model_dump(mode="json"))
-    progress.agent_sessions["review"] = AgentSession(role="review", stage="initial_review")
-    progress.phase = "WAITING_REVIEW"
+    review_session = progress.agent_sessions["review"]
+    review_session.stage = "comparison_review"
+    review_session.status = "pending"
+    progress.phase = "WAITING_REVIEW_COMPARISON"
 
 
 def _prepare_rework_review(state: PangeaState, progress: RunProgress, results: list[WorkerResult]) -> None:
@@ -204,6 +266,7 @@ def _prepare_rework_review(state: PangeaState, progress: RunProgress, results: l
         source_manifest_path=initial_task.source_manifest_path,
         stage="rework_verification",
         result_path=str(review_result_path(state, "rework")),
+        analysis_tasks=initial_task.analysis_tasks,
         analysis_results=refs,
         same_reviewer_id=initial_review.reviewer_id,
         prior_issues=initial_review.issues,
@@ -435,6 +498,25 @@ def _validate_review_inputs(state: PangeaState, task: ReviewTask) -> None:
         write_json(result_path, result.model_dump(mode="json"))
 
 
+def _load_bound_independent_review(
+    state: PangeaState,
+    task: ReviewTask,
+) -> IndependentReviewResult:
+    expected_path = review_result_path(state, "independent")
+    if task.independent_result_path != str(expected_path):
+        raise ArtifactRejected("对照复核绑定的独立复核结果路径与当前 Run 不一致")
+    independent_task = load_review_task(review_task_path(state, "independent"))
+    independent_result = load_independent_review_result(expected_path, independent_task)
+    validate_independent_review_result(
+        independent_task,
+        independent_result,
+        _expected_independent_checks(state, independent_task),
+    )
+    if independent_result.reviewer_id != task.same_reviewer_id:
+        raise ArtifactRejected("对照复核 task 未绑定原独立 reviewer")
+    return independent_result
+
+
 def _rebuild_terminal_state(state: PangeaState, progress: RunProgress) -> PangeaState:
     termination = termination_path(state)
     if termination.exists():
@@ -482,12 +564,67 @@ def _rebuild_terminal_state(state: PangeaState, progress: RunProgress) -> Pangea
         task = load_review_task(review_task_path(state))
         _validate_review_inputs(state, task)
         result = load_review_result(review_result_path(state))
-        validate_review_result(task, result, set(progress.analysis_units))
+        independent_result = (
+            _load_bound_independent_review(state, task)
+            if task.stage == "comparison_review"
+            else None
+        )
+        validate_review_result(
+            task,
+            result,
+            set(progress.analysis_units),
+            independent_result,
+        )
         if result.status == "REWORK":
             raise ArtifactRejected("终态快照丢失，初审仍要求返工，不能宣称完成")
         results = _load_analysis_results(state, progress)
         if results is None:
             raise ArtifactRejected("终态快照丢失，且分析结果无法重建")
+    unresolved = [issue.model_dump(mode="json") for issue in result.issues]
+    return _ready_to_finalize(state, progress, results, result.status, unresolved)
+
+
+def _advance_final_review(
+    state: PangeaState,
+    progress: RunProgress,
+) -> PangeaState:
+    task_path = review_task_path(state)
+    result_path = review_result_path(state)
+    if not result_path.exists():
+        task = load_review_task(task_path)
+        _validate_review_inputs(state, task)
+        if task.stage == "comparison_review":
+            _load_bound_independent_review(state, task)
+        return {**state, "phase": progress.phase}
+    try:
+        task = load_review_task(task_path)
+        result_path = normalize_review_result_path(task_path, task)
+        _validate_review_inputs(state, task)
+        independent_result = (
+            _load_bound_independent_review(state, task)
+            if task.stage == "comparison_review"
+            else None
+        )
+        result = load_review_result(result_path, task)
+        validate_review_result(
+            task,
+            result,
+            set(progress.analysis_units),
+            independent_result,
+        )
+        write_json(result_path, result.model_dump(mode="json"))
+    except Exception as exc:
+        _record_error(progress, "review_result_rejected", result_path, exc)
+        save_progress(state, progress)
+        return {**state, "phase": progress.phase}
+    if result.status == "REWORK":
+        _clear_error(progress, "review_result_rejected", result_path)
+        _prepare_rework(state, progress, result)
+        save_progress(state, progress)
+        return {**state, "phase": progress.phase}
+    _clear_error(progress, "review_result_rejected", result_path)
+    _complete_session(progress, "review")
+    results = _load_analysis_results(state, progress) or []
     unresolved = [issue.model_dump(mode="json") for issue in result.issues]
     return _ready_to_finalize(state, progress, results, result.status, unresolved)
 
@@ -501,7 +638,12 @@ def advance_run(state: PangeaState) -> PangeaState:
         raise ArtifactRejected("请使用 resume-run --run-id <run_id> 继续这个 Run")
     state = _hydrate_run_context(state, progress)
 
-    if progress.phase in {"WAITING_REVIEW", "WAITING_REWORK", "WAITING_REWORK_REVIEW"}:
+    if progress.phase in {
+        "WAITING_REVIEW",
+        "WAITING_REVIEW_COMPARISON",
+        "WAITING_REWORK",
+        "WAITING_REWORK_REVIEW",
+    }:
         terminated = _terminate_if_requested(state, progress)
         if terminated is not None:
             return terminated
@@ -509,38 +651,39 @@ def advance_run(state: PangeaState) -> PangeaState:
     if progress.phase == "WAITING_ANALYSIS":
         results = _load_analysis_results(state, progress)
         if results is not None:
-            _prepare_review(state, progress, results)
+            _prepare_review(state, progress)
         save_progress(state, progress)
         return {**state, "phase": progress.phase}
 
     if progress.phase == "WAITING_REVIEW":
-        task_path = review_task_path(state)
-        result_path = review_result_path(state)
+        independent_task_path = review_task_path(state, "independent")
+        if not independent_task_path.exists():
+            return _advance_final_review(state, progress)
+        result_path = review_result_path(state, "independent")
         if not result_path.exists():
-            task = load_review_task(task_path)
-            _validate_review_inputs(state, task)
             return {**state, "phase": progress.phase}
         try:
-            task = load_review_task(task_path)
-            result_path = normalize_review_result_path(task_path, task)
-            _validate_review_inputs(state, task)
-            result = load_review_result(result_path, task)
-            validate_review_result(task, result, set(progress.analysis_units))
+            task = load_review_task(independent_task_path)
+            result_path = normalize_review_result_path(independent_task_path, task)
+            result = load_independent_review_result(result_path, task)
+            validate_independent_review_result(
+                task,
+                result,
+                _expected_independent_checks(state, task),
+            )
             write_json(result_path, result.model_dump(mode="json"))
         except Exception as exc:
-            _record_error(progress, "review_result_rejected", result_path, exc)
+            _record_error(progress, "independent_review_rejected", result_path, exc)
             save_progress(state, progress)
             return {**state, "phase": progress.phase}
-        if result.status == "REWORK":
-            _clear_error(progress, "review_result_rejected", result_path)
-            _prepare_rework(state, progress, result)
-            save_progress(state, progress)
-            return {**state, "phase": progress.phase}
-        _clear_error(progress, "review_result_rejected", result_path)
-        _complete_session(progress, "review")
+        _clear_error(progress, "independent_review_rejected", result_path)
         results = _load_analysis_results(state, progress) or []
-        unresolved = [issue.model_dump(mode="json") for issue in result.issues]
-        return _ready_to_finalize(state, progress, results, result.status, unresolved)
+        _prepare_review_comparison(state, progress, task, result.reviewer_id, results)
+        save_progress(state, progress)
+        return {**state, "phase": progress.phase}
+
+    if progress.phase == "WAITING_REVIEW_COMPARISON":
+        return _advance_final_review(state, progress)
 
     if progress.phase == "WAITING_REWORK":
         results = _load_rework_results(state, progress)

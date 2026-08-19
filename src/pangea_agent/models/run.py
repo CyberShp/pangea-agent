@@ -9,6 +9,7 @@ RunPhase = Literal[
     "PREPARING",
     "WAITING_ANALYSIS",
     "WAITING_REVIEW",
+    "WAITING_REVIEW_COMPARISON",
     "WAITING_REWORK",
     "WAITING_REWORK_REVIEW",
     "READY_TO_FINALIZE",
@@ -29,7 +30,14 @@ class AgentSession(BaseModel):
 
     role: Literal["analysis", "review", "rework"]
     unit_id: str | None = None
-    stage: Literal["analysis", "initial_review", "rework", "rework_verification"]
+    stage: Literal[
+        "analysis",
+        "independent_review",
+        "comparison_review",
+        "initial_review",
+        "rework",
+        "rework_verification",
+    ]
     task_id: str | None = None
     status: Literal["pending", "dispatched", "completed"] = "pending"
 

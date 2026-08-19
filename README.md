@@ -75,7 +75,8 @@ pangea-data/
 ```text
 准备源码、资料和 inventory
 → WAITING_ANALYSIS（最多 4 个 analysis-worker）
-→ WAITING_REVIEW（1 个 review-worker）
+→ WAITING_REVIEW（reviewer 只看冻结输入，形成独立结论）
+→ WAITING_REVIEW_COMPARISON（同一 reviewer 对照 worker 结果）
 → 可选 WAITING_REWORK（最多一次）
 → 可选 WAITING_REWORK_REVIEW（原 reviewer 验证）
 → COMPLETE / INCOMPLETE

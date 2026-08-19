@@ -6,7 +6,7 @@
   "properties": {
     "schema_version": {"const": "1.0"},
     "run_id": {"type": "string", "minLength": 1},
-    "phase": {"enum": ["WAITING_REVIEW", "WAITING_REWORK", "WAITING_REWORK_REVIEW"]},
+    "phase": {"enum": ["WAITING_REVIEW", "WAITING_REVIEW_COMPARISON", "WAITING_REWORK", "WAITING_REWORK_REVIEW"]},
     "reason": {"type": "string", "minLength": 1},
     "status": {"const": "UNRESOLVED"}
   },

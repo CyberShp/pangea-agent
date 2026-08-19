@@ -35,52 +35,50 @@ task 提供以下可用输入。先按后文 summary 标记确定当前阶段，
 再读取 task 指定的 `result_path`。PANGEA 已经生成固定结果骨架；只填写分析内容，不从零重建 WorkerResult，不修改 task。
 
 若 `task_type` 是 `rework`，还必须读取 `prior_result_path` 和 `review_issues`，只修复列出的复核问题。
-以 prior result 作为内容基础时，以 `addressed_review_issue_ids` 为游标，选择
-`review_issues` 中第一个尚未处理的 issue；本次调用只处理这一项，不同时展开后续 issue。沿同一
-结论链同步修改：先改对应 `analysis_checkpoint.failure_paths`，再改关联 risk 的
+以 prior result 作为内容基础，在一次调用内按 task 顺序处理全部 issue。每项沿同一结论链同步修改：
+先改对应 `analysis_checkpoint.failure_paths`，再改关联 risk 的
 trigger/system_result/external_observation/exclusion_condition 和该 risk 自身的 `evidence[]`，同时改
 顶层 evidence observation、business_flows 和其他仍复述旧机制的 checkpoint 文字，最后改关联 test
 case 的前置、步骤、预期、观测和清理。issue 只要求新增用例时，不得顺带重写无关风险。不要只改
 风险卡或测试用例而保留 checkpoint 或 risk.evidence 中已经被 reviewer 否定的旧机制；failure path
 是下游风险和用例的根因记录，各处必须描述同一触发链和唯一终态。
 
-若 `task_type=analysis`，必须先看结果文件的 `summary`。checkpoint 还要以
-`analysis_checkpoint.source_paths_reviewed` 作为已经完成的文件游标。一次 task 调用只完成下面
-一个阶段或一个 checkpoint 文件，写入后主动结束，不得在同一次调用继续下一项：
+若 `task_type=analysis`，必须先看结果文件的 `summary`。一个 analysis task 固定三次调用，每次完成
+一个完整阶段，不得再按文件、failure path、风险、测试或需求拆分：
 
-1. 空 summary 或 `[STAGE:checkpoint-part]` → `checkpoint`：按 task 中的固定顺序，从
-   `unit.source_scope` 后接 `unit.context_scope`，选择第一个尚未出现在
-   `source_paths_reviewed` 的 C/C++ 文件。本次只分析这一个文件：`source_scope` 文件完整读取，
-   `context_scope` 文件只读取与该文件的 semantic check、failure signal、setter/close/add/remove/
-   create 直接相关的非重叠片段。只处理 `subject_path` 或 `path` 等于当前文件的检查项和信号；
-   需要公共 `source_scope` 才能完成的调用链，使用前一调用已经写入 checkpoint 的结论，不重读
-   已完成文件。完成后立即把当前文件加入 `source_paths_reviewed` 并写回结果。若仍有未完成的
-   C/C++ 文件，summary 以 `[STAGE:checkpoint-part]` 开头，写明本次文件和下一个文件，只返回
-   `STAGE checkpoint part`；全部 C/C++ 文件完成后，summary 以 `[STAGE:checkpoint]` 开头，只返回
-   `STAGE checkpoint`。整个 checkpoint 期间只允许读取 task、结果骨架、
-   `worker_result.schema.json`、`c_cpp_analysis.md` 和当前这一个源码文件；禁止读取 inventory、
-   source manifest、index/materials、Coverage、资料、CLI/历史测试、其他源码文件和其他 rubric。
-2. `[STAGE:checkpoint]` 或 `[STAGE:risks-part]` → `risks`：读取 source manifest、资料索引、Coverage、CLI/历史测试及本阶段 schema/rubric；不再重读源码和 inventory。首次进入时补齐 evidence、business_flows、material_decisions、coverage_priorities。随后只选择第一条尚未被现有 RiskCard 覆盖的 `disposition=risk/unresolved` failure path，本次只为它建立或修正 RiskCard，并对齐 `linked_risk_ids` 与 `affected_paths`；同一根因需要 Debug/Release 共用一张卡可以共用，但不得顺带处理下一条 failure path。仍有未转化路径时 summary 以 `[STAGE:risks-part]` 开头并返回 `STAGE risks part`；全部转化后才冻结风险集合，summary 改以 `[STAGE:risks]` 开头，返回 `STAGE risks`。
-3. `[STAGE:risks]` 或 `[STAGE:tests-part]` → `tests`：先选择第一张 `translation_status!=Developer-confirm` 且尚无任何关联用例的 RiskCard，本次生成该风险所需的全部构建/运行变体；可测试风险都有用例后，再从 `decision=current` 的资料中选择第一条尚无关联用例的当前需求，本次只生成该需求用例。仍有可测试风险或当前需求未处理时，summary 以 `[STAGE:tests-part]` 开头并返回 `STAGE tests part`。全部处理后完成反例检查，改写最终 summary，执行 `validate-worker-result` 直到 PASS，只返回简短 PASS 与风险/用例数量。Coverage priority 明确关联的需求同样必须在此闭合，不能只写在 priority 文本中。
+1. 空 summary → `checkpoint`：按 task 固定顺序完整处理 `unit.source_scope`，并只读取
+   `unit.context_scope` 中与 semantic check、failure signal、setter/close/add/remove/create 直接相关的
+   非重叠片段。完成全部 `semantic_check_items`、其余 failure signal 和正常生命周期反向扫描，逐文件
+   写入 `source_paths_reviewed`，summary 改为 `[STAGE:checkpoint]`，只返回 `STAGE checkpoint`。本阶段
+   只读 task、结果骨架、`worker_result.schema.json`、`c_cpp_analysis.md` 和冻结源码；禁止读取
+   inventory、source manifest、index/materials、Coverage、资料、CLI/历史测试和其他 rubric。
+2. `[STAGE:checkpoint]` → `risks`：读取 source manifest、资料索引、Coverage、CLI/历史测试及本阶段
+   schema/rubric；不再重读源码和 inventory。一次完成 evidence、business_flows、material_decisions、
+   coverage_priorities，并把全部 `disposition=risk/unresolved` failure path 转化为对应 RiskCard。完成
+   上游约束和反证检查后冻结风险集合，summary 改为 `[STAGE:risks]`，返回 `STAGE risks`。
+3. `[STAGE:risks]` → `tests`：一次完成全部 `translation_status!=Developer-confirm` 风险的构建/运行
+   变体，以及 `decision=current` 资料中的全部当前需求用例。先列出当前需求 ID 与对应 TestCase，确认
+   没有缺项；再逐条核对 Coverage priority 已由真实风险或需求用例闭合。随后执行提交前反例检查：
+   每条风险重放完整状态转换，每条 TestCase 检查故障注入没有提前销毁观测依赖、每个状态变化都有
+   显式步骤、每个 expected result 只有一个固定结果与观测位置。完成后改写最终 summary，执行
+   `validate-worker-result` 直到 PASS，只返回简短 PASS 与风险/用例数量。
 
-主 Agent 恢复同一会话后才处理下一个 checkpoint 文件或进入下一阶段。任何阶段都不得提前读取
-并生成后续阶段的大段内容。`task_type=rework` 已有完整 prior result，不重复 analysis 的三阶段，
-但按 review issue 分次恢复同一会话。
+主 Agent 恢复同一会话后才进入下一阶段。任何阶段都不得提前读取并生成后续阶段的大段内容。
+`task_type=rework` 已有完整 prior result，不重复 analysis 的三阶段，也不按 issue 分次恢复。
 
-`task_type=rework` 完成本次唯一 issue 后，用该 issue 中的 check ID、risk ID、test ID、
+`task_type=rework` 每完成一项 issue 后，用该 issue 中的 check ID、risk ID、test ID、
 `required_change` 和被否定的关键短语查询整个当前 rework result；逐项检查 checkpoint、顶层
 evidence、risk 自身的 `evidence[]`、business flow、risk 和 test，确认旧触发、旧终态和旧观测均
 已替换。若本项修改 TestCase，还要确认故障注入没有提前销毁后续观测依赖的注册、连接或资源，
 且每个 expected result 只有一个固定结果和一个固定观测位置；不满足时继续修改本项，不能先标记
-addressed。确认后再把这一项 issue ID 加入 `addressed_review_issue_ids`。若仍有未处理 issue，summary 以
-`[STAGE:rework-part]` 开头并只返回 `STAGE rework part`，等待主 Agent 恢复同一会话；全部 issue
-处理完才执行 `validate-worker-result`，通过后返回 PASS。这只回看 reviewer 明确列出的改动，不
-扩大到全项目或无关结论。
+addressed。确认后再把这一项 issue ID 加入 `addressed_review_issue_ids`。全部 issue 处理完才执行
+`validate-worker-result`，通过后返回 PASS。这只回看 reviewer 明确列出的改动，不扩大到全项目或
+无关结论。
 
 ## 分析要求
 
-1. 源码优先，但严格遵守上面的单文件 checkpoint 游标；“逐文件”表示多次恢复后覆盖全部文件，
-   不是一次调用读取全部文件。`source_scope` 的当前文件完整读取；`context_scope` 的当前文件只按
+1. 源码优先，并在一个 checkpoint 阶段覆盖全部冻结文件。`source_scope` 逐文件完整读取；
+   `context_scope` 的每个文件只按
    上述定位方式读取与当前入口、semantic check、failure signal、状态重配置和清理直接相关的
    函数片段，建立生命周期、状态、资源、副作用、错误处理、清理与恢复关系。此时不要先看设计、
    历史用例或 Coverage 来猜结论，也不要为查公开头文件而搜索 task 未冻结的目录。

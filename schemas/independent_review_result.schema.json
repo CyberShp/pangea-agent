@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "IndependentReviewResult",
+  "type": "object",
+  "required": ["schema_version", "run_id", "reviewer_id", "finish_reason", "summary", "reviewed_units", "findings"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "run_id": {"type": "string", "minLength": 1},
+    "reviewer_id": {"type": "string", "minLength": 1},
+    "finish_reason": {"enum": ["stop", "truncated", "error"]},
+    "summary": {"type": "string", "minLength": 1},
+    "reviewed_units": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+    "findings": {"type": "array", "items": {"type": "object", "required": ["unit_id", "check_id", "finding", "evidence"], "properties": {"unit_id": {"type": "string", "minLength": 1}, "check_id": {"type": "string", "minLength": 1}, "finding": {"type": "string", "minLength": 1}, "evidence": {"type": "array", "minItems": 1, "items": {"type": "string"}}}, "additionalProperties": false}}
+  },
+  "additionalProperties": false
+}
