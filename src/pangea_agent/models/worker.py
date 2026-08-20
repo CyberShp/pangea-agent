@@ -36,6 +36,11 @@ class RepositoryRef(StrictModel):
     git: dict = Field(default_factory=dict)
 
 
+class CoverageGap(StrictModel):
+    coverage_id: str = Field(min_length=1)
+    gap: Literal["function_not_executed", "true_not_executed", "false_not_executed"]
+
+
 class CoverageContext(StrictModel):
     repo_id: str = Field(min_length=1)
     path: str = Field(min_length=1)
@@ -48,6 +53,7 @@ class CoverageContext(StrictModel):
     condition: str | None = None
     true_count: int | None = None
     false_count: int | None = None
+    gaps: list[CoverageGap] = Field(default_factory=list)
 
 
 class FailureSignalContext(StrictModel):
@@ -98,12 +104,33 @@ class MaterialDecision(StrictModel):
     reason: str = Field(min_length=1)
 
 
+class CoverageDecision(StrictModel):
+    coverage_id: str = Field(min_length=1)
+    disposition: Literal[
+        "covered_by_existing_case",
+        "new_coverage_case",
+        "unreachable_from_supported_entry",
+    ]
+    linked_test_case_ids: list[str] = Field(default_factory=list)
+    reason: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_links(self) -> "CoverageDecision":
+        if self.disposition == "unreachable_from_supported_entry":
+            if self.linked_test_case_ids:
+                raise ValueError("不可从支持入口触达的 Coverage 缺口不能关联测试用例")
+        elif not self.linked_test_case_ids:
+            raise ValueError("已闭合的 Coverage 缺口必须关联至少一条测试用例")
+        return self
+
+
 class AnalysisCheckpoint(StrictModel):
     source_paths_reviewed: list[str] = Field(min_length=1)
     lifecycle_stages_checked: list[str] = Field(min_length=1)
     failure_paths: list[FailurePathCheck] = Field(default_factory=list)
     material_decisions: list[MaterialDecision] = Field(default_factory=list)
     coverage_priorities: list[str] = Field(default_factory=list)
+    coverage_decisions: list[CoverageDecision] = Field(default_factory=list)
     risk_set_frozen: bool = False
     counterexamples_checked: list[str] = Field(default_factory=list)
 
