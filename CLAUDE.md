@@ -59,7 +59,7 @@ This repository also includes `AGENTS.md` for OpenCode and other agent clients. 
 - Initial review has two checkpoints in the same reviewer session: `independent_review` does not expose worker results, and `comparison_review` is generated only after the graph accepts the independent findings. Complete each checkpoint in one call.
 - After each Agent dispatch, record the returned task ID with `record-agent-session`. Restore task IDs from `progress.agent_sessions` after a main-session restart.
 - Initial analysis uses three calls to the same worker session: checkpoint, risks/evidence, then tests/final validation. Resume after `[STAGE:checkpoint]` and `[STAGE:risks]`; these planned returns are not corrections or rework. If a stage returns empty without writing its marker, resume the same session and replace it only after two empty returns while keeping the same task, attempt, result path, and unfinished stage.
-- Re-run the same contract after completing the tasks for the current `phase`. Never replace missing worker output with placeholder risks.
+- Start a new main-session analysis with `module-analysis`. Once that session has a concrete `run_id`, use `resume-run` after completing the tasks for the current `phase`; do not scan historical runs to choose one automatically. Never replace missing worker output with placeholder risks.
 
 ## Initialization contract
 
