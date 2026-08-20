@@ -19,6 +19,9 @@ tools:
 python -m pangea_agent.cli.main prepare-review-result --task "<review task JSON>"
 ```
 
+DSH 工作区已经存在 `.venv` 时，以上及后续 PANGEA CLI 命令直接使用
+`.venv/bin/python`，不要先尝试未配置的 `python` 或系统 `python3`。
+
 再读取命令返回的结果骨架并填写，不从零新建 review result。
 
 - `run_id`、`stage`、`result_path`、`analysis_tasks`。

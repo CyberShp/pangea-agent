@@ -20,6 +20,9 @@ tools:
 python -m pangea_agent.cli.main prepare-worker-result --task "<worker task JSON>"
 ```
 
+DSH 工作区已经存在 `.venv` 时，以上及后续 PANGEA CLI 命令直接使用
+`.venv/bin/python`，不要先尝试未配置的 `python` 或系统 `python3`。
+
 task 提供以下可用输入。先按后文 summary 标记确定当前阶段，只读取该阶段需要的内容，不要在第一次调用把全部资料、Coverage 和测试规则一起读完：
 
 - `unit.source_scope`：必须逐文件分析的源码，已经包含 PANGEA 确定性找到的接口实现和必要源码。
@@ -29,7 +32,7 @@ task 提供以下可用输入。先按后文 summary 标记确定当前阶段，
 - `semantic_check_items`：本轮必须逐项完成的短任务清单。每项只要求一个明确结论；用它的 `check_id` 作为对应 `analysis_checkpoint.failure_paths[].path_id`。该 failure path 用 `linked_risk_ids` 指向由本项支撑的风险；风险的 `affected_paths` 必须包含本项 `subject_path`。不要合并不同实现，也不要让断言结论替代资源重配置结论。这是分析顺序，不是自动风险判定。
 - `index_path`、`source_manifest_path`：risks 阶段使用的冻结证据与资料目录。`inventory_path` 由 Python 用于范围冻结和校验，worker 不整份读取；task 中的 scope 已是本单元权威范围。
 - `source_manifest.material_catalog`：本 Run 的资料目录，给出资料类型、解析状态、索引位置和附件状态。
-- schema 和 rubric 按阶段读取：checkpoint 只读 `worker_result.schema.json` 与 `c_cpp_analysis.md`；risks 再读 evidence/business/risk schema、`dfx.md` 与 `risk_reproducibility.md`；tests 最后读 test_case schema 与 `test_case_generation.md`。不得提前读取后续阶段规则。
+- schema 和 rubric 按阶段读取：checkpoint 只读 `schemas/worker_result.schema.json` 与 `src/pangea_agent/rubrics/builtin/c_cpp_analysis.md`；risks 再读 `schemas/evidence_ref.schema.json`、`schemas/business_flow.schema.json`、`schemas/risk.schema.json`、`src/pangea_agent/rubrics/builtin/dfx.md` 与 `src/pangea_agent/rubrics/builtin/risk_reproducibility.md`；tests 最后读 `schemas/test_case.schema.json` 与 `src/pangea_agent/rubrics/builtin/test_case_generation.md`。不得猜文件名、glob 搜索或提前读取后续阶段规则。
 - 上述 `schemas/` 与 `src/pangea_agent/rubrics/` 都位于当前 pangea-agent 工作区根目录，不在 task 的 `data_root`、Run 或验收 case 中。直接读取这里列出的固定路径，不使用 glob/find 搜索 schema 或 rubric。
 
 再读取 task 指定的 `result_path`。PANGEA 已经生成固定结果骨架；只填写分析内容，不从零重建 WorkerResult，不修改 task。
@@ -141,13 +144,15 @@ addressed。确认后再把这一项 issue ID 加入 `addressed_review_issue_ids
 
 ## 提交门禁
 
-完成结果后执行：
+`checkpoint` 和 `risks` 是计划内 checkpoint：写入对应 summary 后直接返回阶段标记，
+不得执行最终 `validate-worker-result`。只有 `tests` 最终阶段和 `task_type=rework` 完成
+全部语义内容后执行：
 
 ```powershell
 python -m pangea_agent.cli.main validate-worker-result --task "<worker task JSON>"
 ```
 
-- `PASS` 是当前 Worker 可以结束的唯一条件。
+- `PASS` 是 `tests` 最终阶段或 rework 可以提交给 graph 的唯一条件；它不适用于前两个计划内 checkpoint。
 - 若返回 `FAIL`，留在当前 Worker 会话中，读取错误消息以及对应 schema，一次处理该次输出列出的全部 JSON/schema 错误，再重新执行同一个验证命令。
 - JSON 语法错误修复后可能暴露结构错误；继续在当前 Worker 内收敛，不要把这种结构修复当成正式 rework，也不要增加 `attempt`、新建 Run 或创建 `fix_all.py` / 临时修复脚本。
 - PANGEA 只会自动恢复少量机械字段以及可确定的 evidence 位置；不会自动补写 `business_flows`、`visual_findings`、`risks`、`test_cases` 的缺失字段或实质内容。

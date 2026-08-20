@@ -1,0 +1,4 @@
+interface:
+  display_name: "PANGEA Agent"
+  short_description: "在 DSH 中按现有 graph 启动并推进 PANGEA 测试分析"
+  default_prompt: "Use $pangea-agent to run the requested PANGEA module analysis through its existing graph."

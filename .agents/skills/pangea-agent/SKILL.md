@@ -1,0 +1,82 @@
+---
+name: pangea-agent
+description: Start and advance this repository's PANGEA test-analysis graph in DSH. Use for natural-language repository, module, risk, flow, requirement, design, Coverage, test-case, and explicit Run requests. Also use whenever a delegated Agent receives a graph-generated JSON path under agent-tasks/analysis, agent-tasks/rework, or agent-tasks/review, including review-independent.json, review.json, and rework-review.json.
+---
+
+# PANGEA Agent
+
+Use this Skill only as the DSH entry into the repository's existing PANGEA graph. Do not
+reimplement the graph, schemas, rubrics, worker roles, or report generation here.
+
+If the current prompt is a graph-generated path under `agent-tasks/analysis/`,
+`agent-tasks/rework/`, or a review task path, this is a delegated Agent call. Read
+`.agents/pangea/dsh.md`, then the matching `.opencode/agents/analysis-worker.md` or
+`.opencode/agents/review-worker.md`, then the task. Do not read
+`.opencode/agents/pangea-agent.md`, do not start or resume a Run, and do not follow the root
+sections below; the selected worker role owns the rest of this call.
+
+Otherwise this is a root-Agent request. Read `.agents/pangea/dsh.md` and
+`.opencode/agents/pangea-agent.md` completely before acting.
+
+The DSH `bash` tool uses the host shell. On a POSIX host, use POSIX commands and never send
+PowerShell cmdlets to `bash`; the repository's Windows compatibility rules do not change the
+actual DSH tool shell.
+
+## Start a new analysis
+
+When the user requests a new analysis and does not explicitly name a historical `run_id`:
+
+1. Treat the current Run as empty. Do not call `pangea_status`; do not list or read
+   `pangea-data/runs/`; do not read an existing pending contract.
+2. Determine only the requested repository and smallest `source_scope` under
+   `pangea-data/repositories/`. Every `source_scope` item is relative to the selected repository
+   root: for repository `acceptance-demo` and directory `module`, write `"module"`, never
+   `"acceptance-demo/module"`. If the request already supplies them, do not explore further.
+3. Delete the exact temporary path `pangea-data/.pangea/pending-task-contract.json` without
+   reading it; on the current POSIX DSH host, use `rm -f` for that file only. Then write it from
+   the current request. For one
+   repository, include `repository: "<repo_id>"` and omit `repositories`; for multiple
+   repositories, include a non-empty `repositories` list and omit `repository`. Also include
+   only `data_root`, `mode=module_analysis`, `target`, `source_scope`, and optional `focus`.
+   `source_scope` is always a JSON array, even for one path. Never include a `run_id` or reuse
+   old contract content.
+4. Run `.venv/bin/python -m pangea_agent.cli.main module-analysis --contract
+   pangea-data/.pangea/pending-task-contract.json`.
+5. After the command returns the new `run_id`, delete the pending contract in a separate tool
+   call. Keep that `run_id` as the only current Run for this DSH root session.
+
+Do not inspect CLI help, schemas, dependencies, historical Runs, or reports before starting.
+If `.venv/bin/python` is unavailable, stop and report the initialization requirement; do not
+install or upgrade anything.
+
+## Advance the current Run
+
+Follow the returned `phase` and graph-generated task paths:
+
+- The main Agent may read tasks, dispatch or resume the required subagent, record its
+  `subagent_id`, run the declared validation CLI, and call `resume-run`.
+- The main Agent does not read worker role files or restate task content. A first-dispatch
+  subagent prompt contains exactly the graph-returned task JSON path and nothing else; the
+  delegated Agent loads its role through `AGENTS.local.md` and `.agents/pangea/dsh.md`.
+- The main Agent must not create, fill, edit, normalize, or repair analysis, rework, or review
+  semantic result files. Only the subagent holding that task may write them.
+- Analysis uses one continuing worker session for checkpoint, risks, and tests. Review uses one
+  continuing reviewer session for independent review, comparison review, and any rework
+  verification.
+- First dispatch always sets `run_in_background=true`; omitting it creates a one-shot result in
+  DSH. Save and record the returned `subagent_id` before waiting.
+- Immediately after dispatch, run `record-agent-session` with that `subagent_id`; no other tool
+  call comes first. A subagent ID is not a job ID, so never pass it to `job_output`.
+- Wait by checking `list_agents`. While the target is `running`, do not read its result or send
+  the next stage; on the current POSIX host, wait five seconds with one `bash` call and check
+  `list_agents` again. Continue only after the target is `ready` or `inactive`.
+- Do not queue the next analysis stage while the worker is still running. Continue only after
+  the current turn returns its expected `STAGE` marker and the result file records that same
+  stage; a failed stage must not be skipped.
+- `STAGE checkpoint` and `STAGE risks` pause only the continuing worker. Do not call
+  `resume-run` until the tests stage passes `validate-worker-result`.
+- If dispatch, resume, validation, or artifact writing fails, stop and report the real phase.
+  Do not replace missing results with main-Agent output.
+
+Continue until the graph returns a terminal quality result and generates `report.md` and
+`report.html`, or until a real failure requires an honest stop.
