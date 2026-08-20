@@ -17,7 +17,7 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["repo_id", "path", "function", "count", "line", "module"],
+        "required": ["repo_id", "path", "function", "count", "line", "module", "coverage_type", "branch_id", "condition", "true_count", "false_count", "gaps"],
         "properties": {
           "repo_id": {"type": "string", "minLength": 1},
           "path": {"type": "string", "minLength": 1},
@@ -29,7 +29,19 @@
           "branch_id": {"type": ["string", "null"]},
           "condition": {"type": ["string", "null"]},
           "true_count": {"type": ["integer", "null"]},
-          "false_count": {"type": ["integer", "null"]}
+          "false_count": {"type": ["integer", "null"]},
+          "gaps": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["coverage_id", "gap"],
+              "properties": {
+                "coverage_id": {"type": "string", "minLength": 1},
+                "gap": {"enum": ["function_not_executed", "true_not_executed", "false_not_executed"]}
+              },
+              "additionalProperties": false
+            }
+          }
         },
         "additionalProperties": false
       }
