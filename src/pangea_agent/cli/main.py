@@ -6,7 +6,9 @@ from pathlib import Path
 from pangea_agent.agent_io import write_json
 from pangea_agent.graph.run_store import (
     independent_review_result_skeleton,
+    load_independent_review_result,
     load_progress,
+    load_review_result,
     load_review_task,
     load_worker_result,
     load_worker_task,
@@ -16,7 +18,12 @@ from pangea_agent.graph.run_store import (
     save_progress,
     worker_result_skeleton,
 )
-from pangea_agent.graph.validation import validate_worker_result, validation_message
+from pangea_agent.graph.validation import (
+    validate_independent_review_result,
+    validate_review_result,
+    validate_worker_result,
+    validation_message,
+)
 
 from .init_data import init_data
 from .index_repo import print_repositories
@@ -48,6 +55,56 @@ def _mark_session_started(task_path: Path, key: str) -> None:
     save_progress(state, progress)
 
 
+def _expected_review_checks(task) -> set[tuple[str, str]]:
+    expected: set[tuple[str, str]] = set()
+    for reference in task.analysis_tasks:
+        worker_task = load_worker_task(Path(reference.task_path))
+        if worker_task.unit.unit_id != reference.unit_id:
+            raise ValueError(f"review task 单元与 analysis task 不一致：{reference.unit_id}")
+        expected.update(
+            (reference.unit_id, item.check_id)
+            for item in worker_task.semantic_check_items
+        )
+    return expected
+
+
+def _check_review_artifact(task_path: Path) -> None:
+    task = load_review_task(task_path)
+    result_path = normalize_review_result_path(task_path, task)
+
+    if task.stage == "independent_review":
+        result = load_independent_review_result(result_path, task)
+        validate_independent_review_result(task, result, _expected_review_checks(task))
+        write_json(result_path, result.model_dump(mode="json"))
+        return
+
+    result = load_review_result(result_path, task)
+    known_units = {item.unit_id for item in task.analysis_tasks}
+    if not known_units:
+        known_units = {item.unit_id for item in task.analysis_results}
+
+    independent_result = None
+    if task.stage == "comparison_review":
+        if not task.independent_result_path:
+            raise ValueError("对照复核缺少 independent_result_path")
+        independent_task_path = task_path.parent / "review-independent.json"
+        independent_task = load_review_task(independent_task_path)
+        independent_result = load_independent_review_result(
+            Path(task.independent_result_path),
+            independent_task,
+        )
+        validate_independent_review_result(
+            independent_task,
+            independent_result,
+            _expected_review_checks(independent_task),
+        )
+
+    validate_review_result(task, result, known_units, independent_result)
+    if task.same_reviewer_id and result.reviewer_id != task.same_reviewer_id:
+        raise ValueError("reviewer_id 与 task 绑定的原 reviewer 不一致")
+    write_json(result_path, result.model_dump(mode="json"))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="pangea")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -62,6 +119,8 @@ def main() -> None:
     prepare.add_argument("--task", required=True)
     prepare_review = sub.add_parser("prepare-review-result")
     prepare_review.add_argument("--task", required=True)
+    check_review = sub.add_parser("check-review-artifact")
+    check_review.add_argument("--task", required=True)
     validate = sub.add_parser("validate-worker-result")
     validate.add_argument("--task", required=True)
     session = sub.add_parser("record-agent-session")
@@ -103,6 +162,16 @@ def main() -> None:
             write_json(result_path, skeleton)
         _mark_session_started(task_path, "review")
         print(result_path)
+    elif args.command == "check-review-artifact":
+        try:
+            _check_review_artifact(Path(args.task))
+        except Exception as exc:
+            parser.exit(
+                1,
+                "FAIL 当前 review result 尚未满足提交契约。"
+                f"请由当前 reviewer 修正同一结果文件后重新检查：{validation_message(exc)}\n",
+            )
+        print("PASS")
     elif args.command == "validate-worker-result":
         try:
             task_path = Path(args.task)
