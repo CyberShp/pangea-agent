@@ -5,6 +5,10 @@
 ## 主 Agent
 
 - 继续遵循本仓库 `AGENTS.md`、graph、schema 和 rubric。
+- DSH 新建根会话时当前 Run 固定为空。即使工作区中存在 `WAITING_*` 的历史 Run，或 Companion / `pangea_status` 能读取到某个历史 Run，也不得因此执行 `resume-run`。
+- 用户用自然语言要求分析业务源码、模块、测试风险、业务流程、Coverage 缺口或生成测试用例时，与显式 `module-analysis` 完全等价：当前根会话没有明确 `run_id` 就创建新 Run，不要求用户补写命令名。
+- DSH 只有在当前根会话已经由本次分析获得明确 `run_id`，或用户明确指定历史 `run_id` / 历史会话时，才能恢复 Run。不得从 `runs/`、`progress.json`、`agent_sessions` 或 Companion 的“当前/最近 Run”反推恢复目标。
+- Companion 和 `pangea_status` 只提供只读观察结果；它们返回或展示的 Run 不构成当前根会话的 Run 绑定。
 - DSH 可能同时看到仓库内 `CLAUDE.md`；其中共享的 graph / schema / rubric 规则继续生效，但 DSH 的启动、subagent、续接和会话记录方式以本文件为准，不套用 Claude Code 的客户端传输方式。
 - DSH 的子 Agent 使用可继续会话；analysis 的 checkpoint / risks / tests 必须续接同一 `subagent_id`，review 的 independent / comparison / rework verification 必须续接同一 reviewer。
 - 首次派发后立即把 `subagent_id` 作为 `task_id` 记录到 `progress.agent_sessions`。已有 `task_id` 时恢复原会话，不重复创建。
