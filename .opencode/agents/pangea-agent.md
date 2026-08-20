@@ -13,11 +13,11 @@ tools:
 
 ## 运行入口
 
-- 用户已经给出 `data_root`、`repository`、`run_id`、`target` 和 `source_scope` 时，首次执行 `module-analysis` 前最多使用 3 次工具调用：检查 `data_root` 与源码仓路径、检查同名 Run、写入 pending contract。
-- pending contract 直接使用用户给出的 `run_id`、`data_root`、`repository`、`target`、`source_scope`，固定 `mode=module_analysis`、`repositories=[]`；`source_scope` 即使只有一个路径也必须写成 JSON 数组，若用户未单列 `focus`，使用 `[target]`。
+- 用户已经给出 `data_root`、`repository`、`target` 和 `source_scope` 时，新主 Agent 会话首次执行 `module-analysis` 前最多使用 2 次工具调用：检查 `data_root` 与源码仓路径、写入 pending contract。不得扫描旧 Run 来决定是否恢复。
+- pending contract 直接使用用户给出的 `data_root`、`repository`、`target`、`source_scope`，固定 `mode=module_analysis`、`repositories=[]`；`source_scope` 即使只有一个路径也必须写成 JSON 数组，若用户未单列 `focus`，使用 `[target]`。新 Run 的 `run_id` 由 PANGEA 生成，不写入 pending contract。
 - 随后立即执行 `python -m pangea_agent.cli.main module-analysis --contract <data_root>/.pangea/pending-task-contract.json`。
 - 首次 `module-analysis` 前禁止读取 README、`src/`、`schemas/`、Agent prompt、旧 Run，禁止查看 CLI help，禁止手工解析 DOCX/XLSX，禁止检查或导入 Python 依赖。graph 会完成资料索引、契约校验和任务生成。
-- 如果同名 Run 已存在，不创建 pending contract，直接执行 `resume-run --run-id <run_id> --data-root <data_root>`。
+- `module-analysis` 表示创建新 Run。只有当前主 Agent 会话已经持有明确 `run_id`，或用户明确选择了历史 Run/历史会话时，才使用 `resume-run --run-id <run_id> --data-root <data_root>` 继续该 Run。新会话不得因为目录中存在同名或相似历史 Run 而自动恢复。
 
 ## 运行目标
 
@@ -50,11 +50,11 @@ tools:
 
 - Python 不调用模型 API。运行命令后读取当前 Run 的 `phase` 和 `agent-tasks/`。
 - 在 DSH 中派发 `analysis-worker` 或 `review-worker` 时，必须使用可持续子 Agent：调用 `subagent` 时省略 `run_in_background` 或显式设为 `true`，保存返回的 `subagent_id`，后续阶段使用 `send_message` 投递到同一子 Agent。禁止设置 `run_in_background=false`，因为前台调用会创建无法续接的一次性子 Agent。
-- DSH 首次派发 worker 的消息只包含 task JSON 路径；analysis 后续消息只写 `继续 risks 阶段`、`继续 tests 阶段`，review 后续消息只提供 graph 当前生成的 review task JSON 路径。每次取得 `subagent_id` 后立即把它作为 `task_id` 执行 `record-agent-session`，Run 恢复时优先从 `agent_sessions` 取回并用 `send_message` 继续。
+- DSH 首次派发 worker 的消息只包含 task JSON 路径；analysis 后续消息只写 `继续 risks 阶段`、`继续 tests 阶段`，review 后续消息只提供 graph 当前生成的 review task JSON 路径。每次取得 `subagent_id` 后立即把它作为 `task_id` 执行 `record-agent-session`，当前 Run 恢复时优先从 `agent_sessions` 取回并用 `send_message` 继续。
 - DSH 子 Agent 继承派发时的文件权限。派发前确认 `data_root` 位于当前 DSH 工作区可写范围；如果不在范围内，停止并说明，不能改用一次性子 Agent、由主 Agent 代写结果或研究 CLI 实现绕过落盘失败。
-- 首次创建 Run 才使用 `module-analysis --contract pangea-data/.pangea/pending-task-contract.json`。不得在项目根目录、`pangea-data/` 一级目录或其他位置另建 task contract。Run 创建成功后删除该 pending 文件。
-- Run 已存在后，后续推进统一使用 `resume-run --run-id <run_id>`；该命令读取 `runs/<run_id>/inputs/task-contract.json` 中冻结的原始契约。
-- Run 已存在时不得重新创建或修改 task contract，也不得因为恢复失败擅自换 `run_id` 重跑。只有用户明确要求新 Run 时才创建新 Run。
+- 新主 Agent 会话首次创建 Run 才使用 `module-analysis --contract pangea-data/.pangea/pending-task-contract.json`。不得在项目根目录、`pangea-data/` 一级目录或其他位置另建 task contract。Run 创建成功后删除该 pending 文件。
+- 当前主 Agent 会话已经持有 `run_id` 后，后续推进统一使用 `resume-run --run-id <run_id>`；该命令读取 `runs/<run_id>/inputs/task-contract.json` 中冻结的原始契约。
+- 新主 Agent 会话不扫描历史 `runs/` 目录寻找可恢复 Run，也不因为存在旧 Run 而优先恢复。OpenCode 恢复原会话或 DSH 切换回历史会话时，沿用该会话已经持有的 `run_id`；若用户在新会话明确指定历史 Run，再恢复该 Run。
 - `agent-results/` 中结果文件存在不代表已完成；只有 graph 接受后，`progress.completed_analysis_units` / `completed_rework_units` 中的单元才算完成。
 - `WAITING_ANALYSIS`：最多并发派发 4 个 `analysis-worker`，每个只处理一个互不重叠单元，禁止继续派生 Agent。向 worker 传对应 task JSON 路径，不由主 Agent 转述或重构任务字段。
 - 派发 analysis-worker 时消息只包含对应 task JSON 路径，不追加验收点、源码结论、风险猜测或文档摘要，避免主 Agent 转述替代 worker 读取冻结输入。
