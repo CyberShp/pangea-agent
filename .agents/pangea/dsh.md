@@ -5,6 +5,7 @@
 ## 主 Agent
 
 - 继续遵循本仓库 `AGENTS.md`、graph、schema 和 rubric。
+- DSH 可能同时看到仓库内 `CLAUDE.md`；其中共享的 graph / schema / rubric 规则继续生效，但 DSH 的启动、subagent、续接和会话记录方式以本文件为准，不套用 Claude Code 的客户端传输方式。
 - DSH 的子 Agent 使用可继续会话；analysis 的 checkpoint / risks / tests 必须续接同一 `subagent_id`，review 的 independent / comparison / rework verification 必须续接同一 reviewer。
 - 首次派发后立即把 `subagent_id` 作为 `task_id` 记录到 `progress.agent_sessions`。已有 `task_id` 时恢复原会话，不重复创建。
 - 不把 PANGEA 规则安装到 DSH 全局配置；工作区切换后，本文件不再适用。
