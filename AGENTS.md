@@ -67,6 +67,7 @@
   review lifecycle，返工最多一次，且返工验证必须由原 reviewer 完成。
 - 初审固定为同一 reviewer 的两个 checkpoint：`independent_review` task 不提供 worker result；
   graph 接受独立结论后才生成 `comparison_review` task。两个阶段各完成一次，不按检查项拆分调用。
+- review-worker 每次写完 `independent_review`、`comparison_review` 或 `rework_verification` 结果后，必须先执行 `python -m pangea_agent.cli.main check-review-artifact --task "<review task JSON>"` 并得到 `PASS`；失败由同一 reviewer 修正同一结果文件，主 Agent 不得代填、扁平化或删除字段绕过契约。只有 `PASS` 后主 Agent 才执行 `resume-run`。
 - 新主 Agent 会话首次运行 `module-analysis` 时创建新 Run；当前会话已经持有明确 `run_id` 后，完成当前 `phase` 的 task 再使用 `resume-run` 推进该 Run。不得扫描历史 Run 自动替用户选择恢复目标，也不得用占位风险冒充语义分析结果。
 
 ## Private House Code Policy
