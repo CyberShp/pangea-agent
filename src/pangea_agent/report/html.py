@@ -11,6 +11,8 @@ from typing import Any
 
 from .markdown import (
     _boundary_text,
+    _case_source,
+    _coverage_gap_rows,
     _coverage_rows,
     _contract_rows,
     _items,
@@ -132,7 +134,7 @@ header{{max-width:1240px;margin:0 auto;padding:44px 28px 26px;border-bottom:1px 
 def render_html_report(state: Mapping[str, Any]) -> str:
     _, incomplete = _status(state)
     nav_labels = (
-        ("contract", "任务契约"), ("scope", "范围与排除"), ("flows", "业务流程"),
+        ("contract", "任务契约"), ("scope", "分析引用范围"), ("flows", "业务流程"),
         ("risks", "六维风险"), ("coverage", "覆盖率缺口"), ("cases", "测试用例"),
         ("incomplete", "不完整项"), ("quality", "质量门禁"),
     )
@@ -168,12 +170,6 @@ def render_html_report(state: Mapping[str, Any]) -> str:
         if isinstance(item, Mapping)
     ]
     summaries_html = _table(("分析单元", "Worker", "结论"), summary_rows, {0, 1})
-    material_decision_rows = [
-        (item.get("unit_id"), item.get("path"), item.get("decision"), item.get("reason"))
-        for item in _items(state.get("material_decisions"))
-        if isinstance(item, Mapping)
-    ]
-    material_decisions_html = _table(("分析单元", "资料", "处理", "理由"), material_decision_rows, {0, 1, 2})
     material_evidence_rows = [
         (item.get("unit_id"), item.get("location") or item.get("chunk_id"), item.get("observation"), item.get("status"))
         for item in _items(state.get("material_evidence"))
@@ -182,7 +178,7 @@ def render_html_report(state: Mapping[str, Any]) -> str:
     material_evidence_html = _table(("分析单元", "引用位置", "使用结论", "状态"), material_evidence_rows, {0, 1, 3})
     body = [
         f'<section id="contract"><a class="back" href="#top">回到顶部</a><h2>1. 任务契约</h2>{contract_html}</section>',
-        f'<section id="scope"><a class="back" href="#top">回到顶部</a><h2>2. 分析范围与排除项</h2><h3>纳入范围</h3>{scope_html}{boundary_html}<h3>源码仓</h3>{repositories_html}<h3>明确排除</h3>{_list(state.get("excluded_scope") or state.get("exclusions"))}<h3>资料采用与排除结论</h3>{material_decisions_html}<h3>资料引用</h3>{material_evidence_html}<h3>分析结论摘要</h3>{summaries_html}<h3>源码清单摘要</h3>{manifest_html}</section>',
+        f'<section id="scope"><a class="back" href="#top">回到顶部</a><h2>2. 分析引用范围</h2><h3>源码引用范围</h3>{scope_html}{boundary_html}<h3>源码仓</h3>{repositories_html}<h3>资料引用</h3>{material_evidence_html}<h3>分析结论摘要</h3>{summaries_html}<h3>引用清单摘要</h3>{manifest_html}</section>',
     ]
 
     flow_parts = []
@@ -237,7 +233,9 @@ def render_html_report(state: Mapping[str, Any]) -> str:
 
     coverage = state.get("coverage_report") or state.get("coverage")
     if isinstance(coverage, Mapping) and any(key in coverage for key in ("matched", "ambiguous", "unmatched")):
-        coverage_html = _table(("状态", "类型", "函数/分支", "执行次数", "Coverage 来源", "源码位置"), _coverage_rows(coverage), {2, 4, 5})
+        gap_html = _table(("Coverage ID", "缺口", "函数/条件", "执行次数", "Coverage 来源"), _coverage_gap_rows(coverage), {0, 2, 4})
+        match_html = _table(("状态", "类型", "函数/分支", "执行次数", "Coverage 来源", "源码位置"), _coverage_rows(coverage), {2, 4, 5})
+        coverage_html = f'<h3>有效缺口</h3>{gap_html}<h3>Coverage 输入匹配</h3>{match_html}'
         coverage_html += '<p class="muted">未出现在 Coverage 文件中的函数或分支状态为“未提供/未知”，不按 0 次执行处理。</p>'
     else:
         coverage_html = _list(coverage, "未提供覆盖率文件或匹配结果。")
@@ -256,9 +254,21 @@ def render_html_report(state: Mapping[str, Any]) -> str:
             )
         else:
             rows = "".join(f"<tr><td>{index}</td><td>{_escape(step)}</td><td>{_escape(expected[index-1] if index-1 < len(expected) else '未提供对应预期结果（语义缺口）')}</td></tr>" for index, step in enumerate(steps, 1))
-        case_parts.append(f'<details><summary>{_escape(case.get("test_case_id"), "未编号")} · {_escape(case.get("title"))}</summary><div class="detail-body"><dl><dt>用例类型</dt><dd>{_escape(case.get("case_type") or case.get("type") or case.get("test_type"))}</dd><dt>关联风险</dt><dd>{_escape("、".join(str(v) for v in _items(case.get("linked_risk_ids"))) or "无")}</dd><dt>关联需求</dt><dd>{_escape("、".join(str(v) for v in _items(case.get("linked_requirement_ids"))) or "无")}</dd><dt>前置条件</dt><dd>{_list(case.get("preconditions"))}</dd></dl><table><thead><tr><th>#</th><th>操作目标</th><th>预期结果</th></tr></thead><tbody>{rows}</tbody></table><h4>观测方式</h4>{_list(case.get("observability"))}<h4>清理/恢复</h4>{_list(case.get("cleanup"))}</div></details>')
+        case_parts.append(
+            f'<details><summary>{_escape(case.get("test_case_id"), "未编号")} · {_escape(case.get("title"))}</summary>'
+            f'<div class="detail-body"><dl>'
+            f'<dt>用例来源</dt><dd>{_escape(_case_source(case))}</dd>'
+            f'<dt>用例类型</dt><dd>{_escape(case.get("case_type") or case.get("type") or case.get("test_type"))}</dd>'
+            f'<dt>关联风险</dt><dd>{_escape("、".join(str(v) for v in _items(case.get("linked_risk_ids"))) or "无")}</dd>'
+            f'<dt>关联需求</dt><dd>{_escape("、".join(str(v) for v in _items(case.get("linked_requirement_ids"))) or "无")}</dd>'
+            f'<dt>关联设计/资料</dt><dd>{_escape("、".join(str(v) for v in _items(case.get("linked_material_ids"))) or "无")}</dd>'
+            f'<dt>关联 Coverage</dt><dd>{_escape("、".join(str(v) for v in _items(case.get("linked_coverage_ids"))) or "无")}</dd>'
+            f'<dt>前置条件</dt><dd>{_list(case.get("preconditions"))}</dd></dl>'
+            f'<table><thead><tr><th>#</th><th>操作目标</th><th>预期结果</th></tr></thead><tbody>{rows}</tbody></table>'
+            f'<h4>观测方式</h4>{_list(case.get("observability"))}<h4>清理/恢复</h4>{_list(case.get("cleanup"))}</div></details>'
+        )
     rendered_cases = "".join(case_parts) or '<p class="muted">未生成测试用例。</p>'
-    body.append(f'<section id="cases"><a class="back" href="#top">回到顶部</a><h2>6. 测试用例与风险映射</h2>{rendered_cases}</section>')
+    body.append(f'<section id="cases"><a class="back" href="#top">回到顶部</a><h2>6. 测试用例与依据映射</h2>{rendered_cases}</section>')
 
     unresolved_units = [unit for unit in _items(state.get("analysis_units")) if isinstance(unit, Mapping) and str(unit.get("status", "")).upper() not in {"", "PASS", "COMPLETED", "COMPLETE"}]
     incomplete_html = f'<h3>解析失败</h3>{_list(_parse_failures(state))}<h3>未读图片</h3>{_list(state.get("unread_images") or state.get("unparsed_images"))}<h3>运行错误</h3>{_list(state.get("errors"))}<h3>未完成分析单元</h3>{_list(unresolved_units)}'
