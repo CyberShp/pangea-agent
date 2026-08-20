@@ -20,7 +20,7 @@ from pangea_agent.graph.validation import validate_worker_result, validation_mes
 
 from .init_data import init_data
 from .index_repo import print_repositories
-from .run_module_analysis import resume_module_analysis, run_module_analysis
+from .run_module_analysis import resume_module_analysis, start_module_analysis
 
 
 def _print_run_result(result: dict) -> None:
@@ -78,7 +78,7 @@ def main() -> None:
     elif args.command == "list-repos":
         print_repositories()
     elif args.command == "module-analysis":
-        _print_run_result(run_module_analysis(args.contract))
+        _print_run_result(start_module_analysis(args.contract))
     elif args.command == "resume-run":
         _print_run_result(resume_module_analysis(args.run_id, args.data_root))
     elif args.command == "prepare-worker-result":
