@@ -55,6 +55,34 @@ class CoverageContext(StrictModel):
     false_count: int | None = None
     gaps: list[CoverageGap] = Field(default_factory=list)
 
+    @model_validator(mode="after")
+    def derive_gaps(self) -> "CoverageContext":
+        if self.gaps:
+            return self
+        prefix = f"COV:{self.repo_id}:{self.path}:{self.function}"
+        if self.coverage_type == "function":
+            if self.count == 0:
+                self.gaps = [CoverageGap(
+                    coverage_id=f"{prefix}:function",
+                    gap="function_not_executed",
+                )]
+            return self
+        if not self.branch_id:
+            return self
+        gaps: list[CoverageGap] = []
+        if self.true_count == 0:
+            gaps.append(CoverageGap(
+                coverage_id=f"{prefix}:{self.branch_id}:true",
+                gap="true_not_executed",
+            ))
+        if self.false_count == 0:
+            gaps.append(CoverageGap(
+                coverage_id=f"{prefix}:{self.branch_id}:false",
+                gap="false_not_executed",
+            ))
+        self.gaps = gaps
+        return self
+
 
 class FailureSignalContext(StrictModel):
     path: str = Field(min_length=1)
