@@ -136,6 +136,52 @@ def _coverage_rows(coverage: Mapping[str, Any]) -> list[tuple[Any, ...]]:
     return rows
 
 
+def _coverage_gap_rows(coverage: Mapping[str, Any]) -> list[tuple[Any, ...]]:
+    rows: list[tuple[Any, ...]] = []
+    for record in _items(coverage.get("matched")):
+        if not isinstance(record, Mapping):
+            continue
+        matches = [item for item in _items(record.get("matches")) if isinstance(item, Mapping)]
+        if len(matches) != 1:
+            continue
+        match = matches[0]
+        repo_id = _text(match.get("repo_id"), "")
+        path = _text(match.get("path"), "")
+        function = _text(record.get("function"), "")
+        if not repo_id or not path or not function:
+            continue
+        prefix = f"COV:{repo_id}:{path}:{function}"
+        source = " · ".join(
+            part for part in (
+                _text(record.get("source"), ""),
+                f"{_text(record.get('sheet'), '')}:{_text(record.get('row'), '')}".strip(":"),
+            ) if part
+        ) or "未说明"
+        if record.get("coverage_type") == "branch" and record.get("branch_id"):
+            branch_id = _text(record.get("branch_id"), "")
+            counts = f"true={_text(record.get('true_count'))}, false={_text(record.get('false_count'))}"
+            if record.get("true_count") == 0:
+                rows.append((f"{prefix}:{branch_id}:true", "真分支未执行", record.get("condition"), counts, source))
+            if record.get("false_count") == 0:
+                rows.append((f"{prefix}:{branch_id}:false", "假分支未执行", record.get("condition"), counts, source))
+        elif record.get("count") == 0:
+            rows.append((f"{prefix}:function", "函数未执行", function, record.get("count"), source))
+    return rows
+
+
+def _case_source(case: Mapping[str, Any]) -> str:
+    labels = []
+    if _items(case.get("linked_risk_ids")):
+        labels.append("风险")
+    if _items(case.get("linked_requirement_ids")):
+        labels.append("需求")
+    if _items(case.get("linked_material_ids")):
+        labels.append("设计/资料")
+    if _items(case.get("linked_coverage_ids")):
+        labels.append("Coverage")
+    return " + ".join(labels) or "未标注"
+
+
 def _contract_rows(state: Mapping[str, Any], contract: Mapping[str, Any]) -> list[tuple[Any, Any]]:
     return [
         ("运行编号", state.get("run_id") or contract.get("run_id")),
@@ -317,7 +363,7 @@ def render_report(state: "PangeaState | Mapping[str, Any]") -> str:
     else:
         lines.append(f"- {_text(contract)}")
 
-    lines.extend(["", "## 2. 分析范围与排除项", "", "### 纳入范围", ""])
+    lines.extend(["", "## 2. 分析引用范围", "", "### 源码引用范围", ""])
     if isinstance(contract, Mapping):
         lines.extend(_markdown_table(("类别", "源码仓", "路径", "纳入原因"), _scope_rows(state, contract)))
     expansion = state.get("scope_expansion") or {}
@@ -325,17 +371,6 @@ def render_report(state: "PangeaState | Mapping[str, Any]") -> str:
         lines.extend(["", f"扩展边界：{_boundary_text(expansion.get('boundary'))}"])
     lines.extend(["", "### 源码仓", ""])
     lines.extend(_markdown_table(("源码仓", "本地目录", "版本", "状态"), _repository_rows(state)))
-    lines.extend(["", "### 明确排除", ""])
-    exclusions = state.get("excluded_scope") or state.get("exclusions")
-    _append_list(lines, exclusions)
-    material_decisions = _items(state.get("material_decisions"))
-    if material_decisions:
-        lines.extend(["", "### 资料采用与排除结论", ""])
-        lines.extend(_markdown_table(("分析单元", "资料", "处理", "理由"), [
-            (item.get("unit_id"), item.get("path"), item.get("decision"), item.get("reason"))
-            for item in material_decisions
-            if isinstance(item, Mapping)
-        ]))
     material_evidence = _items(state.get("material_evidence"))
     if material_evidence:
         lines.extend(["", "### 资料引用", ""])
@@ -353,7 +388,7 @@ def render_report(state: "PangeaState | Mapping[str, Any]") -> str:
             if isinstance(item, Mapping)
         ]))
     if state.get("source_manifest"):
-        lines.extend(["", "### 源码清单摘要", ""])
+        lines.extend(["", "### 引用清单摘要", ""])
         manifest = state["source_manifest"]
         inventory = state.get("inventory") or {}
         if isinstance(manifest, Mapping):
@@ -450,6 +485,9 @@ def render_report(state: "PangeaState | Mapping[str, Any]") -> str:
     coverage = state.get("coverage_report") or state.get("coverage") or {}
     if isinstance(coverage, Mapping):
         if coverage and any(key in coverage for key in ("matched", "ambiguous", "unmatched")):
+            lines.extend(["### 有效缺口", ""])
+            lines.extend(_markdown_table(("Coverage ID", "缺口", "函数/条件", "执行次数", "Coverage 来源"), _coverage_gap_rows(coverage)))
+            lines.extend(["", "### Coverage 输入匹配", ""])
             lines.extend(_markdown_table(("状态", "类型", "函数/分支", "执行次数", "Coverage 来源", "源码位置"), _coverage_rows(coverage)))
             lines.extend(["", "未出现在 Coverage 文件中的函数或分支状态为“未提供/未知”，不按 0 次执行处理。"])
         else:
@@ -457,7 +495,7 @@ def render_report(state: "PangeaState | Mapping[str, Any]") -> str:
     else:
         _append_list(lines, coverage, "- 未提供覆盖率文件或匹配结果。")
 
-    lines.extend(["", "## 6. 测试用例与风险映射", ""])
+    lines.extend(["", "## 6. 测试用例与依据映射", ""])
     cases = _items(state.get("test_cases"))
     if not cases:
         lines.append("- 未生成测试用例。")
@@ -470,9 +508,12 @@ def render_report(state: "PangeaState | Mapping[str, Any]") -> str:
             [
                 f"### {case_id} · {_text(case.get('title'))}",
                 "",
+                f"- **用例来源**：{_case_source(case)}",
                 f"- **用例类型**：{_text(case.get('case_type') or case.get('type') or case.get('test_type'))}",
                 f"- **关联风险**：{', '.join(_text(item) for item in _items(case.get('linked_risk_ids'))) or '无'}",
                 f"- **关联需求**：{', '.join(_text(item) for item in _items(case.get('linked_requirement_ids'))) or '无'}",
+                f"- **关联设计/资料**：{', '.join(_text(item) for item in _items(case.get('linked_material_ids'))) or '无'}",
+                f"- **关联 Coverage**：{', '.join(_text(item) for item in _items(case.get('linked_coverage_ids'))) or '无'}",
                 "- **前置条件**：",
             ]
         )
