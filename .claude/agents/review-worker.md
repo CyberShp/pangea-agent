@@ -25,7 +25,7 @@ python -m pangea_agent.cli.main prepare-review-result --task "<review task JSON>
 - 大型 `context_scope` 实现文件不能整文件读取；先用 `rg -n` 定位 semantic check、failure signal 和相关 setter/close/add/remove/create，再用 offset/limit 读取每段不超过 240 行的非重叠片段，不得 find/glob 扩展冻结范围。
 - 每个 `analysis_results[].result_path`；路径绑定由 PANGEA 校验。
 - `schemas/review_result.schema.json`、`schemas/review_issue.schema.json`、worker 结果及其直接引用的 schema。
-- `src/pangea_agent/rubrics/builtin/` 中有关方法；六维 DFX、C/C++、风险可复现性和测试用例规则必读。
+- `src/pangea_agent/rubrics/builtin/` 中有关方法；六维 DFX、C/C++、风险可复现性和测试用例规则必读。当前 TestCase 四类测试依据和 Coverage 闭环以 `schemas/test_case.schema.json`、`schemas/worker_result.schema.json` 和 `test_case_generation.md` 为准。
 - `schemas/` 与 `src/pangea_agent/rubrics/` 位于当前 pangea-agent 工作区根目录，不在 task 的 data_root、Run 或验收 case 中；直接读取固定路径，不用 glob/find 搜索。
 
 `stage=rework_verification` 时，必须确认自己的 reviewer 身份与 `same_reviewer_id` 一致，并读取 `prior_issues`。身份不一致或原 reviewer 无法继续时，不能换人冒充复核，应返回 `UNRESOLVED`。
@@ -40,11 +40,13 @@ python -m pangea_agent.cli.main prepare-review-result --task "<review task JSON>
 - 方法覆盖：核对六个 DFX 维度、业务正常/异常/分支流程，以及初始化、运行、停止、恢复、卸载生命周期。没有实现信号可以不生成风险，但必须是查证后的结论，不能因为已有用例看似覆盖就跳过。
 - 候选排除：逐项复核 `analysis_checkpoint.failure_paths` 中标为 `excluded` 的路径。进程终止、数据丢失、资源泄漏或无法恢复只有在源码证明不可达、调用方必然阻断或模式明确不受支持时才能排除；仅因发生在 Debug 或特定构建不能排除。
 - 风险：先核对 `upstream_semantics` 中的入口可达性、调用方限制/补救、规格或高层 API 定义、已有测试实际覆盖；已被上游定义为预期行为的结论不得保留为风险。再检查 `affected_paths`、复现条件、系统结果、外部观测、排除条件、严重度、置信度和证据是否一致；正文声称受影响的实现必须由对应 risk failure path 支撑。
+- 测试依据闭环：风险驱动始终是基础，所有 `Blackbox-ready/Graybox-ready` 风险必须至少有真实风险用例。需求/设计资料与 Coverage 是可选输入，但一旦分别被 worker 判定为 `decision=current` 或形成 task 中的 `coverage_context[].gaps[]`，就升级为强制测试依据。逐份核对 current 资料中的可测试需求/设计行为是否被 `linked_material_ids` 和存在时的 `linked_requirement_ids` 指向真实用例；逐 gap 核对 `coverage_decisions`，闭合到用例时用例必须反向包含相同 `linked_coverage_ids`，只有冻结范围确实没有受支持业务入口时才接受 `unreachable_from_supported_entry`。
 - 调用合法性：函数返回失败后的后续路径必须是公开契约允许的正常恢复、重试、关闭或清理。忽略失败后调用只适用于成功状态或已绑定成员的 API 属于调用方误用，不能形成风险、返工要求或测试；继续检查正常失败清理是否安全。
-- 用例：风险验证用例必须关联真实风险；正常流程、需求行为或 Coverage 补测可以只关联当前资料中的真实需求 ID。不得用“同一调用链”或“回归对照”把无关风险挂到需求用例上。按测试人员实际执行来判断。黑盒用例必须写清业务触发条件、对外入口或操作、预期系统结果、真实可观察现象以及清理/恢复；不得把函数调用、字段赋值、对象构造、内部返回值或源码行号当成测试步骤。确实无法纯黑盒触发时，必须诚实标成灰盒，并明确开发协助只负责制造什么条件，测试人员仍从哪个业务入口执行、观察什么、如何恢复。
-- 用例逐条核对：`steps` 与 `expected_results` 数量必须相同，并按数组位置逐项对应；准备动作的预期不能写成最终风险结论。对每个 `linked_risk_id` 反查业务触发条件、预期异常与观测现象，对每个 `linked_requirement_id` 反查当前资料中的真实条目，确认用例确实验证所关联对象，而不是普通异常或无关基线。任一不满足都属于实质黑盒语义缺口。
-- 返工边界：只有缺少关键业务流程、异常/生命周期路径，遗漏明显必须的风险或测试用例，或黑盒/灰盒用例实质不可执行时，才允许 `REWORK`。JSON 字段、路径、编号、证据待确认和纯措辞问题不得触发正式返工。
-- 历史用例与 Coverage：历史用例仅能作为表达/环境参考；函数执行次数不能证明分支或风险已经覆盖。
+- 用例：每条 TestCase 必须保留 `linked_risk_ids`、`linked_requirement_ids`、`linked_material_ids`、`linked_coverage_ids` 四个数组且至少一个非空。风险验证用例必须关联真实风险；没有稳定需求编号的设计行为可以只关联真实 `MAT:<path>`；Coverage-only 用例可以只关联 task 中真实 `COV:...` gap。不得用“同一调用链”或“回归对照”把无关风险挂到需求/资料/Coverage 用例上。按测试人员实际执行来判断。黑盒用例必须写清业务触发条件、对外入口或操作、预期系统结果、真实可观察现象以及清理/恢复；不得把函数调用、字段赋值、对象构造、内部返回值或源码行号当成测试步骤。确实无法纯黑盒触发时，必须诚实标成灰盒，并明确开发协助只负责制造什么条件，测试人员仍从哪个业务入口执行、观察什么、如何恢复。
+- 用例逐条核对：`steps` 与 `expected_results` 数量必须相同，并按数组位置逐项对应；准备动作的预期不能写成最终风险结论。对每个 `linked_risk_id` 反查风险触发与观测，对每个 `linked_requirement_id` 反查当前资料中的真实条目，对每个 `linked_material_id` 反查 `decision=current` 资料，对每个 `linked_coverage_id` 反查 task 的真实 gap，确认用例确实验证所关联对象。任一不满足都属于实质黑盒语义缺口。
+- 返工边界：只有缺少关键业务流程、异常/生命周期路径，遗漏明显必须的风险或测试用例，相关资料/Coverage 未闭环，或黑盒/灰盒用例实质不可执行时，才允许 `REWORK`。JSON 字段、路径、编号、证据待确认和纯措辞问题不得触发正式返工。
+- 历史用例与 Coverage：历史用例仅能作为表达/环境参考；函数执行次数不能证明分支或风险已经覆盖。Coverage 中没有记录表示未知，只有 task 确定生成的 `coverage_context[].gaps[]` 才进入强制 Coverage 测试闭环。
+- 资料处理：确认 worker 读取了全部 material。`decision=current` 表示与当前分析对象相关，必须确认其中可测试需求/设计行为已经进入用例；旧版、冲突或无关资料说明为何未进入当前结论即可。不得把相关资料降成 `context` 只为绕过用例生成。
 - 图片：`visual_findings` 必须指向 manifest 中真实附件，观察内容须来自实际可见图像。无法查看的图片及其影响必须显式保留为不完整，不能由文件名、正文或模型常识代替。
 
 ## 判定规则
@@ -58,7 +60,7 @@ python -m pangea_agent.cli.main prepare-review-result --task "<review task JSON>
 返工验证 `stage=rework_verification`：
 
 - 只能输出 `PASS` 或 `UNRESOLVED`，不得再次输出 `REWORK`。
-- 逐项检查 `prior_issues` 是否真实修复，并确认修改没有破坏其他已经通过的内容。
+- 逐项检查 `prior_issues` 是否真实修复，并确认修改没有破坏其他已经通过的内容；同时确认 `decision=current` 资料与 `coverage_decisions` 没有因返工重新缺失。
 - 任一语义问题未修复、产生新的必需语义修复项或 reviewer 身份不一致，均为 `UNRESOLVED`。仅存在“证据待确认”不影响正常结论。
 
 ## 写入结果
