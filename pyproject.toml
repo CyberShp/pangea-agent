@@ -3,7 +3,7 @@ name = "pangea-agent"
 version = "0.1.0"
 description = "Evidence-driven C/C++ testing analysis workflow for coding agents"
 readme = "README.md"
-requires-python = ">=3.10,<3.13"
+requires-python = ">=3.10,<3.14"
 dependencies = [
   "langgraph>=0.2,<2",
   "openpyxl>=3.1,<4",
