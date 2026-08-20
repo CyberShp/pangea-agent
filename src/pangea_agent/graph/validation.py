@@ -250,7 +250,7 @@ def _validate_test_basis_closure(task: WorkerTask, result: WorkerResult) -> None
     material_catalog = {
         item.get("path"): item
         for item in manifest.get("material_catalog", [])
-        if isinstance(item, dict) and item.get("type") == "material"
+        if isinstance(item, dict) and item.get("type") == "material" and item.get("path")
     }
     known_material_ids = {_material_id(path) for path in material_catalog}
     linked_material_ids = {
@@ -375,6 +375,7 @@ def normalize_unique_ids(results: list[WorkerResult]) -> None:
 
     seen_cases: set[str] = set()
     for result in results:
+        renamed_cases: dict[str, str] = {}
         for case in result.test_cases:
             original = case.test_case_id
             candidate = original
@@ -384,6 +385,14 @@ def normalize_unique_ids(results: list[WorkerResult]) -> None:
                 suffix += 1
             case.test_case_id = candidate
             seen_cases.add(candidate)
+            if candidate != original:
+                renamed_cases[original] = candidate
+        if renamed_cases:
+            for decision in result.analysis_checkpoint.coverage_decisions:
+                decision.linked_test_case_ids = [
+                    renamed_cases.get(case_id, case_id)
+                    for case_id in decision.linked_test_case_ids
+                ]
 
 
 def validate_independent_review_result(
