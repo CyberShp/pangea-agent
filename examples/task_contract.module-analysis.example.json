@@ -1,5 +1,4 @@
 {
-  "run_id": "RUN-example",
   "data_root": "pangea-data",
   "mode": "module_analysis",
   "repository": "driver",
