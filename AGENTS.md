@@ -58,7 +58,9 @@
 
 - OpenCode 读取本文件和 `.opencode/agents/pangea-agent.md`。
 - Claude Code 读取 `CLAUDE.md`。
-- 两个客户端应遵循同一套 graph / schema / rubric 分层。
+- DSH 只在当前工作区属于本 `pangea-agent` 仓库时读取本文件，并额外读取仓库内 `.agents/pangea/dsh.md`。不得把 PANGEA 规则复制到 `~/.dsh/AGENTS.md`、全局 profile 或其他工作区。
+- DSH 派发 PANGEA 子 Agent 时，子 Agent 先按 `.agents/pangea/dsh.md` 选择并读取仓库内对应 worker 规则；不得只把 task JSON 路径交给一个未加载 PANGEA worker 规则的通用子 Agent。
+- 三个客户端应遵循同一套 graph / schema / rubric 分层。
 - Python 不调用模型 API。当前主 Agent 读取 `agent-tasks/` 文件，最多并发派发
   4 个互不重叠的 `analysis-worker`；worker 不得再派发子 Agent。
 - analysis 结果齐备后，只启动 1 个 `review-worker`。初审和返工验证属于同一轮
