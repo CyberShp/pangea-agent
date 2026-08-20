@@ -82,7 +82,12 @@ def ready_state_path(state: dict) -> Path:
 
 
 def load_worker_task(path: Path) -> WorkerTask:
-    return WorkerTask.model_validate(read_json(path))
+    payload = read_json(path)
+    task = WorkerTask.model_validate(payload)
+    normalized = task.model_dump(mode="json")
+    if normalized != payload:
+        write_json(path, normalized)
+    return task
 
 
 def load_worker_result(path: Path, task: WorkerTask | None = None) -> WorkerResult:
