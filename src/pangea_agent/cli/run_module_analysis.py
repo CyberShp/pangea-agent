@@ -5,7 +5,6 @@ import re
 from datetime import date
 from pathlib import Path
 
-from pangea_agent.agent_io import write_json
 from pangea_agent.graph.graph import graph
 
 
@@ -21,20 +20,29 @@ def _default_run_id(contract: dict) -> str:
     return f"{prefix}-{sequence:02d}"
 
 
-def run_module_analysis(contract_path: str) -> dict:
-    path = Path(contract_path)
-    contract = json.loads(path.read_text(encoding="utf-8"))
-    run_id = contract.get("run_id")
-    if not run_id:
-        run_id = _default_run_id(contract)
-        contract["run_id"] = run_id
-        write_json(path, contract)
+def _invoke_contract(contract: dict) -> dict:
     state = {
-        "run_id": run_id,
+        "run_id": contract["run_id"],
         "data_root": contract.get("data_root", "pangea-data"),
         "task_contract": contract,
     }
     return graph.invoke(state)
+
+
+def run_module_analysis(contract_path: str) -> dict:
+    path = Path(contract_path)
+    contract = json.loads(path.read_text(encoding="utf-8"))
+    if not contract.get("run_id"):
+        contract["run_id"] = _default_run_id(contract)
+    return _invoke_contract(contract)
+
+
+def start_module_analysis(contract_path: str) -> dict:
+    path = Path(contract_path)
+    contract = json.loads(path.read_text(encoding="utf-8"))
+    contract.pop("run_id", None)
+    contract["run_id"] = _default_run_id(contract)
+    return _invoke_contract(contract)
 
 
 def resume_module_analysis(run_id: str, data_root: str = "pangea-data") -> dict:
