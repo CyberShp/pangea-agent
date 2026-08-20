@@ -81,6 +81,17 @@ def ready_state_path(state: dict) -> Path:
     return run_directory(state) / "ready-state.json"
 
 
+def load_progress(state: dict) -> RunProgress | None:
+    path = progress_path(state)
+    if not path.exists():
+        return None
+    return RunProgress.model_validate(read_json(path))
+
+
+def save_progress(state: dict, progress: RunProgress) -> None:
+    write_json(progress_path(state), progress.model_dump(mode="json"))
+
+
 def load_worker_task(path: Path) -> WorkerTask:
     return WorkerTask.model_validate(read_json(path))
 
@@ -101,6 +112,9 @@ def load_worker_result(path: Path, task: WorkerTask | None = None) -> WorkerResu
     ):
         payload.setdefault(field, [])
     payload.setdefault("analysis_checkpoint", worker_result_skeleton(task)["analysis_checkpoint"] if task else {})
+    checkpoint = payload.get("analysis_checkpoint")
+    if isinstance(checkpoint, dict):
+        checkpoint.setdefault("coverage_decisions", [])
     if task is not None:
         payload.update({
             "schema_version": "1.0",
