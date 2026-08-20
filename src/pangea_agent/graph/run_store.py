@@ -81,17 +81,6 @@ def ready_state_path(state: dict) -> Path:
     return run_directory(state) / "ready-state.json"
 
 
-def load_progress(state: dict) -> RunProgress | None:
-    path = progress_path(state)
-    if not path.exists():
-        return None
-    return RunProgress.model_validate(read_json(path))
-
-
-def save_progress(state: dict, progress: RunProgress) -> None:
-    write_json(progress_path(state), progress.model_dump(mode="json"))
-
-
 def load_worker_task(path: Path) -> WorkerTask:
     return WorkerTask.model_validate(read_json(path))
 
