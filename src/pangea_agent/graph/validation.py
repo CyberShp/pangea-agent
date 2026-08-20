@@ -187,6 +187,94 @@ def _validate_visual_findings(task: WorkerTask, result: WorkerResult) -> None:
             finding.pending_reason = "附件路径未在当前运行的来源清单中匹配到"
 
 
+def _material_id(path: str) -> str:
+    return f"MAT:{path.replace('\\', '/')}"
+
+
+def _validate_test_basis_closure(task: WorkerTask, result: WorkerResult) -> None:
+    case_by_id = {case.test_case_id: case for case in result.test_cases}
+    if len(case_by_id) != len(result.test_cases):
+        raise ArtifactRejected("当前单元测试用例 ID 重复")
+
+    # Risk 是基础驱动：凡是已经具备可执行测试翻译的风险，都必须至少有一条风险用例。
+    for risk in result.risks:
+        if risk.translation_status == "Developer-confirm":
+            continue
+        if not any(risk.risk_id in case.linked_risk_ids for case in result.test_cases):
+            raise ArtifactRejected(f"可执行风险 {risk.risk_id} 尚未闭环到测试用例")
+
+    # Coverage 只有在与当前分析单元唯一匹配并形成 gap 时才升级为强制输入。
+    known_coverage_ids = {
+        gap.coverage_id
+        for coverage in task.coverage_context
+        for gap in coverage.gaps
+    }
+    linked_coverage_ids = {
+        coverage_id
+        for case in result.test_cases
+        for coverage_id in case.linked_coverage_ids
+    }
+    unknown_coverage_ids = linked_coverage_ids - known_coverage_ids
+    if unknown_coverage_ids:
+        raise ArtifactRejected(f"测试用例引用了当前单元不存在的 Coverage 缺口：{sorted(unknown_coverage_ids)}")
+
+    decisions = result.analysis_checkpoint.coverage_decisions
+    decision_by_id = {decision.coverage_id: decision for decision in decisions}
+    if len(decision_by_id) != len(decisions):
+        raise ArtifactRejected("Coverage 缺口存在重复闭环记录")
+    unknown_decisions = set(decision_by_id) - known_coverage_ids
+    if unknown_decisions:
+        raise ArtifactRejected(f"Coverage 闭环引用了当前单元不存在的缺口：{sorted(unknown_decisions)}")
+    missing_decisions = known_coverage_ids - set(decision_by_id)
+    if missing_decisions:
+        raise ArtifactRejected(f"Coverage 缺口尚未闭环：{sorted(missing_decisions)}")
+    for coverage_id, decision in decision_by_id.items():
+        if decision.disposition == "unreachable_from_supported_entry":
+            continue
+        for case_id in decision.linked_test_case_ids:
+            case = case_by_id.get(case_id)
+            if case is None:
+                raise ArtifactRejected(f"Coverage 缺口 {coverage_id} 引用了不存在的测试用例 {case_id}")
+            if coverage_id not in case.linked_coverage_ids:
+                raise ArtifactRejected(
+                    f"Coverage 缺口 {coverage_id} 的闭环用例 {case_id} 未反向关联该 coverage_id"
+                )
+
+    # Requirement / design 是可选输入；一旦 worker 判定资料为 current，就必须至少有一条资料驱动用例。
+    manifest_path = Path(task.source_manifest_path)
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ArtifactRejected(f"无法校验当前资料闭环：{manifest_path} ({exc})") from exc
+    material_catalog = {
+        item.get("path"): item
+        for item in manifest.get("material_catalog", [])
+        if isinstance(item, dict) and item.get("type") == "material"
+    }
+    known_material_ids = {_material_id(path) for path in material_catalog}
+    linked_material_ids = {
+        material_id
+        for case in result.test_cases
+        for material_id in case.linked_material_ids
+    }
+    unknown_material_ids = linked_material_ids - known_material_ids
+    if unknown_material_ids:
+        raise ArtifactRejected(f"测试用例引用了当前 Run 不存在的资料：{sorted(unknown_material_ids)}")
+    for decision in result.analysis_checkpoint.material_decisions:
+        if decision.decision != "current":
+            continue
+        catalog_item = material_catalog.get(decision.path)
+        if catalog_item is None:
+            continue
+        if not str(catalog_item.get("parse_status", "")).startswith("parsed"):
+            continue
+        material_id = _material_id(decision.path)
+        if not any(material_id in case.linked_material_ids for case in result.test_cases):
+            raise ArtifactRejected(
+                f"当前资料 {decision.path} 已判定与分析对象相关，但尚未闭环到测试用例（{material_id}）"
+            )
+
+
 def validate_nonoverlapping_units(units: list[dict]) -> None:
     owners: dict[tuple[str, str], str] = {}
     for raw_unit in units:
@@ -255,6 +343,7 @@ def validate_worker_result(task: WorkerTask, result: WorkerResult) -> None:
                 raise ArtifactRejected(
                     f"风险 {risk.risk_id} 声明受影响路径 {affected_path}，但对应 semantic check 未判定并关联该风险"
                 )
+    _validate_test_basis_closure(task, result)
     _evidence_rows(task, result)
     _validate_visual_findings(task, result)
     if task.task_type == "rework":
