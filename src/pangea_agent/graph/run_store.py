@@ -152,6 +152,7 @@ def worker_result_skeleton(task: WorkerTask) -> dict:
             "failure_paths": [],
             "material_decisions": [],
             "coverage_priorities": [],
+            "coverage_decisions": [],
             "risk_set_frozen": False,
             "counterexamples_checked": [],
         },
