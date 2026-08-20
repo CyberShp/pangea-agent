@@ -76,6 +76,7 @@ def build_run_index(
     material_source_types = ("material", "coverage", "coverage_record", "testcase")
     for target in {index_path, material_index_path}:
         clear_source_types(target, material_source_types)
+    indexed_code_paths_by_repo: dict[str, set[str]] = {}
     for repo in repositories:
         repo_id = repo["repo_id"]
         root = Path(repo["source_root"])
@@ -86,11 +87,14 @@ def build_run_index(
                 continue
             for path in _iter_files(scoped_root, CODE_SUFFIXES):
                 file_count += 1
-                chunks = chunk_text_file(path, source_type="code", repo_id=repo_id, root=root)
                 relative_path = path.relative_to(root).as_posix()
+                indexed_code_paths_by_repo.setdefault(repo_id, set()).add(relative_path)
+                chunks = chunk_text_file(path, source_type="code", repo_id=repo_id, root=root)
                 _replace((index_path,), chunks, source_type="code", repo_id=repo_id, path=relative_path)
                 chunk_count += len(chunks)
         for relative_path in context_by_repo.get(repo_id, []):
+            if relative_path in indexed_code_paths_by_repo.get(repo_id, set()):
+                continue
             path = root / relative_path
             if not path.is_file():
                 warnings.append({"path": relative_path, "warning": "expanded context file is missing"})
