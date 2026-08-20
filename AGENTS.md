@@ -39,6 +39,15 @@
 - Git 信息只作为版本描述；普通源码目录同样可以分析。
 - 测试用例优先用黑盒语言表达，函数、变量和行号只作为证据。
 
+## 运行入口与会话 Run
+
+- 用户不需要显式说 `module-analysis`。只要用户要求对业务源码、模块或目录做测试分析、风险分析、业务流程分析、Coverage 缺口分析或生成测试用例，就按一次新的 PANGEA 模块分析处理；`/module-analysis` 只是显式快捷入口。
+- 新根 Agent 会话默认没有当前 Run。若当前会话尚未通过本次分析创建并持有明确 `run_id`，且用户没有明确指定历史 `run_id`，禁止通过扫描 `pangea-data/runs/`、读取历史 `progress.json` / `agent_sessions`、报告、Companion 状态或“最近未完成 Run”来决定恢复目标。
+- 新分析意图与显式 `/module-analysis` 执行同一入口：确定目标仓和最小 `source_scope`，使用 `pangea-data/.pangea/pending-task-contract.json` 作为临时 contract，并执行 `python -m pangea_agent.cli.main module-analysis --contract <pending-contract>` 创建新 Run；新 Run 的 `run_id` 由 PANGEA 生成。
+- 只有两种情况允许执行 `resume-run`：当前会话已经由本次分析获得明确 `run_id`；或用户在当前请求中明确指定要恢复的历史 Run / 历史会话。新会话中的“继续之前的”如果没有明确 Run，不得自行扫描历史 Run 猜测。
+- 查看历史 Run、打开报告、浏览 Companion 看板或调用只读状态工具不会把该 Run 绑定为当前会话 Run，也不会授权恢复。
+- 修改 `pangea-agent` 自身代码、graph、schema、rubric、Agent 规则或 DSH/OpenCode 适配属于产品开发，不启动 PANGEA 分析 Run。
+
 ## 输出要求
 
 - 风险必须包含复现条件、系统结果、外部观测和排除条件。
@@ -57,7 +66,7 @@
 
 ## Agent 客户端
 
-- OpenCode 读取本文件和 `.opencode/agents/pangea-agent.md`。
+- OpenCode 普通会话先遵循本文件的“运行入口与会话 Run”；选中 `pangea-agent` 或显式 `/module-analysis` 时继续使用 `.opencode/agents/pangea-agent.md` 和对应 command 细则，但不要求用户必须输入命令名。
 - Claude Code 读取 `CLAUDE.md`。
 - DSH 只在当前工作区属于本 `pangea-agent` 仓库时读取本文件，并额外读取仓库内 `.agents/pangea/dsh.md`。不得把 PANGEA 规则复制到 `~/.dsh/AGENTS.md`、全局 profile 或其他工作区。
 - DSH 派发 PANGEA 子 Agent 时，子 Agent 先按 `.agents/pangea/dsh.md` 选择并读取仓库内对应 worker 规则；不得只把 task JSON 路径交给一个未加载 PANGEA worker 规则的通用子 Agent。
@@ -69,7 +78,7 @@
 - 初审固定为同一 reviewer 的两个 checkpoint：`independent_review` task 不提供 worker result；
   graph 接受独立结论后才生成 `comparison_review` task。两个阶段各完成一次，不按检查项拆分调用。
 - review-worker 每次写完 `independent_review`、`comparison_review` 或 `rework_verification` 结果后，必须先执行 `python -m pangea_agent.cli.main check-review-artifact --task "<review task JSON>"` 并得到 `PASS`；失败由同一 reviewer 修正同一结果文件，主 Agent 不得代填、扁平化或删除字段绕过契约。只有 `PASS` 后主 Agent 才执行 `resume-run`。
-- 新主 Agent 会话首次运行 `module-analysis` 时创建新 Run；当前会话已经持有明确 `run_id` 后，完成当前 `phase` 的 task 再使用 `resume-run` 推进该 Run。不得扫描历史 Run 自动替用户选择恢复目标，也不得用占位风险冒充语义分析结果。
+- 新主 Agent 会话命中新的模块分析意图时创建新 Run；当前会话已经持有本次运行的明确 `run_id` 后，完成当前 `phase` 的 task 再使用 `resume-run` 推进该 Run。不得要求用户为了触发流程显式说 `module-analysis`，不得扫描历史 Run 自动替用户选择恢复目标，也不得用占位风险冒充语义分析结果。
 
 ## Private House Code Policy
 
