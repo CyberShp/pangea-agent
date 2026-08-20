@@ -64,13 +64,19 @@ pangea-data/
 
 ## 分析流程
 
-准备任务契约后运行：
+准备分析配置后运行：
 
 ```powershell
 & ".\.venv\Scripts\python.exe" -m pangea_agent.cli.main module-analysis --contract "examples/task_contract.module-analysis.example.json"
 ```
 
-命令是可恢复的阶段推进器：
+`module-analysis` 每次都创建新的 Run，并在 Run 内冻结本次任务契约和源码输入。后续阶段使用明确的 `run_id` 恢复：
+
+```powershell
+& ".\.venv\Scripts\python.exe" -m pangea_agent.cli.main resume-run --run-id "<run-id>" --data-root "pangea-data"
+```
+
+Run 内部按以下阶段推进：
 
 ```text
 准备源码、资料和 inventory
@@ -89,9 +95,7 @@ pangea-data/
 测试；已经被定义为预期行为的结论不能列为风险。该规则不增加新的 Agent 类型或复核层。
 
 当前 Agent 读取 `pangea-data/runs/<run-id>/agent-tasks/`，把结果写到 task 声明的
-`result_path`，再使用同一 contract 重复运行命令推进。worker 禁止派生子 Agent；
-返工 worker 可以替代失败的原 worker，但不增加返工轮次；返工复核必须沿用原
-reviewer，否则生成不完整报告。
+`result_path`，再使用 `resume-run --run-id <run-id>` 推进当前 Run。新主 Agent 会话不会扫描历史 Run 自动选择恢复目标；OpenCode 恢复原会话或 DSH 切换回历史会话时沿用该会话已经持有的 `run_id`。worker 禁止派生子 Agent；返工 worker 可以替代失败的原 worker，但不增加返工轮次；返工复核必须沿用原 reviewer，否则生成不完整报告。
 
 截断、格式错误、任务摘要不匹配、范围遗漏或缺少证据的结果不会被接受。最终固定输出：
 
