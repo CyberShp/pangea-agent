@@ -65,8 +65,7 @@
   review lifecycle，返工最多一次，且返工验证必须由原 reviewer 完成。
 - 初审固定为同一 reviewer 的两个 checkpoint：`independent_review` task 不提供 worker result；
   graph 接受独立结论后才生成 `comparison_review` task。两个阶段各完成一次，不按检查项拆分调用。
-- 每次运行 `module-analysis` 后检查 `phase`：等待阶段由 Agent 完成对应 task 文件，
-  再沿用同一 contract 继续运行；不得用占位风险冒充语义分析结果。
+- 新主 Agent 会话首次运行 `module-analysis` 时创建新 Run；当前会话已经持有明确 `run_id` 后，完成当前 `phase` 的 task 再使用 `resume-run` 推进该 Run。不得扫描历史 Run 自动替用户选择恢复目标，也不得用占位风险冒充语义分析结果。
 
 ## Private House Code Policy
 
