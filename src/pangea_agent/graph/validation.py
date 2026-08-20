@@ -188,7 +188,8 @@ def _validate_visual_findings(task: WorkerTask, result: WorkerResult) -> None:
 
 
 def _material_id(path: str) -> str:
-    return f"MAT:{path.replace('\\', '/')}"
+    normalized = path.replace("\\", "/")
+    return f"MAT:{normalized}"
 
 
 def _validate_test_basis_closure(task: WorkerTask, result: WorkerResult) -> None:
