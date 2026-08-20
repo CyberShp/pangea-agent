@@ -65,6 +65,6 @@ This repository also includes `AGENTS.md` for OpenCode and other agent clients. 
 ## Initialization contract
 
 - When the user asks to initialize PANGEA, say that initialization is starting, then inspect `py -0p`, `.venv`, and pip.
-- Select only Python 3.10, 3.11, or 3.12. Stop and explain if none is installed; do not install Python silently.
+- Select only Python 3.10, 3.11, 3.12, or 3.13. Stop and explain if none is installed; do not install Python silently.
 - Before creating or recreating `.venv` or installing dependencies, show the selected version, path, and actions, then ask for confirmation.
 - Keep the machine's internal pip source unchanged. If it fails, ask before using the repository's offline wheels and never rewrite pip configuration.
