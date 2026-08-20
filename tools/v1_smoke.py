@@ -109,9 +109,35 @@ def _task_result(task: dict, *, finish_reason: str = "stop", fake_location: bool
             }],
             "material_decisions": [],
             "coverage_priorities": [],
+            "coverage_decisions": [],
             "risk_set_frozen": True,
             "counterexamples_checked": ["异常返回不会被误写为成功"],
         },
+    }
+
+
+def _test_case(
+    case_id: str,
+    *,
+    risk_ids: list[str] | None = None,
+    requirement_ids: list[str] | None = None,
+    material_ids: list[str] | None = None,
+    coverage_ids: list[str] | None = None,
+    title: str = "业务行为验证",
+) -> dict:
+    return {
+        "test_case_id": case_id,
+        "title": title,
+        "case_type": "功能",
+        "linked_risk_ids": risk_ids or [],
+        "linked_requirement_ids": requirement_ids or [],
+        "linked_material_ids": material_ids or [],
+        "linked_coverage_ids": coverage_ids or [],
+        "preconditions": ["环境就绪"],
+        "steps": ["执行目标业务操作"],
+        "expected_results": ["系统表现符合测试依据"],
+        "observability": ["业务结果"],
+        "cleanup": ["恢复环境"],
     }
 
 
@@ -148,6 +174,8 @@ def _mismatched_step_results_rejected() -> None:
         "case_type": "功能",
         "linked_risk_ids": ["U00-R1"],
         "linked_requirement_ids": [],
+        "linked_material_ids": [],
+        "linked_coverage_ids": [],
         "preconditions": ["环境就绪"],
         "steps": ["准备环境", "触发业务"],
         "expected_results": ["系统异常"],
@@ -165,18 +193,11 @@ def _requirement_only_test_case_is_accepted() -> None:
     state = run_module_analysis(str(contract))
     task = read_json(Path(state["agent_task_paths"][0]))
     result = _task_result(task)
-    result["test_cases"] = [{
-        "test_case_id": "U00-REQ-TC1",
-        "title": "需求行为补测",
-        "case_type": "功能",
-        "linked_risk_ids": [],
-        "linked_requirement_ids": ["REQ-DEMO-01"],
-        "preconditions": ["环境就绪"],
-        "steps": ["执行需求规定的业务操作"],
-        "expected_results": ["系统表现符合当前需求"],
-        "observability": ["业务结果"],
-        "cleanup": ["恢复环境"],
-    }]
+    result["test_cases"] = [_test_case(
+        "U00-REQ-TC1",
+        requirement_ids=["REQ-DEMO-01"],
+        title="需求行为补测",
+    )]
     write_json(Path(task["result_path"]), result)
     assert run_module_analysis(str(contract))["phase"] == "WAITING_REVIEW"
 
@@ -312,14 +333,15 @@ def _pass_report() -> None:
     assert state["phase"] == "COMPLETE"
     assert Path(state["report_path"]).is_file() and Path(state["html_report_path"]).is_file()
     markdown = Path(state["report_path"]).read_text(encoding="utf-8")
-    html = Path(state["html_report_path"]).read_text(encoding="utf-8")
+    html_report = Path(state["html_report_path"]).read_text(encoding="utf-8")
     assert markdown.startswith("# CHAP 分析报告")
-    assert "<title>CHAP 分析报告</title>" in html
-    assert "PANGEA Agent 测试分析报告" not in markdown + html
-    assert "COMPLETE / PASS" not in markdown + html
+    assert "<title>CHAP 分析报告</title>" in html_report
+    assert "PANGEA Agent 测试分析报告" not in markdown + html_report
+    assert "COMPLETE / PASS" not in markdown + html_report
     assert "| 项目 | 内容 |" in markdown
     assert "| 类别 | 源码仓 | 路径 | 纳入原因 |" in markdown
-    assert "质量门禁已通过。完成" in markdown and "质量门禁已通过。完成" in html
+    assert "## 2. 分析引用范围" in markdown
+    assert "质量门禁已通过。完成" in markdown and "质量门禁已通过。完成" in html_report
 
 
 def _review_missing_finding_cannot_pass() -> None:
@@ -483,10 +505,12 @@ def _duplicate_ids_correction() -> None:
             "status": "pending",
             "evidence": evidence,
         }]
+        result["test_cases"] = [_test_case("DUP-TC01", risk_ids=["DUP-R01"])]
         write_json(Path(task["result_path"]), result)
     assert run_module_analysis(str(contract))["phase"] == "WAITING_REVIEW"
     normalized = [read_json(Path(task["result_path"])) for task in tasks]
     assert {item["risks"][0]["risk_id"] for item in normalized} == {"DUP-R01", "DUP-R01-2"}
+    assert {item["test_cases"][0]["test_case_id"] for item in normalized} == {"DUP-TC01", "DUP-TC01-2"}
     assert not read_json(data_root / "runs" / "smoke-01" / "progress.json")["errors"]
 
 
@@ -609,6 +633,36 @@ def _coverage_reference_only() -> None:
     report = state["coverage_report"]
     assert len(report["matched"]) == 1 and len(report["unmatched"]) == 1
     assert report["matched"][0]["meaning"] == "function_execution_reference_only"
+    task = read_json(Path(state["agent_task_paths"][0]))
+    assert task["coverage_context"][0]["gaps"] == []
+
+
+def _coverage_gap_requires_test_case() -> None:
+    _, data_root, contract = _workspace()
+    coverage = data_root / "coverage"
+    coverage.mkdir()
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(["模块", "函数", "覆盖次数"])
+    sheet.append(["module", "demo_start", 0])
+    workbook.save(coverage / "coverage.xlsx")
+    state = run_module_analysis(str(contract))
+    task = read_json(Path(state["agent_task_paths"][0]))
+    gap_id = task["coverage_context"][0]["gaps"][0]["coverage_id"]
+    result = _task_result(task)
+    write_json(Path(task["result_path"]), result)
+    assert run_module_analysis(str(contract))["phase"] == "WAITING_ANALYSIS"
+    errors = read_json(data_root / "runs" / "smoke-01" / "progress.json")["errors"]
+    assert any("Coverage 缺口尚未闭环" in item["reason"] for item in errors)
+    result["test_cases"] = [_test_case("U00-COV-TC1", coverage_ids=[gap_id], title="Coverage 缺口补测")]
+    result["analysis_checkpoint"]["coverage_decisions"] = [{
+        "coverage_id": gap_id,
+        "disposition": "new_coverage_case",
+        "linked_test_case_ids": ["U00-COV-TC1"],
+        "reason": "通过当前模块业务入口补齐未执行函数路径。",
+    }]
+    write_json(Path(task["result_path"]), result)
+    assert run_module_analysis(str(contract))["phase"] == "WAITING_REVIEW"
 
 
 def _material_traceability_report() -> None:
@@ -629,15 +683,21 @@ def _material_traceability_report() -> None:
         "decision": "current",
         "reason": "当前需求基线。",
     }]
+    result["test_cases"] = [_test_case(
+        "U00-MAT-TC1",
+        requirement_ids=["REQ-DEMO-01"],
+        material_ids=["MAT:inbox/current.md"],
+        title="当前需求行为验证",
+    )]
     write_json(Path(task["result_path"]), result)
     run_module_analysis(str(contract))
     _review(data_root, "smoke-01", status="PASS")
     state = run_module_analysis(str(contract))
     markdown = Path(state["report_path"]).read_text(encoding="utf-8")
-    html = Path(state["html_report_path"]).read_text(encoding="utf-8")
-    for expected in ("inbox/current.md", "inbox/current.md:1-1", "REQ-DEMO-01 作为当前需求采用。"):
-        assert expected in markdown and expected in html
-    assert "### 资料采用与排除结论" in markdown
+    html_report = Path(state["html_report_path"]).read_text(encoding="utf-8")
+    for expected in ("inbox/current.md", "inbox/current.md:1-1", "REQ-DEMO-01 作为当前需求采用。", "MAT:inbox/current.md"):
+        assert expected in markdown and expected in html_report
+    assert "### 资料采用与排除结论" not in markdown
     assert "### 资料引用" in markdown
 
 
@@ -844,6 +904,7 @@ def _expected_behavior_not_risk() -> None:
         "status": "pending",
         "evidence": result["evidence"],
     }]
+    result["test_cases"] = [_test_case("TC-EXPECTED", risk_ids=["R-EXPECTED"])]
     write_json(Path(task["result_path"]), result)
     assert run_module_analysis(str(contract))["phase"] == "WAITING_REVIEW"
     assert not read_json(data_root / "runs" / "smoke-01" / "progress.json")["errors"]
@@ -997,8 +1058,9 @@ SCENARIOS: tuple[tuple[str, Scenario], ...] = (
     ("不存在 scope 拒绝", _missing_scope),
     ("终态报告恢复", _report_recovery),
     ("文档缺口强制不完整", _document_gap),
-    ("coverage 仅函数执行线索", _coverage_reference_only),
-    ("报告展示逐资料决策与引用", _material_traceability_report),
+    ("有 Coverage 记录但无缺口时不强制补测", _coverage_reference_only),
+    ("Coverage 缺口必须闭环到用例", _coverage_gap_requires_test_case),
+    ("相关资料必须闭环且报告不展示排除章节", _material_traceability_report),
     ("多 repo 单元隔离", _multi_repo_isolation),
     ("返工期间未返工结果编辑不阻塞", _unchanged_result_edit_does_not_block),
     ("范围只扩到直接调用与相关上下文", _bounded_scope_expansion),
