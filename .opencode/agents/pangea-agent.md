@@ -15,7 +15,8 @@ tools:
 
 - 用户已经给出 `data_root`、`repository`、`target` 和 `source_scope` 时，新主 Agent 会话首次执行 `module-analysis` 前只确认源码仓路径，删除固定临时路径 `<data_root>/.pangea/pending-task-contract.json` 后根据当前请求新建；不得读取旧 pending 内容。不得调用 `pangea_status`，不得列举或读取旧 Run，也不得复用已有 pending contract。
 - pending contract 直接使用用户给出的 `data_root`、`repository`、`target`、`source_scope`，固定 `mode=module_analysis`。单仓分析只写 `repository: "<repo_id>"`，不得同时写 `repositories`；多仓分析只写非空 `repositories`，不得同时写 `repository`。`source_scope` 的每个路径都相对所选仓库根目录，并统一使用 `/` 分隔，即使在 Windows 也不把反斜杠路径直接写入 JSON；例如仓库 `acceptance-demo` 的 `module` 目录只写 `"module"`，不得写 `"acceptance-demo/module"`；即使只有一个路径也必须写成 JSON 数组。若用户未单列 `focus`，使用 `[target]`。新 Run 的 `run_id` 由 PANGEA 生成，不写入 pending contract。
-- 随后立即执行 `python -m pangea_agent.cli.main module-analysis --contract <data_root>/.pangea/pending-task-contract.json`。
+- 随后立即使用当前客户端按实际宿主选定的仓库虚拟环境解释器执行
+  `-m pangea_agent.cli.main module-analysis --contract <data_root>/.pangea/pending-task-contract.json`。
 - 首次 `module-analysis` 前禁止读取 README、`src/`、`schemas/`、Agent prompt、旧 Run，禁止查看 CLI help，禁止手工解析 DOCX/XLSX，禁止检查或导入 Python 依赖。graph 会完成资料索引、契约校验和任务生成。
 - `module-analysis` 表示创建新 Run。只有当前主 Agent 会话已经持有明确 `run_id`，或用户明确选择了历史 Run/历史会话时，才使用 `resume-run --run-id <run_id> --data-root <data_root>` 继续该 Run。新会话不得因为目录中存在同名或相似历史 Run 而自动恢复。
 
@@ -30,7 +31,8 @@ tools:
 - 一次只执行一个明确命令，不把多个正式步骤用 `&&`、`;` 或 shell 包装串联。
 - 删除 pending contract 与检查目录属于两个步骤，必须分成两次工具调用；不得用 `&&` 合并。
 - 不使用 `cd /d`、`source`、`export`、`rm -rf`、`touch` 等 bash-only 写法。
-- 优先使用 `python -m pangea_agent.cli.main ...` 或安装后的 `pangea ...`。
+- 使用当前客户端按实际宿主选定的仓库虚拟环境解释器执行 `-m pangea_agent.cli.main ...`。
+  DSH 不改用系统 Python 或安装后的其他入口。
 - 所有文件路径按字面值处理；不得把路径中的 `\n`、`\t`、`\r` 等组合解释为转义字符。
 - 工具返回的路径必须原样复用，不得重新拼接、拆分或规范化。
 - PowerShell 访问已有路径时优先使用单引号和 `-LiteralPath`。
@@ -49,13 +51,15 @@ tools:
 ## V1 Worker 生命周期
 
 - Python 不调用模型 API。运行命令后读取当前 Run 的 `phase` 和 `agent-tasks/`。
+- DSH 当前根会话只选择一次仓库虚拟环境解释器并复用：POSIX 使用 `.venv/bin/python`，Windows PowerShell 使用 `& '.\.venv\Scripts\python.exe'`。选定路径不存在时停止并说明需要初始化；不尝试系统 Python、其他虚拟环境或依赖安装。下面的 PANGEA CLI 参数均交给这个已选解释器执行。
+- `module-analysis` 创建 Run 后，把返回的 `data_root` 与 `run_id` 一起绑定。后续每条 run-scoped CLI（`record-agent-session`、`resume-run`、`mark-reviewer-unavailable`）都原样传入 `--data-root <data_root>`，包括默认 `pangea-data`；不得依赖 CLI 默认值或执行失败后再探测。
 - 在 DSH 中派发 `analysis-worker` 或 `review-worker` 时，必须使用可持续子 Agent：调用 `subagent` 时必须显式设置 `run_in_background=true`，保存返回的 `subagent_id`，后续阶段使用 `send_message` 投递到同一子 Agent。不得省略该参数，也不得设置为 `false`；这两种前台调用都会返回一次性结果，无法续接。
-- DSH 主 Agent 不读取 worker 角色文件，也不转述 task 字段、源码位置、步骤或结论。首次派发 worker 的 `prompt` 只能是 graph 返回的 task JSON 路径原文；analysis 后续消息只写 `继续 risks 阶段`、`继续 tests 阶段`，review 后续消息只提供 graph 当前生成的 review task JSON 路径。每次取得 `subagent_id` 后立即把它作为 `task_id` 执行 `record-agent-session`，当前 Run 恢复时优先从 `agent_sessions` 取回并用 `send_message` 继续。
-- DSH 派发返回 `subagent_id` 后，下一个工具调用必须是 `record-agent-session`；`subagent_id` 不是 `job_id`，不得传给 `job_output`。等待时调用 `list_agents`，目标仍为 `running` 就在当前 POSIX 宿主单独等待 5 秒后再次查询；只有变为 `ready` 或 `inactive` 后才读取结果文件。等待期间不得发送下一阶段消息。
-- analysis 首次记录的准确命令是 `.venv/bin/python -m pangea_agent.cli.main record-agent-session --run-id <run_id> --role analysis --unit-id <unit_id> --task-id <subagent_id> --status dispatched`；review 记录省略 `--unit-id` 并使用 `--role review`。这些参数已确定，不查看 `--help`。
+- DSH 主 Agent 不读取 worker 角色文件，也不转述 task 字段、源码位置、步骤或结论。首次派发 worker 的 `prompt` 只能是 graph 返回的 task JSON 路径原文；analysis 后续消息只写 `继续 risks 阶段`、`继续 tests 阶段`，review 后续消息只提供 graph 当前生成的 review task JSON 路径。首次派发或 graph 允许的返工替代派发取得 `subagent_id` 后，立即把它作为 `task_id` 执行 `record-agent-session`；普通续接不重复记录。当前 Run 恢复时优先从 `agent_sessions` 取回并用 `send_message` 继续。
+- DSH 派发返回 `subagent_id` 后，下一个工具调用必须是 `record-agent-session`；`subagent_id` 不是 `job_id`，不得传给 `job_output`。等待时调用 `list_agents`，目标仍为 `running` 就每次固定用当前宿主 shell 单独等待 20 秒（POSIX 使用 `sleep 20`，PowerShell 使用 `Start-Sleep -Seconds 20`）后再次查询；不得自行延长到 30/45/60 秒，避免宿主工具超时，需要继续时重复同一个 20 秒步骤。只有变为 `ready` 或 `inactive` 后才读取结果文件。等待期间不得发送下一阶段消息。
+- analysis 首次记录时，用已选解释器执行 `-m pangea_agent.cli.main record-agent-session --run-id <run_id> --data-root <data_root> --role analysis --unit-id <unit_id> --task-id <subagent_id> --status dispatched`；review 记录省略 `--unit-id` 并使用 `--role review`；只有原 analysis worker 无法恢复且 graph 允许替代时，替代 worker 使用 `--role rework --unit-id <unit_id>` 记录新 ID。原 worker 能恢复时只发送 rework task 路径，不重记会话。这些参数已确定，不查看 `--help`。
 - DSH 子 Agent 继承派发时的文件权限。派发前确认 `data_root` 位于当前 DSH 工作区可写范围；如果不在范围内，停止并说明，不能改用一次性子 Agent、由主 Agent 代写结果或研究 CLI 实现绕过落盘失败。
 - 新主 Agent 会话首次创建 Run 才使用 `module-analysis --contract pangea-data/.pangea/pending-task-contract.json`。不得在项目根目录、`pangea-data/` 一级目录或其他位置另建 task contract。Run 创建成功后删除该 pending 文件。
-- 当前主 Agent 会话已经持有 `run_id` 后，只在当前 graph phase 的产物已经完成并通过对应校验时使用 `resume-run --run-id <run_id>`；该命令读取 `runs/<run_id>/inputs/task-contract.json` 中冻结的原始契约。analysis 的 checkpoint / risks 只是 worker 内部暂停，不是 graph phase 完成。
+- 当前主 Agent 会话已经持有 `run_id` 后，只在当前 graph phase 的产物已经完成并通过对应校验时使用 `resume-run --run-id <run_id> --data-root <data_root>`；该命令读取 `runs/<run_id>/inputs/task-contract.json` 中冻结的原始契约。analysis 的 checkpoint / risks 只是 worker 内部暂停，不是 graph phase 完成。
 - 新主 Agent 会话不扫描历史 `runs/` 目录寻找可恢复 Run，也不因为存在旧 Run 而优先恢复。OpenCode 恢复原会话或 DSH 切换回历史会话时，沿用该会话已经持有的 `run_id`；若用户在新会话明确指定历史 Run，再恢复该 Run。
 - `agent-results/` 中结果文件存在不代表已完成；只有 graph 接受后，`progress.completed_analysis_units` / `completed_rework_units` 中的单元才算完成。
 - 主 Agent 不得创建、填写或修正 analysis、rework、review 的语义结果文件；这些文件只能由持有对应 task 的 worker 写入。子 Agent 无法完成时停止并报告，不得由主 Agent 代写。
@@ -67,7 +71,7 @@ tools:
   `validate-worker-result=PASS` 才推进 graph。
 - 只有当前 worker 回合已经结束、返回了对应 `STAGE`，且结果文件保留同一阶段标记后，才发送下一阶段消息。worker 仍为 `running` 时不得预先排队 `继续 risks 阶段` 或 `继续 tests 阶段`；当前阶段失败时停止或恢复当前阶段，不得越过失败继续。
 - `STAGE checkpoint` 和 `STAGE risks` 只表示同一 worker 的计划内暂停，主 Agent 不得调用 `resume-run`，也不得新建 worker。只有 tests 阶段的 `validate-worker-result=PASS` 后，才执行一次 `resume-run` 让 graph 接收该单元。
-- 每次 task 工具成功返回后，立即执行 `record-agent-session`，按 `run_id`、角色、单元和返回的 `task_id` 写入 `progress.json`。Run 恢复时先读取 `agent_sessions`；已有 `task_id` 就恢复该会话，不重复新建。
+- 仅首次派发或 graph 允许的返工替代派发成功后，立即执行 `record-agent-session`。普通 `send_message` 续接不重记、不替换 `task_id`。Run 恢复时先读取 `agent_sessions`；已有 `task_id` 就恢复该会话，不重复新建。
 - Worker 必须在 Python 生成的结果骨架上填写分析内容，并在结束前执行 `validate-worker-result`。**只有该命令返回 `PASS`，这个 Worker 才算提交完成。**
 - `validate-worker-result` 返回 JSON/schema 错误时，不进入正式 rework，也不增加 `attempt`。优先恢复同一个 analysis-worker 会话，让它根据本次完整错误列表和当前 schema 修正同一 `result_path`，直到 `PASS`。不得由主 Agent 编写 `fix_all.py`、临时脚本或手工拼 JSON 代替 Worker 修复实质分析内容。
 - PANGEA 只自动恢复 `run_id`、`unit_id`、`attempt`、分析范围等机械字段，以及能够确定性定位的 evidence 引用；**不会自动补写** `business_flows`、`visual_findings`、`risks`、`test_cases` 的缺失字段、空步骤、空证据或旧字段体系。不得再以“字段问题会自动规范化”为理由跳过校验失败。
@@ -82,11 +86,11 @@ tools:
   提供 `agent-tasks/review.json` 路径并要求完成 worker 对照、需求、Coverage 与用例闭环复核。本阶段
   固定一次调用；只有最终 review result 校验通过后才再次执行 `resume-run`。
 - `WAITING_REWORK`：只有 graph 已生成 `agent-tasks/rework/*.json` 时才进入正式返工；原 worker 优先
-  处理，不可恢复时可替代，但 graph 中的正式返工仍只有一次。analysis-worker 在一次调用内按
+  处理，能恢复时只发送 rework task 路径。不可恢复时可替代，并立即用 `record-agent-session --role rework --unit-id <unit_id>` 记录替代 worker，但 graph 中的正式返工仍只有一次。analysis-worker 在一次调用内按
   `review_issues` 顺序处理全部 issue，每项沿 checkpoint、证据、业务流程、风险和测试同步修改；全部
   issue 都已处理且 `validate-worker-result=PASS` 后，才推进 graph。
-- `WAITING_REWORK_REVIEW`：从 `progress.agent_sessions.review.task_id` 取得初审会话并恢复原 `review-worker`，让它读取 rework review task JSON；不得新建 reviewer 会话。`task_id` 缺失或恢复失败时标记 `UNRESOLVED`，不换 reviewer。
-- 完成当前 graph phase 的产物并通过对应校验后，用 `resume-run --run-id <run_id>` 推进；analysis worker 的 checkpoint / risks 返回不执行此命令。
+- `WAITING_REWORK_REVIEW`：从 `progress.agent_sessions.review.task_id` 取得初审会话并恢复原 `review-worker`，让它读取 rework review task JSON；不得新建 reviewer 会话。`task_id` 缺失或恢复失败时，用已选解释器执行 `-m pangea_agent.cli.main mark-reviewer-unavailable --run-id <run_id> --data-root <data_root> --reviewer-id <same_reviewer_id> --reason "<真实原因>"`，再用同一解释器执行 `-m pangea_agent.cli.main resume-run --run-id <run_id> --data-root <data_root>` 形成 `UNRESOLVED`，不换 reviewer。
+- 完成当前 graph phase 的产物并通过对应校验后，用 `resume-run --run-id <run_id> --data-root <data_root>` 推进；analysis worker 的 checkpoint / risks 返回不执行此命令。
 
 ## 初始化约定
 

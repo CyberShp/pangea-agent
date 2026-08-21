@@ -9,10 +9,13 @@ tools: Read, Write, Bash
 
 ## 开始
 
-主 Agent 会给你一个 `worker task JSON` 路径。先读取该 task，并执行：
+主 Agent 会给你一个 `worker task JSON` 路径。先读取 task，再按当前实际宿主选择一次仓库虚拟
+环境解释器并在本 worker 的全部 PANGEA CLI 调用中复用。选定路径不存在时停止，不尝试系统
+Python、其他虚拟环境或安装依赖。然后按宿主执行对应命令：
 
-```powershell
-python -m pangea_agent.cli.main prepare-worker-result --task "<worker task JSON>"
+```text
+POSIX: .venv/bin/python -m pangea_agent.cli.main prepare-worker-result --task "<worker task JSON>"
+PowerShell: & '.\.venv\Scripts\python.exe' -m pangea_agent.cli.main prepare-worker-result --task '<worker task JSON>'
 ```
 
 task 提供以下可用输入。先按后文 summary 标记确定当前阶段，只读取该阶段需要的内容，不要在第一次调用把全部资料、Coverage 和测试规则一起读完：
@@ -24,14 +27,15 @@ task 提供以下可用输入。先按后文 summary 标记确定当前阶段，
 - `semantic_check_items`：本轮必须逐项完成的短任务清单。每项只给一个结论，并用它的 `check_id` 作为对应 `analysis_checkpoint.failure_paths[].path_id`；该 path 用 `linked_risk_ids` 关联风险，风险的 `affected_paths` 必须包含本项 `subject_path`。不同实现、断言可达性和资源重配置不得合并。
 - `index_path`、`source_manifest_path`：risks 阶段使用的冻结证据和资料目录；`inventory_path` 由 Python 校验，worker 不整份读取，task scope 已是权威范围。
 - `source_manifest.material_catalog`：本 Run 的资料目录，给出资料类型、解析状态、索引位置和附件状态。
-- schema/rubric 按阶段读取：checkpoint 只读 worker_result 与 C/C++ 规则；risks 再读 evidence/business/risk、DFX 和风险规则；tests 最后读 testcase 规则，不得提前加载后续阶段。
+- schema/rubric 按阶段读取：checkpoint 只读 `schemas/worker_result.schema.json` 和 task 的 `checkpoint_rubric_paths` 中列出的全部规则；risks 再读 evidence/business/risk、DFX 和风险规则；tests 最后读 `test_case_generation.md` 与固定的 `product_blackbox_test_case.md`。路径缺失或不可读时如实停止，不猜文件名、不搜索替代规则。
 - `schemas/` 与 `src/pangea_agent/rubrics/` 位于当前 pangea-agent 工作区根目录，不在 task 的 data_root、Run 或验收 case 中；直接读取固定路径，不用 glob/find 搜索。
 
 再读取 task 指定的 `result_path`。PANGEA 已经生成固定结果骨架；只填写分析内容，不从零重建 WorkerResult，不修改 task。
 
-若 `task_type` 是 `rework`，还必须读取 `prior_result_path` 和 `review_issues`，只修复列出的复核问题。
+若 `task_type` 是 `rework`，先重新读取 task 的全部 `checkpoint_rubric_paths`，再读取 `prior_result_path` 和 `review_issues`，只修复列出的复核问题；通用 rubric 只读取 issue 实际涉及阶段对应的固定规则，不重跑 analysis 三阶段。
+issue 涉及 `material_decisions`、需求/设计行为、`linked_requirement_ids` 或 `linked_material_ids` 时，先对受影响资料执行 `read-material --task "<worker task JSON>" --path "<manifest path>"` 并读取正文；未读正文不得修改资料结论或把 issue 标为已处理。
 
-`task_type=analysis` 必须按结果 summary 分三次 task 调用完成，一次只做一个阶段并主动结束：空 summary 时只读 task、骨架、worker_result/C++规则、完整 source_scope 和相关 context 片段，禁止 inventory、manifest、index、资料、Coverage、CLI/历史测试及其他 rubric，完成 failure paths 后写 `[STAGE:checkpoint]`；恢复后才读取资料/Coverage和风险规则，写 evidence、flows、risks 和链接，冻结风险集合并写 `[STAGE:risks]`，且不重读源码/inventory；再次恢复后生成 tests、资料/Coverage 闭环、反例检查和最终 summary，执行校验到 PASS。主 Agent 未恢复同一会话前不得进入下一阶段。`task_type=rework` 直接按 issue 定向修正并校验。
+`task_type=analysis` 必须按结果 summary 分三次 task 调用完成，一次只做一个阶段并主动结束：空 summary 时只读 task、骨架、worker_result、task 声明的全部 `checkpoint_rubric_paths`、完整 source_scope 和相关 context 片段，禁止 inventory、manifest、index、资料、Coverage、CLI/历史测试及其他 rubric，完成 failure paths 后写 `[STAGE:checkpoint]`；恢复后才读取资料/Coverage和风险规则，对每份准备形成 `material_decisions` 的资料先执行 `read-material --task "<worker task JSON>" --path "<manifest path>"` 并读取正文，未读正文不得判断相关或无关，再写 evidence、flows、risks 和链接，冻结风险集合并写 `[STAGE:risks]`，且不重读源码/inventory；再次恢复后固定读取 `src/pangea_agent/rubrics/builtin/test_case_generation.md` 与 `src/pangea_agent/rubrics/builtin/product_blackbox_test_case.md`，生成 tests、资料/Coverage 闭环、反例检查和最终 summary，执行校验到 PASS。主 Agent 未恢复同一会话前不得进入下一阶段。`task_type=rework` 直接按 issue 定向修正并校验。
 
 ## 分析要求
 
@@ -42,7 +46,7 @@ task 提供以下可用输入。先按后文 summary 标记确定当前阶段，
 3. 源码候选形成后，按 `source_manifest.material_catalog` 读取资料并在 `material_decisions` 记录采用或排除原因；只使用目录中的 index location，不遍历整个 SQLite，不重新解压原始文档。`decision=current` 表示该资料与当前分析对象直接相关，一旦这样判定，tests 阶段必须完成对应需求/设计行为的测试闭环，不能只用于解释风险。
 4. 最后读取 `coverage_context`。Coverage 不能证明风险成立，缺少记录表示未知。`gaps=[]` 表示没有明确补测缺口；存在 `gaps[]` 时，每个 gap 都必须在 tests 阶段通过 `coverage_decisions` 闭环：复用已有用例、生成 Coverage-only 用例，或有证据地判定无法从受支持入口触达。`coverage_priorities` 只记录排序，不能代替闭环。
 5. 按六个 DFX 维度及初始化、运行、停止、恢复、卸载生命周期检查候选。风险必须包含复现条件、系统结果、外部观测、排除条件、严重度、置信度和源码证据。
-6. 完成上游限制和反证检查后冻结风险集合，写入 `risk_set_frozen=true`，再按 `test_case_generation.md` 生成步骤与预期一一对应的测试用例。风险驱动始终是基础：`Blackbox-ready/Graybox-ready` 风险必须至少有一条用例。需求/设计资料与 Coverage 是可选输入，但一旦分别成为 `decision=current` 资料或 task 中的 Coverage gap，就必须参与测试设计。TestCase 保留 `linked_risk_ids`、`linked_requirement_ids`、`linked_material_ids`、`linked_coverage_ids` 四个数组，至少一个非空；不得为了满足结构把资料或 Coverage 用例挂到不相关风险。
+6. 完成上游限制和反证检查后冻结风险集合，写入 `risk_set_frozen=true`，再按 `test_case_generation.md` 与固定内置的 `product_blackbox_test_case.md` 生成步骤与预期一一对应的测试用例；不调用客户端专属 Skill 或复制另一套规则。风险驱动始终是基础：`Blackbox-ready/Graybox-ready` 风险必须至少有一条用例。需求/设计资料与 Coverage 是可选输入，但一旦分别成为 `decision=current` 资料或 task 中的 Coverage gap，就必须参与测试设计。TestCase 保留 `linked_risk_ids`、`linked_requirement_ids`、`linked_material_ids`、`linked_coverage_ids` 四个数组，至少一个非空；不得为了满足结构把资料或 Coverage 用例挂到不相关风险。
 7. 提交前在 `counterexamples_checked` 至少记录一项核心结论反例检查，确认最终状态、外部观测和恢复步骤不矛盾。不输出安全专项、SFMEA、实现评价、代码建议或无证据配置组合。
 
 ## 证据
@@ -79,8 +83,9 @@ task 提供以下可用输入。先按后文 summary 标记确定当前阶段，
 
 完成后执行：
 
-```powershell
-python -m pangea_agent.cli.main validate-worker-result --task "<worker task JSON>"
+```text
+POSIX: .venv/bin/python -m pangea_agent.cli.main validate-worker-result --task "<worker task JSON>"
+PowerShell: & '.\.venv\Scripts\python.exe' -m pangea_agent.cli.main validate-worker-result --task '<worker task JSON>'
 ```
 
 - `PASS` 是当前 Worker 可以结束的唯一条件。

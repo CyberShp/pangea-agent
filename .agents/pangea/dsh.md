@@ -8,9 +8,13 @@
 - DSH 的 `bash` 工具执行当前宿主 shell。当前工具是 POSIX shell 时使用 POSIX 命令，
   不把 `Get-ChildItem`、`Select-Object` 等 PowerShell cmdlet 交给 `bash`。项目的
   Windows / PowerShell 兼容约定仍用于产品命令和文档，不覆盖 DSH 工具的真实 shell。
+- 当前根会话只选择一次仓库虚拟环境解释器并在所有 PANGEA CLI 调用中复用：POSIX 使用
+  `.venv/bin/python`，Windows PowerShell 使用 `& '.\.venv\Scripts\python.exe'`。选定路径不存在时
+  停止并说明需要初始化；不再尝试系统 Python、其他虚拟环境或安装依赖。
+- `module-analysis` 创建 Run 后，把返回的 `data_root` 与 `run_id` 一起绑定到当前根会话。后续每条 run-scoped CLI（`record-agent-session`、`resume-run`、`mark-reviewer-unavailable`）都必须原样传入 `--data-root <data_root>`，包括默认 `pangea-data`；不得依赖 CLI 默认值或执行失败后再探测。
 - DSH 启动时由根目录 `AGENTS.local.md` 要求先加载仓库内 `pangea-agent` Skill；该 Skill 再要求读取本 adapter。Skill 未成功加载时停止，不要靠通用会话自行摸索 PANGEA 流程。
 - DSH 新建根会话时当前 Run 固定为空。即使工作区中存在 `WAITING_*` 的历史 Run，或 Companion / `pangea_status` 能读取到某个历史 Run，也不得因此执行 `resume-run`。
-- 新根会话命中新分析意图后，在 `module-analysis` 返回新 `run_id` 前，不调用 `pangea_status`，不列举或读取 `pangea-data/runs/`，不读取或复用已有 pending contract。先删除固定临时路径 `pangea-data/.pangea/pending-task-contract.json`，再根据当前请求新建；当前 POSIX DSH 可对这个文件单独使用 `rm -f`。Run 创建成功后再次删除它。
+- 新根会话命中新分析意图后，在 `module-analysis` 返回新 `run_id` 前，不调用 `pangea_status`，不列举或读取 `pangea-data/runs/`，不读取或复用已有 pending contract。先删除固定临时路径 `pangea-data/.pangea/pending-task-contract.json`，再根据当前请求新建；POSIX 对这个文件单独使用 `rm -f`，PowerShell 使用 `Remove-Item -LiteralPath 'pangea-data/.pangea/pending-task-contract.json' -Force -ErrorAction SilentlyContinue`。Run 创建成功后再次删除它。
 - pending contract 中的 `source_scope` 始终写成仓库根目录下使用 `/` 分隔的相对路径；即使宿主是 Windows，也不得把工具返回的反斜杠路径直接写入 JSON。
 - 用户用自然语言要求分析业务源码、模块、测试风险、业务流程、Coverage 缺口或生成测试用例时，与显式 `module-analysis` 完全等价：当前根会话没有明确 `run_id` 就创建新 Run，不要求用户补写命令名。
 - DSH 只有在当前根会话已经由本次分析获得明确 `run_id`，或用户明确指定历史 `run_id` / 历史会话时，才能恢复 Run。不得从 `runs/`、`progress.json`、`agent_sessions` 或 Companion 的“当前/最近 Run”反推恢复目标。
@@ -20,10 +24,11 @@
 - 首次派发必须显式使用 `run_in_background=true`；省略该参数或设为 `false` 会产生不可续接的一次性结果，不得用于 PANGEA worker / reviewer。
 - analysis 子 Agent 仍为 `running` 时不得预先排队下一阶段。只有该回合结束并返回对应 `STAGE`，且结果文件中的阶段标记一致，主 Agent 才能向同一 `subagent_id` 发送下一阶段消息。
 - `STAGE checkpoint` 和 `STAGE risks` 后只续接同一 analysis 子 Agent，不调用 `resume-run`。只有 tests 最终校验 PASS 后才让 graph 接收结果。
-- 首次派发后立即把 `subagent_id` 作为 `task_id` 记录到 `progress.agent_sessions`。已有 `task_id` 时恢复原会话，不重复创建。
+- 首次派发后立即把 `subagent_id` 作为 `task_id` 记录到 `progress.agent_sessions`。已有 `task_id` 时恢复原会话，不重复创建；普通续接不重复记录。
 - 派发返回 `subagent_id` 后，下一个工具调用必须是 `record-agent-session`，中间不执行其他动作。`subagent_id` 不是 `job_id`，不得传给 `job_output`。
-- analysis 首次记录使用 `.venv/bin/python -m pangea_agent.cli.main record-agent-session --run-id <run_id> --role analysis --unit-id <unit_id> --task-id <subagent_id> --status dispatched`；review 使用同一命令但省略 `--unit-id` 并写 `--role review`。不得为确认这些现有参数调用 `--help`。
-- 等待子 Agent 使用 `list_agents`。目标仍为 `running` 时，不读取结果、不发送下一阶段；当前 POSIX DSH 用单独的 `bash` 调用等待 5 秒，再次调用 `list_agents`。只有状态变为 `ready` 或 `inactive` 后才读取阶段结果并决定续接。
+- analysis 首次记录时，用本会话选定的解释器执行 `-m pangea_agent.cli.main record-agent-session --run-id <run_id> --data-root <data_root> --role analysis --unit-id <unit_id> --task-id <subagent_id> --status dispatched`；review 使用同一命令但省略 `--unit-id` 并写 `--role review`。正式返工优先恢复原 analysis worker；只有原会话不可恢复且 rework task 允许替代时，替代 worker 才用 `--role rework --unit-id <unit_id>` 记录新 ID。不得为确认这些现有参数调用 `--help`。
+- 返工复核必须恢复原 reviewer。缺少原 `task_id` 或恢复失败时，不派新 reviewer；用本会话选定解释器执行 `-m pangea_agent.cli.main mark-reviewer-unavailable --run-id <run_id> --data-root <data_root> --reviewer-id <same_reviewer_id> --reason "<真实原因>"`，再用同一解释器执行 `-m pangea_agent.cli.main resume-run --run-id <run_id> --data-root <data_root>` 形成 `UNRESOLVED`。
+- 等待子 Agent 使用 `list_agents`。目标仍为 `running` 时，不读取结果、不发送下一阶段；每次固定用当前宿主 shell 单独等待 20 秒，POSIX 使用 `sleep 20`，PowerShell 使用 `Start-Sleep -Seconds 20`，再调用 `list_agents`。不要自行把等待延长到 30/45/60 秒，避免宿主工具超时；需要继续等待时重复同一个 20 秒步骤。只有状态变为 `ready` 或 `inactive` 后才读取阶段结果并决定续接。
 - graph 进入 `WAITING_*` 后，主 Agent 不得创建、填写或修正 worker / reviewer 的语义结果文件。只能把 graph 生成的 task 路径交给对应子 Agent；派发、续接或写入失败时停止并报告，不得由主 Agent 代写。
 - 不把 PANGEA 规则安装到 DSH 全局配置；工作区切换后，本文件不再适用。
 
@@ -41,8 +46,11 @@ DSH 子 Agent 每次收到 PANGEA task 路径后，先由 `pangea-agent` Skill �
 
 reviewer 写完当前阶段结果后，在返回阶段完成标记前执行：
 
-```powershell
-python -m pangea_agent.cli.main check-review-artifact --task "<review task JSON>"
+使用当前根会话选定的解释器执行对应命令：
+
+```text
+POSIX: .venv/bin/python -m pangea_agent.cli.main check-review-artifact --task "<review task JSON>"
+PowerShell: & '.\.venv\Scripts\python.exe' -m pangea_agent.cli.main check-review-artifact --task '<review task JSON>'
 ```
 
 只有输出 `PASS` 才能让主 Agent 执行 `resume-run`。若失败，由当前 reviewer 在同一结果文件中修正后重试；主 Agent 不得代填、扁平化或删除字段来绕过契约。

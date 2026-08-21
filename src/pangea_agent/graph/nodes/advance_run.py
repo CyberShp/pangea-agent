@@ -48,7 +48,7 @@ from pangea_agent.models.worker import (
     WorkerResult,
     WorkerTask,
 )
-from pangea_agent.documents.coverage import match_coverage_records
+from pangea_agent.documents.coverage import filter_inventory_to_sources, match_coverage_records
 from pangea_agent.report import reports_are_complete
 
 
@@ -80,7 +80,7 @@ def _hydrate_run_context(state: PangeaState, progress: RunProgress) -> PangeaSta
         for dependency in source_manifest.get("missing_dependencies", [])
     )
     environment_errors.extend(
-        {"kind": "missing_dependency", "package": package, "scope": "C/C++ structural parsing"}
+        {"kind": "missing_dependency", "package": package, "scope": "源码结构化解析"}
         for package in inventory.get("missing_dependencies", [])
     )
     progress.errors = [error for error in progress.errors if error.get("kind") in ACTIVE_RESULT_ERROR_KINDS]
@@ -100,7 +100,17 @@ def _hydrate_run_context(state: PangeaState, progress: RunProgress) -> PangeaSta
         "source_manifest": source_manifest,
         "index_path": first_task.index_path,
         "inventory": inventory,
-        "coverage_report": match_coverage_records(source_manifest.get("coverage_records", []), inventory),
+        "coverage_report": match_coverage_records(
+            source_manifest.get("coverage_records", []),
+            filter_inventory_to_sources(
+                inventory,
+                {
+                    (task.unit.repo_id, path)
+                    for task in tasks
+                    for path in task.unit.source_scope
+                },
+            ),
+        ),
         "analysis_units": [
             task.unit.model_dump(mode="json") for task in tasks
         ],
@@ -297,6 +307,7 @@ def _prepare_rework(state: PangeaState, progress: RunProgress, review) -> None:
             index_path=original_task.index_path,
             inventory_path=original_task.inventory_path,
             source_manifest_path=original_task.source_manifest_path,
+            checkpoint_rubric_paths=original_task.checkpoint_rubric_paths,
             coverage_context=original_task.coverage_context,
             failure_signal_context=original_task.failure_signal_context,
             semantic_check_items=original_task.semantic_check_items,

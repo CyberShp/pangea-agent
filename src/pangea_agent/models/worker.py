@@ -21,6 +21,11 @@ class AnalysisUnit(StrictModel):
     context_scope: list[str] = Field(default_factory=list)
     focus: list[str] = Field(min_length=1)
     dfx: list[str] = Field(min_length=1)
+    languages: list[Literal["c_cpp", "lua"]] = Field(
+        default_factory=lambda: ["c_cpp"],
+        min_length=1,
+    )
+    frameworks: list[Literal["openubmc"]] = Field(default_factory=list)
 
 
 class ReviewIssue(StrictModel):
@@ -94,7 +99,12 @@ class FailureSignalContext(StrictModel):
 
 class SemanticCheckItem(StrictModel):
     check_id: str = Field(min_length=1)
-    kind: Literal["assertion_reachability", "resource_reconfiguration", "paired_operation"]
+    kind: Literal[
+        "assertion_reachability",
+        "resource_reconfiguration",
+        "paired_operation",
+        "runtime_semantics",
+    ]
     subject_path: str = Field(min_length=1)
     instruction: str = Field(min_length=1)
     context_paths: list[str] = Field(min_length=1)
@@ -173,6 +183,10 @@ class WorkerTask(StrictModel):
     index_path: str = Field(min_length=1)
     inventory_path: str = Field(min_length=1)
     source_manifest_path: str = Field(min_length=1)
+    checkpoint_rubric_paths: list[str] = Field(
+        default_factory=lambda: ["src/pangea_agent/rubrics/builtin/c_cpp_analysis.md"],
+        min_length=1,
+    )
     coverage_context: list[CoverageContext] = Field(default_factory=list)
     failure_signal_context: list[FailureSignalContext] = Field(default_factory=list)
     semantic_check_items: list[SemanticCheckItem] = Field(default_factory=list)

@@ -51,6 +51,65 @@ def _items(value: Any) -> list[Any]:
     return [value]
 
 
+def _inventory_language_counts(inventory: Any) -> dict[str, int]:
+    counts = {"c_cpp": 0, "lua": 0}
+    if not isinstance(inventory, Mapping):
+        return counts
+    for item in _items(inventory.get("files")):
+        if not isinstance(item, Mapping):
+            continue
+        language = item.get("language") or "c_cpp"
+        if language in {"c", "cpp", "c_cpp"}:
+            counts["c_cpp"] += 1
+        elif language == "lua":
+            counts["lua"] += 1
+    return counts
+
+
+def _inventory_frameworks(inventory: Any) -> list[str]:
+    if not isinstance(inventory, Mapping):
+        return []
+    return sorted({
+        framework
+        for item in _items(inventory.get("files"))
+        if isinstance(item, Mapping)
+        for framework in _items(item.get("frameworks"))
+        if framework
+    })
+
+
+def _source_inventory(state: Mapping[str, Any]) -> dict:
+    inventory = state.get("inventory") or {}
+    if not isinstance(inventory, Mapping):
+        return {}
+    owned = {
+        (unit.get("repo_id"), path)
+        for unit in _items(state.get("analysis_units"))
+        if isinstance(unit, Mapping)
+        for path in _items(unit.get("source_scope"))
+    }
+    if not owned:
+        return dict(inventory)
+    files = [
+        item
+        for item in _items(inventory.get("files"))
+        if isinstance(item, Mapping)
+        and (item.get("repo_id"), item.get("path")) in owned
+    ]
+    return {**inventory, "files": files, "file_count": len(files)}
+
+
+def _state_frameworks(state: Mapping[str, Any], inventory: Any) -> list[str]:
+    frameworks = sorted({
+        framework
+        for unit in _items(state.get("analysis_units"))
+        if isinstance(unit, Mapping)
+        for framework in _items(unit.get("frameworks"))
+        if framework
+    })
+    return frameworks or _inventory_frameworks(inventory)
+
+
 def _mapping_lines(value: Mapping[str, Any], prefix: str = "- ") -> list[str]:
     lines: list[str] = []
     for key, item in value.items():
@@ -252,12 +311,14 @@ def _repository_rows(state: Mapping[str, Any]) -> list[tuple[Any, ...]]:
 
 
 def _quality_summary(state: Mapping[str, Any], incomplete: bool) -> str:
-    inventory = state.get("inventory") or {}
+    inventory = _source_inventory(state)
+    language_counts = _inventory_language_counts(inventory)
     expansion = state.get("scope_expansion") or {}
     context_count = len(_items(expansion.get("context_files"))) if isinstance(expansion, Mapping) else 0
     counts = (
         f"完成 {len(_items(state.get('analysis_units')))} 个分析单元，"
-        f"覆盖 {inventory.get('file_count', 0) if isinstance(inventory, Mapping) else 0} 个 C/C++ 文件"
+        f"覆盖 {inventory.get('file_count', 0) if isinstance(inventory, Mapping) else 0} 个源码文件"
+        f"（C/C++ {language_counts['c_cpp']}，Lua {language_counts['lua']}）"
         f"和 {context_count} 个上游语义文件；"
         f"形成 {len(_items(state.get('business_flows') or state.get('flows')))} 条业务流程、"
         f"{len(_items(state.get('risks')))} 个风险、{len(_items(state.get('test_cases')))} 个测试用例。"
@@ -390,12 +451,17 @@ def render_report(state: "PangeaState | Mapping[str, Any]") -> str:
     if state.get("source_manifest"):
         lines.extend(["", "### 引用清单摘要", ""])
         manifest = state["source_manifest"]
-        inventory = state.get("inventory") or {}
+        inventory = _source_inventory(state)
+        language_counts = _inventory_language_counts(inventory)
+        frameworks = _state_frameworks(state, inventory)
         if isinstance(manifest, Mapping):
             lines.extend(_markdown_table(("项目", "结果"), [
                 ("索引文件数", manifest.get("file_count", 0)),
                 ("证据片段数", manifest.get("chunk_count", 0)),
-                ("C/C++ 文件数", inventory.get("file_count", 0) if isinstance(inventory, Mapping) else 0),
+                ("源码文件数", inventory.get("file_count", 0) if isinstance(inventory, Mapping) else 0),
+                ("C/C++ 文件数", language_counts["c_cpp"]),
+                ("Lua 文件数", language_counts["lua"]),
+                ("识别框架", ", ".join(frameworks) if frameworks else "无"),
                 ("结构化解析", "完整" if isinstance(inventory, Mapping) and inventory.get("structural_parse_complete") else "存在缺口"),
                 ("文档告警", len(_items(manifest.get("warnings")))),
                 ("缺少依赖", len(_items(manifest.get("missing_dependencies")))),

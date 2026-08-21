@@ -15,6 +15,7 @@ from .markdown import (
     _coverage_gap_rows,
     _coverage_rows,
     _contract_rows,
+    _inventory_language_counts,
     _items,
     _parse_failures,
     _quality_summary,
@@ -23,6 +24,8 @@ from .markdown import (
     _risk_dimension_rows,
     _scope_rows,
     _status,
+    _source_inventory,
+    _state_frameworks,
     _text,
     render_report,
 )
@@ -153,11 +156,16 @@ def render_html_report(state: Mapping[str, Any]) -> str:
         boundary_html = f'<p class="muted">扩展边界：{_escape(_boundary_text(expansion.get("boundary")))}</p>'
     repositories_html = _table(("源码仓", "本地目录", "版本", "状态"), _repository_rows(state), {0, 1, 2})
     manifest = state.get("source_manifest") or {}
-    inventory = state.get("inventory") or {}
+    inventory = _source_inventory(state)
+    language_counts = _inventory_language_counts(inventory)
+    frameworks = _state_frameworks(state, inventory)
     manifest_html = _table(("项目", "结果"), [
         ("索引文件数", manifest.get("file_count", 0)),
         ("证据片段数", manifest.get("chunk_count", 0)),
-        ("C/C++ 文件数", inventory.get("file_count", 0) if isinstance(inventory, Mapping) else 0),
+        ("源码文件数", inventory.get("file_count", 0) if isinstance(inventory, Mapping) else 0),
+        ("C/C++ 文件数", language_counts["c_cpp"]),
+        ("Lua 文件数", language_counts["lua"]),
+        ("识别框架", ", ".join(frameworks) if frameworks else "无"),
         ("结构化解析", "完整" if isinstance(inventory, Mapping) and inventory.get("structural_parse_complete") else "存在缺口"),
         ("文档告警", len(_items(manifest.get("warnings"))) if isinstance(manifest, Mapping) else 0),
         ("缺少依赖", len(_items(manifest.get("missing_dependencies"))) if isinstance(manifest, Mapping) else 0),

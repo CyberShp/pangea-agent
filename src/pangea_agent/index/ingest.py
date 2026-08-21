@@ -5,11 +5,11 @@ from pathlib import Path
 
 from pangea_agent.documents import DependencyUnavailableError, extract_document
 from pangea_agent.documents.coverage import parse_coverage_xlsx
+from pangea_agent.inventory.source_languages import CODE_SUFFIXES
 
 from .chunker import chunk_text, chunk_text_file
 from .store import clear_source_types, replace_source_chunks
 
-CODE_SUFFIXES = {".c", ".h", ".cc", ".cpp", ".cxx", ".hpp", ".hh"}
 DOCUMENT_SUFFIXES = {".md", ".txt", ".pdf", ".docx", ".xlsx"}
 IGNORED_PARTS = {".git", "build", "dist", "third_party", "node_modules", "__pycache__", ".pangea"}
 

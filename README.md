@@ -1,12 +1,17 @@
 # pangea-agent
 
-`pangea-agent` 是部署在测试人员 Windows 电脑上的项目级测试分析 Agent。用户在
-OpenCode 或 Claude Code 中用自然语言提出模块分析任务，Agent 结合当前本地 C/C++
-源码、长期资料和函数覆盖率，输出可追溯风险、测试用例以及离线报告。
+`pangea-agent` 是项目级测试分析 Agent，以 DSH 作为主要运行入口，并兼容 OpenCode 和
+Claude Code。用户用自然语言提出模块分析任务，Agent 结合当前本地 C/C++、Lua/openUBMC
+源码、长期资料和函数/分支覆盖率，输出可追溯风险、测试用例以及离线报告。
 
 Python 只负责确定性解析、索引、任务拆分、状态、校验和报告，不调用模型 API。
 语义分析由当前客户端最多并发派发 4 个 `analysis-worker` 完成，再由 1 个
 `review-worker` 做独立复核。
+
+DSH 只读取当前仓库的 `AGENTS.local.md`、`.agents/skills/pangea-agent/` 和
+`.agents/pangea/dsh.md`，不安装全局 PANGEA 规则，也不使用独立 graph 或 bridge。根 Agent
+负责自然语言冷启动、Run 创建、持续子 Agent 派发和 graph 推进；analysis-worker 固定分为
+checkpoint、risks、tests 三次持续会话，独立复核、对照复核和返工验证沿用同一 reviewer。
 
 ## 初始化
 
@@ -64,6 +69,10 @@ pangea-data/
 
 ## 分析流程
 
+客户端按实际宿主选择一次仓库虚拟环境解释器并在当前会话复用：Windows PowerShell 使用
+`& ".\.venv\Scripts\python.exe"`，POSIX 使用 `.venv/bin/python`。选定路径不存在时停止并提示
+初始化，不切换到系统 Python 或其他环境。
+
 准备分析配置后运行：
 
 ```powershell
@@ -90,8 +99,10 @@ Run 内部按以下阶段推进：
 
 用户指定的 `source_scope` 是起点，不是盲目的硬边界。准备阶段会做一次有界扩展：
 加入直接调用该范围公开函数的源码，以及与目标直接相关的配置入口、规格和测试；不做
-递归调用链扩张，也不因此扫描整仓。每个 worker 同时收到必须分析的源码清单和上游
-语义清单。风险进入报告前必须核对入口可达性、调用方限制或补救、规格/API 定义和已有
+递归调用链扩张，也不因此扫描整仓。每个 worker 同时收到必须分析的源码清单、上游
+语义清单和冻结的 `checkpoint_rubric_paths`。C/C++、Lua 和 openUBMC 使用同一 graph，
+worker 只读取 task 为当前单元声明的语言/框架规则；tests 阶段统一读取内置产品黑盒用例规则。
+风险进入报告前必须核对入口可达性、调用方限制或补救、规格/API 定义和已有
 测试；已经被定义为预期行为的结论不能列为风险。该规则不增加新的 Agent 类型或复核层。
 
 当前 Agent 读取 `pangea-data/runs/<run-id>/agent-tasks/`，把结果写到 task 声明的
@@ -111,6 +122,10 @@ HTML 是无外链的离线单文件，支持目录跳转和内容折叠。Mermai
 
 - C/C++ 使用 Python `tree-sitter` 提取函数、类型、分支和条件编译；失败文件继续
   原始文本分析，并在报告中标明范围。
+- Lua 提取函数、表方法、分支、直接调用、`require`、错误处理和协程信号；动态模块名、
+  元表分派或缺少原生扩展契约时保留为未确认，不猜测调用链。
+- openUBMC 在 Lua 规则上补充组件独立 VM、`mc.class` 生命周期、资源协作接口和
+  `mc.signal` callback 部分副作用；本版本不把完整 BMC 协议知识库塞进框架规则。
 - 文本型 PDF、Word、Excel 和 Markdown 可索引；文档图片提取为 evidence
   attachment，客户端不能看图时标为未解析。
 - Coverage 只证明函数执行线索，不证明代码分支或风险已覆盖。

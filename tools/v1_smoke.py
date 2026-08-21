@@ -16,13 +16,23 @@ from openpyxl import Workbook
 
 from pangea_agent.agent_io import read_json, write_json
 from pangea_agent.cli.run_module_analysis import run_module_analysis
+from pangea_agent.documents.coverage import match_coverage_records, parse_coverage_xlsx
 from pangea_agent.graph.nodes.advance_run import advance_run
 from pangea_agent.graph.nodes.load_contract import load_contract
 from pangea_agent.graph.nodes.resolve_repositories import resolve_repositories
 from pangea_agent.graph.nodes.locate_module import locate_module
 from pangea_agent.graph.nodes.index_materials import index_materials
-from pangea_agent.graph.nodes.prepare_worker_tasks import _related_state_context
+from pangea_agent.graph.nodes.prepare_worker_tasks import (
+    _coverage_context,
+    _related_state_context,
+    _source_inventory,
+)
+from pangea_agent.graph.run_store import load_worker_task
+from pangea_agent.models.worker import AnalysisUnit
 from pangea_agent.inventory.source_scanner import _known_macro_parse_artifact
+from pangea_agent.inventory.lua_symbols import parse_lua_file
+from pangea_agent.report.html import render_html_report
+from pangea_agent.report.markdown import render_report
 
 
 Scenario = Callable[[], None]
@@ -66,9 +76,60 @@ def _workspace(*, run_id: str = "smoke-01", repositories: tuple[str, ...] = ("de
     return root, data_root, contract_path
 
 
+def _lua_workspace() -> tuple[Path, Path, Path]:
+    root, data_root, contract_path = _workspace(repositories=("lua-demo",))
+    repo = data_root / "repositories" / "lua-demo"
+    module = repo / "module"
+    (module / "entry.c").unlink()
+    (module / "helper.lua").write_text(
+        "local M = {}\nfunction M.value() return 1 end\nreturn M\n",
+        encoding="utf-8",
+    )
+    (module / "component.lua").write_text(
+        """local mc = require("mc")
+local helper = require("module.helper")
+local Component = mc.class("Component")
+Component.changed = mc.signal()
+
+function Component:ctor()
+    self.ready = false
+end
+
+function Component:pre_init()
+    self.value = helper.value()
+end
+
+function Component:init()
+    self.changed:connect(function() self.ready = true end)
+end
+
+function Component:run()
+    if not self.ready then error("not ready") end
+    return pcall(function() self.changed:emit() end)
+end
+
+return Component
+""",
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+    subprocess.run(
+        [
+            "git", "-C", str(repo), "-c", "user.name=PANGEA Smoke",
+            "-c", "user.email=pangea-smoke@example.invalid", "commit", "-qm", "lua fixture",
+        ],
+        check=True,
+    )
+    contract = read_json(contract_path)
+    contract["source_scope"] = ["module/component.lua"]
+    write_json(contract_path, contract)
+    return root, data_root, contract_path
+
+
 def _task_result(task: dict, *, finish_reason: str = "stop", fake_location: bool = False) -> dict:
     repo_id = task["unit"]["repo_id"]
-    chunk_id = f"{repo_id}:module/entry.c:1-1"
+    source_path = task["unit"]["source_scope"][0]
+    chunk_id = f"{repo_id}:{source_path}:1-1"
     location = "fake:missing.c:1-1" if fake_location else chunk_id
     evidence = {"chunk_id": chunk_id, "location": location, "observation": "模块入口实现"}
     return {
@@ -98,6 +159,15 @@ def _task_result(task: dict, *, finish_reason: str = "stop", fake_location: bool
             "source_paths_reviewed": task["unit"]["source_scope"],
             "lifecycle_stages_checked": ["初始化", "运行", "停止", "恢复"],
             "failure_paths": [{
+                "path_id": item["check_id"],
+                "linked_risk_ids": [],
+                "trigger": "入口调用",
+                "side_effects": "进入模块逻辑",
+                "failure": "无已确认故障",
+                "caller_handling": "调用方读取返回值",
+                "final_states": "模块保持可用",
+                "disposition": "excluded",
+            } for item in task.get("semantic_check_items", [])] or [{
                 "path_id": "F-001",
                 "linked_risk_ids": [],
                 "trigger": "入口调用",
@@ -420,14 +490,47 @@ def _comparison_cannot_drop_independent_findings() -> None:
 
 
 def _rework_same_reviewer() -> None:
-    _, data_root, contract = _workspace()
+    _, data_root, contract = _lua_workspace()
     state = run_module_analysis(str(contract))
+    subprocess.run(
+        [
+            sys.executable, "-m", "pangea_agent.cli.main", "record-agent-session",
+            "--run-id", "smoke-01", "--data-root", str(data_root),
+            "--role", "analysis", "--unit-id", "U00", "--task-id", "analysis-worker-1",
+        ],
+        check=True,
+        capture_output=True,
+    )
     _write_all_analysis(state)
     run_module_analysis(str(contract))
     _review(data_root, "smoke-01", status="REWORK", reviewer="reviewer-1")
     state = run_module_analysis(str(contract))
     assert state["phase"] == "WAITING_REWORK"
     rework_task = read_json(data_root / "runs" / "smoke-01" / "agent-tasks" / "rework" / "U00.json")
+    analysis_task = read_json(data_root / "runs" / "smoke-01" / "agent-tasks" / "analysis" / "U00.json")
+    assert rework_task["checkpoint_rubric_paths"] == analysis_task["checkpoint_rubric_paths"]
+    assert "src/pangea_agent/rubrics/builtin/lua_analysis.md" in rework_task["checkpoint_rubric_paths"]
+    assert "src/pangea_agent/rubrics/builtin/openubmc_analysis.md" in rework_task["checkpoint_rubric_paths"]
+    subprocess.run(
+        [
+            sys.executable, "-m", "pangea_agent.cli.main", "record-agent-session",
+            "--run-id", "smoke-01", "--data-root", str(data_root),
+            "--role", "rework", "--unit-id", "U00", "--task-id", "replacement-worker-1",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    rejected = subprocess.run(
+        [
+            sys.executable, "-m", "pangea_agent.cli.main", "record-agent-session",
+            "--run-id", "smoke-01", "--data-root", str(data_root),
+            "--role", "rework", "--unit-id", "U00", "--task-id", "replacement-worker-2",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert rejected.returncode != 0 and "不能替换 task_id" in rejected.stderr
     write_json(Path(rework_task["result_path"]), _task_result(rework_task))
     state = run_module_analysis(str(contract))
     assert state["phase"] == "WAITING_REWORK_REVIEW"
@@ -459,6 +562,48 @@ def _truncated_correction() -> None:
     assert run_module_analysis(str(contract))["phase"] == "WAITING_REVIEW"
     progress = read_json(progress_path)
     assert not progress["errors"] and progress["error_history"]
+
+
+def _reviewer_unavailable_has_explicit_unresolved_path() -> None:
+    _, data_root, contract = _workspace()
+    state = run_module_analysis(str(contract))
+    _write_all_analysis(state)
+    assert run_module_analysis(str(contract))["phase"] == "WAITING_REVIEW"
+    _review(data_root, "smoke-01", status="REWORK", reviewer="reviewer-1")
+    state = run_module_analysis(str(contract))
+    assert state["phase"] == "WAITING_REWORK"
+    rework_task = read_json(
+        data_root / "runs" / "smoke-01" / "agent-tasks" / "rework" / "U00.json"
+    )
+    write_json(Path(rework_task["result_path"]), _task_result(rework_task))
+    state = run_module_analysis(str(contract))
+    assert state["phase"] == "WAITING_REWORK_REVIEW"
+
+    rejected = subprocess.run(
+        [
+            sys.executable, "-m", "pangea_agent.cli.main", "mark-reviewer-unavailable",
+            "--run-id", "smoke-01", "--data-root", str(data_root),
+            "--reviewer-id", "another-reviewer", "--reason", "session missing",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert rejected.returncode != 0 and "不是当前 Run 绑定的原 reviewer" in rejected.stderr
+    subprocess.run(
+        [
+            sys.executable, "-m", "pangea_agent.cli.main", "mark-reviewer-unavailable",
+            "--run-id", "smoke-01", "--data-root", str(data_root),
+            "--reviewer-id", "reviewer-1", "--reason", "saved DSH session cannot be resumed",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    state = run_module_analysis(str(contract))
+    if state["phase"] == "READY_TO_FINALIZE":
+        state = run_module_analysis(str(contract))
+    assert state["quality_report"]["status"] == "UNRESOLVED"
+    assert state["phase"] == "INCOMPLETE"
 
 
 def _unmatched_evidence_is_pending() -> None:
@@ -566,7 +711,7 @@ def _missing_scope() -> None:
     try:
         run_module_analysis(str(contract))
     except ValueError as exc:
-        assert "未发现对应 C/C++ 实现" in str(exc)
+        assert "没有可分析源码" in str(exc)
     else:
         raise AssertionError("不存在的源码范围仍派发了任务")
     assert not list((data_root / "runs" / "smoke-01" / "agent-tasks").glob("**/*.json"))
@@ -1042,11 +1187,349 @@ def _agent_start_checkpoint() -> None:
     assert read_json(progress_path)["agent_sessions"]["review"]["status"] == "dispatched"
 
 
+def _legacy_task_uses_c_cpp_defaults() -> None:
+    _, _, contract = _workspace()
+    state = run_module_analysis(str(contract))
+    task_path = Path(state["agent_task_paths"][0])
+    payload = read_json(task_path)
+    payload["unit"].pop("languages", None)
+    payload["unit"].pop("frameworks", None)
+    payload.pop("checkpoint_rubric_paths", None)
+    write_json(task_path, payload)
+
+    task = load_worker_task(task_path)
+    assert task.unit.languages == ["c_cpp"]
+    assert task.unit.frameworks == []
+    assert task.checkpoint_rubric_paths == [
+        "src/pangea_agent/rubrics/builtin/c_cpp_analysis.md"
+    ]
+
+
+def _lua_openubmc_task_metadata() -> None:
+    _, _, contract = _lua_workspace()
+    state = run_module_analysis(str(contract))
+    task = read_json(Path(state["agent_task_paths"][0]))
+
+    assert task["unit"]["languages"] == ["lua"]
+    assert task["unit"]["frameworks"] == ["openubmc"]
+    assert task["unit"]["source_scope"] == ["module/component.lua"]
+    assert "module/helper.lua" in task["unit"]["context_scope"]
+    assert task["checkpoint_rubric_paths"] == [
+        "src/pangea_agent/rubrics/builtin/lua_analysis.md",
+        "src/pangea_agent/rubrics/builtin/openubmc_analysis.md",
+    ]
+    check_ids = {item["check_id"] for item in task["semantic_check_items"]}
+    assert any(value.startswith("SC-LUA-ERROR-") for value in check_ids)
+    assert any(value.startswith("SC-OPENUBMC-LIFECYCLE-") for value in check_ids)
+    assert any(value.startswith("SC-OPENUBMC-SIGNAL-") for value in check_ids)
+    assert any(value.startswith("SC-LUA-REQUIRE-") for value in check_ids)
+
+
+def _lua_direct_dependency_keeps_context_boundary_and_framework_checks() -> None:
+    _, data_root, contract = _lua_workspace()
+    repo = data_root / "repositories" / "lua-demo"
+    (repo / "module" / "entry.lua").write_text(
+        'return require("module.component")\n', encoding="utf-8"
+    )
+    subprocess.run(["git", "-C", str(repo), "add", "module/entry.lua"], check=True)
+    subprocess.run(
+        [
+            "git", "-C", str(repo), "-c", "user.name=PANGEA Smoke",
+            "-c", "user.email=pangea-smoke@example.invalid", "commit", "-qm", "lua entry fixture",
+        ],
+        check=True,
+    )
+    payload = read_json(contract)
+    payload["source_scope"] = ["module/entry.lua"]
+    write_json(contract, payload)
+
+    state = run_module_analysis(str(contract))
+    task = read_json(Path(state["agent_task_paths"][0]))
+    assert task["unit"]["source_scope"] == ["module/entry.lua"]
+    assert "module/component.lua" in task["unit"]["context_scope"]
+    assert task["unit"]["frameworks"] == ["openubmc"]
+    assert "src/pangea_agent/rubrics/builtin/openubmc_analysis.md" in task["checkpoint_rubric_paths"]
+    component_checks = [
+        item for item in task["semantic_check_items"]
+        if item["subject_path"] == "module/component.lua"
+    ]
+    assert any(item["check_id"].startswith("SC-OPENUBMC-LIFECYCLE-") for item in component_checks)
+    assert any(item["check_id"].startswith("SC-OPENUBMC-SIGNAL-") for item in component_checks)
+    entry_inventory = next(
+        item for item in state["inventory"]["files"]
+        if item["repo_id"] == "lua-demo" and item["path"] == "module/entry.lua"
+    )
+    assert entry_inventory["imports"][0]["resolved_path"] == "module/component.lua"
+    markdown = render_report(state)
+    assert "| 源码文件数 | 1 |" in markdown
+    assert "| Lua 文件数 | 1 |" in markdown
+    assert "覆盖 1 个源码文件（C/C++ 0，Lua 1）和 1 个上游语义文件" in markdown
+
+
+def _lua_parser_binds_direct_assignments_and_self_signals() -> None:
+    root = Path(tempfile.mkdtemp(prefix="pangea-lua-symbols-"))
+    _TEMP_ROOTS.append(root)
+    path = root / "component.lua"
+    path.write_text(
+        """local ignored, Component = make(), mc.class("Component")
+local Wrapped = decorate(mc.class("Wrapped"))
+Component.changed = mc.signal()
+function Component:init() self.changed:connect(function() end) end
+function Component:run() self.changed:emit() end
+""",
+        encoding="utf-8",
+    )
+    parsed = parse_lua_file(path)
+    declarations = [
+        item["symbol"] for item in parsed["framework_signals"]
+        if item["kind"] == "class_declaration"
+    ]
+    assert "Component" in declarations
+    assert "ignored" not in declarations and "Wrapped" not in declarations
+    signal_kinds = {item["kind"] for item in parsed["framework_signals"]}
+    assert {"signal_callback", "signal_emit"} <= signal_kinds
+
+    scoped_path = root / "scoped.lua"
+    scoped_path.write_text(
+        """function A()
+    local changed = mc.signal()
+    changed:emit()
+end
+function B()
+    changed:emit()
+end
+local M = { run = function() return true end }
+return M
+""",
+        encoding="utf-8",
+    )
+    scoped = parse_lua_file(scoped_path)
+    emits = [item for item in scoped["framework_signals"] if item["kind"] == "signal_emit"]
+    assert len(emits) == 1
+    assert any(item["symbol"] == "M.run" for item in scoped["functions"])
+
+
+def _lua_coverage_path_disambiguates_duplicate_symbols() -> None:
+    inventory = {
+        "files": [
+            {
+                "repo_id": "lua-demo",
+                "path": "module/a.lua",
+                "language": "lua",
+                "functions": [{"symbol": "Alpha:init", "line": 2}],
+            },
+            {
+                "repo_id": "lua-demo",
+                "path": "module/b.lua",
+                "language": "lua",
+                "functions": [{"symbol": "Beta:init", "line": 4}],
+            },
+        ]
+    }
+    base = {"coverage_type": "function", "module": "", "function": "init", "count": 0}
+    without_path = match_coverage_records([base], inventory)
+    assert len(without_path["unmatched"]) == 1
+
+    matched = match_coverage_records([{**base, "path": "module/b.lua"}], inventory)
+    assert matched["matched"][0]["matches"] == [
+        {"repo_id": "lua-demo", "path": "module/b.lua", "line": 4}
+    ]
+
+    unmatched = match_coverage_records([{**base, "path": "module/missing.lua"}], inventory)
+    assert len(unmatched["unmatched"]) == 1
+    assert not unmatched["matched"]
+    dotted = match_coverage_records([
+        {**base, "function": "Beta.init"}
+    ], inventory)
+    assert dotted["matched"][0]["matches"][0]["line"] == 4
+
+
+def _coverage_ignores_context_symbol_collisions() -> None:
+    unit = AnalysisUnit(
+        unit_id="U00",
+        repo_id="lua-demo",
+        title="Lua source",
+        source_scope=["module/source.lua"],
+        context_scope=["module/context.lua"],
+        focus=["test_cases"],
+        dfx=["功能与状态"],
+        languages=["lua"],
+    )
+    inventory = {
+        "files": [
+            {
+                "repo_id": "lua-demo",
+                "path": "module/source.lua",
+                "language": "lua",
+                "functions": [{"symbol": "Component:init", "line": 3}],
+            },
+            {
+                "repo_id": "lua-demo",
+                "path": "module/context.lua",
+                "language": "lua",
+                "functions": [{"symbol": "Component:init", "line": 8}],
+            },
+        ],
+        "file_count": 2,
+    }
+    records = [{
+        "coverage_type": "function",
+        "module": "component",
+        "function": "Component.init",
+        "count": 0,
+    }]
+    report = match_coverage_records(records, _source_inventory(unit, inventory))
+    context = _coverage_context(unit, report)
+    assert len(report["matched"]) == 1 and not report["ambiguous"]
+    assert context[0]["path"] == "module/source.lua"
+
+
+def _coverage_context_collision_keeps_source_gap_through_advance() -> None:
+    _, data_root, contract = _lua_workspace()
+    repo = data_root / "repositories" / "lua-demo"
+    (repo / "module" / "entry.lua").write_text(
+        """local Context = require("module.component")
+local Component = {}
+function Component:init() return Context ~= nil end
+return Component
+""",
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "-C", str(repo), "add", "module/entry.lua"], check=True)
+    subprocess.run(
+        [
+            "git", "-C", str(repo), "-c", "user.name=PANGEA Smoke",
+            "-c", "user.email=pangea-smoke@example.invalid", "commit", "-qm", "coverage collision fixture",
+        ],
+        check=True,
+    )
+    payload = read_json(contract)
+    payload["source_scope"] = ["module/entry.lua"]
+    write_json(contract, payload)
+    coverage = data_root / "coverage"
+    coverage.mkdir()
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(["module", "function", "count"])
+    sheet.append(["component", "Component.init", 0])
+    workbook.save(coverage / "collision.xlsx")
+    workbook.close()
+
+    state = run_module_analysis(str(contract))
+    assert len(state["coverage_report"]["matched"]) == 1
+    assert not state["coverage_report"]["ambiguous"]
+    task = read_json(Path(state["agent_task_paths"][0]))
+    gap_id = task["coverage_context"][0]["gaps"][0]["coverage_id"]
+    assert task["coverage_context"][0]["path"] == "module/entry.lua"
+    result = _task_result(task)
+    result["test_cases"] = [_test_case("U00-COV-TC1", coverage_ids=[gap_id])]
+    result["analysis_checkpoint"]["coverage_decisions"] = [{
+        "coverage_id": gap_id,
+        "disposition": "new_coverage_case",
+        "linked_test_case_ids": ["U00-COV-TC1"],
+        "reason": "从当前源码入口补齐未执行函数。",
+    }]
+    write_json(Path(task["result_path"]), result)
+    state = run_module_analysis(str(contract))
+    assert state["phase"] == "WAITING_REVIEW"
+    assert len(state["coverage_report"]["matched"]) == 1
+    assert not state["coverage_report"]["ambiguous"]
+
+
+def _lua_context_inventory_isolated_by_repository() -> None:
+    _, data_root, contract = _workspace(repositories=("repo-a", "repo-b"))
+    for repo_id in ("repo-a", "repo-b"):
+        repo = data_root / "repositories" / repo_id
+        (repo / "module" / "entry.c").unlink()
+        (repo / "module" / "component.lua").write_text(
+            "local C = mc.class(\"C\")\nfunction C:init() end\nreturn C\n",
+            encoding="utf-8",
+        )
+        entry = (
+            'return require("module.component")\n'
+            if repo_id == "repo-a"
+            else "return { value = true }\n"
+        )
+        (repo / "module" / "entry.lua").write_text(entry, encoding="utf-8")
+        subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+        subprocess.run(
+            [
+                "git", "-C", str(repo), "-c", "user.name=PANGEA Smoke",
+                "-c", "user.email=pangea-smoke@example.invalid", "commit", "-qm", "lua repo fixture",
+            ],
+            check=True,
+        )
+    payload = read_json(contract)
+    payload["source_scope"] = ["module/entry.lua"]
+    write_json(contract, payload)
+    state = run_module_analysis(str(contract))
+    inventory_paths = {
+        (item["repo_id"], item["path"]) for item in state["inventory"]["files"]
+    }
+    assert ("repo-a", "module/component.lua") in inventory_paths
+    assert ("repo-b", "module/component.lua") not in inventory_paths
+
+
+def _coverage_workbook_preserves_source_path() -> None:
+    root = Path(tempfile.mkdtemp(prefix="pangea-coverage-path-"))
+    _TEMP_ROOTS.append(root)
+    workbook = Workbook()
+    function_sheet = workbook.active
+    function_sheet.title = "functions"
+    function_sheet.append(["module", "path", "function", "count"])
+    function_sheet.append(["power", "module/component.lua", "init", 0])
+    branch_sheet = workbook.create_sheet("branches")
+    branch_sheet.append([
+        "branch_id", "路径", "function", "condition", "true_count", "false_count"
+    ])
+    branch_sheet.append(["B1", "module/component.lua", "run", "ready", 0, 2])
+    path = root / "coverage.xlsx"
+    workbook.save(path)
+    workbook.close()
+
+    records, warnings = parse_coverage_xlsx(path)
+    assert warnings == []
+    assert [item["path"] for item in records] == [
+        "module/component.lua", "module/component.lua"
+    ]
+
+
+def _mixed_language_reports_show_frameworks() -> None:
+    _, _, contract = _workspace()
+    state = run_module_analysis(str(contract))
+    state["inventory"]["files"].append({
+        "repo_id": "demo",
+        "path": "module/component.lua",
+        "language": "lua",
+        "frameworks": ["openubmc"],
+    })
+    state["inventory"]["file_count"] += 1
+    state["analysis_units"][0]["source_scope"].append("module/component.lua")
+    state["analysis_units"][0]["languages"] = ["c_cpp", "lua"]
+    state["analysis_units"][0]["frameworks"] = ["openubmc"]
+
+    markdown = render_report(state)
+    html = render_html_report(state)
+    assert "| C/C++ 文件数 | 1 |" in markdown
+    assert "| Lua 文件数 | 1 |" in markdown
+    assert "| 识别框架 | openubmc |" in markdown
+    assert "<td>C/C++ 文件数</td><td>1</td>" in html
+    assert "<td>Lua 文件数</td><td>1</td>" in html
+    assert "<td>识别框架</td><td>openubmc</td>" in html
+
+    legacy_state = run_module_analysis(str(contract))
+    for item in legacy_state["inventory"]["files"]:
+        item.pop("language", None)
+    legacy_markdown = render_report(legacy_state)
+    assert "| C/C++ 文件数 | 1 |" in legacy_markdown
+
+
 SCENARIOS: tuple[tuple[str, Scenario], ...] = (
     ("PASS 到双报告", _pass_report),
     ("reviewer 发现遗漏时不能 PASS", _review_missing_finding_cannot_pass),
     ("对照复核不能丢弃独立 finding", _comparison_cannot_drop_independent_findings),
     ("REWORK 同 reviewer 通过", _rework_same_reviewer),
+    ("原 reviewer 无法恢复时显式 UNRESOLVED", _reviewer_unavailable_has_explicit_unresolved_path),
     ("截断结果覆盖修正", _truncated_correction),
     ("黑盒步骤与预期必须逐项对应", _mismatched_step_results_rejected),
     ("需求补测无需伪造风险关联", _requirement_only_test_case_is_accepted),
@@ -1071,6 +1554,16 @@ SCENARIOS: tuple[tuple[str, Scenario], ...] = (
     ("INDEX_READY 恢复不再读取活动源码", _index_checkpoint_resumes_without_live_source),
     ("Agent 启动状态写入 Run checkpoint", _agent_start_checkpoint),
     ("已知 C 宏解析误报不冒充真实缺口", _known_c_macro_parse_artifacts),
+    ("旧 WorkerTask 使用 C/C++ 默认规则", _legacy_task_uses_c_cpp_defaults),
+    ("Lua openUBMC task 冻结语言与规则", _lua_openubmc_task_metadata),
+    ("Lua 直接依赖保留 context 边界并生成框架检查", _lua_direct_dependency_keeps_context_boundary_and_framework_checks),
+    ("Lua parser 正确绑定多赋值与 self signal", _lua_parser_binds_direct_assignments_and_self_signals),
+    ("Lua 重名函数 Coverage 使用路径消歧", _lua_coverage_path_disambiguates_duplicate_symbols),
+    ("Coverage 匹配忽略 context 重名符号", _coverage_ignores_context_symbol_collisions),
+    ("Coverage source 缺口推进后仍保持匹配", _coverage_context_collision_keeps_source_gap_through_advance),
+    ("Lua context inventory 按源码仓隔离", _lua_context_inventory_isolated_by_repository),
+    ("Coverage Excel 保留源码路径", _coverage_workbook_preserves_source_path),
+    ("混合语言报告显示框架", _mixed_language_reports_show_frameworks),
 )
 
 

@@ -14,30 +14,32 @@ tools:
 
 ## 开始
 
-主 Agent 会给你一个 `worker task JSON` 路径。先读取该 task，并执行：
+主 Agent 会给你一个 `worker task JSON` 路径。先读取该 task。在 DSH 中按实际宿主选择一次
+仓库虚拟环境解释器：POSIX 使用 `.venv/bin/python`，Windows PowerShell 使用
+`& '.\.venv\Scripts\python.exe'`。本 worker 后续全部 PANGEA CLI 调用复用该解释器；选定路径
+不存在时停止，不尝试系统 Python、其他虚拟环境或安装依赖。然后按宿主执行对应命令：
 
-```powershell
-python -m pangea_agent.cli.main prepare-worker-result --task "<worker task JSON>"
+```text
+POSIX: .venv/bin/python -m pangea_agent.cli.main prepare-worker-result --task "<worker task JSON>"
+PowerShell: & '.\.venv\Scripts\python.exe' -m pangea_agent.cli.main prepare-worker-result --task '<worker task JSON>'
 ```
-
-DSH 工作区已经存在 `.venv` 时，以上及后续 PANGEA CLI 命令直接使用
-`.venv/bin/python`，不要先尝试未配置的 `python` 或系统 `python3`。
 
 task 提供以下可用输入。先按后文 summary 标记确定当前阶段，只读取该阶段需要的内容，不要在第一次调用把全部资料、Coverage 和测试规则一起读完：
 
 - `unit.source_scope`：必须逐文件分析的源码，已经包含 PANGEA 确定性找到的接口实现和必要源码。
 - `unit.context_scope`：函数指针的直接实现，以及调用入口、配置、规格和测试等语义范围。直接实现用于核对回调的部分副作用，不像 `source_scope` 那样逐文件完整读取：先用 `rg -n` 定位 semantic check、failure signal、相关 setter/close/add/remove/create 函数，再用 offset/limit 读取所需片段；单次片段不超过 240 行，避免重叠，不得整文件读取大型 posix/uring 实现，也不得继续 find/glob 扩展文件范围。
 - `coverage_context`：当前单元能唯一匹配到的函数与分支 Coverage。`gaps[]` 由 Python 根据执行次数确定性生成，只包含当前单元真实的函数未执行或分支单侧未执行缺口；每个 gap 的 `coverage_id` 是后续测试闭环的唯一引用。分支记录还包含 `branch_id`、`condition`、`true_count` 和 `false_count`。
-- `failure_signal_context`：Python 从当前任务已经提供的 C/C++ 文件中定位出的少量高影响断言/终止信号。它只告诉你位置，不证明可达、危害或风险成立；必须逐项读取源码上下文，并按新任务中每项附带的 `analysis_focus` 做语义判断。状态断言还会附少量 `related_state_context`，列出同文件的状态写入和重配置候选；必须打开这些位置判断真实时序，不能把候选本身当成风险结论。
+- `failure_signal_context`：Python 从当前任务的冻结源码中定位出的少量高影响失败信号。它只告诉你位置，不证明可达、危害或风险成立；必须逐项读取源码上下文，并按每项附带的 `analysis_focus` 做语义判断。若附带 `related_state_context`，必须打开这些位置判断真实时序，不能把候选本身当成风险结论。
 - `semantic_check_items`：本轮必须逐项完成的短任务清单。每项只要求一个明确结论；用它的 `check_id` 作为对应 `analysis_checkpoint.failure_paths[].path_id`。该 failure path 用 `linked_risk_ids` 指向由本项支撑的风险；风险的 `affected_paths` 必须包含本项 `subject_path`。不要合并不同实现，也不要让断言结论替代资源重配置结论。这是分析顺序，不是自动风险判定。
 - `index_path`、`source_manifest_path`：risks 阶段使用的冻结证据与资料目录。`inventory_path` 由 Python 用于范围冻结和校验，worker 不整份读取；task 中的 scope 已是本单元权威范围。
 - `source_manifest.material_catalog`：本 Run 的资料目录，给出资料类型、解析状态、索引位置和附件状态。
-- schema 和 rubric 按阶段读取：checkpoint 只读 `schemas/worker_result.schema.json` 与 `src/pangea_agent/rubrics/builtin/c_cpp_analysis.md`；risks 再读 `schemas/evidence_ref.schema.json`、`schemas/business_flow.schema.json`、`schemas/risk.schema.json`、`src/pangea_agent/rubrics/builtin/dfx.md` 与 `src/pangea_agent/rubrics/builtin/risk_reproducibility.md`；tests 最后读 `schemas/test_case.schema.json` 与 `src/pangea_agent/rubrics/builtin/test_case_generation.md`。不得猜文件名、glob 搜索或提前读取后续阶段规则。
+- schema 和 rubric 按阶段读取：checkpoint 只读 `schemas/worker_result.schema.json` 和 task 的 `checkpoint_rubric_paths` 中列出的每一份规则；risks 再读 `schemas/evidence_ref.schema.json`、`schemas/business_flow.schema.json`、`schemas/risk.schema.json`、`src/pangea_agent/rubrics/builtin/dfx.md` 与 `src/pangea_agent/rubrics/builtin/risk_reproducibility.md`；tests 最后读 `schemas/test_case.schema.json`、`src/pangea_agent/rubrics/builtin/test_case_generation.md` 和固定的 `src/pangea_agent/rubrics/builtin/product_blackbox_test_case.md`。路径缺失或不可读时如实停止，不猜文件名、不 glob 搜索，也不改用其他语言规则。
 - 上述 `schemas/` 与 `src/pangea_agent/rubrics/` 都位于当前 pangea-agent 工作区根目录，不在 task 的 `data_root`、Run 或验收 case 中。直接读取这里列出的固定路径，不使用 glob/find 搜索 schema 或 rubric。
 
 再读取 task 指定的 `result_path`。PANGEA 已经生成固定结果骨架；只填写分析内容，不从零重建 WorkerResult，不修改 task。
 
-若 `task_type` 是 `rework`，还必须读取 `prior_result_path` 和 `review_issues`，只修复列出的复核问题。
+若 `task_type` 是 `rework`，先重新读取 task 的全部 `checkpoint_rubric_paths`，再读取 `prior_result_path` 和 `review_issues`，只修复列出的复核问题；通用 rubric 只读取 issue 实际涉及阶段对应的固定规则，不重跑 analysis 三阶段。
+issue 涉及 `material_decisions`、需求/设计行为、`linked_requirement_ids` 或 `linked_material_ids` 时，先对受影响资料执行 `read-material --task "<worker task JSON>" --path "<manifest path>"` 并读取正文；未读正文不得修改资料结论或把 issue 标为已处理。
 以 prior result 作为内容基础，在一次调用内按 task 顺序处理全部 issue。每项沿同一结论链同步修改：
 先改对应 `analysis_checkpoint.failure_paths`，再改关联 risk 的
 trigger/system_result/external_observation/exclusion_condition 和该 risk 自身的 `evidence[]`，同时改
@@ -53,11 +55,11 @@ case 的前置、步骤、预期、观测和清理。issue 只要求新增用例
    `unit.context_scope` 中与 semantic check、failure signal、setter/close/add/remove/create 直接相关的
    非重叠片段。完成全部 `semantic_check_items`、其余 failure signal 和正常生命周期反向扫描，逐文件
    写入 `source_paths_reviewed`，summary 改为 `[STAGE:checkpoint]`，只返回 `STAGE checkpoint`。本阶段
-   只读 task、结果骨架、`worker_result.schema.json`、`c_cpp_analysis.md` 和冻结源码；禁止读取
+   只读 task、结果骨架、`worker_result.schema.json`、task 声明的全部 `checkpoint_rubric_paths` 和冻结源码；禁止读取
    inventory、source manifest、index/materials、Coverage、资料、CLI/历史测试和其他 rubric。
 2. `[STAGE:checkpoint]` → `risks`：读取 source manifest、资料索引、Coverage、CLI/历史测试及本阶段
    schema/rubric；不再重读源码和 inventory。读取 manifest 后，先对每份准备写入
-   `material_decisions` 的资料执行 `python -m pangea_agent.cli.main read-material --task
+   `material_decisions` 的资料用当前客户端选定的解释器执行 `-m pangea_agent.cli.main read-material --task
    "<worker task JSON>" --path "<manifest path>"`，以命令返回的正文判断关联性；没有执行该命令并
    读到正文时不得写该资料的 decision，也不得根据文件名或常识声称资料未点名当前函数。一次完成 evidence、business_flows、material_decisions、
    coverage_priorities，并把全部 `disposition=risk/unresolved` failure path 转化为对应 RiskCard。完成
@@ -95,7 +97,7 @@ addressed。确认后再把这一项 issue ID 加入 `addressed_review_issue_ids
    上述定位方式读取与当前入口、semantic check、failure signal、状态重配置和清理直接相关的
    函数片段，建立生命周期、状态、资源、副作用、错误处理、清理与恢复关系。此时不要先看设计、
    历史用例或 Coverage 来猜结论，也不要为查公开头文件而搜索 task 未冻结的目录。
-2. 入口和状态关系明确后，先按顺序完成 `semantic_check_items`，把每项结论立即写入同 `check_id` 的 failure path；`disposition=risk` 时同时填写真实 `linked_risk_ids`，其他实现只能出现在上下文证据中，不能写进本项结论或其风险的 `affected_paths`。再处理其余 `failure_signal_context`，最后写正常流程总结。打开信号附近源码并按 `analysis_focus` 反向追触发条件、Debug/Release、调用方和最终状态；实现内的注释只能解释实现意图，不能单独证明公开调用方承担了前置条件。调用方保证必须来自公开契约或入口处实际执行的阻断检查。之后再独立反向扫描 `source_scope` 及任务已提供的 C/C++ 直接实现和内联头文件，查找会导致进程终止、数据丢失、资源遗失或不可恢复状态的明确终点。定位清单不是风险结论；不要递归寻找新文件，普通且状态安全的错误返回也不需要为凑完整性而逐项登记。
+2. 入口和状态关系明确后，先按顺序完成 `semantic_check_items`，把每项结论立即写入同 `check_id` 的 failure path；`disposition=risk` 时同时填写真实 `linked_risk_ids`，其他实现只能出现在上下文证据中，不能写进本项结论或其风险的 `affected_paths`。再处理其余 `failure_signal_context`，最后写正常流程总结。打开信号附近源码并按 `analysis_focus` 反向追触发条件、运行模式、调用方和最终状态；实现内的注释只能解释实现意图，不能单独证明公开调用方承担了前置条件。调用方保证必须来自公开契约或入口处实际执行的阻断检查。之后再按 `checkpoint_rubric_paths` 的语言和框架规则反向扫描 `source_scope` 及 task 已提供的直接实现，查找会导致进程终止、数据丢失、资源遗失或不可恢复状态的明确终点。定位清单不是风险结论；不要递归寻找新文件，普通且状态安全的错误返回也不需要为凑完整性而逐项登记。
    数值句柄或索引参与边界判断时，先从创建函数的真实失败返回值和同文件使用方式确定无效哨兵；不能凭习惯把 0 当无效。若创建失败只返回 -1，则 0 是必须单独重放的有效边界，`<= 0` 与 `< 0` 的差异不能用“退化环境”或“通常不会发生”排除。
    信号位于共享 helper、引用计数或公共状态时，必须把 task 已提供的每个直接调用实现分别重放；不同实现的错误处理不同就分开写 failure path。一个实现安全、不可达或未确认，不能覆盖另一个实现已经可达的严重路径。
    对 insert/lookup/release、acquire/use/free 等配对操作，failure path 必须写出一条真实调用序列。看到错误日志或“继续运行”注释后仍要追踪当前函数最终返回值，以及上层是否真正完成绑定、入队或状态提交；lookup 不增加引用、单个函数看起来不对称，都不能代替“某次减少前没有成功增加”的完整证明。
@@ -119,7 +121,7 @@ addressed。确认后再把这一项 issue ID 加入 `addressed_review_issue_ids
 5. 最后读取 `coverage_context`。缺少记录表示未知，不能写成未覆盖；Coverage 不能证明风险成立。`gaps=[]` 表示当前匹配记录没有明确补测缺口；存在 `gaps[]` 时，每个 gap 都是 tests 阶段必须闭环的测试依据，并在 `analysis_checkpoint.coverage_decisions` 记录结论。`coverage_priorities` 可以继续记录补测排序，但不能代替 `coverage_decisions`。
 6. 按六个 DFX 维度和初始化、运行、停止、恢复、卸载生命周期检查候选问题；风险必须说明复现条件、系统结果、外部观测、排除条件、严重度、置信度和真实源码证据。首次分析产生的新风险 `status` 固定为 `pending`。
 7. 在生成测试用例前完成上游约束和反证检查，把最终风险集合固定下来，并将 `risk_set_frozen=true`。之后不得为了凑用例临时新增风险。
-8. 写入 `test_cases` 前调用 `product-blackbox-test-case` Skill，并执行 `test_case_generation.md` 的转换步骤。风险验证用例填写真实 `linked_risk_ids`；资料/需求用例填写真实 `linked_material_ids` 和存在时的 `linked_requirement_ids`；Coverage 补测使用 task 中真实 `linked_coverage_ids`。四个关联数组都必须保留，至少一个非空。风险驱动是基础：`Blackbox-ready/Graybox-ready` 风险必须有用例；资料和 Coverage 可由用户不提供，但一旦分别成为 `decision=current` 资料或 task 中的 gap，就必须参与用例闭环。不得为了过 schema 把正常需求、资料或 Coverage 用例挂到相邻风险。先为每条风险列出测试变体，每个变体只含一种构建、一种运行模式和一个唯一终态，再逐行生成独立 TestCase；Debug 与 Release 等对照必须在生成步骤前拆开。某个变体的终态是进程/服务崩溃、退出或停止时，若还要验证恢复，下一步先写“重启并等待服务恢复”，再写后续业务操作。每个步骤与预期结果一一对应；故障注入只制造触发条件，测试人员仍从业务入口执行、观察并恢复。前置条件只描述第 1 步开始前已经成立的状态；测试开始后的配置切换、销毁、重建、恢复或再次发送都必须写成独立步骤并给出同位置预期，不能用前置条件中的“随后”“之后恢复”代替触发链中的状态转换。
+8. 写入 `test_cases` 前读取固定的 `src/pangea_agent/rubrics/builtin/product_blackbox_test_case.md`，并执行 `test_case_generation.md` 的转换步骤。不要调用客户端专属 Skill 或复制另一套用例规则。风险验证用例填写真实 `linked_risk_ids`；资料/需求用例填写真实 `linked_material_ids` 和存在时的 `linked_requirement_ids`；Coverage 补测使用 task 中真实 `linked_coverage_ids`。四个关联数组都必须保留，至少一个非空。风险驱动是基础：`Blackbox-ready/Graybox-ready` 风险必须有用例；资料和 Coverage 可由用户不提供，但一旦分别成为 `decision=current` 资料或 task 中的 gap，就必须参与用例闭环。不得为了过 schema 把正常需求、资料或 Coverage 用例挂到相邻风险。先为每条风险列出测试变体，每个变体只含一种构建、一种运行模式和一个唯一终态，再逐行生成独立 TestCase；Debug 与 Release 等对照必须在生成步骤前拆开。某个变体的终态是进程/服务崩溃、退出或停止时，若还要验证恢复，下一步先写“重启并等待服务恢复”，再写后续业务操作。每个步骤与预期结果一一对应；故障注入只制造触发条件，测试人员仍从业务入口执行、观察并恢复。前置条件只描述第 1 步开始前已经成立的状态；测试开始后的配置切换、销毁、重建、恢复或再次发送都必须写成独立步骤并给出同位置预期，不能用前置条件中的“随后”“之后恢复”代替触发链中的状态转换。
    对 `decision=current` 资料，在提交前把正文中抽取的需求 ID 集合与所有 TestCase 的
    `linked_requirement_ids` 并集做一次逐项对照；正文中的每个当前需求 ID 都必须出现在并集中。
    没有需求 ID 的当前设计行为逐项核对 `linked_material_ids` 和测试步骤。Coverage 已执行、源码已符合
@@ -165,8 +167,9 @@ addressed。确认后再把这一项 issue ID 加入 `addressed_review_issue_ids
 不得执行最终 `validate-worker-result`。只有 `tests` 最终阶段和 `task_type=rework` 完成
 全部语义内容后执行：
 
-```powershell
-python -m pangea_agent.cli.main validate-worker-result --task "<worker task JSON>"
+```text
+POSIX: .venv/bin/python -m pangea_agent.cli.main validate-worker-result --task "<worker task JSON>"
+PowerShell: & '.\.venv\Scripts\python.exe' -m pangea_agent.cli.main validate-worker-result --task '<worker task JSON>'
 ```
 
 - `PASS` 是 `tests` 最终阶段或 rework 可以提交给 graph 的唯一条件；它不适用于前两个计划内 checkpoint。

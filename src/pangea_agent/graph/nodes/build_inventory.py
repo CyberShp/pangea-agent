@@ -4,23 +4,82 @@ from pathlib import Path
 from time import perf_counter
 
 from pangea_agent.agent_io import write_json
-from pangea_agent.documents.coverage import match_coverage_records
+from pangea_agent.documents.coverage import filter_inventory_to_sources, match_coverage_records
 from pangea_agent.graph.run_store import load_progress, save_progress
 from pangea_agent.graph.state import PangeaState
 from pangea_agent.inventory.source_scanner import build_lightweight_inventory
+from pangea_agent.inventory.source_languages import language_for_path
 
 
 def build_inventory(state: PangeaState) -> PangeaState:
     started = perf_counter()
     print("[pangea] build_inventory started", flush=True)
 
-    inventory = build_lightweight_inventory(state.get("repositories", []), state.get("module_scope", []))
+    groups = state.get("scope_expansion", {}).get("groups", [])
+    inventories = []
+    for repository in state.get("repositories", []):
+        repo_groups = [group for group in groups if group.get("repo_id") == repository["repo_id"]]
+        inventory_scope = list(dict.fromkeys(
+            path
+            for group in repo_groups
+            for path in [
+                *group.get("code_paths", []),
+                *(
+                    item
+                    for item in group.get("context_paths", [])
+                    if language_for_path(Path(item)) == "lua"
+                ),
+            ]
+        ))
+        if not inventory_scope and not repo_groups:
+            inventory_scope = list(state.get("module_scope", []))
+        if inventory_scope:
+            inventories.append(build_lightweight_inventory([repository], inventory_scope))
+    files = [item for inventory in inventories for item in inventory.get("files", [])]
+    missing_dependencies = sorted({
+        package
+        for inventory in inventories
+        for package in inventory.get("missing_dependencies", [])
+    })
+    parse_failures = [
+        item
+        for inventory in inventories
+        for item in inventory.get("parse_failures", [])
+    ]
+    inventory = {
+        "files": files,
+        "file_count": len(files),
+        "missing_dependencies": missing_dependencies,
+        "parse_failures": parse_failures,
+        "structural_parse_complete": not missing_dependencies and not parse_failures,
+    }
+    resolved_dependencies = {
+        (
+            item.get("repo_id"),
+            item.get("path"),
+            item.get("line"),
+            item.get("module"),
+        ): item.get("resolved_path")
+        for item in state.get("scope_expansion", {}).get("resolved_dependencies", [])
+    }
+    for file in inventory["files"]:
+        for item in file.get("imports", []):
+            item["resolved_path"] = resolved_dependencies.get(
+                (file.get("repo_id"), file.get("path"), item.get("line"), item.get("module")),
+                item.get("resolved_path"),
+            )
+    source_paths = {
+        (group.get("repo_id"), path)
+        for group in groups
+        for path in group.get("code_paths", [])
+    }
     coverage_report = match_coverage_records(
-        state.get("source_manifest", {}).get("coverage_records", []), inventory
+        state.get("source_manifest", {}).get("coverage_records", []),
+        filter_inventory_to_sources(inventory, source_paths),
     )
     errors = list(state.get("errors", []))
     errors.extend(
-        {"kind": "missing_dependency", "package": package, "scope": "C/C++ structural parsing"}
+        {"kind": "missing_dependency", "package": package, "scope": "源码结构化解析"}
         for package in inventory.get("missing_dependencies", [])
     )
     result = {

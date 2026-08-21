@@ -4,8 +4,9 @@ import re
 from pathlib import Path
 
 from pangea_agent.agent_io import write_json
-from pangea_agent.documents.coverage import match_coverage_records
+from pangea_agent.documents.coverage import filter_inventory_to_sources, match_coverage_records
 from pangea_agent.graph.run_store import analysis_result_path, analysis_task_path, run_directory, save_progress
+from pangea_agent.graph.semantic_checks import build_runtime_semantic_checks
 from pangea_agent.graph.state import PangeaState
 from pangea_agent.graph.validation import validate_nonoverlapping_units
 from pangea_agent.models.run import AgentSession, RunProgress
@@ -23,6 +24,17 @@ _CODE_SUFFIXES = {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp"}
 _IMPLEMENTATION_SUFFIXES = {".c", ".cc", ".cpp", ".cxx"}
 _MAP_INSERT_CALL_RE = re.compile(r"\bspdk_sock_map_insert\s*\([^;{}]*\)\s*;", re.DOTALL)
 _MAP_RELEASE_CALL_RE = re.compile(r"\bspdk_sock_map_release\s*\([^;{}]*\)\s*;", re.DOTALL)
+
+
+def _checkpoint_rubric_paths(unit: AnalysisUnit) -> list[str]:
+    paths: list[str] = []
+    if "c_cpp" in unit.languages:
+        paths.append("src/pangea_agent/rubrics/builtin/c_cpp_analysis.md")
+    if "lua" in unit.languages:
+        paths.append("src/pangea_agent/rubrics/builtin/lua_analysis.md")
+    if "openubmc" in unit.frameworks:
+        paths.append("src/pangea_agent/rubrics/builtin/openubmc_analysis.md")
+    return paths
 
 
 def _failure_signal_focus(signal: str) -> str:
@@ -150,6 +162,13 @@ def _coverage_context(unit: AnalysisUnit, coverage_report: dict) -> list[dict]:
     )
 
 
+def _source_inventory(unit: AnalysisUnit, inventory: dict) -> dict:
+    return filter_inventory_to_sources(
+        inventory,
+        {(unit.repo_id, path) for path in unit.source_scope},
+    )
+
+
 def _failure_signal_context(unit: AnalysisUnit, repositories: list[dict]) -> list[dict]:
     repository = next((item for item in repositories if item["repo_id"] == unit.repo_id), None)
     if repository is None:
@@ -274,7 +293,7 @@ def _semantic_check_items(
 def prepare_worker_tasks(state: PangeaState) -> PangeaState:
     units = state.get("analysis_units", [])
     if not units:
-        raise ValueError("未发现对应 C/C++ 实现：用户指定范围没有可分析源码")
+        raise ValueError("用户指定范围没有可分析源码")
     inventory = state.get("inventory", {})
     inventory_files = {
         (item.get("repo_id"), item.get("path", "").replace("\\", "/"))
@@ -291,13 +310,12 @@ def prepare_worker_tasks(state: PangeaState) -> PangeaState:
         ):
             empty_units.append(unit["unit_id"])
     if empty_units:
-        raise ValueError(f"未发现对应 C/C++ 实现：{', '.join(empty_units)}")
+        raise ValueError(f"分析单元没有可分析源码：{', '.join(empty_units)}")
     validate_nonoverlapping_units(units)
     run_dir = run_directory(state)
     inventory_path = run_dir / "inputs" / "inventory.json"
     source_manifest_path = run_dir / "inputs" / "source-manifest.json"
     source_manifest = state.get("source_manifest", {})
-    coverage_report = match_coverage_records(source_manifest.get("coverage_records", []), inventory)
     write_json(run_dir / "inputs" / "task-contract.json", state["task_contract"])
     write_json(source_manifest_path, source_manifest)
     write_json(inventory_path, inventory)
@@ -314,8 +332,20 @@ def prepare_worker_tasks(state: PangeaState) -> PangeaState:
     task_paths: list[str] = []
     for raw_unit in units:
         unit = AnalysisUnit.model_validate(raw_unit)
+        coverage_report = match_coverage_records(
+            source_manifest.get("coverage_records", []),
+            _source_inventory(unit, inventory),
+        )
         unit_repositories = [repo for repo in repositories if repo["repo_id"] == unit.repo_id]
         failure_signal_context = _failure_signal_context(unit, unit_repositories)
+        semantic_check_items = _semantic_check_items(
+            unit, unit_repositories, failure_signal_context
+        )
+        semantic_check_items.extend(build_runtime_semantic_checks(
+            unit,
+            inventory,
+            state.get("scope_expansion", {}).get("unresolved_dependencies", []),
+        ))
         task = WorkerTask(
             task_type="analysis",
             run_id=state["run_id"],
@@ -325,9 +355,10 @@ def prepare_worker_tasks(state: PangeaState) -> PangeaState:
             index_path=state["index_path"],
             inventory_path=str(inventory_path),
             source_manifest_path=str(source_manifest_path),
+            checkpoint_rubric_paths=_checkpoint_rubric_paths(unit),
             coverage_context=_coverage_context(unit, coverage_report),
             failure_signal_context=failure_signal_context,
-            semantic_check_items=_semantic_check_items(unit, unit_repositories, failure_signal_context),
+            semantic_check_items=semantic_check_items,
             attempt=0,
             result_path=str(analysis_result_path(state, unit.unit_id, 0)),
         )

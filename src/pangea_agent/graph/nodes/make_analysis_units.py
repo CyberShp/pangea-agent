@@ -1,6 +1,28 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from pangea_agent.graph.state import PangeaState
+from pangea_agent.inventory.source_languages import language_for_path
+
+
+def _unit_languages(paths: list[str]) -> list[str]:
+    languages = {
+        "lua" if language == "lua" else "c_cpp"
+        for path in paths
+        if (language := language_for_path(Path(path))) is not None
+    }
+    return sorted(languages)
+
+
+def _unit_frameworks(repo_id: str, paths: list[str], inventory: dict) -> list[str]:
+    owned = set(paths)
+    return sorted({
+        framework
+        for item in inventory.get("files", [])
+        if item.get("repo_id") == repo_id and item.get("path") in owned
+        for framework in item.get("frameworks", [])
+    })
 
 
 def make_analysis_units(state: PangeaState) -> PangeaState:
@@ -12,9 +34,11 @@ def make_analysis_units(state: PangeaState) -> PangeaState:
 
     units = []
     expansion_groups = state.get("scope_expansion", {}).get("groups", [])
+    inventory = state.get("inventory", {})
     for group in expansion_groups:
         if group["code_paths"]:
             requested = ", ".join(group["requested_scope"])
+            languages = _unit_languages(group["code_paths"])
             units.append({
                 "unit_id": f"U{len(units):02d}",
                 "repo_id": group["repo_id"],
@@ -22,6 +46,12 @@ def make_analysis_units(state: PangeaState) -> PangeaState:
                 "source_scope": group["code_paths"],
                 "context_scope": group["context_paths"],
                 "focus": ["code_map", "flows", "branches", "risks", "test_cases"],
+                "languages": languages or ["c_cpp"],
+                "frameworks": _unit_frameworks(
+                    group["repo_id"],
+                    [*group["code_paths"], *group["context_paths"]],
+                    inventory,
+                ),
                 "dfx": [
                     "功能与状态",
                     "资源与规格",

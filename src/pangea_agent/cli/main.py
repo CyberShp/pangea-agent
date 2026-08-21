@@ -15,10 +15,12 @@ from pangea_agent.graph.run_store import (
     load_worker_task,
     normalize_review_result_path,
     normalize_worker_result_path,
+    reviewer_unavailable_path,
     review_result_skeleton,
     save_progress,
     worker_result_skeleton,
 )
+from pangea_agent.models.worker import ReviewerUnavailable
 from pangea_agent.graph.validation import (
     validate_independent_review_result,
     validate_review_result,
@@ -135,6 +137,11 @@ def main() -> None:
     session.add_argument("--unit-id")
     session.add_argument("--task-id")
     session.add_argument("--status", choices=("dispatched", "completed"), default="dispatched")
+    unavailable = sub.add_parser("mark-reviewer-unavailable")
+    unavailable.add_argument("--run-id", required=True)
+    unavailable.add_argument("--data-root", default="pangea-data")
+    unavailable.add_argument("--reviewer-id", required=True)
+    unavailable.add_argument("--reason", required=True)
     args = parser.parse_args()
 
     if args.command == "init-data":
@@ -217,12 +224,45 @@ def main() -> None:
         if args.status == "dispatched" and not args.task_id:
             parser.error("记录 dispatched 状态时必须提供 --task-id")
         if record.task_id and args.task_id and record.task_id != args.task_id:
-            parser.error("同一 Agent 会话不能替换 task_id")
+            run_dir = Path(args.data_root) / "runs" / args.run_id
+            rework_task_path = run_dir / "agent-tasks" / "rework" / f"{args.unit_id}.json"
+            analysis_record = progress.agent_sessions.get(f"analysis:{args.unit_id or ''}")
+            replacement_allowed = (
+                args.role == "rework"
+                and progress.phase == "WAITING_REWORK"
+                and record.status != "completed"
+                and analysis_record is not None
+                and record.task_id == analysis_record.task_id
+                and rework_task_path.is_file()
+                and load_worker_task(rework_task_path).replacement_allowed
+            )
+            if not replacement_allowed:
+                parser.error("同一 Agent 会话不能替换 task_id")
         if args.task_id:
             record.task_id = args.task_id
         record.status = args.status
         save_progress(state, progress)
         print(f"{key}={record.status}")
+    elif args.command == "mark-reviewer-unavailable":
+        state = {"run_id": args.run_id, "data_root": args.data_root}
+        progress = load_progress(state)
+        if progress is None:
+            parser.error("指定 Run 不存在")
+        if progress.phase != "WAITING_REWORK_REVIEW":
+            parser.error("仅返工复核阶段可以标记原 reviewer 无法恢复")
+        task_path = Path(args.data_root) / "runs" / args.run_id / "agent-tasks" / "rework-review.json"
+        if not task_path.is_file():
+            parser.error("当前 Run 缺少返工复核 task")
+        task = load_review_task(task_path)
+        if task.same_reviewer_id != args.reviewer_id:
+            parser.error("reviewer-id 不是当前 Run 绑定的原 reviewer")
+        signal = ReviewerUnavailable(
+            run_id=args.run_id,
+            reviewer_id=args.reviewer_id,
+            reason=args.reason,
+        )
+        write_json(reviewer_unavailable_path(state), signal.model_dump(mode="json"))
+        print("UNRESOLVED")
 
 
 if __name__ == "__main__":

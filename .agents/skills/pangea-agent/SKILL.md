@@ -22,6 +22,15 @@ The DSH `bash` tool uses the host shell. On a POSIX host, use POSIX commands and
 PowerShell cmdlets to `bash`; the repository's Windows compatibility rules do not change the
 actual DSH tool shell.
 
+Choose the repository virtual-environment interpreter once for the current DSH root session and
+reuse that exact command for every PANGEA CLI call:
+
+- POSIX host: `.venv/bin/python`
+- Windows PowerShell host: `& '.\.venv\Scripts\python.exe'`
+
+If the selected path does not exist, stop and report that PANGEA must be initialized. Do not try a
+different Python executable, install packages, or build a fallback chain.
+
 ## Start a new analysis
 
 When the user requests a new analysis and does not explicitly name a historical `run_id`:
@@ -35,21 +44,25 @@ When the user requests a new analysis and does not explicitly name a historical 
    `"acceptance-demo/module"` or a backslash path. If the request already supplies them, do not
    explore further.
 3. Delete the exact temporary path `pangea-data/.pangea/pending-task-contract.json` without
-   reading it; on the current POSIX DSH host, use `rm -f` for that file only. Then write it from
-   the current request. For one
+   reading it. Use `rm -f` for that file only on POSIX. On Windows PowerShell use
+   `Remove-Item -LiteralPath 'pangea-data/.pangea/pending-task-contract.json' -Force -ErrorAction SilentlyContinue`.
+   Then write it from the current request. For one
    repository, include `repository: "<repo_id>"` and omit `repositories`; for multiple
    repositories, include a non-empty `repositories` list and omit `repository`. Also include
    only `data_root`, `mode=module_analysis`, `target`, `source_scope`, and optional `focus`.
    `source_scope` is always a JSON array, even for one path. Never include a `run_id` or reuse
    old contract content.
-4. Run `.venv/bin/python -m pangea_agent.cli.main module-analysis --contract
-   pangea-data/.pangea/pending-task-contract.json`.
+4. With the interpreter selected above, run the matching command: POSIX
+   `.venv/bin/python -m pangea_agent.cli.main module-analysis --contract
+   pangea-data/.pangea/pending-task-contract.json`; Windows PowerShell
+   `& '.\.venv\Scripts\python.exe' -m pangea_agent.cli.main module-analysis --contract
+   'pangea-data/.pangea/pending-task-contract.json'`.
 5. After the command returns the new `run_id`, delete the pending contract in a separate tool
    call. Keep that `run_id` as the only current Run for this DSH root session.
 
 Do not inspect CLI help, schemas, dependencies, historical Runs, or reports before starting.
-If `.venv/bin/python` is unavailable, stop and report the initialization requirement; do not
-install or upgrade anything.
+If the selected virtual-environment interpreter is unavailable, stop and report the initialization
+requirement; do not install or upgrade anything.
 
 ## Advance the current Run
 
@@ -69,9 +82,18 @@ Follow the returned `phase` and graph-generated task paths:
   DSH. Save and record the returned `subagent_id` before waiting.
 - Immediately after dispatch, run `record-agent-session` with that `subagent_id`; no other tool
   call comes first. A subagent ID is not a job ID, so never pass it to `job_output`.
+- Bind the `data_root` returned for the new Run together with its `run_id`. Pass the literal
+  `--data-root <data_root>` to every run-scoped `record-agent-session`, `resume-run`, and
+  `mark-reviewer-unavailable` command, including the default `pangea-data`. Do not rely on a CLI
+  default or recover after first probing the wrong directory.
+- Do not record ordinary `send_message` continuations again. During formal rework, resume the
+  original analysis worker when possible; only a graph-authorized replacement dispatch records
+  the new ID with `--role rework --unit-id <unit_id>`.
 - Wait by checking `list_agents`. While the target is `running`, do not read its result or send
-  the next stage; on the current POSIX host, wait five seconds with one `bash` call and check
-  `list_agents` again. Continue only after the target is `ready` or `inactive`.
+  the next stage; wait exactly twenty seconds with one host-shell call (`sleep 20` on POSIX or
+  `Start-Sleep -Seconds 20` on PowerShell), then check `list_agents` again. Do not lengthen a wait
+  to 30, 45, or 60 seconds because the host tool may time out; repeat the same twenty-second step
+  instead. Continue only after the target is `ready` or `inactive`.
 - Do not queue the next analysis stage while the worker is still running. Continue only after
   the current turn returns its expected `STAGE` marker and the result file records that same
   stage; a failed stage must not be skipped.
@@ -79,6 +101,10 @@ Follow the returned `phase` and graph-generated task paths:
   `resume-run` until the tests stage passes `validate-worker-result`.
 - If dispatch, resume, validation, or artifact writing fails, stop and report the real phase.
   Do not replace missing results with main-Agent output.
+- Rework verification must use the original reviewer. If that reviewer cannot be resumed, use
+  the selected interpreter to run `-m pangea_agent.cli.main mark-reviewer-unavailable` with the
+  bound reviewer ID and real reason, then use it again for `-m pangea_agent.cli.main resume-run`
+  to produce `UNRESOLVED`; do not dispatch a substitute reviewer.
 
 Continue until the graph returns a terminal quality result and generates `report.md` and
 `report.html`, or until a real failure requires an honest stop.

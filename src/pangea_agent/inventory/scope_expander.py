@@ -3,9 +3,16 @@ from __future__ import annotations
 import re
 from pathlib import Path, PurePosixPath
 
-SOURCE_SUFFIXES = {".c", ".cc", ".cpp", ".cxx"}
-HEADER_SUFFIXES = {".h", ".hpp", ".hh"}
-CODE_SUFFIXES = SOURCE_SUFFIXES | HEADER_SUFFIXES
+from .lua_scope import expand_lua_context
+from .source_languages import (
+    CODE_SUFFIXES,
+    C_CPP_HEADER_SUFFIXES,
+    C_CPP_SOURCE_SUFFIXES,
+    C_CPP_SUFFIXES,
+)
+
+SOURCE_SUFFIXES = C_CPP_SOURCE_SUFFIXES
+HEADER_SUFFIXES = C_CPP_HEADER_SUFFIXES
 CONTEXT_SUFFIXES = {".md", ".rst", ".txt", ".sh", ".py", ".json", ".yaml", ".yml"}
 HARD_IGNORED_PARTS = {".git", ".pangea", "__pycache__"}
 SOFT_IGNORED_PARTS = {"build", "dist", "third_party", "node_modules"}
@@ -35,6 +42,8 @@ def expand_analysis_scope(repositories: list[dict], requested_scopes: list[str],
     groups: list[dict] = []
     context_files: list[dict] = []
     added_files: list[dict] = []
+    unresolved_dependencies: list[dict] = []
+    resolved_dependencies: list[dict] = []
 
     for repository in repositories:
         repo_id = repository["repo_id"]
@@ -43,7 +52,12 @@ def expand_analysis_scope(repositories: list[dict], requested_scopes: list[str],
         code_files.extend(_explicit_soft_scope_files(root, normalized_scopes, CODE_SUFFIXES))
         code_files = sorted(set(code_files))
         code_paths = {path: _relative(path, root) for path in code_files}
-        function_pointer_implementations = _function_pointer_implementation_index(code_paths)
+        c_cpp_code_paths = {
+            path: relative
+            for path, relative in code_paths.items()
+            if path.suffix.lower() in C_CPP_SUFFIXES
+        }
+        function_pointer_implementations = _function_pointer_implementation_index(c_cpp_code_paths)
         explicit_paths = {relative for relative in code_paths.values() if any(_inside_scope(relative, scope) for scope in normalized_scopes)}
         declarations_by_group = [_declared_symbols(scopes, root) for scopes in requested_groups]
         wanted_definitions = set().union(*declarations_by_group) if declarations_by_group else set()
@@ -51,7 +65,7 @@ def expand_analysis_scope(repositories: list[dict], requested_scopes: list[str],
         repo_groups = []
         for group_index, scopes in enumerate(requested_groups):
             paths = {relative for relative in code_paths.values() if any(_inside_scope(relative, scope) for scope in scopes)}
-            companions = _companion_paths(scopes, code_paths.values())
+            companions = _companion_paths(scopes, c_cpp_code_paths.values())
             declared = declarations_by_group[group_index]
             definitions: dict[str, list[str]] = {}
             for relative, symbols in definition_symbols_by_path.items():
@@ -67,8 +81,12 @@ def expand_analysis_scope(repositories: list[dict], requested_scopes: list[str],
             paths.update(companions)
             paths.update(definitions)
             inline_headers = _called_inline_headers(
-                (root / relative for relative in paths),
-                code_paths,
+                (
+                    root / relative
+                    for relative in paths
+                    if PurePosixPath(relative).suffix.lower() in C_CPP_SUFFIXES
+                ),
+                c_cpp_code_paths,
             )
             for relative, symbols in sorted(inline_headers.items()):
                 context_files.append({
@@ -77,7 +95,11 @@ def expand_analysis_scope(repositories: list[dict], requested_scopes: list[str],
                     "reason": f"direct_inline_dependency:{','.join(sorted(symbols)[:5])}",
                 })
             pointer_implementations = _called_function_pointer_implementations(
-                (root / relative for relative in paths),
+                (
+                    root / relative
+                    for relative in paths
+                    if PurePosixPath(relative).suffix.lower() in C_CPP_SUFFIXES
+                ),
                 function_pointer_implementations,
             )
             for relative, members in sorted(pointer_implementations.items()):
@@ -99,11 +121,23 @@ def expand_analysis_scope(repositories: list[dict], requested_scopes: list[str],
 
         repo_groups = _merge_overlapping_groups(repo_groups)
         owned = {path for group in repo_groups for path in group["code_paths"]}
-        symbols_by_group = [_exported_symbols((root / path for path in group["code_paths"]), domain_terms) for group in repo_groups]
+        symbols_by_group = [
+            _exported_symbols(
+                (
+                    root / path
+                    for path in group["code_paths"]
+                    if PurePosixPath(path).suffix.lower() in C_CPP_SUFFIXES
+                ),
+                domain_terms,
+            )
+            for group in repo_groups
+        ]
         all_symbols = set().union(*symbols_by_group) if symbols_by_group else set()
         target_context_candidates: list[list[tuple[int, str]]] = [[] for _ in repo_groups]
 
         for path in code_files:
+            if path.suffix.lower() not in C_CPP_SUFFIXES:
+                continue
             relative = code_paths[path]
             if relative in owned:
                 continue
@@ -130,6 +164,16 @@ def expand_analysis_scope(repositories: list[dict], requested_scopes: list[str],
                 if score >= 10:
                     target_context_candidates[group_index].append((score, relative))
 
+        lua_context, lua_unresolved, lua_resolved = expand_lua_context(
+            root, code_paths, repo_groups
+        )
+        context_files.extend(lua_context)
+        resolved_dependencies.extend(lua_resolved)
+        unresolved_dependencies.extend(
+            {"repo_id": repo_id, **item}
+            for item in lua_unresolved
+        )
+
         for group_index, candidates in enumerate(target_context_candidates):
             selected = sorted(candidates, key=lambda item: (-item[0], item[1]))[:MAX_TARGET_CONTEXT_PER_GROUP]
             for _, relative in selected:
@@ -146,7 +190,9 @@ def expand_analysis_scope(repositories: list[dict], requested_scopes: list[str],
         "groups": groups,
         "context_files": _unique_records(context_files),
         "added_files": _unique_records(added_files),
-        "boundary": "source_scope = explicit scope + declared implementations; context_scope = called inline headers + direct function-pointer implementations + callers + target-related config/docs/tests",
+        "unresolved_dependencies": unresolved_dependencies,
+        "resolved_dependencies": resolved_dependencies,
+        "boundary": "source_scope = explicit scope + C/C++ declared implementations; context_scope = C/C++ inline/function-pointer dependencies + direct callers + direct Lua require dependencies/requirers + target-related config/docs/tests",
     }
 
 
@@ -207,11 +253,12 @@ def _scope_path(repository: dict, scope: str) -> Path | None:
 
 def _group_requested_scopes(scopes: list[str]) -> list[list[str]]:
     groups: list[list[str]] = []
-    file_groups: dict[tuple[str, str], list[str]] = {}
+    file_groups: dict[tuple[str, str, str], list[str]] = {}
     for scope in scopes:
         path = PurePosixPath(scope)
         if path.suffix.lower() in CODE_SUFFIXES:
-            key = (str(path.parent), path.stem)
+            family = "c_cpp" if path.suffix.lower() in C_CPP_SUFFIXES else path.suffix.lower()
+            key = (str(path.parent), path.stem, family)
             if key not in file_groups:
                 file_groups[key] = []
                 groups.append(file_groups[key])
@@ -222,10 +269,10 @@ def _group_requested_scopes(scopes: list[str]) -> list[list[str]]:
 
 
 def _companion_paths(scopes: list[str], code_paths) -> set[str]:
-    keys = {(str(path.parent), path.stem) for scope in scopes for path in [PurePosixPath(scope)] if path.suffix.lower() in CODE_SUFFIXES}
+    keys = {(str(path.parent), path.stem) for scope in scopes for path in [PurePosixPath(scope)] if path.suffix.lower() in C_CPP_SUFFIXES}
     if not keys:
         return set()
-    return {relative for relative in code_paths for path in [PurePosixPath(relative)] if (str(path.parent), path.stem) in keys and path.suffix.lower() in CODE_SUFFIXES}
+    return {relative for relative in code_paths for path in [PurePosixPath(relative)] if (str(path.parent), path.stem) in keys and path.suffix.lower() in C_CPP_SUFFIXES}
 
 
 def _declared_symbols(scopes: list[str], root: Path) -> set[str]:
