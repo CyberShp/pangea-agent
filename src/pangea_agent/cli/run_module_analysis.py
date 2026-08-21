@@ -6,6 +6,8 @@ from datetime import date
 from pathlib import Path
 
 from pangea_agent.graph.graph import graph
+from pangea_agent.inventory.scope_expander import preflight_source_scopes
+from pangea_agent.repositories.resolver import resolve_repositories_from_contract
 
 
 def _default_run_id(contract: dict) -> str:
@@ -29,10 +31,20 @@ def _invoke_contract(contract: dict) -> dict:
     return graph.invoke(state)
 
 
+def _preflight_new_contract(contract: dict) -> None:
+    data_root = contract.get("data_root", "pangea-data")
+    repositories = resolve_repositories_from_contract(contract, data_root)
+    scope = contract.get("source_scope") or []
+    if isinstance(scope, str):
+        scope = [scope]
+    preflight_source_scopes(repositories, list(scope))
+
+
 def run_module_analysis(contract_path: str) -> dict:
     path = Path(contract_path)
     contract = json.loads(path.read_text(encoding="utf-8"))
     if not contract.get("run_id"):
+        _preflight_new_contract(contract)
         contract["run_id"] = _default_run_id(contract)
     return _invoke_contract(contract)
 
@@ -41,6 +53,7 @@ def start_module_analysis(contract_path: str) -> dict:
     path = Path(contract_path)
     contract = json.loads(path.read_text(encoding="utf-8"))
     contract.pop("run_id", None)
+    _preflight_new_contract(contract)
     contract["run_id"] = _default_run_id(contract)
     return _invoke_contract(contract)
 

@@ -69,3 +69,32 @@ def search_evidence(index_path: Path, query: str, top_k: int = 10) -> list[dict[
             "evidence_role": "reference_only" if "testcase_reference" in parsed_tags else "evidence",
         })
     return results
+
+
+def read_material(index_path: Path, path: str) -> list[dict[str, object]]:
+    if not index_path.exists():
+        return []
+    with sqlite3.connect(index_path) as conn:
+        rows = conn.execute(
+            "SELECT chunk_id, source_type, repo_id, path, line_start, line_end, content, tags "
+            "FROM chunks WHERE source_type = 'material' AND path = ? "
+            "ORDER BY line_start, chunk_id",
+            (path,),
+        ).fetchall()
+    results = []
+    for chunk_id, source_type, repo_id, item_path, line_start, line_end, content, tags in rows:
+        location = (
+            f"{item_path}:{line_start}-{line_end}"
+            if line_start and line_end
+            else item_path
+        )
+        results.append({
+            "chunk_id": chunk_id,
+            "source_type": source_type,
+            "repo_id": repo_id or "",
+            "path": item_path,
+            "location": location,
+            "content": content,
+            "tags": json.loads(tags or "[]"),
+        })
+    return results

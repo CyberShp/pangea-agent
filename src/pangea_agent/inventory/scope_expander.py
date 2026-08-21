@@ -7,7 +7,9 @@ SOURCE_SUFFIXES = {".c", ".cc", ".cpp", ".cxx"}
 HEADER_SUFFIXES = {".h", ".hpp", ".hh"}
 CODE_SUFFIXES = SOURCE_SUFFIXES | HEADER_SUFFIXES
 CONTEXT_SUFFIXES = {".md", ".rst", ".txt", ".sh", ".py", ".json", ".yaml", ".yml"}
-IGNORED_PARTS = {".git", "build", "dist", "third_party", "node_modules", "__pycache__", ".pangea"}
+HARD_IGNORED_PARTS = {".git", ".pangea", "__pycache__"}
+SOFT_IGNORED_PARTS = {"build", "dist", "third_party", "node_modules"}
+DEFAULT_IGNORED_PARTS = HARD_IGNORED_PARTS | SOFT_IGNORED_PARTS
 COMMON_FUNCTIONS = {"main", "free", "calloc", "malloc", "memcpy", "memset", "strcmp", "strlen"}
 GENERIC_TERMS = {"analysis", "feature", "include", "module", "source", "test", "功能", "模块", "分析"}
 MAX_TARGET_CONTEXT_PER_GROUP = 8
@@ -38,6 +40,8 @@ def expand_analysis_scope(repositories: list[dict], requested_scopes: list[str],
         repo_id = repository["repo_id"]
         root = Path(repository["source_root"])
         code_files = list(_iter_files(root, CODE_SUFFIXES))
+        code_files.extend(_explicit_soft_scope_files(root, normalized_scopes, CODE_SUFFIXES))
+        code_files = sorted(set(code_files))
         code_paths = {path: _relative(path, root) for path in code_files}
         function_pointer_implementations = _function_pointer_implementation_index(code_paths)
         explicit_paths = {relative for relative in code_paths.values() if any(_inside_scope(relative, scope) for scope in normalized_scopes)}
@@ -146,10 +150,59 @@ def expand_analysis_scope(repositories: list[dict], requested_scopes: list[str],
     }
 
 
+def preflight_source_scopes(repositories: list[dict], requested_scopes: list[str]) -> list[str]:
+    normalized_scopes = [_normalize(value) for value in requested_scopes or ["."]]
+    missing: list[str] = []
+    for original, scope in zip(requested_scopes or ["."], normalized_scopes):
+        if not any(_scope_path(repository, scope) is not None for repository in repositories):
+            missing.append(original)
+    if missing:
+        rendered = ", ".join(repr(value) for value in missing)
+        raise ValueError(
+            "source_scope 在所选仓库中不存在："
+            f"{rendered}。路径必须是仓库根目录下使用 / 分隔的相对路径。"
+        )
+    return normalized_scopes
+
+
 def _iter_files(root: Path, suffixes: set[str]):
     for path in root.rglob("*"):
-        if path.is_file() and path.suffix.lower() in suffixes and not any(part in IGNORED_PARTS for part in path.relative_to(root).parts):
+        if path.is_file() and path.suffix.lower() in suffixes and not any(part in DEFAULT_IGNORED_PARTS for part in path.relative_to(root).parts):
             yield path
+
+
+def _explicit_soft_scope_files(root: Path, scopes: list[str], suffixes: set[str]):
+    for scope in scopes:
+        parts = PurePosixPath(scope).parts
+        soft_index = next(
+            (index for index, part in enumerate(parts) if part in SOFT_IGNORED_PARTS),
+            None,
+        )
+        if soft_index is None:
+            continue
+        explicit_root = root.joinpath(*parts[: soft_index + 1])
+        if not explicit_root.is_dir():
+            continue
+        for path in explicit_root.rglob("*"):
+            if (
+                path.is_file()
+                and path.suffix.lower() in suffixes
+                and not any(
+                    part in HARD_IGNORED_PARTS
+                    for part in path.relative_to(root).parts
+                )
+            ):
+                yield path
+
+
+def _scope_path(repository: dict, scope: str) -> Path | None:
+    root = Path(repository["source_root"]).resolve()
+    candidate = root.joinpath(*PurePosixPath(scope).parts).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError:
+        return None
+    return candidate if candidate.exists() else None
 
 
 def _group_requested_scopes(scopes: list[str]) -> list[list[str]]:

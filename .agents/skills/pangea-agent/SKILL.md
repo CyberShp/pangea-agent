@@ -30,8 +30,10 @@ When the user requests a new analysis and does not explicitly name a historical 
    `pangea-data/runs/`; do not read an existing pending contract.
 2. Determine only the requested repository and smallest `source_scope` under
    `pangea-data/repositories/`. Every `source_scope` item is relative to the selected repository
-   root: for repository `acceptance-demo` and directory `module`, write `"module"`, never
-   `"acceptance-demo/module"`. If the request already supplies them, do not explore further.
+   root and always uses `/` as the separator, including on Windows: for repository
+   `acceptance-demo` and directory `module`, write `"module"`, never
+   `"acceptance-demo/module"` or a backslash path. If the request already supplies them, do not
+   explore further.
 3. Delete the exact temporary path `pangea-data/.pangea/pending-task-contract.json` without
    reading it; on the current POSIX DSH host, use `rm -f` for that file only. Then write it from
    the current request. For one

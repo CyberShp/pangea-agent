@@ -43,7 +43,7 @@
 
 - 用户不需要显式说 `module-analysis`。只要用户要求对业务源码、模块或目录做测试分析、风险分析、业务流程分析、Coverage 缺口分析或生成测试用例，就按一次新的 PANGEA 模块分析处理；`/module-analysis` 只是显式快捷入口。
 - 新根 Agent 会话默认没有当前 Run。若当前会话尚未通过本次分析创建并持有明确 `run_id`，且用户没有明确指定历史 `run_id`，创建新 Run 前不得调用 `pangea_status`，不得列举或读取 `pangea-data/runs/`、历史 `progress.json` / `agent_sessions`、报告或 Companion 状态。
-- 新分析意图与显式 `/module-analysis` 执行同一入口：确定目标仓和最小 `source_scope`；`source_scope` 路径相对所选仓库根目录，不包含 `repo_id` 前缀。先删除固定临时路径 `pangea-data/.pangea/pending-task-contract.json`，不读取其旧内容，再根据当前请求新建；随后执行 `python -m pangea_agent.cli.main module-analysis --contract <pending-contract>` 创建新 Run。新 Run 的 `run_id` 由 PANGEA 生成，创建成功后删除 pending contract。
+- 新分析意图与显式 `/module-analysis` 执行同一入口：确定目标仓和最小 `source_scope`；`source_scope` 路径相对所选仓库根目录，不包含 `repo_id` 前缀，并在所有宿主上统一使用 `/` 分隔。先删除固定临时路径 `pangea-data/.pangea/pending-task-contract.json`，不读取其旧内容，再根据当前请求新建；随后执行 `python -m pangea_agent.cli.main module-analysis --contract <pending-contract>` 创建新 Run。新 Run 的 `run_id` 由 PANGEA 生成，创建成功后删除 pending contract。
 - 只有两种情况允许执行 `resume-run`：当前会话已经由本次分析获得明确 `run_id`；或用户在当前请求中明确指定要恢复的历史 Run / 历史会话。新会话中的“继续之前的”如果没有明确 Run，不得自行扫描历史 Run 猜测。
 - 查看历史 Run、打开报告、浏览 Companion 看板或调用只读状态工具不会把该 Run 绑定为当前会话 Run，也不会授权恢复。
 - 修改 `pangea-agent` 自身代码、graph、schema、rubric、Agent 规则或 DSH/OpenCode 适配属于产品开发，不启动 PANGEA 分析 Run。

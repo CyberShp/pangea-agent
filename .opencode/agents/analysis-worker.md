@@ -56,12 +56,18 @@ case 的前置、步骤、预期、观测和清理。issue 只要求新增用例
    只读 task、结果骨架、`worker_result.schema.json`、`c_cpp_analysis.md` 和冻结源码；禁止读取
    inventory、source manifest、index/materials、Coverage、资料、CLI/历史测试和其他 rubric。
 2. `[STAGE:checkpoint]` → `risks`：读取 source manifest、资料索引、Coverage、CLI/历史测试及本阶段
-   schema/rubric；不再重读源码和 inventory。一次完成 evidence、business_flows、material_decisions、
+   schema/rubric；不再重读源码和 inventory。读取 manifest 后，先对每份准备写入
+   `material_decisions` 的资料执行 `python -m pangea_agent.cli.main read-material --task
+   "<worker task JSON>" --path "<manifest path>"`，以命令返回的正文判断关联性；没有执行该命令并
+   读到正文时不得写该资料的 decision，也不得根据文件名或常识声称资料未点名当前函数。一次完成 evidence、business_flows、material_decisions、
    coverage_priorities，并把全部 `disposition=risk/unresolved` failure path 转化为对应 RiskCard。完成
    上游约束和反证检查后冻结风险集合，summary 改为 `[STAGE:risks]`，返回 `STAGE risks`。
 3. `[STAGE:risks]` → `tests`：风险驱动是基础，一次完成全部 `translation_status!=Developer-confirm`
    风险的构建/运行变体。然后处理可选输入：`decision=current` 的资料已经被判定与当前分析对象相关，
-   必须把其中全部可测试需求/设计行为闭环为 TestCase；task 中每个 `coverage_context[].gaps[]` 也必须
+   先从已读正文逐项列出全部需求 ID 和没有 ID 的可测试设计行为，再分别确认每一项至少被一条
+   TestCase 的 `linked_requirement_ids` 或 `linked_material_ids` 指向；已有 Coverage 执行次数不算需求
+   TestCase，不能因为某分支已经执行过就省略对应需求。完成这份逐项对照后，才处理 task 中每个
+   `coverage_context[].gaps[]`；每个 gap 也必须
    形成 `coverage_decisions`，优先复用已经命中该 gap 的风险/资料用例，否则生成 Coverage-only 用例，
    只有冻结范围确实找不到受支持业务入口时才能写 `unreachable_from_supported_entry`。资料没有稳定
    需求编号时使用 `linked_material_ids=["MAT:<path>"]`；Coverage 用例使用 task 给出的真实
@@ -102,11 +108,22 @@ addressed。确认后再把这一项 issue ID 加入 `addressed_review_issue_ids
    `excluded` 必须有源码支持的不可达条件、调用方保证或明确不支持的运行模式。不能仅因问题只发生在 Debug、特定构建或特定受支持模式就排除；若最终状态是进程终止、数据丢失、资源泄漏或无法恢复，必须分别核对该模式并保留风险或给出可验证的不可达证据。
    在固定风险集合前，对每条 `excluded` 再做一次反证：在 `caller_handling` 中指出公开契约或入口阻断的具体源码位置。若只能找到实现注释、assert、`fail-fast` 或“调用方误用”的说法，没有实际阻断位置，就不能写 `excluded`，应按已确认的最终状态写成 risk，证据不足时写 unresolved。
    高影响 failure path 因冻结范围不足而写 `unresolved` 时，不得在 risks 阶段消失：保留一张低置信度 RiskCard，`upstream_semantics.conclusion=unresolved`、`translation_status=Developer-confirm`，明确还缺哪项外部语义；不为它伪造可执行测试。同一个 semantic check 同时产生已确认结果和另一个独立的高影响 unresolved 结果时，保留原 `check_id` 对应的主 failure path，并为 unresolved 结果新增带明确后缀的 failure path 和独立 RiskCard；不得把未确认的资源后果作为“子项”并入 `risk_remains` / `Blackbox-ready` 风险，借已确认结果覆盖它的确认状态和测试转化状态。
-4. 源码候选形成后，按 `source_manifest.material_catalog` 逐项读取已解析资料，只查询目录列出的 index location，不遍历整个 SQLite，也不重新解压原始文档。在 `material_decisions` 记录采用、仅作上下文或排除及原因；每份用于结论或排除理由的资料，都要在顶层 `evidence` 保留至少一条真实 `chunk_id`，让最终报告展示实际引用位置。`decision=current` 表示资料与当前分析对象直接相关，一旦这样判定，tests 阶段就必须按 `test_case_generation.md` 完成测试闭环，不能只用于解释风险。
+4. 源码候选形成后，按 `source_manifest.material_catalog` 逐项处理已解析资料，通过上面的
+   `read-material` 命令读取当前 Run 索引中的正文，不遍历整个 SQLite，也不重新解压原始文档。
+   `material_decisions` 的 reason 必须来自命令实际返回的正文；未读正文不得填写 decision。每份用于
+   结论或排除理由的资料，都要在顶层 `evidence` 保留至少一条命令返回的真实 `chunk_id`，让最终报告
+   展示实际引用位置。`decision=current` 表示资料与当前分析对象直接相关，一旦这样判定，tests 阶段
+   就必须按 `test_case_generation.md` 完成测试闭环，不能只用于解释风险。资料直接点名本单元
+   API/函数、定义其需求 ID、返回值、状态转换或外部行为时必须判为 `current`；`context` 只用于没有
+   当前可测试行为的背景信息，不能因为源码已经符合需求就把对应需求资料降为 `context`。
 5. 最后读取 `coverage_context`。缺少记录表示未知，不能写成未覆盖；Coverage 不能证明风险成立。`gaps=[]` 表示当前匹配记录没有明确补测缺口；存在 `gaps[]` 时，每个 gap 都是 tests 阶段必须闭环的测试依据，并在 `analysis_checkpoint.coverage_decisions` 记录结论。`coverage_priorities` 可以继续记录补测排序，但不能代替 `coverage_decisions`。
 6. 按六个 DFX 维度和初始化、运行、停止、恢复、卸载生命周期检查候选问题；风险必须说明复现条件、系统结果、外部观测、排除条件、严重度、置信度和真实源码证据。首次分析产生的新风险 `status` 固定为 `pending`。
 7. 在生成测试用例前完成上游约束和反证检查，把最终风险集合固定下来，并将 `risk_set_frozen=true`。之后不得为了凑用例临时新增风险。
 8. 写入 `test_cases` 前调用 `product-blackbox-test-case` Skill，并执行 `test_case_generation.md` 的转换步骤。风险验证用例填写真实 `linked_risk_ids`；资料/需求用例填写真实 `linked_material_ids` 和存在时的 `linked_requirement_ids`；Coverage 补测使用 task 中真实 `linked_coverage_ids`。四个关联数组都必须保留，至少一个非空。风险驱动是基础：`Blackbox-ready/Graybox-ready` 风险必须有用例；资料和 Coverage 可由用户不提供，但一旦分别成为 `decision=current` 资料或 task 中的 gap，就必须参与用例闭环。不得为了过 schema 把正常需求、资料或 Coverage 用例挂到相邻风险。先为每条风险列出测试变体，每个变体只含一种构建、一种运行模式和一个唯一终态，再逐行生成独立 TestCase；Debug 与 Release 等对照必须在生成步骤前拆开。某个变体的终态是进程/服务崩溃、退出或停止时，若还要验证恢复，下一步先写“重启并等待服务恢复”，再写后续业务操作。每个步骤与预期结果一一对应；故障注入只制造触发条件，测试人员仍从业务入口执行、观察并恢复。前置条件只描述第 1 步开始前已经成立的状态；测试开始后的配置切换、销毁、重建、恢复或再次发送都必须写成独立步骤并给出同位置预期，不能用前置条件中的“随后”“之后恢复”代替触发链中的状态转换。
+   对 `decision=current` 资料，在提交前把正文中抽取的需求 ID 集合与所有 TestCase 的
+   `linked_requirement_ids` 并集做一次逐项对照；正文中的每个当前需求 ID 都必须出现在并集中。
+   没有需求 ID 的当前设计行为逐项核对 `linked_material_ids` 和测试步骤。Coverage 已执行、源码已符合
+   需求或同一函数已有另一分支用例，都不能代替这项资料闭环。
    用例依赖大小、计数、队列深度或批量阈值进入某分支时，把源码比较式转成明确的测试取值范围，例如 `< MIN_SOCK_PIPE_SIZE`，不能只写“小于缓冲区”或“一批”。用例依赖异步完成回调时，步骤必须包含真实触发发送、flush、poll 或 completion 的公开动作及其门槛；“已提交异步请求”本身不等于回调会执行。
    用例依赖某个消费入口清理或保留状态时，步骤和预期必须写出真实 API 或源码符号及其返回值；“读取一次”“消费性读取”“继续处理”不能代替 `readv`、`recv_next` 等会产生不同状态转换的入口。恢复若必须改用另一 API，另写一个显式步骤并验证清理后的容器成员和标志。
    配置枚举优先使用源码符号名。只有冻结输入中存在该入口的权威数值映射时才能同时写数字；不同入口只支持部分枚举时，不得把 CLI 数字映射套到实现内部的另一枚举值。

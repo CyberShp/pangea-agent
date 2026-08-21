@@ -126,8 +126,24 @@ def _coverage_context(unit: AnalysisUnit, coverage_report: dict) -> list[dict]:
             "true_count": record.get("true_count"),
             "false_count": record.get("false_count"),
         })
+    # An executed branch proves the function ran, so a zero function count cannot be a real gap.
+    executed_by_branch = {
+        (item["repo_id"], item["path"], item["function"])
+        for item in context
+        if item.get("coverage_type") == "branch" and item.get("count", 0) > 0
+    }
+    consistent_context = [
+        item
+        for item in context
+        if not (
+            item.get("coverage_type") == "function"
+            and item.get("count") == 0
+            and (item["repo_id"], item["path"], item["function"])
+            in executed_by_branch
+        )
+    ]
     return sorted(
-        context,
+        consistent_context,
         key=lambda item: (
             item["path"], item["line"] or 0, item["function"], item.get("branch_id") or ""
         ),

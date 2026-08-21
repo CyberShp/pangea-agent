@@ -5,9 +5,9 @@ from pathlib import Path
 from .cpp_branches import extract_branches
 from .cpp_resources import extract_resource_signals
 from .cpp_symbols import TreeSitterUnavailableError, extract_functions, parse_cpp_file
+from .scope_expander import DEFAULT_IGNORED_PARTS, HARD_IGNORED_PARTS, SOFT_IGNORED_PARTS
 
 CODE_SUFFIXES = {".c", ".h", ".cc", ".cpp", ".cxx", ".hpp", ".hh"}
-IGNORED_PARTS = {".git", "build", "dist", "third_party", "node_modules", "__pycache__"}
 KNOWN_EXTENSION_ERRORS = {"__attribute__((unused))", ")"}
 
 
@@ -23,12 +23,17 @@ def build_lightweight_inventory(repositories: list[dict], module_scope: list[str
             scoped_root = root / scope
             if not scoped_root.exists():
                 continue
+            ignored_parts = (
+                HARD_IGNORED_PARTS
+                if any(part in SOFT_IGNORED_PARTS for part in Path(scope).parts)
+                else DEFAULT_IGNORED_PARTS
+            )
             candidates = [scoped_root] if scoped_root.is_file() else scoped_root.rglob("*")
             for path in candidates:
                 if (
                     not path.is_file()
                     or path.suffix.lower() not in CODE_SUFFIXES
-                    or any(part in IGNORED_PARTS for part in path.parts)
+                    or any(part in ignored_parts for part in path.relative_to(root).parts)
                     or path in seen_paths
                 ):
                     continue

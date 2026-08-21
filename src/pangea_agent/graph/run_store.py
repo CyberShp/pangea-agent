@@ -167,17 +167,28 @@ def worker_result_skeleton(task: WorkerTask) -> dict:
     }
 
 
-def review_result_skeleton(task: ReviewTask) -> dict:
+def review_result_skeleton(
+    task: ReviewTask,
+    independent_result: IndependentReviewResult | None = None,
+) -> dict:
+    reviewer_id = ""
+    independent_findings: list[dict] = []
+    if task.stage == "comparison_review" and independent_result is not None:
+        reviewer_id = independent_result.reviewer_id
+        independent_findings = [
+            finding.model_dump(mode="json")
+            for finding in independent_result.findings
+        ]
     return {
         "schema_version": "1.0",
         "run_id": task.run_id,
-        "reviewer_id": "",
+        "reviewer_id": reviewer_id,
         "finish_reason": "stop",
         "status": "PASS",
         "summary": "",
         "issues": [],
         "reviewed_units": [item.unit_id for item in task.analysis_results],
-        "independent_findings": [],
+        "independent_findings": independent_findings,
     }
 
 

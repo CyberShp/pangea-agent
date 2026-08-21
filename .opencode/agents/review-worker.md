@@ -54,14 +54,20 @@ check 必须写一条同 `check_id` 的 finding；额外发现使用稳定且有
 源码、当前资料和 Coverage 独立得到的结论与证据，不写 worker 是否覆盖，也不读取、搜索或推测
 worker result 路径。结果写入 task 指定的独立复核结果文件，符合
 `schemas/independent_review_result.schema.json`，然后只返回 `STAGE review independent`。该阶段不输出
-PASS、REWORK 或 UNRESOLVED。
+PASS、REWORK 或 UNRESOLVED。独立资料结论不能只看 manifest：从每个 analysis task 取得 worker task
+路径，对准备形成 finding 的资料先执行 `python -m pangea_agent.cli.main read-material --task
+"<worker task JSON>" --path "<manifest path>"`。没有读到正文时不得断言资料未点名当前函数或没有相关
+需求；资料正文直接点名 source_scope 中的 API/函数时，独立 finding 必须记录它是当前资料。
 
 主 Agent 恢复同一会话并提供 `stage=comparison_review` task 后，先读取已经冻结的独立 finding，
-再读取 worker result，逐项补充同 `check_id` 的 `worker_disposition`。不得改写独立 finding 正文或
-证据；差异写入 issue。随后执行完整测试依据闭环复核：风险驱动是基础，所有
+再读取 worker result。`prepare-review-result` 已把独立 finding 原样写入结果骨架；只在每个现有
+对象上补充 `worker_disposition`，不得重建 `independent_findings` 数组，不得改写 finding 正文、
+evidence、unit_id 或 check_id；差异写入 issue。随后执行完整测试依据闭环复核：风险驱动是基础，所有
 `Blackbox-ready/Graybox-ready` 风险必须至少有真实风险用例；对每份 `decision=current` 资料，列出其中
-与当前分析对象相关且可测试的需求和设计行为，确认它们被 `linked_material_ids` 和存在时的
-`linked_requirement_ids` 指向真实用例；对 worker task 中每个 `coverage_context[].gaps[]`，逐项核对
+与当前分析对象相关且可测试的需求和设计行为，先形成正文需求 ID 集合，再与全部 TestCase 的
+`linked_requirement_ids` 并集逐项对照；每个需求 ID 都必须出现，不能用 Coverage 已执行、源码已符合
+需求或同函数另一分支用例代替。没有需求 ID 的设计行为再确认被 `linked_material_ids` 指向真实用例；
+对 worker task 中每个 `coverage_context[].gaps[]`，逐项核对
 `coverage_decisions`，闭合到用例时用例必须反向包含同一 `linked_coverage_ids`，只有确实没有受支持
 业务入口时才接受 `unreachable_from_supported_entry`。不得用风险用例数量、`coverage_priorities` 文本
 或相邻需求代替这些闭环。最终写入 issues/status、`reviewed_units` 并校验 review result。实现注释描述
@@ -94,7 +100,8 @@ covered。无法得到唯一一致结论时生成 issue，不得 PASS。
 - 分支触发：用例依赖大小、数量、队列深度或批量门槛时，必须把实际比较式转成不会跨分支的明确取值范围；“小读取”“一批数据”“低于容量”不足以证明命中目标分支。用例依赖异步回调时，独立确认步骤真的触发了 flush、poll 或 completion 及其门槛，不能把请求入队当作回调必然发生。
 - 返工边界：缺少关键业务流程、异常/生命周期路径，遗漏明显必须的风险或测试用例，或者风险的最终状态、外部观测、恢复方式与测试预期不符时，允许 `REWORK`。这些字段决定测试人员会观察什么，不属于纯措辞。JSON 字段、命令格式、路径格式、ID 冲突、证据待确认和不改变触发条件/终态/观测/测试预期的文字润色不得触发正式返工。
 - 历史用例与 Coverage：历史用例仅能作为表达/环境参考；函数执行次数不能证明分支或风险已经覆盖。Coverage 中没有某函数或分支记录表示“未提供/未知”，不得写成执行次数为 0 或未覆盖。只有 worker task 中确定生成的 `coverage_context[].gaps[]` 才进入强制 Coverage 测试闭环。
-- 资料处理：确认 worker 读取了全部 material；每份用于结论或排除理由的资料都在顶层 evidence 保留真实 chunk_id/location，且报告可展示引用。`decision=current` 表示与当前分析对象相关，必须核对其中全部可测试需求/设计行为已经进入用例；旧版、冲突或无关资料说明为何不进入当前结论即可。漏读、把冲突资料当成现行规格，或把相关资料降成 context 以绕过用例生成，都属于语义问题。
+- 资料处理：用 `read-material` 独立读取 worker 判为 `current` 或 `context` 的资料正文，再判断 worker 是否正确处理；不得根据 worker 的 reason 或文件名代替正文。每份用于结论或排除理由的资料都在顶层 evidence 保留真实 chunk_id/location，且报告可展示引用。`decision=current` 表示与当前分析对象相关，必须核对其中全部可测试需求/设计行为已经进入用例；旧版、冲突或无关资料说明为何不进入当前结论即可。漏读、把冲突资料当成现行规格，或把相关资料降成 context 以绕过用例生成，都属于语义问题。
+- 资料决策：资料直接点名本单元 API/函数，或定义其需求 ID、返回值、状态转换和外部行为时，必须是 `decision=current`。即使 worker 用例填写了部分 `linked_requirement_ids`，把这类需求资料标为 `context`，或正文需求 ID 集合中仍有任一 ID 没进入 TestCase，都会导致报告丢失资料闭环，必须生成 issue，不能 PASS。
 - 图片：`visual_findings` 必须指向 manifest 中真实附件，观察内容须来自实际可见图像。无法查看的图片及其影响必须显式保留为不完整，不能由文件名、正文或模型常识代替。
 
 ## 判定规则
@@ -130,3 +137,4 @@ covered。无法得到唯一一致结论时生成 issue，不得 PASS。
 - 只把最终 JSON 写到 task 指定的 `result_path`。不得改 worker result、task、index、inventory、source manifest、源码或其他路径。
 - 正常复核只能写 `finish_reason=stop`。截断、异常或无法完成核验时不得伪装成 PASS。
 - 写完后重新读取结果文件，确认它是单个完整 JSON、状态符合当前 stage、issue 字段完整且没有 Markdown 代码围栏。
+- 然后执行 `.venv/bin/python -m pangea_agent.cli.main check-review-artifact --task "<review task JSON>"`。只传 task 文件路径，不传 task JSON 内容。输出 `PASS` 后立即结束当前阶段；若失败，一次处理错误中列出的全部问题后重试，不得反复逐字段改写冻结的 `independent_findings`。

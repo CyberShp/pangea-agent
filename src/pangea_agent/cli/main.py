@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
 from pangea_agent.agent_io import write_json
@@ -24,6 +25,7 @@ from pangea_agent.graph.validation import (
     validate_worker_result,
     validation_message,
 )
+from pangea_agent.index.retriever import read_material
 
 from .init_data import init_data
 from .index_repo import print_repositories
@@ -121,6 +123,9 @@ def main() -> None:
     prepare_review.add_argument("--task", required=True)
     check_review = sub.add_parser("check-review-artifact")
     check_review.add_argument("--task", required=True)
+    material = sub.add_parser("read-material")
+    material.add_argument("--task", required=True)
+    material.add_argument("--path", required=True)
     validate = sub.add_parser("validate-worker-result")
     validate.add_argument("--task", required=True)
     session = sub.add_parser("record-agent-session")
@@ -154,11 +159,15 @@ def main() -> None:
         task = load_review_task(task_path)
         result_path = normalize_review_result_path(task_path, task)
         if not result_path.exists():
-            skeleton = (
-                independent_review_result_skeleton(task)
-                if task.stage == "independent_review"
-                else review_result_skeleton(task)
-            )
+            if task.stage == "independent_review":
+                skeleton = independent_review_result_skeleton(task)
+            elif task.stage == "comparison_review" and task.independent_result_path:
+                independent_result = load_independent_review_result(
+                    Path(task.independent_result_path)
+                )
+                skeleton = review_result_skeleton(task, independent_result)
+            else:
+                skeleton = review_result_skeleton(task)
             write_json(result_path, skeleton)
         _mark_session_started(task_path, "review")
         print(result_path)
@@ -172,6 +181,12 @@ def main() -> None:
                 f"请由当前 reviewer 修正同一结果文件后重新检查：{validation_message(exc)}\n",
             )
         print("PASS")
+    elif args.command == "read-material":
+        task = load_worker_task(Path(args.task))
+        chunks = read_material(Path(task.index_path), args.path)
+        if not chunks:
+            parser.error(f"资料未在当前 Run 索引中找到：{args.path!r}")
+        print(json.dumps(chunks, ensure_ascii=False, indent=2))
     elif args.command == "validate-worker-result":
         try:
             task_path = Path(args.task)

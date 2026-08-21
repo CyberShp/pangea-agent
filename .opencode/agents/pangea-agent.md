@@ -14,7 +14,7 @@ tools:
 ## 运行入口
 
 - 用户已经给出 `data_root`、`repository`、`target` 和 `source_scope` 时，新主 Agent 会话首次执行 `module-analysis` 前只确认源码仓路径，删除固定临时路径 `<data_root>/.pangea/pending-task-contract.json` 后根据当前请求新建；不得读取旧 pending 内容。不得调用 `pangea_status`，不得列举或读取旧 Run，也不得复用已有 pending contract。
-- pending contract 直接使用用户给出的 `data_root`、`repository`、`target`、`source_scope`，固定 `mode=module_analysis`。单仓分析只写 `repository: "<repo_id>"`，不得同时写 `repositories`；多仓分析只写非空 `repositories`，不得同时写 `repository`。`source_scope` 的每个路径都相对所选仓库根目录，例如仓库 `acceptance-demo` 的 `module` 目录只写 `"module"`，不得写 `"acceptance-demo/module"`；即使只有一个路径也必须写成 JSON 数组。若用户未单列 `focus`，使用 `[target]`。新 Run 的 `run_id` 由 PANGEA 生成，不写入 pending contract。
+- pending contract 直接使用用户给出的 `data_root`、`repository`、`target`、`source_scope`，固定 `mode=module_analysis`。单仓分析只写 `repository: "<repo_id>"`，不得同时写 `repositories`；多仓分析只写非空 `repositories`，不得同时写 `repository`。`source_scope` 的每个路径都相对所选仓库根目录，并统一使用 `/` 分隔，即使在 Windows 也不把反斜杠路径直接写入 JSON；例如仓库 `acceptance-demo` 的 `module` 目录只写 `"module"`，不得写 `"acceptance-demo/module"`；即使只有一个路径也必须写成 JSON 数组。若用户未单列 `focus`，使用 `[target]`。新 Run 的 `run_id` 由 PANGEA 生成，不写入 pending contract。
 - 随后立即执行 `python -m pangea_agent.cli.main module-analysis --contract <data_root>/.pangea/pending-task-contract.json`。
 - 首次 `module-analysis` 前禁止读取 README、`src/`、`schemas/`、Agent prompt、旧 Run，禁止查看 CLI help，禁止手工解析 DOCX/XLSX，禁止检查或导入 Python 依赖。graph 会完成资料索引、契约校验和任务生成。
 - `module-analysis` 表示创建新 Run。只有当前主 Agent 会话已经持有明确 `run_id`，或用户明确选择了历史 Run/历史会话时，才使用 `resume-run --run-id <run_id> --data-root <data_root>` 继续该 Run。新会话不得因为目录中存在同名或相似历史 Run 而自动恢复。

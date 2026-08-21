@@ -11,6 +11,7 @@
 - DSH 启动时由根目录 `AGENTS.local.md` 要求先加载仓库内 `pangea-agent` Skill；该 Skill 再要求读取本 adapter。Skill 未成功加载时停止，不要靠通用会话自行摸索 PANGEA 流程。
 - DSH 新建根会话时当前 Run 固定为空。即使工作区中存在 `WAITING_*` 的历史 Run，或 Companion / `pangea_status` 能读取到某个历史 Run，也不得因此执行 `resume-run`。
 - 新根会话命中新分析意图后，在 `module-analysis` 返回新 `run_id` 前，不调用 `pangea_status`，不列举或读取 `pangea-data/runs/`，不读取或复用已有 pending contract。先删除固定临时路径 `pangea-data/.pangea/pending-task-contract.json`，再根据当前请求新建；当前 POSIX DSH 可对这个文件单独使用 `rm -f`。Run 创建成功后再次删除它。
+- pending contract 中的 `source_scope` 始终写成仓库根目录下使用 `/` 分隔的相对路径；即使宿主是 Windows，也不得把工具返回的反斜杠路径直接写入 JSON。
 - 用户用自然语言要求分析业务源码、模块、测试风险、业务流程、Coverage 缺口或生成测试用例时，与显式 `module-analysis` 完全等价：当前根会话没有明确 `run_id` 就创建新 Run，不要求用户补写命令名。
 - DSH 只有在当前根会话已经由本次分析获得明确 `run_id`，或用户明确指定历史 `run_id` / 历史会话时，才能恢复 Run。不得从 `runs/`、`progress.json`、`agent_sessions` 或 Companion 的“当前/最近 Run”反推恢复目标。
 - Companion 和 `pangea_status` 只提供只读观察结果；它们返回或展示的 Run 不构成当前根会话的 Run 绑定。

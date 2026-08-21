@@ -308,8 +308,12 @@ def _prepare_rework(state: PangeaState, progress: RunProgress, review) -> None:
             review_issues=issues,
         )
         write_json(rework_task_path(state, unit_id), task.model_dump(mode="json"))
+        analysis_session = progress.agent_sessions.get(f"analysis:{unit_id}")
         progress.agent_sessions[f"rework:{unit_id}"] = AgentSession(
-            role="rework", unit_id=unit_id, stage="rework"
+            role="rework",
+            unit_id=unit_id,
+            stage="rework",
+            task_id=analysis_session.task_id if analysis_session else None,
         )
     _complete_session(progress, "review")
     progress.phase = "WAITING_REWORK"

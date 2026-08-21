@@ -43,7 +43,7 @@ Assume the primary local shell may be Windows PowerShell.
 - Risk output should explain reproducible trigger, system result, external observation, and exclusion condition.
 - Test cases should include preconditions, steps, expected results, observability, and cleanup.
 - When evidence is insufficient, record `UNRESOLVED` rather than inventing a conclusion.
-- Treat `source_scope` as the starting point. Deterministically include direct callers and target-related configuration, specifications, and tests without recursively expanding the call graph. Each analysis worker must complete both `source_scope` and `context_scope`.
+- Treat `source_scope` as repository-relative paths that use `/` separators on every host, including Windows. Use it as the starting point. Deterministically include direct callers and target-related configuration, specifications, and tests without recursively expanding the call graph. Each analysis worker must complete both `source_scope` and `context_scope`.
 - Before retaining a risk, check reachability, caller constraints or remedies, documented high-level behavior, and existing tests. Expected behavior must not be reported as a risk. Do not add another agent or review layer for this check.
 - Analyze frozen source first, then consult the run-scoped material catalog and finally use Coverage. Risk-driven test generation is always required for executable risks. Requirement/design materials and Coverage are optional inputs only until they are relevant to the current target; every `decision=current` material and every matched Coverage gap must then be closed by a real TestCase or an explicit unsupported-entry conclusion. Freeze the risk set before writing test cases.
 
