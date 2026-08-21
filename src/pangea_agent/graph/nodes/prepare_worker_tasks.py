@@ -5,10 +5,15 @@ from pathlib import Path
 
 from pangea_agent.agent_io import write_json
 from pangea_agent.documents.coverage import filter_inventory_to_sources, match_coverage_records
+from pangea_agent.graph.actions import MAX_PARALLEL_ACTIONS, agent_action
 from pangea_agent.graph.run_store import analysis_result_path, analysis_task_path, run_directory, save_progress
 from pangea_agent.graph.semantic_checks import build_runtime_semantic_checks
 from pangea_agent.graph.state import PangeaState
 from pangea_agent.graph.validation import validate_nonoverlapping_units
+from pangea_agent.inventory.source_languages import (
+    checkpoint_rubrics,
+    semantic_providers,
+)
 from pangea_agent.models.run import AgentSession, RunProgress
 from pangea_agent.models.worker import AnalysisUnit, WorkerTask
 
@@ -27,14 +32,7 @@ _MAP_RELEASE_CALL_RE = re.compile(r"\bspdk_sock_map_release\s*\([^;{}]*\)\s*;", 
 
 
 def _checkpoint_rubric_paths(unit: AnalysisUnit) -> list[str]:
-    paths: list[str] = []
-    if "c_cpp" in unit.languages:
-        paths.append("src/pangea_agent/rubrics/builtin/c_cpp_analysis.md")
-    if "lua" in unit.languages:
-        paths.append("src/pangea_agent/rubrics/builtin/lua_analysis.md")
-    if "openubmc" in unit.frameworks:
-        paths.append("src/pangea_agent/rubrics/builtin/openubmc_analysis.md")
-    return paths
+    return checkpoint_rubrics(unit.languages, unit.frameworks)
 
 
 def _failure_signal_focus(signal: str) -> str:
@@ -329,7 +327,6 @@ def prepare_worker_tasks(state: PangeaState) -> PangeaState:
     ]
     if missing_inputs:
         raise ValueError(f"worker 冻结输入不存在：{missing_inputs}")
-    task_paths: list[str] = []
     for raw_unit in units:
         unit = AnalysisUnit.model_validate(raw_unit)
         coverage_report = match_coverage_records(
@@ -338,16 +335,26 @@ def prepare_worker_tasks(state: PangeaState) -> PangeaState:
         )
         unit_repositories = [repo for repo in repositories if repo["repo_id"] == unit.repo_id]
         failure_signal_context = _failure_signal_context(unit, unit_repositories)
-        semantic_check_items = _semantic_check_items(
-            unit, unit_repositories, failure_signal_context
-        )
-        semantic_check_items.extend(build_runtime_semantic_checks(
-            unit,
-            inventory,
-            state.get("scope_expansion", {}).get("unresolved_dependencies", []),
-        ))
+        providers = semantic_providers(unit.languages, unit.frameworks)
+        unsupported_providers = providers - {"c_cpp", "lua", "openubmc"}
+        if unsupported_providers:
+            raise ValueError(
+                f"unsupported semantic providers: {sorted(unsupported_providers)}"
+            )
+        semantic_check_items = []
+        if "c_cpp" in providers:
+            semantic_check_items.extend(_semantic_check_items(
+                unit, unit_repositories, failure_signal_context
+            ))
+        if providers & {"lua", "openubmc"}:
+            semantic_check_items.extend(build_runtime_semantic_checks(
+                unit,
+                inventory,
+                state.get("scope_expansion", {}).get("unresolved_dependencies", []),
+            ))
         task = WorkerTask(
             task_type="analysis",
+            stage="source_checkpoint",
             run_id=state["run_id"],
             target=state["task_contract"]["target"],
             unit=unit,
@@ -364,17 +371,33 @@ def prepare_worker_tasks(state: PangeaState) -> PangeaState:
         )
         path = analysis_task_path(state, unit.unit_id)
         write_json(path, task.model_dump(mode="json"))
-        task_paths.append(str(path))
     progress = RunProgress(
+        workflow_version=2,
         run_id=state["run_id"],
-        phase="WAITING_ANALYSIS",
+        phase="WAITING_SOURCE_CHECKPOINT",
         analysis_units=[unit["unit_id"] for unit in units],
         agent_sessions={
             f"analysis:{unit['unit_id']}": AgentSession(
-                role="analysis", unit_id=unit["unit_id"], stage="analysis"
+                role="analysis", unit_id=unit["unit_id"], stage="source_checkpoint"
             )
             for unit in units
         },
     )
     save_progress(state, progress)
-    return {**state, "phase": progress.phase, "agent_task_paths": task_paths}
+    actions = [
+        agent_action(
+            progress,
+            session_key=f"analysis:{unit['unit_id']}",
+            role="analysis",
+            stage="source_checkpoint",
+            unit_id=unit["unit_id"],
+            task_path=analysis_task_path(state, unit["unit_id"]),
+        )
+        for unit in units[:MAX_PARALLEL_ACTIONS]
+    ]
+    return {
+        **state,
+        "phase": progress.phase,
+        "agent_task_paths": [action["task_path"] for action in actions],
+        "agent_actions": actions,
+    }

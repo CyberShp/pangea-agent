@@ -38,7 +38,9 @@ When the user requests a new analysis and does not explicitly name a historical 
 1. Treat the current Run as empty. Do not call `pangea_status`; do not list or read
    `pangea-data/runs/`; do not read an existing pending contract.
 2. Determine only the requested repository and smallest `source_scope` under
-   `pangea-data/repositories/`. Every `source_scope` item is relative to the selected repository
+   `<data_root>/repositories/`; substitute the exact `data_root` from the current request, including
+   the default `pangea-data`. Never probe the default root first when the request supplies another
+   one. Every `source_scope` item is relative to the selected repository
    root and always uses `/` as the separator, including on Windows: for repository
    `acceptance-demo` and directory `module`, write `"module"`, never
    `"acceptance-demo/module"` or a backslash path. If the request already supplies them, do not
@@ -50,6 +52,8 @@ When the user requests a new analysis and does not explicitly name a historical 
    repository, include `repository: "<repo_id>"` and omit `repositories`; for multiple
    repositories, include a non-empty `repositories` list and omit `repository`. Also include
    only `data_root`, `mode=module_analysis`, `target`, `source_scope`, and optional `focus`.
+   Encode `focus` as a JSON array in every contract; one natural-language focus becomes a
+   one-item array, and an omitted focus becomes `[target]`.
    `source_scope` is always a JSON array, even for one path. Never include a `run_id` or reuse
    old contract content.
 4. With the interpreter selected above, run the matching command: POSIX
@@ -66,45 +70,43 @@ requirement; do not install or upgrade anything.
 
 ## Advance the current Run
 
-Follow the returned `phase` and graph-generated task paths:
+Treat every `action=<JSON>` line returned by `module-analysis` or `resume-run` as the sole
+authority for the next Agent turn. `phase` is display information only. Do not infer dispatch,
+continuation, stage completion, or replacement from `phase` or from subagent response text.
 
-- The main Agent may read tasks, dispatch or resume the required subagent, record its
-  `subagent_id`, run the declared validation CLI, and call `resume-run`.
-- The main Agent does not read worker role files or restate task content. A first-dispatch
-  subagent prompt contains exactly the graph-returned task JSON path and nothing else; the
-  delegated Agent loads its role through `AGENTS.local.md` and `.agents/pangea/dsh.md`.
-- The main Agent must not create, fill, edit, normalize, or repair analysis, rework, or review
-  semantic result files. Only the subagent holding that task may write them.
-- Analysis uses one continuing worker session for checkpoint, risks, and tests. Review uses one
-  continuing reviewer session for independent review, comparison review, and any rework
-  verification.
-- First dispatch always sets `run_in_background=true`; omitting it creates a one-shot result in
-  DSH. Save and record the returned `subagent_id` before waiting.
-- Immediately after dispatch, run `record-agent-session` with that `subagent_id`; no other tool
-  call comes first. A subagent ID is not a job ID, so never pass it to `job_output`.
+- For `action=dispatch_agent`, start one persistent subagent with `run_in_background=true`. Its
+  prompt contains exactly `task_path` and nothing else. Save the returned `subagent_id`, then make
+  `record-agent-session` the next tool call. Use action `role` and `unit_id`; record no `unit_id`
+  when it is null. A subagent ID is not a job ID, so never pass it to `job_output`.
+- For `action=continue_agent`, send exactly `task_path` to the action's `task_id`. Do not create a
+  new subagent and do not record an ordinary continuation again.
+- The action `stage` decides what the delegated Agent executes. Analysis stages for one unit use
+  the same persistent worker; `independent_review`, `comparison_review`, and any
+  `rework_verification` use the same persistent reviewer. A formal `rework` resumes the original
+  analysis worker whenever its action provides that task ID. Dispatch a replacement only when
+  the action is `dispatch_agent` and `replacement_allowed=true`.
+- The main Agent does not read worker role files or restate task content. It must not create,
+  fill, edit, normalize, or repair analysis, rework, or review semantic result files. Only the
+  subagent holding that task may write them.
 - Bind the `data_root` returned for the new Run together with its `run_id`. Pass the literal
   `--data-root <data_root>` to every run-scoped `record-agent-session`, `resume-run`, and
   `mark-reviewer-unavailable` command, including the default `pangea-data`. Do not rely on a CLI
   default or recover after first probing the wrong directory.
-- Do not record ordinary `send_message` continuations again. During formal rework, resume the
-  original analysis worker when possible; only a graph-authorized replacement dispatch records
-  the new ID with `--role rework --unit-id <unit_id>`.
 - Wait by checking `list_agents`. While the target is `running`, do not read its result or send
-  the next stage; wait exactly twenty seconds with one host-shell call (`sleep 20` on POSIX or
-  `Start-Sleep -Seconds 20` on PowerShell), then check `list_agents` again. Do not lengthen a wait
-  to 30, 45, or 60 seconds because the host tool may time out; repeat the same twenty-second step
-  instead. Continue only after the target is `ready` or `inactive`.
-- Do not queue the next analysis stage while the worker is still running. Continue only after
-  the current turn returns its expected `STAGE` marker and the result file records that same
-  stage; a failed stage must not be skipped.
-- `STAGE checkpoint` and `STAGE risks` pause only the continuing worker. Do not call
-  `resume-run` until the tests stage passes `validate-worker-result`.
-- If dispatch, resume, validation, or artifact writing fails, stop and report the real phase.
-  Do not replace missing results with main-Agent output.
-- Rework verification must use the original reviewer. If that reviewer cannot be resumed, use
-  the selected interpreter to run `-m pangea_agent.cli.main mark-reviewer-unavailable` with the
-  bound reviewer ID and real reason, then use it again for `-m pangea_agent.cli.main resume-run`
-  to produce `UNRESOLVED`; do not dispatch a substitute reviewer.
+  another message; wait exactly twenty seconds with one host-shell call (`sleep 20` on POSIX or
+  `Start-Sleep -Seconds 20` on PowerShell), then check `list_agents` again. Repeat that same wait
+  if needed. Continue only after the target is `ready` or `inactive`.
+- Each delegated Agent validates the artifact for its current task before ending its turn. Once
+  that turn completes successfully, obey `after_completion=resume_run` immediately by running
+  `resume-run --run-id <run_id> --data-root <data_root>`. The next returned action decides the
+  next turn; do not inspect or parse a textual completion marker.
+- If dispatch, continuation, validation, or artifact writing fails, stop and report the real
+  action and stage. Do not replace missing results with main-Agent output.
+- Rework remains limited to one graph-authorized round. Rework verification must use the original
+  reviewer. If that reviewer cannot be resumed, use the selected interpreter to run
+  `-m pangea_agent.cli.main mark-reviewer-unavailable` with the bound reviewer ID and real reason,
+  then run `resume-run` with the same `run_id` and `data_root` to produce `UNRESOLVED`; do not
+  dispatch a substitute reviewer.
 
 Continue until the graph returns a terminal quality result and generates `report.md` and
 `report.html`, or until a real failure requires an honest stop.

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from pangea_agent.inventory.source_languages import coverage_symbol_aliases
+
 from .extract import DependencyUnavailableError
 
 _MODULE_HEADERS = {"module", "模块"}
@@ -129,9 +131,11 @@ def match_coverage_records(records: list[dict], inventory: dict) -> dict:
                 "path": file["path"],
                 "line": function["line"],
             }
-            aliases = {function["symbol"]}
-            if file.get("language") == "lua":
-                aliases.add(function["symbol"].replace(":", "."))
+            aliases = coverage_symbol_aliases(
+                function["symbol"],
+                file.get("language"),
+                path_scoped=False,
+            )
             for alias in aliases:
                 symbols.setdefault(alias, []).append(candidate)
     matched: list[dict] = []
@@ -148,10 +152,11 @@ def match_coverage_records(records: list[dict], inventory: dict) -> dict:
                     continue
                 for function in file.get("functions", []):
                     symbol = function["symbol"]
-                    aliases = {symbol}
-                    if file.get("language") == "lua":
-                        aliases.add(symbol.replace(":", "."))
-                        aliases.add(symbol.rsplit(":", 1)[-1].rsplit(".", 1)[-1])
+                    aliases = coverage_symbol_aliases(
+                        symbol,
+                        file.get("language"),
+                        path_scoped=True,
+                    )
                     if requested_symbol in aliases:
                         candidates.append({
                             "repo_id": file["repo_id"],

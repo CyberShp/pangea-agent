@@ -137,15 +137,20 @@ def _receiver_and_method(callee: str) -> tuple[str, str]:
     return "", callee
 
 
-def _enclosing_function_symbol(node, source: bytes) -> str | None:
+def _enclosing_function_symbols(node, source: bytes) -> tuple[str | None, str | None]:
+    immediate = None
+    named = None
     parent = node.parent
     while parent is not None:
         if parent.type in {"function_declaration", "function_definition"}:
             symbol = _function_symbol(parent, source)
+            if immediate is None:
+                immediate = symbol
             if not symbol.startswith("<anonymous@"):
-                return symbol
+                named = symbol
+                break
         parent = parent.parent
-    return None
+    return immediate, named
 
 
 def _normalize_signal_receiver(receiver: str, function_symbol: str | None) -> str:
@@ -220,9 +225,11 @@ def parse_lua_file(path: Path) -> dict:
                 "end_line": end_line,
                 "callee": callee,
             }
-            function_symbol = _enclosing_function_symbol(node, source)
+            function_symbol, owner_function_symbol = _enclosing_function_symbols(node, source)
             if function_symbol:
                 call["function_symbol"] = function_symbol
+            if owner_function_symbol and owner_function_symbol != function_symbol:
+                call["owner_function_symbol"] = owner_function_symbol
             if assigned_to:
                 call["assigned_to"] = assigned_to
             calls.append(call)
@@ -265,14 +272,15 @@ def parse_lua_file(path: Path) -> dict:
 
     for call in calls:
         receiver, method = _receiver_and_method(call["callee"])
-        receiver = _normalize_signal_receiver(receiver, call.get("function_symbol"))
+        framework_owner = call.get("owner_function_symbol") or call.get("function_symbol")
+        receiver = _normalize_signal_receiver(receiver, framework_owner)
         signal_scope = signal_scopes.get(receiver, "<missing>")
         signal_matches = (
             signal_scope != "<missing>"
             and (
                 "." in receiver
                 or signal_scope is None
-                or signal_scope == call.get("function_symbol")
+                or signal_scope == framework_owner
             )
         )
         if method == "emit" and (signal_matches or receiver.startswith("mc.")):

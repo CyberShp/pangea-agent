@@ -4,6 +4,7 @@
   "type": "object",
   "required": [
     "schema_version",
+    "workflow_version",
     "run_id",
     "phase",
     "analysis_units",
@@ -17,6 +18,9 @@
     "schema_version": {
       "const": "1.0"
     },
+    "workflow_version": {
+      "const": 2
+    },
     "run_id": {
       "type": "string",
       "minLength": 1
@@ -24,11 +28,13 @@
     "phase": {
       "enum": [
         "PREPARING",
-        "WAITING_ANALYSIS",
-        "WAITING_REVIEW",
-        "WAITING_REVIEW_COMPARISON",
+        "WAITING_SOURCE_CHECKPOINT",
+        "WAITING_RISK_ANALYSIS",
+        "WAITING_TEST_GENERATION",
+        "WAITING_INDEPENDENT_REVIEW",
+        "WAITING_COMPARISON_REVIEW",
         "WAITING_REWORK",
-        "WAITING_REWORK_REVIEW",
+        "WAITING_REWORK_VERIFICATION",
         "READY_TO_FINALIZE",
         "COMPLETE",
         "INCOMPLETE"
@@ -97,7 +103,7 @@
         "properties": {
           "role": {"enum": ["analysis", "review", "rework"]},
           "unit_id": {"type": ["string", "null"]},
-          "stage": {"enum": ["analysis", "independent_review", "comparison_review", "initial_review", "rework", "rework_verification"]},
+          "stage": {"enum": ["source_checkpoint", "risk_analysis", "test_generation", "independent_review", "comparison_review", "rework", "rework_verification"]},
           "task_id": {"type": ["string", "null"]},
           "status": {"enum": ["pending", "dispatched", "completed"]}
         },

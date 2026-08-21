@@ -2,13 +2,14 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "WorkerResult",
   "type": "object",
-  "required": ["schema_version", "run_id", "unit_id", "worker_id", "attempt", "finish_reason", "summary", "analyzed_scope", "analyzed_context_scope", "evidence", "business_flows", "visual_findings", "risks", "test_cases", "addressed_review_issue_ids", "errors", "analysis_checkpoint"],
+  "required": ["schema_version", "run_id", "unit_id", "worker_id", "attempt", "completed_stage", "finish_reason", "summary", "analyzed_scope", "analyzed_context_scope", "evidence", "business_flows", "visual_findings", "risks", "test_cases", "addressed_review_issue_ids", "errors", "analysis_checkpoint"],
   "properties": {
     "schema_version": {"const": "1.0"},
     "run_id": {"type": "string", "minLength": 1},
     "unit_id": {"type": "string", "minLength": 1},
     "worker_id": {"type": "string", "minLength": 1},
     "attempt": {"enum": [0, 1]},
+    "completed_stage": {"enum": ["pending", "source_checkpoint", "risk_analysis", "test_generation", "rework"]},
     "finish_reason": {"enum": ["stop", "truncated", "error"]},
     "summary": {"type": "string", "minLength": 1},
     "analyzed_scope": {"type": "array", "minItems": 1, "items": {"type": "string"}},
@@ -51,7 +52,13 @@
   },
   "allOf": [
     {
-      "if": {"properties": {"finish_reason": {"const": "stop"}}},
+      "if": {
+        "properties": {
+          "finish_reason": {"const": "stop"},
+          "completed_stage": {"enum": ["test_generation", "rework"]}
+        },
+        "required": ["finish_reason", "completed_stage"]
+      },
       "then": {
         "properties": {
           "evidence": {"minItems": 1},

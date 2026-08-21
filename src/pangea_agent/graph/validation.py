@@ -292,27 +292,21 @@ def validate_nonoverlapping_units(units: list[dict]) -> None:
             owners[(raw_unit["repo_id"], normalized)] = unit
 
 
-def validate_worker_result(task: WorkerTask, result: WorkerResult) -> None:
-    # 这些字段由任务定义，结果文件只承载分析内容；统一恢复为 task 中的确定值。
+def _bind_worker_result(task: WorkerTask, result: WorkerResult) -> None:
+    """Restore fields owned by the graph task before checking agent content."""
+
     result.run_id = task.run_id
     result.unit_id = task.unit.unit_id
     result.attempt = task.attempt
     result.analyzed_scope = list(task.unit.source_scope)
     result.analyzed_context_scope = list(task.unit.context_scope)
 
-    if result.finish_reason != "stop":
-        raise ArtifactRejected(f"worker 未正常完成：finish_reason={result.finish_reason}")
-    if not result.evidence or not result.business_flows:
-        raise ArtifactRejected("worker 正常完成时必须包含真实证据和业务流程")
-    checkpoint = result.analysis_checkpoint
-    if not checkpoint.risk_set_frozen:
-        raise ArtifactRejected("worker 尚未冻结风险集合，不能开始生成或提交测试用例")
-    if not checkpoint.counterexamples_checked:
-        raise ArtifactRejected("worker 尚未记录提交前的反例检查")
+
+def _validate_semantic_check_closure(task: WorkerTask, result: WorkerResult) -> None:
     risk_by_id = {risk.risk_id: risk for risk in result.risks}
     check_by_id = {check.check_id: check for check in task.semantic_check_items}
     failure_by_id: dict[str, list] = {}
-    for failure_path in checkpoint.failure_paths:
+    for failure_path in result.analysis_checkpoint.failure_paths:
         failure_by_id.setdefault(failure_path.path_id, []).append(failure_path)
         unknown_risks = set(failure_path.linked_risk_ids) - set(risk_by_id)
         if unknown_risks:
@@ -334,7 +328,7 @@ def validate_worker_result(task: WorkerTask, result: WorkerResult) -> None:
     semantic_subjects = {check.subject_path for check in task.semantic_check_items}
     supported_pairs = {
         (risk_id, check_by_id[path.path_id].subject_path)
-        for path in checkpoint.failure_paths
+        for path in result.analysis_checkpoint.failure_paths
         if path.path_id in check_by_id and path.disposition == "risk"
         for risk_id in path.linked_risk_ids
     }
@@ -344,6 +338,72 @@ def validate_worker_result(task: WorkerTask, result: WorkerResult) -> None:
                 raise ArtifactRejected(
                     f"风险 {risk.risk_id} 声明受影响路径 {affected_path}，但对应 semantic check 未判定并关联该风险"
                 )
+
+
+def validate_worker_stage_result(
+    task: WorkerTask,
+    result: WorkerResult,
+    expected_stage: str,
+) -> None:
+    """Validate the cumulative worker artifact at one graph-owned checkpoint."""
+
+    _bind_worker_result(task, result)
+    if result.finish_reason != "stop":
+        raise ArtifactRejected(f"worker 未正常完成：finish_reason={result.finish_reason}")
+    if result.completed_stage != expected_stage:
+        raise ArtifactRejected(
+            f"worker 结果阶段为 {result.completed_stage}，当前 Graph 等待 {expected_stage}"
+        )
+
+    checkpoint = result.analysis_checkpoint
+    if expected_stage == "source_checkpoint":
+        if result.evidence or result.business_flows or result.risks or result.test_cases:
+            raise ArtifactRejected("源码 checkpoint 只能提交源码理解和 failure paths")
+        if set(checkpoint.source_paths_reviewed) != set(task.unit.source_scope):
+            raise ArtifactRejected("源码 checkpoint 必须记录全部 source_scope 文件")
+        failure_ids = [item.path_id for item in checkpoint.failure_paths]
+        for check in task.semantic_check_items:
+            if failure_ids.count(check.check_id) != 1:
+                raise ArtifactRejected(
+                    f"源码 checkpoint 必须为 semantic check {check.check_id} 记录一条 failure path"
+                )
+        return
+
+    if expected_stage == "risk_analysis":
+        if not result.evidence or not result.business_flows:
+            raise ArtifactRejected("风险分析必须包含真实证据和业务流程")
+        if not checkpoint.risk_set_frozen:
+            raise ArtifactRejected("风险分析尚未冻结风险集合")
+        if result.test_cases:
+            raise ArtifactRejected("风险分析阶段不能提前生成测试用例")
+        _validate_semantic_check_closure(task, result)
+        _evidence_rows(task, result)
+        _validate_visual_findings(task, result)
+        return
+
+    if expected_stage not in {"test_generation", "rework"}:
+        raise ArtifactRejected(f"未知 worker 阶段：{expected_stage}")
+    validate_worker_result(task, result)
+
+
+def validate_worker_result(task: WorkerTask, result: WorkerResult) -> None:
+    _bind_worker_result(task, result)
+
+    if result.finish_reason != "stop":
+        raise ArtifactRejected(f"worker 未正常完成：finish_reason={result.finish_reason}")
+    expected_stage = "rework" if task.task_type == "rework" else "test_generation"
+    if result.completed_stage != expected_stage:
+        raise ArtifactRejected(
+            f"worker 最终结果阶段必须是 {expected_stage}，实际为 {result.completed_stage}"
+        )
+    if not result.evidence or not result.business_flows:
+        raise ArtifactRejected("worker 正常完成时必须包含真实证据和业务流程")
+    checkpoint = result.analysis_checkpoint
+    if not checkpoint.risk_set_frozen:
+        raise ArtifactRejected("worker 尚未冻结风险集合，不能开始生成或提交测试用例")
+    if not checkpoint.counterexamples_checked:
+        raise ArtifactRejected("worker 尚未记录提交前的反例检查")
+    _validate_semantic_check_closure(task, result)
     _validate_test_basis_closure(task, result)
     _evidence_rows(task, result)
     _validate_visual_findings(task, result)
@@ -439,11 +499,11 @@ def validate_review_result(
     unknown_findings = {item.unit_id for item in result.independent_findings} - known_units
     if unknown_findings:
         raise ArtifactRejected(f"独立发现引用了未知单元：{sorted(unknown_findings)}")
-    if task.stage == "comparison_review":
+    if task.stage in {"comparison_review", "rework_verification"}:
         if independent_result is None:
-            raise ArtifactRejected("对照复核缺少已完成的独立复核结果")
+            raise ArtifactRejected("复核缺少已完成的独立复核结果")
         if result.reviewer_id != independent_result.reviewer_id:
-            raise ArtifactRejected("对照复核必须由原独立 reviewer 完成")
+            raise ArtifactRejected("复核必须由原独立 reviewer 完成")
         original = {
             (item.unit_id, item.check_id): item
             for item in independent_result.findings
@@ -454,11 +514,11 @@ def validate_review_result(
             if item.check_id is not None
         }
         if len(compared) != len(result.independent_findings) or set(compared) != set(original):
-            raise ArtifactRejected("对照复核必须逐项保留独立复核 findings")
+            raise ArtifactRejected("复核必须逐项保留独立复核 findings")
         for key, finding in original.items():
             comparison = compared[key]
             if comparison.finding != finding.finding or comparison.evidence != finding.evidence:
-                raise ArtifactRejected("对照复核不能改写独立复核结论或证据")
+                raise ArtifactRejected("复核不能改写独立复核结论或证据")
 
 
 def validation_message(exc: Exception) -> str:

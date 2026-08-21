@@ -3,14 +3,14 @@ from __future__ import annotations
 from pathlib import Path
 
 from pangea_agent.graph.state import PangeaState
-from pangea_agent.inventory.source_languages import language_for_path
+from pangea_agent.inventory.source_languages import analysis_language_for_path
 
 
 def _unit_languages(paths: list[str]) -> list[str]:
     languages = {
-        "lua" if language == "lua" else "c_cpp"
+        language
         for path in paths
-        if (language := language_for_path(Path(path))) is not None
+        if (language := analysis_language_for_path(Path(path))) is not None
     }
     return sorted(languages)
 

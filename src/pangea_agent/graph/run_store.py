@@ -27,7 +27,10 @@ def load_progress(state: dict) -> RunProgress | None:
     path = progress_path(state)
     if not path.exists():
         return None
-    return RunProgress.model_validate(read_json(path))
+    payload = read_json(path)
+    if payload.get("workflow_version") != 2:
+        raise ValueError("当前 Run 不是 Graph V2 workflow")
+    return RunProgress.model_validate(payload)
 
 
 def save_progress(state: dict, progress: RunProgress) -> None:
@@ -143,6 +146,7 @@ def worker_result_skeleton(task: WorkerTask) -> dict:
         "unit_id": task.unit.unit_id,
         "worker_id": "",
         "attempt": task.attempt,
+        "completed_stage": "pending",
         "finish_reason": "stop",
         "summary": "",
         "analyzed_scope": list(task.unit.source_scope),
@@ -173,7 +177,7 @@ def review_result_skeleton(
 ) -> dict:
     reviewer_id = ""
     independent_findings: list[dict] = []
-    if task.stage == "comparison_review" and independent_result is not None:
+    if task.stage in {"comparison_review", "rework_verification"} and independent_result is not None:
         reviewer_id = independent_result.reviewer_id
         independent_findings = [
             finding.model_dump(mode="json")

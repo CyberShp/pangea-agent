@@ -24,16 +24,16 @@ POSIX: .venv/bin/python -m pangea_agent.cli.main prepare-worker-result --task "<
 PowerShell: & '.\.venv\Scripts\python.exe' -m pangea_agent.cli.main prepare-worker-result --task '<worker task JSON>'
 ```
 
-task 提供以下可用输入。先按后文 summary 标记确定当前阶段，只读取该阶段需要的内容，不要在第一次调用把全部资料、Coverage 和测试规则一起读完：
+task 提供当前 `stage` 和以下可用输入。`stage` 是本回合唯一的工作范围；不根据结果 `summary`、主 Agent 消息或上一回合文本推测阶段：
 
 - `unit.source_scope`：必须逐文件分析的源码，已经包含 PANGEA 确定性找到的接口实现和必要源码。
 - `unit.context_scope`：函数指针的直接实现，以及调用入口、配置、规格和测试等语义范围。直接实现用于核对回调的部分副作用，不像 `source_scope` 那样逐文件完整读取：先用 `rg -n` 定位 semantic check、failure signal、相关 setter/close/add/remove/create 函数，再用 offset/limit 读取所需片段；单次片段不超过 240 行，避免重叠，不得整文件读取大型 posix/uring 实现，也不得继续 find/glob 扩展文件范围。
 - `coverage_context`：当前单元能唯一匹配到的函数与分支 Coverage。`gaps[]` 由 Python 根据执行次数确定性生成，只包含当前单元真实的函数未执行或分支单侧未执行缺口；每个 gap 的 `coverage_id` 是后续测试闭环的唯一引用。分支记录还包含 `branch_id`、`condition`、`true_count` 和 `false_count`。
 - `failure_signal_context`：Python 从当前任务的冻结源码中定位出的少量高影响失败信号。它只告诉你位置，不证明可达、危害或风险成立；必须逐项读取源码上下文，并按每项附带的 `analysis_focus` 做语义判断。若附带 `related_state_context`，必须打开这些位置判断真实时序，不能把候选本身当成风险结论。
 - `semantic_check_items`：本轮必须逐项完成的短任务清单。每项只要求一个明确结论；用它的 `check_id` 作为对应 `analysis_checkpoint.failure_paths[].path_id`。该 failure path 用 `linked_risk_ids` 指向由本项支撑的风险；风险的 `affected_paths` 必须包含本项 `subject_path`。不要合并不同实现，也不要让断言结论替代资源重配置结论。这是分析顺序，不是自动风险判定。
-- `index_path`、`source_manifest_path`：risks 阶段使用的冻结证据与资料目录。`inventory_path` 由 Python 用于范围冻结和校验，worker 不整份读取；task 中的 scope 已是本单元权威范围。
+- `index_path`、`source_manifest_path`：`risk_analysis` 使用的冻结证据与资料目录。`inventory_path` 由 Python 用于范围冻结和校验，worker 不整份读取；task 中的 scope 已是本单元权威范围。
 - `source_manifest.material_catalog`：本 Run 的资料目录，给出资料类型、解析状态、索引位置和附件状态。
-- schema 和 rubric 按阶段读取：checkpoint 只读 `schemas/worker_result.schema.json` 和 task 的 `checkpoint_rubric_paths` 中列出的每一份规则；risks 再读 `schemas/evidence_ref.schema.json`、`schemas/business_flow.schema.json`、`schemas/risk.schema.json`、`src/pangea_agent/rubrics/builtin/dfx.md` 与 `src/pangea_agent/rubrics/builtin/risk_reproducibility.md`；tests 最后读 `schemas/test_case.schema.json`、`src/pangea_agent/rubrics/builtin/test_case_generation.md` 和固定的 `src/pangea_agent/rubrics/builtin/product_blackbox_test_case.md`。路径缺失或不可读时如实停止，不猜文件名、不 glob 搜索，也不改用其他语言规则。
+- schema 和 rubric 按 `task.stage` 读取：`source_checkpoint` 只读 `schemas/worker_result.schema.json` 和 task 的 `checkpoint_rubric_paths` 中列出的每一份规则；`risk_analysis` 再读 `schemas/evidence_ref.schema.json`、`schemas/business_flow.schema.json`、`schemas/risk.schema.json`、`src/pangea_agent/rubrics/builtin/dfx.md` 与 `src/pangea_agent/rubrics/builtin/risk_reproducibility.md`；`test_generation` 最后读 `schemas/test_case.schema.json`、`src/pangea_agent/rubrics/builtin/test_case_generation.md` 和固定的 `src/pangea_agent/rubrics/builtin/product_blackbox_test_case.md`。路径缺失或不可读时如实停止，不猜文件名、不 glob 搜索，也不改用其他语言规则。
 - 上述 `schemas/` 与 `src/pangea_agent/rubrics/` 都位于当前 pangea-agent 工作区根目录，不在 task 的 `data_root`、Run 或验收 case 中。直接读取这里列出的固定路径，不使用 glob/find 搜索 schema 或 rubric。
 
 再读取 task 指定的 `result_path`。PANGEA 已经生成固定结果骨架；只填写分析内容，不从零重建 WorkerResult，不修改 task。
@@ -48,23 +48,30 @@ case 的前置、步骤、预期、观测和清理。issue 只要求新增用例
 风险卡或测试用例而保留 checkpoint 或 risk.evidence 中已经被 reviewer 否定的旧机制；failure path
 是下游风险和用例的根因记录，各处必须描述同一触发链和唯一终态。
 
-若 `task_type=analysis`，必须先看结果文件的 `summary`。一个 analysis task 固定三次调用，每次完成
-一个完整阶段，不得再按文件、failure path、风险、测试或需求拆分：
+若 `task_type=analysis`，只按 `task.stage` 执行以下对应的一个完整回合，不得按文件、failure path、风险、测试或需求继续拆分：
 
-1. 空 summary → `checkpoint`：按 task 固定顺序完整处理 `unit.source_scope`，并只读取
+1. `source_checkpoint`：按 task 固定顺序完整处理 `unit.source_scope`，并只读取
    `unit.context_scope` 中与 semantic check、failure signal、setter/close/add/remove/create 直接相关的
    非重叠片段。完成全部 `semantic_check_items`、其余 failure signal 和正常生命周期反向扫描，逐文件
-   写入 `source_paths_reviewed`，summary 改为 `[STAGE:checkpoint]`，只返回 `STAGE checkpoint`。本阶段
-   只读 task、结果骨架、`worker_result.schema.json`、task 声明的全部 `checkpoint_rubric_paths` 和冻结源码；禁止读取
-   inventory、source manifest、index/materials、Coverage、资料、CLI/历史测试和其他 rubric。
-2. `[STAGE:checkpoint]` → `risks`：读取 source manifest、资料索引、Coverage、CLI/历史测试及本阶段
+   写入 `source_paths_reviewed`。本回合只读 task、结果骨架、`worker_result.schema.json`、task 声明的全部 `checkpoint_rubric_paths` 和冻结源码；禁止读取
+   inventory、source manifest、index/materials、Coverage、资料、CLI/历史测试和其他 rubric。写入 `completed_stage="source_checkpoint"`。
+   每条 failure path 的 `final_states` 必须逐项记录本路径涉及的返回值、错误原因、计数器、布尔状态、集合成员和注册项；对执行顺序中未到达的 callback/提交/清理也明确写“未执行/未改变”，能确定次数时写准确次数，不能只记录最显眼的一个字段。
+   一个 failure path 只承载一个独立触发和终态。若同一生命周期 semantic check 还发现其他失败点或可独立生成风险/用例的终态，保留原 `check_id` 的主 path，并为每个额外结论增加稳定派生 ID（如 `<check_id>:nil-config`、`<check_id>:uninitialized-update`）；不得把多个结论塞进一条 path 后只为其中一个关联风险。
+2. `risk_analysis`：读取 source manifest、资料索引、Coverage、CLI/历史测试及本阶段
    schema/rubric；不再重读源码和 inventory。读取 manifest 后，先对每份准备写入
    `material_decisions` 的资料用当前客户端选定的解释器执行 `-m pangea_agent.cli.main read-material --task
    "<worker task JSON>" --path "<manifest path>"`，以命令返回的正文判断关联性；没有执行该命令并
-   读到正文时不得写该资料的 decision，也不得根据文件名或常识声称资料未点名当前函数。一次完成 evidence、business_flows、material_decisions、
+   读到正文时不得写该资料的 decision。一次完成 evidence、business_flows、material_decisions、
    coverage_priorities，并把全部 `disposition=risk/unresolved` failure path 转化为对应 RiskCard。完成
-   上游约束和反证检查后冻结风险集合，summary 改为 `[STAGE:risks]`，返回 `STAGE risks`。
-3. `[STAGE:risks]` → `tests`：风险驱动是基础，一次完成全部 `translation_status!=Developer-confirm`
+   上游约束和反证检查后冻结风险集合，写入 `completed_stage="risk_analysis"`。RiskCard 中每个计数、
+   布尔状态、重复次数和最终值都必须能逐项回指同一 failure path 的 `side_effects/final_states`；不得
+   在本阶段新增 checkpoint 未建立的状态，也不得把一种 callback 重复扩大成所有 callback 重复。
+   `trigger` 中用“或”连接的每个替代条件必须分别重放；到达同一失败点且风险相关的系统结果、
+   外部观测相同时可合并，但必须写清每个输入对应的精确内部值；失败点或风险结果不同就拆分或删除
+   没有证据的替代条件，不得共用一个分支的终态。
+   函数指针或注入回调实现不在冻结范围时，不得仅凭“可能有部分副作用”新增 Developer-confirm 风险；
+   只保留当前调用方能证明的状态与调用次数，真实回调语义没有直接证据就不扩写。
+3. `test_generation`：风险驱动是基础，一次完成全部 `translation_status!=Developer-confirm`
    风险的构建/运行变体。然后处理可选输入：`decision=current` 的资料已经被判定与当前分析对象相关，
    先从已读正文逐项列出全部需求 ID 和没有 ID 的可测试设计行为，再分别确认每一项至少被一条
    TestCase 的 `linked_requirement_ids` 或 `linked_material_ids` 指向；已有 Coverage 执行次数不算需求
@@ -75,11 +82,14 @@ case 的前置、步骤、预期、观测和清理。issue 只要求新增用例
    需求编号时使用 `linked_material_ids=["MAT:<path>"]`；Coverage 用例使用 task 给出的真实
    `linked_coverage_ids`，不得伪造 Risk/Requirement ID。随后执行提交前反例检查：每条风险重放完整
    状态转换，每条 TestCase 检查故障注入没有提前销毁观测依赖、每个状态变化都有显式步骤、每个
-   expected result 只有一个固定结果与观测位置。完成后改写最终 summary，执行
-   `validate-worker-result` 直到 PASS，只返回简短 PASS 与风险/用例数量。
+   expected result 只有一个固定结果与观测位置。最后对每个 `linked_risk_id` 将 RiskCard 的 `title`、`system_result`、`external_observation` 与关联 TestCase 的步骤、预期和观测逐字段对照，确保它们描述同一个状态向量。完成后改写最终 summary，写入 `completed_stage="test_generation"`。
+   当前资料承诺失败后可重试/恢复时，必须有用例实际执行“失败 → 移除故障 → 重试 → 恢复成功”，
+   不能用只验证首轮失败的用例宣称闭环；可控回调桩可使用首次失败、随后成功的确定序列验证调用方。
+   当前需求/设计已规定正确结果但源码与之冲突时，TestCase expected result 必须写资料要求的正确值，
+   源码的错误现状只作为 FAIL 判据，不能写成预期通过。`expected_results` 每项整句都是通过判据；禁止
+   先写错误实现值，再在句尾补“实测该值即 FAIL/复现风险”来伪装成正确预期。
 
-主 Agent 恢复同一会话后才进入下一阶段。任何阶段都不得提前读取并生成后续阶段的大段内容。
-`task_type=rework` 已有完整 prior result，不重复 analysis 的三阶段，也不按 issue 分次恢复。
+任何回合都不得提前读取并生成后续阶段的大段内容。`task_type=rework` 已有完整 prior result，在一个 `stage=rework` 回合中处理全部 issue，并写入 `completed_stage="rework"`。
 
 `task_type=rework` 每完成一项 issue 后，用该 issue 中的 check ID、risk ID、test ID、
 `required_change` 和被否定的关键短语查询整个当前 rework result；逐项检查 checkpoint、顶层
@@ -109,7 +119,7 @@ addressed。确认后再把这一项 issue ID 加入 `addressed_review_issue_ids
    被调用函数返回失败后，只继续分析公开契约允许的正常恢复、重试、关闭和清理。不得让测试应用忽略失败结果，再调用只适用于成功状态或已绑定成员的 API，以此制造断言或链表破坏；这种调用只能作为排除反例，不能成为风险和测试的主路径。
    `excluded` 必须有源码支持的不可达条件、调用方保证或明确不支持的运行模式。不能仅因问题只发生在 Debug、特定构建或特定受支持模式就排除；若最终状态是进程终止、数据丢失、资源泄漏或无法恢复，必须分别核对该模式并保留风险或给出可验证的不可达证据。
    在固定风险集合前，对每条 `excluded` 再做一次反证：在 `caller_handling` 中指出公开契约或入口阻断的具体源码位置。若只能找到实现注释、assert、`fail-fast` 或“调用方误用”的说法，没有实际阻断位置，就不能写 `excluded`，应按已确认的最终状态写成 risk，证据不足时写 unresolved。
-   高影响 failure path 因冻结范围不足而写 `unresolved` 时，不得在 risks 阶段消失：保留一张低置信度 RiskCard，`upstream_semantics.conclusion=unresolved`、`translation_status=Developer-confirm`，明确还缺哪项外部语义；不为它伪造可执行测试。同一个 semantic check 同时产生已确认结果和另一个独立的高影响 unresolved 结果时，保留原 `check_id` 对应的主 failure path，并为 unresolved 结果新增带明确后缀的 failure path 和独立 RiskCard；不得把未确认的资源后果作为“子项”并入 `risk_remains` / `Blackbox-ready` 风险，借已确认结果覆盖它的确认状态和测试转化状态。
+   高影响 failure path 因冻结范围不足而写 `unresolved` 时，不得在 risks 阶段消失：保留一张低置信度 RiskCard，`upstream_semantics.conclusion=unresolved`、`translation_status=Developer-confirm`，明确还缺哪项外部语义；不为它伪造可执行测试。同一个 semantic check 同时产生已确认结果和另一个独立的高影响 unresolved 结果时，保留原 `check_id` 对应的主 failure path，并为 unresolved 结果新增带明确后缀的 failure path 和独立 RiskCard；不得把未确认的资源后果作为“子项”并入 `risk_remains` / `Blackbox-ready` 风险，借已确认结果覆盖它的确认状态和测试转化状态。这条 unresolved 保留规则不适用于“函数指针或注入回调实现未冻结，所以内部也许有副作用”：没有直接实现证据时该猜测不是 failure path，必须删除，不能改名为 Developer-confirm 风险。
 4. 源码候选形成后，按 `source_manifest.material_catalog` 逐项处理已解析资料，通过上面的
    `read-material` 命令读取当前 Run 索引中的正文，不遍历整个 SQLite，也不重新解压原始文档。
    `material_decisions` 的 reason 必须来自命令实际返回的正文；未读正文不得填写 decision。每份用于
@@ -163,16 +173,14 @@ addressed。确认后再把这一项 issue ID 加入 `addressed_review_issue_ids
 
 ## 提交门禁
 
-`checkpoint` 和 `risks` 是计划内 checkpoint：写入对应 summary 后直接返回阶段标记，
-不得执行最终 `validate-worker-result`。只有 `tests` 最终阶段和 `task_type=rework` 完成
-全部语义内容后执行：
+每个 task 回合都必须在结果中写入与 `task.stage` 相同的 `completed_stage`，然后执行：
 
 ```text
 POSIX: .venv/bin/python -m pangea_agent.cli.main validate-worker-result --task "<worker task JSON>"
 PowerShell: & '.\.venv\Scripts\python.exe' -m pangea_agent.cli.main validate-worker-result --task '<worker task JSON>'
 ```
 
-- `PASS` 是 `tests` 最终阶段或 rework 可以提交给 graph 的唯一条件；它不适用于前两个计划内 checkpoint。
+- `PASS` 是当前 worker 回合可以结束的唯一条件。回合结束后由主 Agent 直接 `resume-run`，graph 决定下一个 action。
 - 若返回 `FAIL`，留在当前 Worker 会话中，读取错误消息以及对应 schema，一次处理该次输出列出的全部 JSON/schema 错误，再重新执行同一个验证命令。
 - JSON 语法错误修复后可能暴露结构错误；继续在当前 Worker 内收敛，不要把这种结构修复当成正式 rework，也不要增加 `attempt`、新建 Run 或创建 `fix_all.py` / 临时修复脚本。
 - PANGEA 只会自动恢复少量机械字段以及可确定的 evidence 位置；不会自动补写 `business_flows`、`visual_findings`、`risks`、`test_cases` 的缺失字段或实质内容。

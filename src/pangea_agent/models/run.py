@@ -7,11 +7,13 @@ from pydantic import BaseModel, ConfigDict, Field
 
 RunPhase = Literal[
     "PREPARING",
-    "WAITING_ANALYSIS",
-    "WAITING_REVIEW",
-    "WAITING_REVIEW_COMPARISON",
+    "WAITING_SOURCE_CHECKPOINT",
+    "WAITING_RISK_ANALYSIS",
+    "WAITING_TEST_GENERATION",
+    "WAITING_INDEPENDENT_REVIEW",
+    "WAITING_COMPARISON_REVIEW",
     "WAITING_REWORK",
-    "WAITING_REWORK_REVIEW",
+    "WAITING_REWORK_VERIFICATION",
     "READY_TO_FINALIZE",
     "COMPLETE",
     "INCOMPLETE",
@@ -31,10 +33,11 @@ class AgentSession(BaseModel):
     role: Literal["analysis", "review", "rework"]
     unit_id: str | None = None
     stage: Literal[
-        "analysis",
+        "source_checkpoint",
+        "risk_analysis",
+        "test_generation",
         "independent_review",
         "comparison_review",
-        "initial_review",
         "rework",
         "rework_verification",
     ]
@@ -42,10 +45,33 @@ class AgentSession(BaseModel):
     status: Literal["pending", "dispatched", "completed"] = "pending"
 
 
+class AgentAction(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    action: Literal["dispatch_agent", "continue_agent"]
+    role: Literal["analysis", "review", "rework"]
+    stage: Literal[
+        "source_checkpoint",
+        "risk_analysis",
+        "test_generation",
+        "independent_review",
+        "comparison_review",
+        "rework",
+        "rework_verification",
+    ]
+    session_key: str = Field(min_length=1)
+    unit_id: str | None = None
+    task_path: str = Field(min_length=1)
+    task_id: str | None = None
+    replacement_allowed: bool = False
+    after_completion: Literal["resume_run"] = "resume_run"
+
+
 class RunProgress(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     schema_version: Literal["1.0"] = "1.0"
+    workflow_version: Literal[2]
     run_id: str = Field(min_length=1)
     phase: RunPhase
     init_step: InitStep | None = None

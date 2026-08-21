@@ -28,6 +28,7 @@ def load_contract(state: PangeaState) -> PangeaState:
     if progress is None:
         write_json(frozen_contract_path, contract)
         progress = RunProgress(
+            workflow_version=2,
             run_id=run_id,
             phase="PREPARING",
             init_step="CONTRACT_FROZEN",

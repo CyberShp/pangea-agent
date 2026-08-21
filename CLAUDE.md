@@ -51,16 +51,17 @@ Assume the primary local shell may be Windows PowerShell.
 
 This repository also includes `AGENTS.md` for OpenCode and other agent clients. Keep `CLAUDE.md` and `AGENTS.md` aligned when changing project-level rules.
 
-## V1 worker lifecycle
+## Graph-owned worker lifecycle
 
 - Python never calls a model API. Read the JSON tasks under the current run and write results to each declared `result_path`.
 - Dispatch at most four non-overlapping `analysis-worker` tasks concurrently. Workers must not spawn child workers.
 - Use one `review-worker` after analysis. Initial review and rework verification are one review lifecycle; allow at most one rework and require the same reviewer for verification.
 - Initial review has two checkpoints in the same reviewer session: `independent_review` does not expose worker results, and `comparison_review` is generated only after the graph accepts the independent findings. Complete each checkpoint in one call.
 - Before the reviewer returns from `independent_review`, `comparison_review`, or `rework_verification`, run `python -m pangea_agent.cli.main check-review-artifact --task "<review task JSON>"` and require `PASS`. A failure is fixed by the same reviewer in the same result file; the main Agent must not rewrite the review artifact to make it pass.
-- After each Agent dispatch, record the returned task ID with `record-agent-session`. Restore task IDs from `progress.agent_sessions` after a main-session restart.
-- Initial analysis uses three calls to the same worker session: checkpoint, risks/evidence, then tests/final validation. Resume after `[STAGE:checkpoint]` and `[STAGE:risks]`; these planned returns are not corrections or rework. If a stage returns empty without writing its marker, resume the same session and replace it only after two empty returns while keeping the same task, attempt, result path, and unfinished stage.
-- Start a new main-session analysis with `module-analysis`. Once that session has a concrete `run_id`, use `resume-run` after completing the tasks for the current `phase`; do not scan historical runs to choose one automatically. Never replace missing worker output with placeholder risks.
+- Treat each `action=<JSON>` line returned by `module-analysis` or `resume-run` as the sole dispatch authority. Use `dispatch_agent` or `continue_agent` exactly as declared, send only `task_path`, and use the declared `task_id` for continuation. Do not infer work from `phase` or Agent response text.
+- After a `dispatch_agent`, record the returned task ID with `record-agent-session`. Restore and continue that exact task ID when the graph returns `continue_agent`; do not record ordinary continuations again.
+- Each analysis-worker turn performs only the current worker task `stage`, writes the same value to `completed_stage`, and runs `validate-worker-result` until `PASS`. After every completed action turn, the main Agent immediately runs `resume-run` as declared by `after_completion`; the next graph action decides the next stage.
+- Start a new main-session analysis with `module-analysis`. Once that session has a concrete `run_id`, keep its literal `data_root` on every run-scoped CLI call; do not scan historical runs to choose one automatically. Never replace missing worker output with placeholder risks.
 
 ## Initialization contract
 

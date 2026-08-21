@@ -73,13 +73,13 @@
 - 三个客户端应遵循同一套 graph / schema / rubric 分层。
 - Python 不调用模型 API。当前主 Agent 读取 `agent-tasks/` 文件，最多并发派发
   4 个互不重叠的 `analysis-worker`；worker 不得再派发子 Agent。
-- graph 返回 `WAITING_*` 后，主 Agent 只负责读取 task、派发或续接对应 worker、记录 Agent 会话并推进 graph；不得创建、填写或修正 `agent-results/analysis/`、`agent-results/rework/` 或 review 语义结果。worker 无法完成时如实停止，不得由主 Agent 代写结果。
+- CLI 每次创建或恢复 Run 后返回 `action=<JSON>`。主 Agent 只按 action 的 `action`、`role`、`stage`、`task_path`、`task_id`、`replacement_allowed` 和 `after_completion` 派发或续接对应 Agent；不得用 `phase`、Agent 回复文本或自定阶段提示代替 action。新 Run 返回的 `data_root` 与 `run_id` 一起绑定，所有 run-scoped CLI 都必须显式传 `--data-root <data_root>`。主 Agent 不得创建、填写或修正 `agent-results/analysis/`、`agent-results/rework/` 或 review 语义结果。worker 无法完成时如实停止，不得由主 Agent 代写结果。
 - analysis 结果齐备后，只启动 1 个 `review-worker`。初审和返工验证属于同一轮
   review lifecycle，返工最多一次，且返工验证必须由原 reviewer 完成。
 - 初审固定为同一 reviewer 的两个 checkpoint：`independent_review` task 不提供 worker result；
   graph 接受独立结论后才生成 `comparison_review` task。两个阶段各完成一次，不按检查项拆分调用。
-- review-worker 每次写完 `independent_review`、`comparison_review` 或 `rework_verification` 结果后，必须先执行 `python -m pangea_agent.cli.main check-review-artifact --task "<review task JSON>"` 并得到 `PASS`；失败由同一 reviewer 修正同一结果文件，主 Agent 不得代填、扁平化或删除字段绕过契约。只有 `PASS` 后主 Agent 才执行 `resume-run`。
-- 新主 Agent 会话命中新的模块分析意图时创建新 Run；当前会话已经持有本次运行的明确 `run_id` 后，完成当前 `phase` 的 task 再使用 `resume-run` 推进该 Run。不得要求用户为了触发流程显式说 `module-analysis`，不得扫描历史 Run 自动替用户选择恢复目标，也不得用占位风险冒充语义分析结果。
+- analysis-worker 每回合只执行 worker task 当前 `stage`，将 `completed_stage` 写成相同值，并在结束前执行 `validate-worker-result --task "<worker task JSON>"` 到 `PASS`。review-worker 每次写完 `independent_review`、`comparison_review` 或 `rework_verification` 结果后，必须执行 `check-review-artifact --task "<review task JSON>"` 并得到 `PASS`。失败由当前 Agent 修正同一结果文件，主 Agent 不得代填或绕过契约。
+- 新主 Agent 会话命中新的模块分析意图时创建新 Run。当前会话已经持有本次运行的明确 `run_id` 后，每个 action 对应的 Agent 回合完成并通过提交检查后，主 Agent 立即执行 action 声明的 `resume_run`；不等待或解析 Agent 回复中的文本标记。不得要求用户为了触发流程显式说 `module-analysis`，不得扫描历史 Run 自动替用户选择恢复目标，也不得用占位风险冒充语义分析结果。
 
 ## Private House Code Policy
 

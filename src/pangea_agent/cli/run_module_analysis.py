@@ -31,6 +31,19 @@ def _invoke_contract(contract: dict) -> dict:
     return graph.invoke(state)
 
 
+def apply_run_event(run_id: str, data_root: str, event: dict) -> dict:
+    contract_path = Path(data_root) / "runs" / run_id / "inputs" / "task-contract.json"
+    if not contract_path.is_file():
+        raise ValueError(f"冻结 task contract 不存在：{contract_path}")
+    contract = json.loads(contract_path.read_text(encoding="utf-8"))
+    return graph.invoke({
+        "run_id": run_id,
+        "data_root": data_root,
+        "task_contract": contract,
+        "event": event,
+    })
+
+
 def _preflight_new_contract(contract: dict) -> None:
     data_root = contract.get("data_root", "pangea-data")
     repositories = resolve_repositories_from_contract(contract, data_root)
@@ -59,7 +72,34 @@ def start_module_analysis(contract_path: str) -> dict:
 
 
 def resume_module_analysis(run_id: str, data_root: str = "pangea-data") -> dict:
-    contract_path = Path(data_root) / "runs" / run_id / "inputs" / "task-contract.json"
+    run_dir = Path(data_root) / "runs" / run_id
+    progress_path = run_dir / "progress.json"
+    if not progress_path.is_file():
+        raise ValueError(f"指定 Run 不存在：{run_id}")
+    raw_progress = json.loads(progress_path.read_text(encoding="utf-8"))
+    workflow_version = raw_progress.get("workflow_version", 1)
+    if workflow_version != 2:
+        if workflow_version != 1:
+            raise ValueError(f"不支持的 workflow_version：{workflow_version}")
+        if workflow_version == 1 and raw_progress.get("phase") == "COMPLETE":
+            report_path = run_dir / "report.md"
+            if not report_path.is_file():
+                raise ValueError("旧版 COMPLETE Run 缺少现有报告，Graph V2 不重建旧版产物")
+            result = {
+                "run_id": run_id,
+                "data_root": data_root,
+                "phase": "COMPLETE",
+                "report_path": str(report_path),
+            }
+            html_path = run_dir / "report.html"
+            if html_path.is_file():
+                result["html_report_path"] = str(html_path)
+            return result
+        raise ValueError(
+            "该 Run 使用旧版文本阶段流程，Graph V2 只读既有 COMPLETE 报告；"
+            "旧版非终态不能继续，请新建一次模块分析。"
+        )
+    contract_path = run_dir / "inputs" / "task-contract.json"
     if not contract_path.is_file():
         raise ValueError(
             f"冻结 task contract 不存在：{contract_path}。"

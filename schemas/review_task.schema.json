@@ -10,7 +10,7 @@
     "repositories": {"type": "array", "minItems": 1, "items": {"type": "object", "required": ["repo_id", "source_root", "git"], "properties": {"repo_id": {"type": "string"}, "source_root": {"type": "string"}, "git": {"type": "object"}}, "additionalProperties": false}},
     "inventory_path": {"type": "string", "minLength": 1},
     "source_manifest_path": {"type": "string", "minLength": 1},
-    "stage": {"enum": ["independent_review", "comparison_review", "initial_review", "rework_verification"]},
+    "stage": {"enum": ["independent_review", "comparison_review", "rework_verification"]},
     "result_path": {"type": "string", "minLength": 1},
     "analysis_tasks": {"type": "array", "items": {"type": "object", "required": ["unit_id", "task_path"], "properties": {"unit_id": {"type": "string"}, "task_path": {"type": "string"}}, "additionalProperties": false}},
     "analysis_results": {"type": "array", "items": {"type": "object", "required": ["unit_id", "result_path"], "properties": {"unit_id": {"type": "string"}, "result_path": {"type": "string"}}, "additionalProperties": false}},
@@ -20,5 +20,18 @@
     "same_reviewer_id": {"type": ["string", "null"]},
     "prior_issues": {"type": "array", "items": {"$ref": "review_issue.schema.json"}}
   },
+  "allOf": [
+    {
+      "if": {"properties": {"stage": {"enum": ["comparison_review", "rework_verification"]}}},
+      "then": {
+        "required": ["analysis_tasks", "independent_result_path"],
+        "properties": {
+          "analysis_tasks": {"minItems": 1},
+          "analysis_results": {"minItems": 1},
+          "independent_result_path": {"type": "string", "minLength": 1}
+        }
+      }
+    }
+  ],
   "additionalProperties": false
 }

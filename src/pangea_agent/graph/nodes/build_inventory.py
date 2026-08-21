@@ -8,7 +8,7 @@ from pangea_agent.documents.coverage import filter_inventory_to_sources, match_c
 from pangea_agent.graph.run_store import load_progress, save_progress
 from pangea_agent.graph.state import PangeaState
 from pangea_agent.inventory.source_scanner import build_lightweight_inventory
-from pangea_agent.inventory.source_languages import language_for_path
+from pangea_agent.inventory.source_languages import inventory_context_for_path
 
 
 def build_inventory(state: PangeaState) -> PangeaState:
@@ -27,7 +27,7 @@ def build_inventory(state: PangeaState) -> PangeaState:
                 *(
                     item
                     for item in group.get("context_paths", [])
-                    if language_for_path(Path(item)) == "lua"
+                    if inventory_context_for_path(Path(item))
                 ),
             ]
         ))

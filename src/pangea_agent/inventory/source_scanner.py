@@ -7,7 +7,11 @@ from .cpp_resources import extract_resource_signals
 from .cpp_symbols import TreeSitterUnavailableError, extract_functions, parse_cpp_file
 from .lua_symbols import LuaParserUnavailableError, parse_lua_file
 from .scope_expander import DEFAULT_IGNORED_PARTS, HARD_IGNORED_PARTS, SOFT_IGNORED_PARTS
-from .source_languages import CODE_SUFFIXES, language_for_path
+from .source_languages import (
+    CODE_SUFFIXES,
+    capability_for_source_language,
+    language_for_path,
+)
 
 KNOWN_EXTENSION_ERRORS = {"__attribute__((unused))", ")"}
 
@@ -44,9 +48,17 @@ def build_lightweight_inventory(repositories: list[dict], module_scope: list[str
                 language = language_for_path(path)
                 if language is None:
                     continue
+                capability = capability_for_source_language(language)
+                if capability.inventory_provider not in {"c_cpp", "lua"}:
+                    raise ValueError(
+                        f"unsupported inventory provider: {capability.inventory_provider}"
+                    )
                 structural_complete = True
                 try:
-                    parsed = parse_lua_file(path) if language == "lua" else parse_cpp_file(path)
+                    if capability.inventory_provider == "lua":
+                        parsed = parse_lua_file(path)
+                    elif capability.inventory_provider == "c_cpp":
+                        parsed = parse_cpp_file(path)
                 except TreeSitterUnavailableError as exc:
                     missing_dependencies.update(exc.packages)
                     structural_complete = False
@@ -88,9 +100,9 @@ def build_lightweight_inventory(repositories: list[dict], module_scope: list[str
                         "parser": "regex_fallback",
                         "grammar_package": None,
                         "has_error": True,
-                        "functions": extract_functions(lines) if language != "lua" else [],
-                        "branches": extract_branches(lines) if language != "lua" else [],
-                        "preprocessor": _extract_preprocessor(lines) if language != "lua" else [],
+                        "functions": extract_functions(lines) if capability.inventory_provider == "c_cpp" else [],
+                        "branches": extract_branches(lines) if capability.inventory_provider == "c_cpp" else [],
+                        "preprocessor": _extract_preprocessor(lines) if capability.inventory_provider == "c_cpp" else [],
                         "types": [],
                         "imports": [],
                         "calls": [],
@@ -99,7 +111,7 @@ def build_lightweight_inventory(repositories: list[dict], module_scope: list[str
                         "parse_errors": [{"line": None, "kind": "parser_failure", "text": str(exc)}],
                     }
                 if parsed["has_error"]:
-                    if language == "lua":
+                    if capability.inventory_provider == "lua":
                         material_errors = parsed["parse_errors"]
                     else:
                         function_ranges = [
@@ -121,7 +133,7 @@ def build_lightweight_inventory(repositories: list[dict], module_scope: list[str
                             "path": relative_path,
                             "error": (
                                 "tree-sitter reported Lua syntax errors"
-                                if language == "lua"
+                                if capability.inventory_provider == "lua"
                                 else "tree-sitter reported syntax errors inside a function"
                             ),
                             "locations": material_errors,
@@ -141,7 +153,11 @@ def build_lightweight_inventory(repositories: list[dict], module_scope: list[str
                     "branches": parsed["branches"],
                     "preprocessor": parsed["preprocessor"],
                     "types": parsed["types"],
-                    "resource_signals": extract_resource_signals(lines) if language != "lua" else [],
+                    "resource_signals": (
+                        extract_resource_signals(lines)
+                        if capability.inventory_provider == "c_cpp"
+                        else []
+                    ),
                     "imports": parsed.get("imports", []),
                     "calls": parsed.get("calls", []),
                     "frameworks": parsed_frameworks,

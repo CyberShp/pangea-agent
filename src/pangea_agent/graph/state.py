@@ -34,6 +34,11 @@ class PangeaState(TypedDict, total=False):
     phase: str
     run_status: str
     agent_task_paths: list[str]
+    agent_actions: list[dict[str, Any]]
+    next_node: str
+    reviewer_id: str
+    event: dict[str, Any]
+    event_result: str
     parse_failures: list[dict[str, Any]]
     unread_images: list[dict[str, Any]]
     errors: list[dict[str, Any]]

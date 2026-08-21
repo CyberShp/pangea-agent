@@ -176,6 +176,12 @@ class AnalysisCheckpoint(StrictModel):
 class WorkerTask(StrictModel):
     schema_version: Literal["1.0"] = "1.0"
     task_type: Literal["analysis", "rework"]
+    stage: Literal[
+        "source_checkpoint",
+        "risk_analysis",
+        "test_generation",
+        "rework",
+    ]
     run_id: str = Field(min_length=1)
     target: str = Field(min_length=1)
     unit: AnalysisUnit
@@ -201,10 +207,18 @@ class WorkerTask(StrictModel):
 
     @model_validator(mode="after")
     def validate_task_type(self) -> "WorkerTask":
-        if self.task_type == "analysis" and (self.attempt != 0 or self.prior_result_path or self.review_issues):
+        if self.task_type == "analysis" and (
+            self.stage == "rework"
+            or self.attempt != 0
+            or self.prior_result_path
+            or self.review_issues
+        ):
             raise ValueError("analysis task 只能是 attempt=0，且不能携带返工字段")
         if self.task_type == "rework" and (
-            self.attempt != 1 or not self.prior_result_path or not self.review_issues
+            self.stage != "rework"
+            or self.attempt != 1
+            or not self.prior_result_path
+            or not self.review_issues
         ):
             raise ValueError("rework task 必须绑定原结果和 review issues")
         return self
@@ -216,6 +230,13 @@ class WorkerResult(StrictModel):
     unit_id: str = Field(min_length=1)
     worker_id: str = Field(min_length=1)
     attempt: Literal[0, 1]
+    completed_stage: Literal[
+        "pending",
+        "source_checkpoint",
+        "risk_analysis",
+        "test_generation",
+        "rework",
+    ]
     finish_reason: Literal["stop", "truncated", "error"]
     summary: str = Field(min_length=1)
     analyzed_scope: list[str] = Field(min_length=1)
@@ -231,7 +252,10 @@ class WorkerResult(StrictModel):
 
     @model_validator(mode="after")
     def validate_links(self) -> "WorkerResult":
-        if self.finish_reason == "stop" and (not self.evidence or not self.business_flows):
+        final_stage = self.completed_stage in {"test_generation", "rework"}
+        if final_stage and self.finish_reason == "stop" and (
+            not self.evidence or not self.business_flows
+        ):
             raise ValueError("完整 worker 结果必须包含单元证据和业务流程")
         risk_ids = {risk.risk_id for risk in self.risks}
         for case in self.test_cases:
@@ -263,9 +287,8 @@ class ReviewTask(StrictModel):
     stage: Literal[
         "independent_review",
         "comparison_review",
-        "initial_review",
         "rework_verification",
-    ] = "initial_review"
+    ]
     result_path: str = Field(min_length=1)
     analysis_tasks: list[TaskRef] = Field(default_factory=list)
     analysis_results: list[ResultRef] = Field(default_factory=list)
@@ -293,14 +316,14 @@ class ReviewTask(StrictModel):
             or self.prior_issues
         ):
             raise ValueError("对照复核必须绑定独立复核结果、原 reviewer、analysis task 和 worker result")
-        if self.stage == "initial_review" and (
-            not self.analysis_results or self.same_reviewer_id is not None or self.prior_issues
-        ):
-            raise ValueError("初审任务不能预设 reviewer 或 prior issues")
         if self.stage == "rework_verification" and (
-            not self.analysis_results or not self.same_reviewer_id or not self.prior_issues
+            not self.analysis_tasks
+            or not self.analysis_results
+            or not self.independent_result_path
+            or not self.same_reviewer_id
+            or not self.prior_issues
         ):
-            raise ValueError("返工复核必须绑定原 reviewer 和初审问题")
+            raise ValueError("返工复核必须绑定独立复核结果、原 reviewer、初审问题和分析输入")
         return self
 
 
@@ -370,10 +393,10 @@ class TerminationSignal(StrictModel):
     schema_version: Literal["1.0"] = "1.0"
     run_id: str = Field(min_length=1)
     phase: Literal[
-        "WAITING_REVIEW",
-        "WAITING_REVIEW_COMPARISON",
+        "WAITING_INDEPENDENT_REVIEW",
+        "WAITING_COMPARISON_REVIEW",
         "WAITING_REWORK",
-        "WAITING_REWORK_REVIEW",
+        "WAITING_REWORK_VERIFICATION",
     ]
     reason: str = Field(min_length=1)
     status: Literal["UNRESOLVED"] = "UNRESOLVED"

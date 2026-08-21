@@ -16,10 +16,12 @@ cmdlet。Windows / PowerShell 兼容要求不改变 DSH 工具的真实 shell。
 - 新根会话收到新的模块分析要求时，当前 Run 固定为空。创建新 Run 前不得调用
   `pangea_status`，不得列举或读取 `pangea-data/runs/`，不得读取或复用已有
   `pending-task-contract.json`。
-- graph 返回 `WAITING_*` 后，主 Agent 只负责读取 task、派发或续接对应子 Agent、
-  记录 `subagent_id` 和推进 graph。主 Agent 不得创建、填写或修正 worker / reviewer
-  的语义结果文件。
+- CLI 返回 `action=<JSON>` 后，主 Agent 只按 action 派发或续接对应子 Agent、
+  记录 `subagent_id`，并在该回合通过提交检查后立即执行 `resume-run`。
+  主 Agent 不根据 `phase` 或子 Agent 回复文本推测下一步，也不得创建、填写或修正
+  worker / reviewer 的语义结果文件。
 - 主 Agent 不读取 worker 角色文件，也不复述 task 字段、源码位置、分析步骤或结论。
-  首次派发子 Agent 的 `prompt` 必须只包含 graph 返回的 task JSON 路径。
+  `dispatch_agent` 的 `prompt` 和 `continue_agent` 的续接消息都必须只包含 action 返回的
+  `task_path`；续接必须使用 action 中的 `task_id`。
 - 子 Agent 无法派发、续接或写入结果时，停止并如实报告；不得由主 Agent 代写结果
   绕过失败。

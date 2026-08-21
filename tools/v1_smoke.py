@@ -15,9 +15,8 @@ from PIL import Image
 from openpyxl import Workbook
 
 from pangea_agent.agent_io import read_json, write_json
-from pangea_agent.cli.run_module_analysis import run_module_analysis
+from pangea_agent.cli.run_module_analysis import resume_module_analysis, run_module_analysis
 from pangea_agent.documents.coverage import match_coverage_records, parse_coverage_xlsx
-from pangea_agent.graph.nodes.advance_run import advance_run
 from pangea_agent.graph.nodes.load_contract import load_contract
 from pangea_agent.graph.nodes.resolve_repositories import resolve_repositories
 from pangea_agent.graph.nodes.locate_module import locate_module
@@ -132,12 +131,14 @@ def _task_result(task: dict, *, finish_reason: str = "stop", fake_location: bool
     chunk_id = f"{repo_id}:{source_path}:1-1"
     location = "fake:missing.c:1-1" if fake_location else chunk_id
     evidence = {"chunk_id": chunk_id, "location": location, "observation": "模块入口实现"}
-    return {
+    stage = task["stage"]
+    result = {
         "schema_version": "1.0",
         "run_id": task["run_id"],
         "unit_id": task["unit"]["unit_id"],
         "worker_id": f"worker-{task['unit']['unit_id']}",
         "attempt": task["attempt"],
+        "completed_stage": stage,
         "finish_reason": finish_reason,
         "summary": "完成当前单元分析",
         "analyzed_scope": task["unit"]["source_scope"],
@@ -184,6 +185,27 @@ def _task_result(task: dict, *, finish_reason: str = "stop", fake_location: bool
             "counterexamples_checked": ["异常返回不会被误写为成功"],
         },
     }
+    if stage == "source_checkpoint":
+        result["evidence"] = []
+        result["business_flows"] = []
+        result["analysis_checkpoint"]["risk_set_frozen"] = False
+        result["analysis_checkpoint"]["counterexamples_checked"] = []
+    elif stage == "risk_analysis":
+        result["test_cases"] = []
+        result["analysis_checkpoint"]["counterexamples_checked"] = []
+    return result
+
+
+def _advance_to_test_generation(state: dict) -> dict:
+    while state["phase"] in {"WAITING_SOURCE_CHECKPOINT", "WAITING_RISK_ANALYSIS"}:
+        task_paths = [Path(path) for path in state["agent_task_paths"]]
+        for task_path in task_paths:
+            task = read_json(task_path)
+            write_json(Path(task["result_path"]), _task_result(task))
+        run_dir = task_paths[0].parents[2]
+        state = run_module_analysis(str(run_dir / "inputs" / "task-contract.json"))
+    assert state["phase"] == "WAITING_TEST_GENERATION"
+    return state
 
 
 def _test_case(
@@ -214,6 +236,7 @@ def _test_case(
 def _mismatched_step_results_rejected() -> None:
     _, data_root, contract = _workspace()
     state = run_module_analysis(str(contract))
+    state = _advance_to_test_generation(state)
     task = read_json(Path(state["agent_task_paths"][0]))
     result = _task_result(task)
     result["risks"] = [{
@@ -253,7 +276,7 @@ def _mismatched_step_results_rejected() -> None:
         "cleanup": ["恢复环境"],
     }]
     write_json(Path(task["result_path"]), result)
-    assert run_module_analysis(str(contract))["phase"] == "WAITING_ANALYSIS"
+    assert run_module_analysis(str(contract))["phase"] == "WAITING_TEST_GENERATION"
     errors = read_json(data_root / "runs" / "smoke-01" / "progress.json")["errors"]
     assert any("每个测试步骤必须有且只有一个对应的预期结果" in item["reason"] for item in errors)
 
@@ -261,6 +284,7 @@ def _mismatched_step_results_rejected() -> None:
 def _requirement_only_test_case_is_accepted() -> None:
     _, _, contract = _workspace()
     state = run_module_analysis(str(contract))
+    state = _advance_to_test_generation(state)
     task = read_json(Path(state["agent_task_paths"][0]))
     result = _task_result(task)
     result["test_cases"] = [_test_case(
@@ -269,12 +293,13 @@ def _requirement_only_test_case_is_accepted() -> None:
         title="需求行为补测",
     )]
     write_json(Path(task["result_path"]), result)
-    assert run_module_analysis(str(contract))["phase"] == "WAITING_REVIEW"
+    assert run_module_analysis(str(contract))["phase"] == "WAITING_INDEPENDENT_REVIEW"
 
 
 def _semantic_check_risk_scope_is_enforced() -> None:
     _, data_root, contract = _workspace()
     state = run_module_analysis(str(contract))
+    state = _advance_to_test_generation(state)
     task_path = Path(state["agent_task_paths"][0])
     task = read_json(task_path)
     task["semantic_check_items"] = [{
@@ -319,12 +344,13 @@ def _semantic_check_risk_scope_is_enforced() -> None:
         "disposition": "risk",
     }]
     write_json(Path(task["result_path"]), result)
-    assert run_module_analysis(str(contract))["phase"] == "WAITING_ANALYSIS"
+    assert run_module_analysis(str(contract))["phase"] == "WAITING_TEST_GENERATION"
     errors = read_json(data_root / "runs" / "smoke-01" / "progress.json")["errors"]
     assert any("未声明 semantic check" in item["reason"] for item in errors)
 
 
 def _write_all_analysis(state: dict) -> None:
+    state = _advance_to_test_generation(state)
     for task_path in state["agent_task_paths"]:
         task = read_json(Path(task_path))
         write_json(Path(task["result_path"]), _task_result(task))
@@ -361,7 +387,7 @@ def _advance_to_review_comparison(
         "findings": findings,
     })
     state = run_module_analysis(str(run_dir / "inputs" / "task-contract.json"))
-    assert state["phase"] == "WAITING_REVIEW_COMPARISON"
+    assert state["phase"] == "WAITING_COMPARISON_REVIEW"
     comparison = read_json(run_dir / "agent-tasks" / "review.json")
     assert comparison["stage"] == "comparison_review"
     assert comparison["same_reviewer_id"] == reviewer
@@ -397,7 +423,7 @@ def _pass_report() -> None:
     state = run_module_analysis(str(contract))
     _write_all_analysis(state)
     state = run_module_analysis(str(contract))
-    assert state["phase"] == "WAITING_REVIEW"
+    assert state["phase"] == "WAITING_INDEPENDENT_REVIEW"
     _review(data_root, "smoke-01", status="PASS")
     state = run_module_analysis(str(contract))
     assert state["phase"] == "COMPLETE"
@@ -419,7 +445,7 @@ def _review_missing_finding_cannot_pass() -> None:
     state = run_module_analysis(str(contract))
     _write_all_analysis(state)
     state = run_module_analysis(str(contract))
-    assert state["phase"] == "WAITING_REVIEW"
+    assert state["phase"] == "WAITING_INDEPENDENT_REVIEW"
     extra = {
         "unit_id": "U00",
         "check_id": "LIFECYCLE-U00",
@@ -451,7 +477,7 @@ def _review_missing_finding_cannot_pass() -> None:
         ],
     })
     state = run_module_analysis(str(contract))
-    assert state["phase"] == "WAITING_REVIEW_COMPARISON"
+    assert state["phase"] == "WAITING_COMPARISON_REVIEW"
     progress = read_json(data_root / "runs" / "smoke-01" / "progress.json")
     assert any("PASS 不能包含 missing" in item["reason"] for item in progress["errors"])
 
@@ -460,7 +486,7 @@ def _comparison_cannot_drop_independent_findings() -> None:
     _, data_root, contract = _workspace()
     state = run_module_analysis(str(contract))
     _write_all_analysis(state)
-    assert run_module_analysis(str(contract))["phase"] == "WAITING_REVIEW"
+    assert run_module_analysis(str(contract))["phase"] == "WAITING_INDEPENDENT_REVIEW"
     extra = {
         "unit_id": "U00",
         "check_id": "LIFECYCLE-U00",
@@ -484,7 +510,7 @@ def _comparison_cannot_drop_independent_findings() -> None:
         "independent_findings": [],
     })
     state = run_module_analysis(str(contract))
-    assert state["phase"] == "WAITING_REVIEW_COMPARISON"
+    assert state["phase"] == "WAITING_COMPARISON_REVIEW"
     progress = read_json(data_root / "runs" / "smoke-01" / "progress.json")
     assert any("必须逐项保留独立复核 findings" in item["reason"] for item in progress["errors"])
 
@@ -533,9 +559,10 @@ def _rework_same_reviewer() -> None:
     assert rejected.returncode != 0 and "不能替换 task_id" in rejected.stderr
     write_json(Path(rework_task["result_path"]), _task_result(rework_task))
     state = run_module_analysis(str(contract))
-    assert state["phase"] == "WAITING_REWORK_REVIEW"
+    assert state["phase"] == "WAITING_REWORK_VERIFICATION"
     review_task = read_json(data_root / "runs" / "smoke-01" / "agent-tasks" / "rework-review.json")
     assert review_task["same_reviewer_id"] == "reviewer-1"
+    assert review_task["independent_result_path"].endswith("review-independent.json")
     write_json(Path(review_task["result_path"]), {
         "schema_version": "1.0",
         "run_id": "smoke-01",
@@ -547,19 +574,39 @@ def _rework_same_reviewer() -> None:
         "reviewed_units": [item["unit_id"] for item in review_task["analysis_results"]],
         "independent_findings": [],
     })
+    rejected = run_module_analysis(str(contract))
+    assert rejected["phase"] == "WAITING_REWORK_VERIFICATION"
+    progress = read_json(data_root / "runs" / "smoke-01" / "progress.json")
+    assert any("逐项保留独立复核 findings" in item["reason"] for item in progress["errors"])
+    independent = read_json(Path(review_task["independent_result_path"]))
+    write_json(Path(review_task["result_path"]), {
+        "schema_version": "1.0",
+        "run_id": "smoke-01",
+        "reviewer_id": "reviewer-1",
+        "finish_reason": "stop",
+        "status": "PASS",
+        "summary": "返工验证通过",
+        "issues": [],
+        "reviewed_units": [item["unit_id"] for item in review_task["analysis_results"]],
+        "independent_findings": [
+            {**finding, "worker_disposition": "covered"}
+            for finding in independent["findings"]
+        ],
+    })
     assert run_module_analysis(str(contract))["phase"] == "COMPLETE"
 
 
 def _truncated_correction() -> None:
     _, data_root, contract = _workspace()
     state = run_module_analysis(str(contract))
+    state = _advance_to_test_generation(state)
     task = read_json(Path(state["agent_task_paths"][0]))
     write_json(Path(task["result_path"]), _task_result(task, finish_reason="truncated"))
-    assert run_module_analysis(str(contract))["phase"] == "WAITING_ANALYSIS"
+    assert run_module_analysis(str(contract))["phase"] == "WAITING_TEST_GENERATION"
     progress_path = data_root / "runs" / "smoke-01" / "progress.json"
     assert read_json(progress_path)["errors"]
     write_json(Path(task["result_path"]), _task_result(task))
-    assert run_module_analysis(str(contract))["phase"] == "WAITING_REVIEW"
+    assert run_module_analysis(str(contract))["phase"] == "WAITING_INDEPENDENT_REVIEW"
     progress = read_json(progress_path)
     assert not progress["errors"] and progress["error_history"]
 
@@ -568,7 +615,7 @@ def _reviewer_unavailable_has_explicit_unresolved_path() -> None:
     _, data_root, contract = _workspace()
     state = run_module_analysis(str(contract))
     _write_all_analysis(state)
-    assert run_module_analysis(str(contract))["phase"] == "WAITING_REVIEW"
+    assert run_module_analysis(str(contract))["phase"] == "WAITING_INDEPENDENT_REVIEW"
     _review(data_root, "smoke-01", status="REWORK", reviewer="reviewer-1")
     state = run_module_analysis(str(contract))
     assert state["phase"] == "WAITING_REWORK"
@@ -577,7 +624,7 @@ def _reviewer_unavailable_has_explicit_unresolved_path() -> None:
     )
     write_json(Path(rework_task["result_path"]), _task_result(rework_task))
     state = run_module_analysis(str(contract))
-    assert state["phase"] == "WAITING_REWORK_REVIEW"
+    assert state["phase"] == "WAITING_REWORK_VERIFICATION"
 
     rejected = subprocess.run(
         [
@@ -609,12 +656,13 @@ def _reviewer_unavailable_has_explicit_unresolved_path() -> None:
 def _unmatched_evidence_is_pending() -> None:
     _, data_root, contract = _workspace()
     state = run_module_analysis(str(contract))
+    state = _advance_to_test_generation(state)
     task = read_json(Path(state["agent_task_paths"][0]))
     forged = _task_result(task, fake_location=True)
     forged["evidence"][0]["chunk_id"] = "missing-chunk"
     forged["business_flows"][0]["evidence"] = forged["evidence"]
     write_json(Path(task["result_path"]), forged)
-    assert run_module_analysis(str(contract))["phase"] == "WAITING_REVIEW"
+    assert run_module_analysis(str(contract))["phase"] == "WAITING_INDEPENDENT_REVIEW"
     normalized = read_json(Path(task["result_path"]))
     assert normalized["evidence"][0]["status"] == "pending_confirmation"
     assert normalized["business_flows"][0]["evidence"][0]["status"] == "pending_confirmation"
@@ -624,6 +672,7 @@ def _unmatched_evidence_is_pending() -> None:
 def _duplicate_ids_correction() -> None:
     _, data_root, contract = _workspace(repositories=("repo-a", "repo-b"))
     state = run_module_analysis(str(contract))
+    state = _advance_to_test_generation(state)
     tasks = [read_json(Path(path)) for path in state["agent_task_paths"]]
     for task in tasks:
         result = _task_result(task)
@@ -652,7 +701,7 @@ def _duplicate_ids_correction() -> None:
         }]
         result["test_cases"] = [_test_case("DUP-TC01", risk_ids=["DUP-R01"])]
         write_json(Path(task["result_path"]), result)
-    assert run_module_analysis(str(contract))["phase"] == "WAITING_REVIEW"
+    assert run_module_analysis(str(contract))["phase"] == "WAITING_INDEPENDENT_REVIEW"
     normalized = [read_json(Path(task["result_path"])) for task in tasks]
     assert {item["risks"][0]["risk_id"] for item in normalized} == {"DUP-R01", "DUP-R01-2"}
     assert {item["test_cases"][0]["test_case_id"] for item in normalized} == {"DUP-TC01", "DUP-TC01-2"}
@@ -662,13 +711,14 @@ def _duplicate_ids_correction() -> None:
 def _mechanical_task_change_does_not_block() -> None:
     _, _, contract = _workspace()
     state = run_module_analysis(str(contract))
+    state = _advance_to_test_generation(state)
     task_path = Path(state["agent_task_paths"][0])
     task = read_json(task_path)
     task["result_path"] = "Z:\\wrong\\result.json"
     write_json(task_path, task)
     corrected_path = Path(task_path).parents[2] / "agent-results" / "analysis" / "U00.json"
     write_json(corrected_path, _task_result(task))
-    assert run_module_analysis(str(contract))["phase"] == "WAITING_REVIEW"
+    assert run_module_analysis(str(contract))["phase"] == "WAITING_INDEPENDENT_REVIEW"
     assert Path(read_json(task_path)["result_path"]).resolve() == corrected_path.resolve()
 
 
@@ -676,7 +726,7 @@ def _mechanical_review_fields_do_not_block() -> None:
     _, data_root, contract = _workspace()
     state = run_module_analysis(str(contract))
     _write_all_analysis(state)
-    assert run_module_analysis(str(contract))["phase"] == "WAITING_REVIEW"
+    assert run_module_analysis(str(contract))["phase"] == "WAITING_INDEPENDENT_REVIEW"
     run_dir = data_root / "runs" / "smoke-01"
     _, findings = _advance_to_review_comparison(data_root, "smoke-01")
     task_path = run_dir / "agent-tasks" / "review.json"
@@ -723,10 +773,8 @@ def _report_recovery() -> None:
     _write_all_analysis(state)
     run_module_analysis(str(contract))
     _review(data_root, "smoke-01", status="PASS")
-    raw_contract = read_json(contract)
-    state = load_contract({"run_id": "smoke-01", "data_root": str(data_root), "task_contract": raw_contract})
-    assert advance_run(state)["phase"] == "READY_TO_FINALIZE"
     state = run_module_analysis(str(contract))
+    assert state["phase"] == "COMPLETE"
     Path(state["report_path"]).unlink()
     Path(state["html_report_path"]).unlink()
     recovered = run_module_analysis(str(contract))
@@ -792,11 +840,12 @@ def _coverage_gap_requires_test_case() -> None:
     sheet.append(["module", "demo_start", 0])
     workbook.save(coverage / "coverage.xlsx")
     state = run_module_analysis(str(contract))
+    state = _advance_to_test_generation(state)
     task = read_json(Path(state["agent_task_paths"][0]))
     gap_id = task["coverage_context"][0]["gaps"][0]["coverage_id"]
     result = _task_result(task)
     write_json(Path(task["result_path"]), result)
-    assert run_module_analysis(str(contract))["phase"] == "WAITING_ANALYSIS"
+    assert run_module_analysis(str(contract))["phase"] == "WAITING_TEST_GENERATION"
     errors = read_json(data_root / "runs" / "smoke-01" / "progress.json")["errors"]
     assert any("Coverage 缺口尚未闭环" in item["reason"] for item in errors)
     result["test_cases"] = [_test_case("U00-COV-TC1", coverage_ids=[gap_id], title="Coverage 缺口补测")]
@@ -807,7 +856,7 @@ def _coverage_gap_requires_test_case() -> None:
         "reason": "通过当前模块业务入口补齐未执行函数路径。",
     }]
     write_json(Path(task["result_path"]), result)
-    assert run_module_analysis(str(contract))["phase"] == "WAITING_REVIEW"
+    assert run_module_analysis(str(contract))["phase"] == "WAITING_INDEPENDENT_REVIEW"
 
 
 def _material_traceability_report() -> None:
@@ -816,6 +865,7 @@ def _material_traceability_report() -> None:
     inbox.mkdir()
     (inbox / "current.md").write_text("REQ-DEMO-01 当前需求。\n", encoding="utf-8")
     state = run_module_analysis(str(contract))
+    state = _advance_to_test_generation(state)
     task = read_json(Path(state["agent_task_paths"][0]))
     result = _task_result(task)
     result["evidence"].append({
@@ -835,7 +885,25 @@ def _material_traceability_report() -> None:
         title="当前需求行为验证",
     )]
     write_json(Path(task["result_path"]), result)
-    run_module_analysis(str(contract))
+    state = run_module_analysis(str(contract))
+    assert state["phase"] == "WAITING_INDEPENDENT_REVIEW"
+    review_task_path = data_root / "runs" / "smoke-01" / "agent-tasks" / "review-independent.json"
+    material = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pangea_agent.cli.main",
+            "read-material",
+            "--task",
+            str(review_task_path),
+            "--path",
+            "inbox/current.md",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert "REQ-DEMO-01 当前需求" in material.stdout
     _review(data_root, "smoke-01", status="PASS")
     state = run_module_analysis(str(contract))
     markdown = Path(state["report_path"]).read_text(encoding="utf-8")
@@ -879,7 +947,7 @@ def _unchanged_result_edit_does_not_block() -> None:
     rework_task = read_json(run_dir / "agent-tasks" / "rework" / "U00.json")
     write_json(Path(rework_task["result_path"]), _task_result(rework_task))
     state = run_module_analysis(str(contract))
-    assert state["phase"] == "WAITING_REWORK_REVIEW"
+    assert state["phase"] == "WAITING_REWORK_VERIFICATION"
 
 
 def _bounded_scope_expansion() -> None:
@@ -1025,6 +1093,7 @@ def _state_context_balances_lifecycle_and_reconfiguration() -> None:
 def _expected_behavior_not_risk() -> None:
     _, data_root, contract = _workspace()
     state = run_module_analysis(str(contract))
+    state = _advance_to_test_generation(state)
     task = read_json(Path(state["agent_task_paths"][0]))
     result = _task_result(task)
     result["risks"] = [{
@@ -1051,20 +1120,21 @@ def _expected_behavior_not_risk() -> None:
     }]
     result["test_cases"] = [_test_case("TC-EXPECTED", risk_ids=["R-EXPECTED"])]
     write_json(Path(task["result_path"]), result)
-    assert run_module_analysis(str(contract))["phase"] == "WAITING_REVIEW"
+    assert run_module_analysis(str(contract))["phase"] == "WAITING_INDEPENDENT_REVIEW"
     assert not read_json(data_root / "runs" / "smoke-01" / "progress.json")["errors"]
 
 
-def _unversioned_source_is_sample() -> None:
+def _unversioned_source_is_deliverable() -> None:
     _, data_root, contract = _workspace()
     shutil.rmtree(data_root / "repositories" / "demo" / ".git")
     state = run_module_analysis(str(contract))
+    state = _advance_to_test_generation(state)
     _write_all_analysis(state)
     run_module_analysis(str(contract))
     _review(data_root, "smoke-01", status="PASS")
     state = run_module_analysis(str(contract))
-    assert state["phase"] == "INCOMPLETE"
-    assert any(
+    assert state["phase"] == "COMPLETE"
+    assert not any(
         item.get("kind") == "source_version_unverifiable"
         for item in state["quality_report"]["unresolved"]
     )
@@ -1118,7 +1188,7 @@ def _index_checkpoint_resumes_without_live_source() -> None:
     assert progress["init_step"] == "INDEX_READY"
     (data_root / "repositories" / "demo" / "module" / "entry.c").unlink()
     state = run_module_analysis(str(contract))
-    assert state["phase"] == "WAITING_ANALYSIS"
+    assert state["phase"] == "WAITING_SOURCE_CHECKPOINT"
     assert Path(state["agent_task_paths"][0]).is_file()
 
 
@@ -1131,9 +1201,22 @@ def _agent_start_checkpoint() -> None:
         check=True,
         capture_output=True,
     )
+    assert state["agent_actions"][0]["action"] == "dispatch_agent"
+    subprocess.run(
+        [
+            sys.executable, "-m", "pangea_agent.cli.main", "record-agent-session",
+            "--run-id", "smoke-01", "--data-root", str(data_root),
+            "--role", "analysis", "--unit-id", "U00", "--task-id", "analysis-task-1",
+        ],
+        check=True,
+        capture_output=True,
+    )
     progress_path = data_root / "runs" / "smoke-01" / "progress.json"
     assert read_json(progress_path)["agent_sessions"]["analysis:U00"]["status"] == "dispatched"
-    task = read_json(task_path)
+    state = _advance_to_test_generation(state)
+    assert state["agent_actions"][0]["action"] == "continue_agent"
+    assert state["agent_actions"][0]["task_id"] == "analysis-task-1"
+    task = read_json(Path(state["agent_task_paths"][0]))
     write_json(Path(task["result_path"]), _task_result(task))
     state = run_module_analysis(str(contract))
     review_path = data_root / "runs" / "smoke-01" / "agent-tasks" / "review-independent.json"
@@ -1142,9 +1225,7 @@ def _agent_start_checkpoint() -> None:
         check=True,
         capture_output=True,
     )
-    progress = read_json(progress_path)
-    assert state["phase"] == "WAITING_REVIEW"
-    assert progress["agent_sessions"]["review"]["status"] == "dispatched"
+    assert state["phase"] == "WAITING_INDEPENDENT_REVIEW"
     subprocess.run(
         [
             sys.executable,
@@ -1163,6 +1244,8 @@ def _agent_start_checkpoint() -> None:
         check=True,
         capture_output=True,
     )
+    progress = read_json(progress_path)
+    assert progress["agent_sessions"]["review"]["status"] == "dispatched"
     _advance_to_review_comparison(data_root, "smoke-01")
     progress = read_json(progress_path)
     assert progress["agent_sessions"]["review"] == {
@@ -1184,7 +1267,277 @@ def _agent_start_checkpoint() -> None:
         check=True,
         capture_output=True,
     )
-    assert read_json(progress_path)["agent_sessions"]["review"]["status"] == "dispatched"
+    assert read_json(progress_path)["agent_sessions"]["review"]["status"] == "pending"
+
+
+def _graph_v2_stage_actions_reach_complete() -> None:
+    _, data_root, contract = _workspace()
+    run_dir = data_root / "runs" / "smoke-01"
+    progress_path = run_dir / "progress.json"
+
+    state = run_module_analysis(str(contract))
+    assert state["phase"] == "WAITING_SOURCE_CHECKPOINT"
+    assert read_json(progress_path)["workflow_version"] == 2
+    task_path = Path(state["agent_task_paths"][0])
+    assert read_json(task_path)["stage"] == "source_checkpoint"
+    assert state["agent_actions"] == [{
+        "action": "dispatch_agent",
+        "role": "analysis",
+        "stage": "source_checkpoint",
+        "session_key": "analysis:U00",
+        "unit_id": "U00",
+        "task_path": str(task_path),
+        "task_id": None,
+        "replacement_allowed": False,
+        "after_completion": "resume_run",
+    }]
+    subprocess.run(
+        [
+            sys.executable, "-m", "pangea_agent.cli.main", "record-agent-session",
+            "--run-id", "smoke-01", "--data-root", str(data_root),
+            "--role", "analysis", "--unit-id", "U00", "--task-id", "analysis-session-1",
+        ],
+        check=True,
+        capture_output=True,
+    )
+
+    for completed_stage, next_phase, next_stage in (
+        ("source_checkpoint", "WAITING_RISK_ANALYSIS", "risk_analysis"),
+        ("risk_analysis", "WAITING_TEST_GENERATION", "test_generation"),
+    ):
+        task = read_json(task_path)
+        result = _task_result(task)
+        assert result["completed_stage"] == completed_stage
+        write_json(Path(task["result_path"]), result)
+        state = run_module_analysis(str(contract))
+        assert state["phase"] == next_phase
+        assert read_json(task_path)["stage"] == next_stage
+        assert state["agent_actions"][0]["action"] == "continue_agent"
+        assert state["agent_actions"][0]["task_id"] == "analysis-session-1"
+
+    task = read_json(task_path)
+    result = _task_result(task)
+    assert result["completed_stage"] == "test_generation"
+    write_json(Path(task["result_path"]), result)
+    state = run_module_analysis(str(contract))
+    assert state["phase"] == "WAITING_INDEPENDENT_REVIEW"
+    independent_path = run_dir / "agent-tasks" / "review-independent.json"
+    independent = read_json(independent_path)
+    assert independent["stage"] == "independent_review"
+    assert state["agent_actions"][0]["action"] == "dispatch_agent"
+    subprocess.run(
+        [
+            sys.executable, "-m", "pangea_agent.cli.main", "record-agent-session",
+            "--run-id", "smoke-01", "--data-root", str(data_root),
+            "--role", "review", "--task-id", "review-session-1",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    findings = []
+    for reference in independent["analysis_tasks"]:
+        worker_task = read_json(Path(reference["task_path"]))
+        findings.extend({
+            "unit_id": reference["unit_id"],
+            "check_id": item["check_id"],
+            "finding": f"独立核对 {item['check_id']} 未发现额外问题",
+            "evidence": [f"{worker_task['unit']['repo_id']}:{item['subject_path']}:1"],
+        } for item in worker_task["semantic_check_items"])
+    write_json(Path(independent["result_path"]), {
+        "schema_version": "1.0",
+        "run_id": "smoke-01",
+        "reviewer_id": "reviewer-1",
+        "finish_reason": "stop",
+        "summary": "独立复核完成",
+        "reviewed_units": [item["unit_id"] for item in independent["analysis_tasks"]],
+        "findings": findings,
+    })
+    state = run_module_analysis(str(contract))
+    assert state["phase"] == "WAITING_COMPARISON_REVIEW"
+    comparison = read_json(run_dir / "agent-tasks" / "review.json")
+    assert comparison["stage"] == "comparison_review"
+    assert state["agent_actions"][0]["action"] == "continue_agent"
+    assert state["agent_actions"][0]["task_id"] == "review-session-1"
+    write_json(Path(comparison["result_path"]), {
+        "schema_version": "1.0",
+        "run_id": "smoke-01",
+        "reviewer_id": "reviewer-1",
+        "finish_reason": "stop",
+        "status": "PASS",
+        "summary": "对照复核完成",
+        "issues": [],
+        "reviewed_units": [item["unit_id"] for item in comparison["analysis_results"]],
+        "independent_findings": [
+            {**finding, "worker_disposition": "covered"}
+            for finding in findings
+        ],
+    })
+    state = run_module_analysis(str(contract))
+    assert state["phase"] == "COMPLETE"
+
+
+def _graph_v2_two_unit_stage_barrier() -> None:
+    _, _, contract = _workspace(repositories=("repo-a", "repo-b"))
+    state = run_module_analysis(str(contract))
+    assert state["phase"] == "WAITING_SOURCE_CHECKPOINT"
+    task_paths = [Path(path) for path in state["agent_task_paths"]]
+    assert len(task_paths) == 2
+
+    first = read_json(task_paths[0])
+    write_json(Path(first["result_path"]), _task_result(first))
+    state = run_module_analysis(str(contract))
+    assert state["phase"] == "WAITING_SOURCE_CHECKPOINT"
+    assert [action["unit_id"] for action in state["agent_actions"]] == ["U01"]
+    assert all(read_json(path)["stage"] == "source_checkpoint" for path in task_paths)
+
+    second = read_json(task_paths[1])
+    write_json(Path(second["result_path"]), _task_result(second))
+    state = run_module_analysis(str(contract))
+    assert state["phase"] == "WAITING_RISK_ANALYSIS"
+    assert all(read_json(path)["stage"] == "risk_analysis" for path in task_paths)
+    assert {action["unit_id"] for action in state["agent_actions"]} == {"U00", "U01"}
+
+
+def _graph_v2_limits_each_action_batch_to_four() -> None:
+    _, _, contract = _workspace(
+        repositories=("repo-a", "repo-b", "repo-c", "repo-d", "repo-e")
+    )
+    state = run_module_analysis(str(contract))
+    assert state["phase"] == "WAITING_SOURCE_CHECKPOINT"
+    assert len(state["agent_actions"]) == 4
+    assert len(state["agent_task_paths"]) == 4
+    for action in state["agent_actions"]:
+        task = read_json(Path(action["task_path"]))
+        write_json(Path(task["result_path"]), _task_result(task))
+
+    state = run_module_analysis(str(contract))
+    assert state["phase"] == "WAITING_SOURCE_CHECKPOINT"
+    assert [action["unit_id"] for action in state["agent_actions"]] == ["U04"]
+    final_task = read_json(Path(state["agent_actions"][0]["task_path"]))
+    write_json(Path(final_task["result_path"]), _task_result(final_task))
+
+    state = run_module_analysis(str(contract))
+    assert state["phase"] == "WAITING_RISK_ANALYSIS"
+    assert len(state["agent_actions"]) == 4
+
+
+def _graph_v2_cli_rejects_stale_stage_task() -> None:
+    _, data_root, contract = _workspace()
+    state = run_module_analysis(str(contract))
+    task_path = Path(state["agent_task_paths"][0])
+    stale_source_task = read_json(task_path)
+    write_json(Path(stale_source_task["result_path"]), _task_result(stale_source_task))
+    state = run_module_analysis(str(contract))
+    assert state["phase"] == "WAITING_RISK_ANALYSIS"
+    current_risk_task = read_json(task_path)
+    assert current_risk_task["stage"] == "risk_analysis"
+
+    write_json(task_path, stale_source_task)
+    progress_path = data_root / "runs" / "smoke-01" / "progress.json"
+    before_progress = progress_path.read_bytes()
+    for command in ("prepare-worker-result", "validate-worker-result"):
+        rejected = subprocess.run(
+            [sys.executable, "-m", "pangea_agent.cli.main", command, "--task", str(task_path)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert rejected.returncode != 0
+        assert "不是当前 Graph 阶段任务" in rejected.stderr
+        assert progress_path.read_bytes() == before_progress
+    write_json(task_path, current_risk_task)
+
+
+def _graph_v2_legacy_resume_is_read_only() -> None:
+    root = Path(tempfile.mkdtemp(prefix="pangea-legacy-resume-"))
+    _TEMP_ROOTS.append(root)
+    data_root = root / "data"
+    complete_dir = data_root / "runs" / "legacy-complete"
+    complete_dir.mkdir(parents=True)
+    write_json(complete_dir / "progress.json", {
+        "schema_version": "1.0",
+        "run_id": "legacy-complete",
+        "phase": "COMPLETE",
+    })
+    (complete_dir / "report.md").write_text("# legacy report\n", encoding="utf-8")
+    (complete_dir / "report.html").write_text("<h1>legacy report</h1>\n", encoding="utf-8")
+    before = {
+        path.relative_to(complete_dir).as_posix(): path.read_bytes()
+        for path in complete_dir.rglob("*")
+        if path.is_file()
+    }
+    result = resume_module_analysis("legacy-complete", str(data_root))
+    assert result["phase"] == "COMPLETE"
+    assert result["report_path"] == str(complete_dir / "report.md")
+    after = {
+        path.relative_to(complete_dir).as_posix(): path.read_bytes()
+        for path in complete_dir.rglob("*")
+        if path.is_file()
+    }
+    assert after == before
+
+    waiting_dir = data_root / "runs" / "legacy-waiting"
+    waiting_dir.mkdir(parents=True)
+    write_json(waiting_dir / "progress.json", {
+        "schema_version": "1.0",
+        "run_id": "legacy-waiting",
+        "phase": "WAITING_ANALYSIS",
+    })
+    waiting_before = (waiting_dir / "progress.json").read_bytes()
+    try:
+        resume_module_analysis("legacy-waiting", str(data_root))
+    except ValueError as exc:
+        assert "旧版非终态不能继续" in str(exc)
+    else:
+        raise AssertionError("旧版非终态 Run 被 Graph V2 恢复")
+    assert (waiting_dir / "progress.json").read_bytes() == waiting_before
+    assert [path.name for path in waiting_dir.iterdir()] == ["progress.json"]
+
+
+def _graph_v2_rejects_missing_or_future_completed_stage() -> None:
+    _, data_root, contract = _workspace()
+    state = run_module_analysis(str(contract))
+    assert state["phase"] == "WAITING_SOURCE_CHECKPOINT"
+    task = read_json(Path(state["agent_task_paths"][0]))
+    result_path = Path(task["result_path"])
+    progress_path = data_root / "runs" / "smoke-01" / "progress.json"
+
+    missing = _task_result(task)
+    missing.pop("completed_stage")
+    write_json(result_path, missing)
+    state = run_module_analysis(str(contract))
+    assert state["phase"] == "WAITING_SOURCE_CHECKPOINT"
+    assert read_json(progress_path)["errors"]
+
+    future = _task_result(task)
+    future["completed_stage"] = "risk_analysis"
+    write_json(result_path, future)
+    state = run_module_analysis(str(contract))
+    assert state["phase"] == "WAITING_SOURCE_CHECKPOINT"
+    reasons = [item["reason"] for item in read_json(progress_path)["errors"]]
+    assert any("当前 Graph 等待 source_checkpoint" in reason for reason in reasons)
+
+    write_json(result_path, _task_result(task))
+    state = run_module_analysis(str(contract))
+    assert state["phase"] == "WAITING_RISK_ANALYSIS"
+
+
+def _cli_prints_custom_data_root() -> None:
+    _, data_root, contract = _workspace()
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pangea_agent.cli.main",
+            "module-analysis",
+            "--contract",
+            str(contract),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert f"data_root={data_root}" in result.stdout
 
 
 def _legacy_task_uses_c_cpp_defaults() -> None:
@@ -1298,6 +1651,11 @@ end
 function B()
     changed:emit()
 end
+function C:init()
+    self.changed:connect(function()
+        error("callback failed")
+    end)
+end
 local M = { run = function() return true end }
 return M
 """,
@@ -1307,6 +1665,9 @@ return M
     emits = [item for item in scoped["framework_signals"] if item["kind"] == "signal_emit"]
     assert len(emits) == 1
     assert any(item["symbol"] == "M.run" for item in scoped["functions"])
+    nested_error = next(item for item in scoped["calls"] if item["callee"] == "error")
+    assert nested_error["function_symbol"].startswith("<anonymous@")
+    assert nested_error["owner_function_symbol"] == "C:init"
 
 
 def _lua_coverage_path_disambiguates_duplicate_symbols() -> None:
@@ -1342,6 +1703,26 @@ def _lua_coverage_path_disambiguates_duplicate_symbols() -> None:
         {**base, "function": "Beta.init"}
     ], inventory)
     assert dotted["matched"][0]["matches"][0]["line"] == 4
+
+
+def _legacy_inventory_coverage_defaults_to_c_cpp() -> None:
+    files = [{
+        "repo_id": "repo-a",
+        "path": "src/legacy.c",
+        "functions": [{"symbol": "legacy_start", "line": 12}],
+    }]
+    record = {
+        "coverage_type": "function",
+        "module": "",
+        "path": "",
+        "function": "legacy_start",
+        "count": 0,
+    }
+    for legacy_file in (files[0], {**files[0], "language": "c_cpp"}):
+        report = match_coverage_records([record], {"files": [legacy_file]})
+        assert len(report["matched"]) == 1
+        assert not report["ambiguous"]
+        assert not report["unmatched"]
 
 
 def _coverage_ignores_context_symbol_collisions() -> None:
@@ -1418,6 +1799,7 @@ return Component
     state = run_module_analysis(str(contract))
     assert len(state["coverage_report"]["matched"]) == 1
     assert not state["coverage_report"]["ambiguous"]
+    state = _advance_to_test_generation(state)
     task = read_json(Path(state["agent_task_paths"][0]))
     gap_id = task["coverage_context"][0]["gaps"][0]["coverage_id"]
     assert task["coverage_context"][0]["path"] == "module/entry.lua"
@@ -1431,7 +1813,7 @@ return Component
     }]
     write_json(Path(task["result_path"]), result)
     state = run_module_analysis(str(contract))
-    assert state["phase"] == "WAITING_REVIEW"
+    assert state["phase"] == "WAITING_INDEPENDENT_REVIEW"
     assert len(state["coverage_report"]["matched"]) == 1
     assert not state["coverage_report"]["ambiguous"]
 
@@ -1549,16 +1931,24 @@ SCENARIOS: tuple[tuple[str, Scenario], ...] = (
     ("范围只扩到直接调用与相关上下文", _bounded_scope_expansion),
     ("状态上下文均衡保留生命周期与重配置", _state_context_balances_lifecycle_and_reconfiguration),
     ("预期行为不能列为风险", _expected_behavior_not_risk),
-    ("无法确认源码版本时只出样本报告", _unversioned_source_is_sample),
+    ("普通源码目录不因缺少 Git 版本阻塞交付", _unversioned_source_is_deliverable),
     ("SOURCE_READY 恢复只使用冻结输入", _source_checkpoint_uses_frozen_inputs),
     ("INDEX_READY 恢复不再读取活动源码", _index_checkpoint_resumes_without_live_source),
     ("Agent 启动状态写入 Run checkpoint", _agent_start_checkpoint),
+    ("Graph V2 阶段与 Agent action 严格推进到 COMPLETE", _graph_v2_stage_actions_reach_complete),
+    ("Graph V2 两单元阶段 barrier", _graph_v2_two_unit_stage_barrier),
+    ("Graph V2 每批最多返回四个 Agent action", _graph_v2_limits_each_action_batch_to_four),
+    ("Graph V2 CLI 拒绝旧阶段 task", _graph_v2_cli_rejects_stale_stage_task),
+    ("Graph V2 只读旧 COMPLETE 并拒绝旧非终态", _graph_v2_legacy_resume_is_read_only),
+    ("Graph V2 拒绝缺失或越级 completed_stage", _graph_v2_rejects_missing_or_future_completed_stage),
+    ("CLI 回显自定义 data_root", _cli_prints_custom_data_root),
     ("已知 C 宏解析误报不冒充真实缺口", _known_c_macro_parse_artifacts),
     ("旧 WorkerTask 使用 C/C++ 默认规则", _legacy_task_uses_c_cpp_defaults),
     ("Lua openUBMC task 冻结语言与规则", _lua_openubmc_task_metadata),
     ("Lua 直接依赖保留 context 边界并生成框架检查", _lua_direct_dependency_keeps_context_boundary_and_framework_checks),
     ("Lua parser 正确绑定多赋值与 self signal", _lua_parser_binds_direct_assignments_and_self_signals),
     ("Lua 重名函数 Coverage 使用路径消歧", _lua_coverage_path_disambiguates_duplicate_symbols),
+    ("旧 inventory Coverage 默认按 C/C++ 匹配", _legacy_inventory_coverage_defaults_to_c_cpp),
     ("Coverage 匹配忽略 context 重名符号", _coverage_ignores_context_symbol_collisions),
     ("Coverage source 缺口推进后仍保持匹配", _coverage_context_collision_keeps_source_gap_through_advance),
     ("Lua context inventory 按源码仓隔离", _lua_context_inventory_isolated_by_repository),
@@ -1572,7 +1962,7 @@ def main() -> None:
     for name, scenario in SCENARIOS:
         scenario()
         print(f"PASS  {name}")
-    print(f"PASS  V1 smoke ({len(SCENARIOS)} scenarios)")
+    print(f"PASS  Graph V2 smoke ({len(SCENARIOS)} scenarios)")
 
 
 if __name__ == "__main__":

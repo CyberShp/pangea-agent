@@ -53,19 +53,28 @@ PowerShell: & '.\.venv\Scripts\python.exe' -m pangea_agent.cli.main prepare-revi
 
 `stage=independent_review` 时，在一次调用内按 task 固定顺序完成全部
 `semantic_check_items`、其余 `failure_signal_context` 和正常生命周期反向扫描。每个 semantic
-check 必须写一条同 `check_id` 的 finding；额外发现使用稳定且有含义的 check_id。finding 只写从
+check 必须写一条同 `check_id` 的 finding；额外发现使用稳定且有含义的 check_id。每条 finding 只承载一个可独立判定为 `covered/missing/contradiction` 的触发和终态；同一 lifecycle check 发现多个独立失败点或需要不同 RiskCard/TestCase 的结论时，保留原 `check_id` 的主 finding，并用稳定派生 ID（如 `<check_id>:nil-config`、`<check_id>:uninitialized-update`）逐条拆开。不得把多个独立结论写进一条 finding，让 comparison 用其中一个已覆盖结论放行整条。finding 只写从
 源码、当前资料和 Coverage 独立得到的结论与证据，不写 worker 是否覆盖，也不读取、搜索或推测
 worker result 路径。结果写入 task 指定的独立复核结果文件，符合
-`schemas/independent_review_result.schema.json`，然后只返回 `STAGE review independent`。该阶段不输出
-PASS、REWORK 或 UNRESOLVED。独立资料结论不能只看 manifest：从每个 analysis task 取得 worker task
-路径，对准备形成 finding 的资料用当前客户端选定的解释器执行 `-m pangea_agent.cli.main read-material --task
-"<worker task JSON>" --path "<manifest path>"`。没有读到正文时不得断言资料未点名当前函数或没有相关
+`schemas/independent_review_result.schema.json`并通过提交检查后结束当前回合。该阶段不输出
+PASS、REWORK 或 UNRESOLVED；主 Agent 不解析 reviewer 回复文本，而是直接恢复 graph。独立资料结论不能只看 manifest：对准备形成 finding 的资料用当前客户端选定的解释器执行 `-m pangea_agent.cli.main read-material --task
+"<current review task JSON>" --path "<manifest path>"`。没有读到正文时不得断言资料未点名当前函数或没有相关
 需求；资料正文直接点名 source_scope 中的 API/函数时，独立 finding 必须记录它是当前资料。
 
 主 Agent 恢复同一会话并提供 `stage=comparison_review` task 后，先读取已经冻结的独立 finding，
 再读取 worker result。`prepare-review-result` 已把独立 finding 原样写入结果骨架；只在每个现有
 对象上补充 `worker_disposition`，不得重建 `independent_findings` 数组，不得改写 finding 正文、
-evidence、unit_id 或 check_id；差异写入 issue。随后执行完整测试依据闭环复核：风险驱动是基础，所有
+evidence、unit_id 或 check_id；差异写入 issue。先于资料/Coverage 数量闭环，对每张 RiskCard 从其
+linked failure path 和冻结源码独立重放一次完整状态向量：按执行顺序列出所有注册/回调/清理，逐项
+写返回值、错误原因、计数器、布尔状态、集合成员和未执行操作；再与 RiskCard 及每条关联 TestCase
+逐字段对照。任一字段没有证据、次数被概括扩大或终态不同，立即生成 issue，不能等到返工验证才
+首次检查。完成该步骤后，所有
+finding 必须先拆成其中每个有方向的结论：`应保留风险`、`应排除/调用方误用`、`unresolved` 或
+`正常行为`。只有这些结论与 worker result 全部同向时，整条 finding 才能标为 `covered`；任一结论
+相反时整条 finding 标为 `contradiction` 并生成 issue。独立 finding 明确某路径不构成产品风险，
+而 worker 对同一路径生成 RiskCard/TestCase 时，不能用该 finding 中另一条已覆盖结论抵消，必须
+`REWORK`。
+独立阶段若仍把多个可独立生成风险或用例的终态合在一条 finding，comparison 必须逐个确认 worker 均有对应 failure path、RiskCard 和需要时的 TestCase；缺任一项就标 `missing` 并形成 issue，不得以“总体同向”放行。随后执行完整测试依据闭环复核：风险驱动是基础，所有
 `Blackbox-ready/Graybox-ready` 风险必须至少有真实风险用例；对每份 `decision=current` 资料，列出其中
 与当前分析对象相关且可测试的需求和设计行为，先形成正文需求 ID 集合，再与全部 TestCase 的
 `linked_requirement_ids` 并集逐项对照；每个需求 ID 都必须出现，不能用 Coverage 已执行、源码已符合
@@ -100,12 +109,16 @@ covered。无法得到唯一一致结论时生成 issue，不得 PASS。
 - 清理反证：风险声称关闭、销毁、注销或释放后仍残留注册、事件、引用或资源时，必须在接受该风险前独立核对对象自身以及操作系统、运行库或框架的清理语义。普通顺序关闭已经消除状态时，不能用未写入 trigger 的重复句柄、并发已返回事件批次或延迟回调替原结论补条件；应判为 contradiction 并要求删除或重写风险和用例。冻结范围不足以确认外部语义时只能要求降为 unresolved，不能直接 PASS。
 - 调用合法性：被调用函数已经返回失败时，后续路径必须是公开契约允许的正常恢复、重试、关闭或清理。若结论依赖调用方忽略失败，再调用只适用于成功状态或已绑定成员的 API，该路径属于调用方误用，不能作为风险、返工要求或测试；复核应继续检查正常失败清理是否安全。
 - 用例：每条 TestCase 必须保留 `linked_risk_ids`、`linked_requirement_ids`、`linked_material_ids`、`linked_coverage_ids` 四个数组且至少一个非空。风险验证用例必须真实触发关联风险；需求/设计用例必须能回到当前 `decision=current` 资料；Coverage-only 用例可以只关联真实 `COV:...` gap。逐条确认关联与实际验证目标一致，禁止用“同一调用链”或“回归对照”把无关风险挂到资料/Coverage 用例上。步骤和预期结果一一对应，观测与清理可执行。前置条件只能描述第 1 步前已经成立的状态；测试开始后的配置切换、销毁、重建、恢复或再次发送必须是带对应预期的显式步骤。若最终状态依赖某次重配置，而该操作只出现在前置条件的“随后/之后”叙述中，必须 `REWORK`。故障环境只制造触发条件，不能预先制造待验证结果；失败原因必须对应真实对象状态，资源释放或进程退出后不得继续操作失效对象，必须显式重建后再验证恢复。同一条 TestCase 只能有一种构建类型和一种运行模式；如果步骤中从 Debug 切到 Release、从 epoll 切到 kevent，必须 `REWORK` 并拆成不同用例，不能把它当成预期唯一的普通对照步骤。
-- 风险与用例一致性：在给出 `PASS` 前，对每个 `linked_risk_id` 单独建立一次执行顺序，把该风险的 `title`、`trigger`、`system_result`、`external_observation`、`exclusion_condition` 与关联 TestCase 的 `steps`、`expected_results`、`observability` 逐项对照。返回值、错误原因、计数、布尔状态、集合成员及回调先后顺序只要有一项不同，或 RiskCard 混入关联用例没有执行的第二个终态，就是会改变测试判定的语义矛盾，必须生成 issue 并 `REWORK`；不得因为风险主题或大致机制已被用例覆盖就标为 `covered`。
+- 风险与用例一致性：在把 finding 标为 `covered` 或给出 `PASS` 前，对每个 `linked_risk_id` 单独建立一次执行顺序，把该风险的 `title`、`trigger`、`system_result`、`external_observation`、`exclusion_condition` 与关联 TestCase 的 `steps`、`expected_results`、`observability` 逐项对照。返回值、错误原因、计数、布尔状态、集合成员及回调先后顺序只要有一项不同，或 RiskCard 混入关联用例没有执行的第二个终态，就是会改变测试判定的语义矛盾，必须生成 issue 并 `REWORK`；不得因为风险主题或大致机制已被用例覆盖就标为 `covered`。
+- 替代触发与 Lua 精确值：`trigger` 中每个“或”条件必须分别重放；到达同一失败点且风险相关的系统结果、外部观测相同时可在一张 RiskCard 中参数化表达，但每个输入对应的内部值必须精确保留；失败点或风险结果不同却共用一张卡时必须形成 issue。Lua 结果严格区分 `nil`、`false`、`0`、空字符串和空表，不得把未赋值状态改写成布尔近似值后仍标 `covered`。
+- 共享运行时隔离：类表、模块表、全局注册表或同一 VM 中共享的 callback/订阅存在时，逐条核对用例的前置和清理是否真的重置共享状态。释放或重建实例不能冒充清除类级/模块级注册；若用例顺序会改变后续计数、回调顺序或目标实例，必须要求独立 VM/等效确定性重置，或把残留显式纳入步骤和预期。Lua 用例若以清理 `package.loaded` 代替新 VM，必须同时清除并重新加载所有仍持有旧类表、signal、callback 或闭包引用的上层模块，且丢弃测试侧旧引用；只清底层模块不算等效重置。声称“无残留注册”却没有源码清除入口时必须形成 issue。
 - 分支触发：用例依赖大小、数量、队列深度或批量门槛时，必须把实际比较式转成不会跨分支的明确取值范围；“小读取”“一批数据”“低于容量”不足以证明命中目标分支。用例依赖异步回调时，独立确认步骤真的触发了 flush、poll 或 completion 及其门槛，不能把请求入队当作回调必然发生。
 - 返工边界：缺少关键业务流程、异常/生命周期路径，遗漏明显必须的风险或测试用例，或者风险的最终状态、外部观测、恢复方式与测试预期不符时，允许 `REWORK`。这些字段决定测试人员会观察什么，不属于纯措辞。JSON 字段、命令格式、路径格式、ID 冲突、证据待确认和不改变触发条件/终态/观测/测试预期的文字润色不得触发正式返工。
 - 历史用例与 Coverage：历史用例仅能作为表达/环境参考；函数执行次数不能证明分支或风险已经覆盖。Coverage 中没有某函数或分支记录表示“未提供/未知”，不得写成执行次数为 0 或未覆盖。只有 worker task 中确定生成的 `coverage_context[].gaps[]` 才进入强制 Coverage 测试闭环。
 - 资料处理：用 `read-material` 独立读取 worker 判为 `current` 或 `context` 的资料正文，再判断 worker 是否正确处理；不得根据 worker 的 reason 或文件名代替正文。每份用于结论或排除理由的资料都在顶层 evidence 保留真实 chunk_id/location，且报告可展示引用。`decision=current` 表示与当前分析对象相关，必须核对其中全部可测试需求/设计行为已经进入用例；旧版、冲突或无关资料说明为何不进入当前结论即可。漏读、把冲突资料当成现行规格，或把相关资料降成 context 以绕过用例生成，都属于语义问题。
 - 资料决策：资料直接点名本单元 API/函数，或定义其需求 ID、返回值、状态转换和外部行为时，必须是 `decision=current`。即使 worker 用例填写了部分 `linked_requirement_ids`，把这类需求资料标为 `context`，或正文需求 ID 集合中仍有任一 ID 没进入 TestCase，都会导致报告丢失资料闭环，必须生成 issue，不能 PASS。
+- 重试与可控边界：资料承诺失败后可重试/恢复时，必须有用例实际执行失败、移除故障、重试和恢复成功；只测首轮失败不能算该条款闭环。函数指针或注入回调实现不在冻结范围时，不接受仅凭“可能有部分副作用”扩出的 Developer-confirm 风险；这种未知实现猜测不适用“高影响 unresolved 保留”规则，必须形成 issue 并要求删除，不能以 Developer-confirm 出现在报告中。若可用确定性桩配置首次无副作用失败、随后成功，应以它验证调用方状态与调用次数，不推测真实回调内部后果。
+- 资料预期：`decision=current` 资料已经规定正确结果、源码实现与之冲突时，用例预期必须采用资料契约；源码错误现状只能作为 FAIL 判据。`expected_results` 每项整句都是通过判据；若句首写源码错误值，即使句尾补“实测该值即 FAIL/复现风险”，仍然是错误 expected result，必须形成 issue。逐条用“按这句话执行后，用例何时 PASS”反查，不能被同句的失败说明放行。
 - 图片：`visual_findings` 必须指向 manifest 中真实附件，观察内容须来自实际可见图像。无法查看的图片及其影响必须显式保留为不完整，不能由文件名、正文或模型常识代替。
 
 ## 判定规则

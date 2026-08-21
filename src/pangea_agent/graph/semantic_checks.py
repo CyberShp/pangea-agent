@@ -71,7 +71,11 @@ def build_runtime_semantic_checks(
                 "context_paths": [path],
             })
 
-        framework_signals = item.get("framework_signals", [])
+        framework_signals = (
+            item.get("framework_signals", [])
+            if "openubmc" in unit.frameworks
+            else []
+        )
         lifecycle_signals = [
             signal
             for signal in framework_signals

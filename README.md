@@ -10,8 +10,9 @@ Python 只负责确定性解析、索引、任务拆分、状态、校验和报�
 
 DSH 只读取当前仓库的 `AGENTS.local.md`、`.agents/skills/pangea-agent/` 和
 `.agents/pangea/dsh.md`，不安装全局 PANGEA 规则，也不使用独立 graph 或 bridge。根 Agent
-负责自然语言冷启动、Run 创建、持续子 Agent 派发和 graph 推进；analysis-worker 固定分为
-checkpoint、risks、tests 三次持续会话，独立复核、对照复核和返工验证沿用同一 reviewer。
+负责自然语言冷启动、Run 创建、持续子 Agent 派发和 graph 推进。CLI 返回的
+`action=<JSON>` 唯一决定客户端是派发还是续接、使用哪个 task 与执行哪个 stage；
+analysis-worker 每回合只执行 task 当前 stage，独立复核、对照复核和返工验证沿用同一 reviewer。
 
 ## 初始化
 
@@ -85,16 +86,18 @@ pangea-data/
 & ".\.venv\Scripts\python.exe" -m pangea_agent.cli.main resume-run --run-id "<run-id>" --data-root "pangea-data"
 ```
 
-Run 内部按以下阶段推进：
+Run 内部由 graph 按以下语义阶段推进：
 
 ```text
 准备源码、资料和 inventory
-→ WAITING_ANALYSIS（最多 4 个 analysis-worker）
-→ WAITING_REVIEW（reviewer 只看冻结输入，形成独立结论）
-→ WAITING_REVIEW_COMPARISON（同一 reviewer 对照 worker 结果）
-→ 可选 WAITING_REWORK（最多一次）
-→ 可选 WAITING_REWORK_REVIEW（原 reviewer 验证）
-→ COMPLETE / INCOMPLETE
+→ source_checkpoint（最多 4 个 analysis-worker）
+→ risk_analysis（续接同一 worker）
+→ test_generation（续接同一 worker）
+→ independent_review（reviewer 只看冻结输入）
+→ comparison_review（同一 reviewer 对照 worker 结果）
+→ 可选 rework（最多一次）
+→ 可选 rework_verification（原 reviewer 验证）
+→ 报告
 ```
 
 用户指定的 `source_scope` 是起点，不是盲目的硬边界。准备阶段会做一次有界扩展：
@@ -105,8 +108,9 @@ worker 只读取 task 为当前单元声明的语言/框架规则；tests 阶段
 风险进入报告前必须核对入口可达性、调用方限制或补救、规格/API 定义和已有
 测试；已经被定义为预期行为的结论不能列为风险。该规则不增加新的 Agent 类型或复核层。
 
-当前 Agent 读取 `pangea-data/runs/<run-id>/agent-tasks/`，把结果写到 task 声明的
-`result_path`，再使用 `resume-run --run-id <run-id>` 推进当前 Run。新主 Agent 会话不会扫描历史 Run 自动选择恢复目标；OpenCode 恢复原会话或 DSH 切换回历史会话时沿用该会话已经持有的 `run_id`。worker 禁止派生子 Agent；返工 worker 可以替代失败的原 worker，但不增加返工轮次；返工复核必须沿用原 reviewer，否则生成不完整报告。
+当前 Agent 只把 action 的 `task_path` 交给对应持续子 Agent。子 Agent 在 task 声明的
+`result_path` 写入结果并通过提交检查后，主 Agent 立即使用
+`resume-run --run-id <run-id> --data-root <data_root>` 推进 Run，不解析子 Agent 回复中的文本标记。新主 Agent 会话不会扫描历史 Run 自动选择恢复目标；OpenCode 恢复原会话或 DSH 切换回历史会话时沿用该会话已经持有的 `run_id`。worker 禁止派生子 Agent；只有 action 明确允许时才可替代失败的原 worker，且不增加返工轮次；返工复核必须沿用原 reviewer，否则生成不完整报告。
 
 截断、格式错误、任务摘要不匹配、范围遗漏或缺少证据的结果不会被接受。最终固定输出：
 

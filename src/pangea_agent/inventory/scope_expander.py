@@ -9,6 +9,7 @@ from .source_languages import (
     C_CPP_HEADER_SUFFIXES,
     C_CPP_SOURCE_SUFFIXES,
     C_CPP_SUFFIXES,
+    LANGUAGE_CAPABILITIES,
 )
 
 SOURCE_SUFFIXES = C_CPP_SOURCE_SUFFIXES
@@ -33,6 +34,7 @@ _INLINE_DEF_RE = re.compile(
 )
 _DECL_RE = re.compile(r"^[ \t]*(?:extern[ \t]+)?(?:[A-Za-z_]\w*[ \t*]+)+([A-Za-z_]\w*)[ \t]*\([^;{}]*\)[ \t]*;", re.MULTILINE)
 _DEF_RE = re.compile(r"^[ \t]*(?!if\b|for\b|while\b|switch\b)(?:[A-Za-z_]\w*[ \t*]+)+([A-Za-z_]\w*)[ \t]*\([^;{}]*\)[ \t\n]*\{", re.MULTILINE)
+_SCOPE_EXPANDERS = {"lua": expand_lua_context}
 
 
 def expand_analysis_scope(repositories: list[dict], requested_scopes: list[str], *, target: str, focus: list[str]) -> dict:
@@ -164,15 +166,23 @@ def expand_analysis_scope(repositories: list[dict], requested_scopes: list[str],
                 if score >= 10:
                     target_context_candidates[group_index].append((score, relative))
 
-        lua_context, lua_unresolved, lua_resolved = expand_lua_context(
-            root, code_paths, repo_groups
-        )
-        context_files.extend(lua_context)
-        resolved_dependencies.extend(lua_resolved)
-        unresolved_dependencies.extend(
-            {"repo_id": repo_id, **item}
-            for item in lua_unresolved
-        )
+        for capability in LANGUAGE_CAPABILITIES:
+            if capability.scope_provider is None:
+                continue
+            expander = _SCOPE_EXPANDERS.get(capability.scope_provider)
+            if expander is None:
+                raise ValueError(
+                    f"unsupported scope provider: {capability.scope_provider}"
+                )
+            provider_context, provider_unresolved, provider_resolved = expander(
+                root, code_paths, repo_groups
+            )
+            context_files.extend(provider_context)
+            resolved_dependencies.extend(provider_resolved)
+            unresolved_dependencies.extend(
+                {"repo_id": repo_id, **item}
+                for item in provider_unresolved
+            )
 
         for group_index, candidates in enumerate(target_context_candidates):
             selected = sorted(candidates, key=lambda item: (-item[0], item[1]))[:MAX_TARGET_CONTEXT_PER_GROUP]
