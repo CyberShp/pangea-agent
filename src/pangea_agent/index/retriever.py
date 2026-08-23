@@ -16,6 +16,10 @@ SYNONYMS = {
 }
 
 
+def _evidence_role(tags: list[str]) -> str:
+    return "reference_only" if "reference_only" in tags or "testcase_reference" in tags else "evidence"
+
+
 def _terms(query: str) -> list[str]:
     terms = [value for value in re.split(r"[\s,，;；/]+", query.strip()) if value]
     lowered = query.lower()
@@ -66,7 +70,7 @@ def search_evidence(index_path: Path, query: str, top_k: int = 10) -> list[dict[
             "location": location,
             "content": content,
             "tags": parsed_tags,
-            "evidence_role": "reference_only" if "testcase_reference" in parsed_tags else "evidence",
+            "evidence_role": _evidence_role(parsed_tags),
         })
     return results
 
@@ -88,6 +92,7 @@ def read_material(index_path: Path, path: str) -> list[dict[str, object]]:
             if line_start and line_end
             else item_path
         )
+        parsed_tags = json.loads(tags or "[]")
         results.append({
             "chunk_id": chunk_id,
             "source_type": source_type,
@@ -95,6 +100,7 @@ def read_material(index_path: Path, path: str) -> list[dict[str, object]]:
             "path": item_path,
             "location": location,
             "content": content,
-            "tags": json.loads(tags or "[]"),
+            "tags": parsed_tags,
+            "evidence_role": _evidence_role(parsed_tags),
         })
     return results

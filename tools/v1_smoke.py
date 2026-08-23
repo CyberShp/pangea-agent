@@ -1662,6 +1662,219 @@ def _material_traceability_report() -> None:
     assert "### 资料引用" in markdown
 
 
+def _confirmed_historical_issues_are_frozen_as_references() -> None:
+    _, data_root, contract = _workspace()
+    inbox = data_root / "inbox"
+    inbox.mkdir()
+    (inbox / "current.md").write_text(
+        "REQ-HIST-01 重连成功后，新实例不得接收旧会话状态。\n",
+        encoding="utf-8",
+    )
+    catalog_root = data_root / "asset-catalog"
+    (catalog_root / "historical-issues").mkdir(parents=True)
+    (catalog_root / "historical-issues" / "draft-asset.json").write_text(
+        '{"issues":[{"issue_id":"draft-only-issue"}]}\n',
+        encoding="utf-8",
+    )
+    confirmed_id = "asset-incident-r1-issue-001"
+    excluded_id = "asset-incident-r1-issue-002"
+    write_json(catalog_root / "historical-issue-reviews.json", {
+        "schema_version": "1.0",
+        "updated_at": "2026-08-24T00:00:00Z",
+        "reviews": {
+            confirmed_id: {
+                "issue_id": confirmed_id,
+                "asset_id": "asset-incident",
+                "decision": "confirmed",
+                "reviewed_at": "2026-08-24T00:00:00Z",
+                "issue": {
+                    "issue_id": confirmed_id,
+                    "status": "confirmed",
+                    "non_binding": True,
+                    "review_required": False,
+                    "title": "重连清理残留",
+                    "symptom": "重连后旧状态影响新实例。",
+                    "trigger_conditions": ["首次连接清理失败后再次连接"],
+                    "impact": ["新实例收到旧状态"],
+                    "root_causes": ["清理完成前允许重连"],
+                    "resolutions": ["等待清理完成后再重连"],
+                    "verification": ["新实例不接收旧状态"],
+                    "limitations": [],
+                    "missing_fields": [],
+                    "confidence": "high",
+                    "evidence": [{
+                        "location": "inbox/incident.md#line=3",
+                        "excerpt": "cleanup timed out",
+                    }],
+                },
+            },
+            excluded_id: {
+                "issue_id": excluded_id,
+                "asset_id": "asset-incident",
+                "decision": "excluded",
+                "reviewed_at": "2026-08-24T00:00:00Z",
+            },
+        },
+    })
+    write_json(catalog_root / "methodology-candidates.json", {
+        "schema_version": "1.0",
+        "candidates": [{"title": "本轮不应进入 Run"}],
+    })
+
+    state = run_module_analysis(str(contract))
+    run_dir = data_root / "runs" / "smoke-01"
+    historical_path = f"historical-issues/{confirmed_id}.md"
+    frozen_history = run_dir / "inputs" / "frozen" / "materials" / historical_path
+    assert frozen_history.is_file()
+    frozen_text = frozen_history.read_text(encoding="utf-8")
+    assert "重连清理残留" in frozen_text
+    assert "历史问题参考" in frozen_text
+    assert not (frozen_history.parent / f"{excluded_id}.md").exists()
+    assert not (frozen_history.parent / "draft-only-issue.md").exists()
+    assert not (run_dir / "inputs" / "frozen" / "materials" / "methodology-candidates.json").exists()
+    manifest = read_json(run_dir / "inputs" / "source-manifest.json")
+    catalog_paths = {item["path"] for item in manifest["material_catalog"]}
+    assert historical_path in catalog_paths
+    assert "historical-issues/draft-only-issue.md" not in catalog_paths
+
+    source_task_path = Path(state["agent_task_paths"][0])
+    source_task = read_json(source_task_path)
+    write_json(Path(source_task["result_path"]), _task_result(source_task))
+    _validate_worker_task(source_task_path)
+    state = run_module_analysis(str(contract))
+    assert state["phase"] == "WAITING_RISK_ANALYSIS"
+
+    risk_task_path = Path(state["agent_task_paths"][0])
+    risk_task = read_json(risk_task_path)
+    material = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pangea_agent.cli.main",
+            "read-material",
+            "--task",
+            str(risk_task_path),
+            "--path",
+            historical_path,
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    chunks = json.loads(material.stdout)
+    assert chunks
+    assert "historical_issue" in chunks[0]["tags"]
+    assert chunks[0]["evidence_role"] == "reference_only"
+    assert "重连清理残留" in chunks[0]["content"]
+
+    risk_result = _task_result(risk_task)
+    risk_result["analysis_checkpoint"]["material_decisions"] = [{
+        "path": "inbox/current.md",
+        "decision": "current",
+        "reason": "当前需求给出重连通过标准。",
+    }, {
+        "path": historical_path,
+        "decision": "current",
+        "reason": "人工确认的历史问题与当前重连流程相关。",
+    }]
+    historical_evidence = {
+        "chunk_id": chunks[0]["chunk_id"],
+        "location": chunks[0]["location"],
+        "observation": "已确认历史问题“重连清理残留”用于重放当前触发。",
+    }
+    risk_result["evidence"].append(historical_evidence)
+    risk_result["risks"] = [{
+        "risk_id": "U00-R-HISTORY",
+        "title": "重连前清理未完成",
+        "affected_paths": risk_task["unit"]["source_scope"],
+        "dfx": ["可靠性与容错"],
+        "severity": "Medium",
+        "confidence": "medium",
+        "trigger": "旧会话清理失败后发起新连接",
+        "system_result": "新实例继承旧会话状态",
+        "external_observation": "新实例收到旧状态",
+        "exclusion_condition": "旧会话已完全清理",
+        "upstream_semantics": {
+            "reachability": "重连入口可达",
+            "caller_constraints": "调用方未阻断该路径",
+            "documented_behavior": "REQ-HIST-01 要求新实例不接收旧状态",
+            "existing_tests": "当前无确认回归用例",
+            "conclusion": "risk_remains",
+        },
+        "translation_status": "Blackbox-ready",
+        "status": "pending",
+        "evidence": [historical_evidence],
+    }]
+    risk_result["analysis_checkpoint"]["failure_paths"][0].update({
+        "linked_risk_ids": ["U00-R-HISTORY"],
+        "failure": "旧会话清理不完整",
+        "final_states": "新实例保留旧会话状态",
+        "disposition": "risk",
+    })
+    write_json(Path(risk_task["result_path"]), risk_result)
+    rejected = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pangea_agent.cli.main",
+            "validate-worker-result",
+            "--task",
+            str(risk_task_path),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert rejected.returncode != 0
+    assert "必须同时引用当前源码证据" in rejected.stderr
+
+    risk_result["risks"][0]["evidence"].append(risk_result["evidence"][0])
+    write_json(Path(risk_task["result_path"]), risk_result)
+    _validate_worker_task(risk_task_path)
+    state = run_module_analysis(str(contract))
+    assert state["phase"] == "WAITING_TEST_GENERATION"
+
+    test_task_path = Path(state["agent_task_paths"][0])
+    test_task = read_json(test_task_path)
+    test_result = _task_result(test_task)
+    test_result["evidence"] = risk_result["evidence"]
+    test_result["business_flows"] = risk_result["business_flows"]
+    test_result["risks"] = risk_result["risks"]
+    test_result["analysis_checkpoint"] = risk_result["analysis_checkpoint"]
+    test_result["analysis_checkpoint"]["counterexamples_checked"] = [
+        "历史故障只作失败观测，通过标准来自 REQ-HIST-01。",
+    ]
+    case = _test_case(
+        "U00-TC-HISTORY",
+        risk_ids=["U00-R-HISTORY"],
+        requirement_ids=["REQ-HIST-01"],
+        material_ids=[f"MAT:{historical_path}", "MAT:inbox/current.md"],
+        title="重连清理历史问题回归",
+    )
+    case["steps"][0] = {
+        "action": "完成旧会话清理后发起新连接",
+        "expected_result": "新连接实例不接收旧会话状态",
+        "failure_observation": "新连接实例收到旧会话状态",
+    }
+    test_result["test_cases"] = [case]
+    write_json(Path(test_task["result_path"]), test_result)
+    _validate_worker_task(test_task_path)
+    state = run_module_analysis(str(contract))
+    assert state["phase"] == "WAITING_INDEPENDENT_REVIEW"
+    _review(data_root, "smoke-01", status="PASS")
+    state = run_module_analysis(str(contract))
+    assert state["phase"] == "COMPLETE"
+    markdown = Path(state["report_path"]).read_text(encoding="utf-8")
+    html_report = Path(state["html_report_path"]).read_text(encoding="utf-8")
+    for expected in (
+        historical_path,
+        "重连清理残留",
+        f"MAT:{historical_path}",
+        "MAT:inbox/current.md",
+    ):
+        assert expected in markdown and expected in html_report
+
+
 def _multi_repo_isolation() -> None:
     _, data_root, contract = _workspace(repositories=("repo-a", "repo-b"))
     state = run_module_analysis(str(contract))
@@ -3473,7 +3686,7 @@ def _graph_control_contract_reaches_all_clients() -> None:
     assert "never compare actions to decide whether to stop" in dsh_skill
     assert "the same action, stop truthfully" not in dsh_skill
     dsh_adapter = (root / ".agents/pangea/dsh.md").read_text()
-    assert "`dsh-pangea-companion` 内置的唤醒策略" in dsh_adapter
+    assert "统一插件 `dsh-pangea` 内置的唤醒策略" in dsh_adapter
     assert "成功返回的 action 一律按其内容执行" in dsh_adapter
     for relative_path in (
         ".opencode/agents/analysis-worker.md",
@@ -3542,6 +3755,7 @@ SCENARIOS: tuple[tuple[str, Scenario], ...] = (
     ("空 Coverage 输入拒绝伪造缺口结论", _empty_coverage_rejects_claimed_gap),
     ("风险阶段可先规划 Coverage 且用例阶段必须闭环", _risk_stage_can_plan_coverage_before_test_ids_exist),
     ("相关资料必须闭环且报告不展示排除章节", _material_traceability_report),
+    ("已确认历史问题作为只读回归参考进入 Run", _confirmed_historical_issues_are_frozen_as_references),
     ("多 repo 单元隔离", _multi_repo_isolation),
     ("返工期间未返工结果编辑不阻塞", _unchanged_result_edit_does_not_block),
     ("范围只扩到直接调用与相关上下文", _bounded_scope_expansion),

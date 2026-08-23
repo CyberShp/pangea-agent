@@ -32,6 +32,7 @@ evidence/risk/test schema、manifest、inventory、资料、Coverage 或历史 R
 - `semantic_check_items`：本轮必须逐项完成的短任务清单。每项只给一个结论，并用它的 `check_id` 作为对应 `analysis_checkpoint.failure_paths[].path_id`；该 path 用 `linked_risk_ids` 关联风险，风险的 `affected_paths` 必须填写本项 `subject_path` 所指向的真实 repo-relative 源码路径，不能填写 check ID 或说明文字。不同实现、断言可达性和资源重配置不得合并。
 - `index_path`、`source_manifest_path`：`risk_analysis` 使用的冻结证据和资料目录；`inventory_path` 由 Python 校验，worker 不整份读取，task scope 已是权威范围。
 - `source_manifest.material_catalog`：本 Run 的资料目录，给出资料类型、解析状态、索引位置和附件状态。
+- `historical-issues/<issue_id>.md`：新插件中经人工确认后冻结进本 Run 的历史问题参考。必须用 `read-material` 读取正文；它只能提示当前源码核对方向，不能单独证明当前 RiskCard，也不能把历史错误结果写成测试通过标准。形成 RiskCard 时同时保留当前 `code`/`source_context` 证据；形成回归用例时使用 `MAT:historical-issues/<issue_id>.md`，并从现行需求/设计或外部契约取得正确预期。
 - schema/rubric 按 `task.stage` 读取：`source_checkpoint` 只读 `schemas/worker_result.schema.json` 和 task 的 `checkpoint_rubric_paths` 中列出的全部规则；`risk_analysis` 再读 evidence/business/risk、DFX 和风险规则；`test_generation` 最后读 `test_case_generation.md` 与固定的 `product_blackbox_test_case.md`。路径缺失或不可读时如实停止，不猜文件名、不搜索替代规则。
 - `schemas/` 与 `src/pangea_agent/rubrics/` 位于当前 pangea-agent 工作区根目录，不在 task 的 data_root、Run 或验收 case 中；直接读取固定路径，不用 glob/find 搜索。
 

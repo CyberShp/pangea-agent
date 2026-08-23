@@ -224,7 +224,7 @@ def _evidence_rows(task: WorkerTask, result: WorkerResult) -> dict[str, dict]:
 
 
 def _require_confirmed_evidence(task: WorkerTask, result: WorkerResult) -> None:
-    _evidence_rows(task, result)
+    rows = _evidence_rows(task, result)
     pending = sorted({
         evidence.chunk_id
         for evidence in _all_evidence(result)
@@ -234,6 +234,19 @@ def _require_confirmed_evidence(task: WorkerTask, result: WorkerResult) -> None:
         raise ArtifactRejected(
             "证据未绑定当前 Run 的真实索引片段，请使用 read-material 返回的 chunk_id 或"
             f" repo_id:path:line 源码引用：{pending}"
+        )
+    historical_only_risks = []
+    for risk in result.risks:
+        risk_rows = [rows.get(evidence.chunk_id) for evidence in risk.evidence]
+        if any(row and "historical_issue" in row["tags"] for row in risk_rows) and not any(
+            row and row["source_type"] in {"code", "source_context"}
+            for row in risk_rows
+        ):
+            historical_only_risks.append(risk.risk_id)
+    if historical_only_risks:
+        raise ArtifactRejected(
+            "历史问题只能作为当前风险线索；以下 RiskCard 必须同时引用当前源码证据："
+            f"{sorted(historical_only_risks)}"
         )
 
 

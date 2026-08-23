@@ -41,7 +41,7 @@
   Graph 返回的 action 即使与上一条具有相同 role、stage、task_path 或 task_id，仍是新的唯一执行依据，
   必须按其 `dispatch_agent` / `continue_agent` 执行，不得通过比较新旧 action 自行决定停止。
   `continue_agent` 必须先对 action 的 `task_id` 发起真实续接，只有调用明确拒绝或找不到会话才算恢复失败。
-- `dsh-pangea-companion` 内置的唤醒策略在本工作区把 `subagent-report` 静默投递，避免它提前唤醒根 Agent；规则层仍把 report 只作信息展示，不解析其语义、不据此读取产物、不给子 Agent 发送修正建议，也不据此执行 `resume-run`。当前 action 对应的 `subagent-settled` 才负责唤醒根 Agent；根 Agent 不推断 PASS，直接且只执行一次 action 的 `after_completion=resume_run`。Graph 会重新校验绑定会话和产物，只有 Graph 能推进阶段。resume 命令失败时如实停止；成功返回的 action 一律按其内容执行，不因“看起来相同”而停止。一个 action 已执行过一次 resume 后，在返回 action 真正派发或续接前忽略重复的 report/settled 通知。
+- 统一插件 `dsh-pangea` 内置的唤醒策略在本工作区把 `subagent-report` 静默投递，避免它提前唤醒根 Agent；规则层仍把 report 只作信息展示，不解析其语义、不据此读取产物、不给子 Agent 发送修正建议，也不据此执行 `resume-run`。当前 action 对应的 `subagent-settled` 才负责唤醒根 Agent；根 Agent 不推断 PASS，直接且只执行一次 action 的 `after_completion=resume_run`。Graph 会重新校验绑定会话和产物，只有 Graph 能推进阶段。resume 命令失败时如实停止；成功返回的 action 一律按其内容执行，不因“看起来相同”而停止。一个 action 已执行过一次 resume 后，在返回 action 真正派发或续接前忽略重复的 report/settled 通知。
 - 主 Agent 不得创建、填写或修正 worker / reviewer 的语义结果文件。只能把 action 的 `task_path` 交给对应子 Agent；派发、续接或写入失败时停止并报告，不得由主 Agent 代写。
 - 不把 PANGEA 工作流规则安装到 DSH 全局配置；Companion 可以安装在 DSH profile，但其唤醒策略
   只在向上找到本文件时启用静默投递。工作区切换后，本文件及其静默策略都不再适用。

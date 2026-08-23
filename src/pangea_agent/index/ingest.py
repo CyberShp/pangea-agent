@@ -31,6 +31,8 @@ def _iter_files(root: Path, suffixes: set[str]):
 def _material_tags(path: Path, text: str) -> tuple[str, ...]:
     sample = f"{path.name}\n{text[:4000]}".lower()
     tags = ["material"]
+    if "historical-issues" in path.parts:
+        tags.extend(("historical_issue", "reference_only"))
     if any(value in sample for value in ("测试用例", "test case", "expected result", "预期结果", "测试步骤")):
         tags.append("testcase_reference")
     if any(value in sample for value in ("规格", "设计", "specification", "design")):
@@ -117,7 +119,11 @@ def build_run_index(
             )
             chunk_count += len(chunks)
     inbox_coverage_root = materials_root / "inbox" / "coverage"
-    for folder, source_type in (("inbox", "material"), ("coverage", "coverage")):
+    for folder, source_type in (
+        ("inbox", "material"),
+        ("historical-issues", "material"),
+        ("coverage", "coverage"),
+    ):
         source_root = materials_root / folder
         if source_root.exists():
             for path in _iter_files(source_root, DOCUMENT_SUFFIXES):
