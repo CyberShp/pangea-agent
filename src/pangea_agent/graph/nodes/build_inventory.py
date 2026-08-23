@@ -73,9 +73,15 @@ def build_inventory(state: PangeaState) -> PangeaState:
         for group in groups
         for path in group.get("code_paths", [])
     }
+    path_coverage_paths = {
+        (group.get("repo_id"), path)
+        for group in groups
+        for path in [*group.get("code_paths", []), *group.get("context_paths", [])]
+    }
     coverage_report = match_coverage_records(
         state.get("source_manifest", {}).get("coverage_records", []),
         filter_inventory_to_sources(inventory, source_paths),
+        path_inventory=filter_inventory_to_sources(inventory, path_coverage_paths),
     )
     errors = list(state.get("errors", []))
     errors.extend(

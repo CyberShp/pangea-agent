@@ -17,6 +17,53 @@
 `pcall` 或 `xpcall` 捕获错误只证明调用方收到了错误结果，不证明被调函数已经回滚。
 继续检查失败前已经完成的表写入、资源注册、外部调用、回调执行和状态迁移，以及调用方
 后续重试、停止或恢复是否仍成立。
+保护范围包含传给 `pcall`/`xpcall` 的函数体及该函数体同步调用的全部下层函数；错误语句不需要在
+源码文字上写在 `pcall` 内部，只要它是在受保护函数的动态调用链中执行，就会被捕获。写在该调用之前的 `pre_init`、参数准备、
+配置读取或其他普通调用不受后面的保护；它们先报错时，保护函数尚未开始，调用方也收不到
+`ok=false` 返回值。TestCase 若直接调用这个公开入口，预期必须写“调用抛出错误”；只有 action 明确
+写出“在入口外层使用 pcall/xpcall 调用”时，expected result 才能写外层 wrapper 的 `ok=false`。
+赋值表达式在右侧取值时报错时，左侧字段保持进入该语句前的原值。
+
+task 的 semantic check 若带“冻结解析器事实”，其中的原始 `return` 语句和 callback 注册顺序来自
+当前 Run 的冻结源码解析结果。先逐字抄回这些事实，再推导调用方结果；不得把 `return ok, err`
+改写成“固定返回 true”，也不得在失败点之后臆造本次尚未到达的注册项。若正文推导与这些字面事实
+冲突，先重读对应源码行并修正，不以经验或上一次 Run 的结论覆盖它们。
+条件分支内的 `return` 会立即结束当前函数；即使它位于 callback 遍历循环内，也不会继续下一项。
+
+同一个源码失败点可能同时出现在语言错误、生命周期或框架检查中。提交前以
+`repo_id:path:line + 错误点` 为键横向核对所有 failure path：调用阶段、`pcall`/`xpcall` 保护范围、
+调用方收到的是直接异常还是 `ok=false` 返回值必须一致。派生 path 可以描述另一个阶段，但主 path
+不得把另一个阶段的触发或传播方式带回来；发现同一错误点有两种相反结论时，先修正或拆分，不能
+只修其中一个 check ID。
+一个 semantic check 的主 path 只描述 instruction 指定的单一触发和终态。失败重试、未初始化继续
+使用、nil 配置和多实例共享等兄弟场景使用 `<check_id>:<scenario>` 派生 ID；兄弟场景成立不能把
+正常主 path 从 `excluded` 改成 `risk`，也不能把两个场景的计数和传播方式混入一张 RiskCard。
+
+注册 callback 与执行 callback 是两次不同动作。`connect`、`register` 或向 callback 表插入函数，
+只证明注册表发生变化；除非冻结实现同时调用该函数，否则不能据此增加 callback 内部的计数器、
+修改布尔状态或声称外部副作用已发生。重放 emit/dispatch 时，为每个 callback 分别记录捕获对象、
+实际写入字段和错误位置；callback 表长度不能冒充某一个业务计数器的值。
+
+涉及 callback 的路径先建立一张执行账本，再写 failure path、RiskCard 或 TestCase。每个注册位置使用
+稳定代号（如 C1、C2），逐行记录：本次操作是“注册”还是“执行”、捕获哪个对象、函数体实际写哪些
+字段、在当前路径执行几次、是否在前一 callback 报错后被跳过。字段增量只等于“实际执行且函数体写
+该字段”的 callback 次数之和。没有发生 emit/dispatch 时，所有 callback 函数体字段的增量都是 0。
+例如表中共有 4 个 callback、其中只有两条 callback 的函数体写 `callback_count`，一次完整 emit 后
+`callback_count` 只增加 2，不是 4；审计和提交 callback 不能算进该字段。
+每一步同时写清“本次增量”和“调用后的绝对值”。第二次正常调用后字段绝对值从 1 变为 2时，本次
+增量仍是 1；不得把“绝对值为 2”改写为“本次错误地增加 2”。
+匿名 callback 在实例方法内引用 `self` 时，Lua 词法闭包捕获的是注册该 callback 的那次方法调用所用
+实例。共享 signal 以后由 A 或 B 中任一实例触发，都不会把 callback 内的 `self` 改成 emit 发起者。
+因此必须按“哪一个实例注册了这条 callback”归属字段写入；A 注册的 callback 写 A，B 注册的 callback
+写 B。前一条 A callback 报错导致 B callbacks 尚未执行时，不能把 B 字段变化归因给 A callback。
+每次 emit 还必须用本次传入值重新判断 callback 内的条件。残留 callback 曾在 `value='trip'` 时抛错，
+不等于它在后续 `value='normal'` 时也会抛错；不能把上一次的分支结果当成 callback 的永久状态。
+例如顺序为 A.C1、A.C2、A.C3、B.C1、B.C2、B.C3 时，A.C2 报错只说明 A.C3 和全部 B callbacks
+在本次 emit 未执行；此时 B 的计数和提交字段保持调用前值。
+按同一顺序做一组校准：A 发出 `trip` 后应为 A.callback_count=1、A.audit_count=0、A.committed=nil，
+B 三个字段仍为 0、0、nil；随后 B 发出 `normal` 时六条 callback 都能完成，最终 A 为 2、1、true，
+B 为 1、1、true。此时污染证据是“B 的事件又修改了 A”，不是“B 的字段变成 2”，也不是“A.C2
+曾经失败所以以后永久阻断”。正确产品通过标准仍是 B 的事件只修改 B 一次、A 保持调用前值。
 
 Lua 表中缺失的 key 读取结果是 `nil`；只有对 `nil` 或其他不可索引的接收者继续取字段时才会
 直接报错。对 `config=nil`、`config={}` 和 `config={dependency_ready=false}` 必须分别重放，
@@ -26,6 +73,9 @@ Lua 表中缺失的 key 读取结果是 `nil`；只有对 `nil` 或其他不可�
 Lua 的 `error` 经 `pcall` 返回的错误对象可能包含源码位置。冻结的上层入口没有对错误文本做
 归一化时，黑盒风险和用例只固定成功标志以及可稳定确认的消息片段，不把完整错误字符串相等
 作为唯一预期。
+用例文字固定写成“成功标志为 false，错误文本包含 `<稳定片段>`”；未证明入口做过错误归一化时，
+不得写 `err='<完整字符串>'` 或 `err="<完整字符串>"`。共享状态没有已证明的完整模块链重载步骤时，
+每条用例直接使用新的 Lua VM/进程，不提供“新 VM 或重载模块”的二选一清理。
 
 `require` 通常按当前 Lua VM 的 `package.loaded` 缓存模块。区分首次加载的顶层副作用与缓存
 命中后的行为；只有冻结源码明确清除缓存或使用其他加载入口时，才分析重复执行模块顶层代码。
@@ -34,6 +84,27 @@ Lua 的 `error` 经 `pcall` 返回的错误对象可能包含源码位置。冻�
 用例声称通过清理 `package.loaded` 获得全新状态时，必须清除并重新 `require` 持有旧类表、模块表、
 signal、callback 或闭包引用的完整依赖链，并丢弃测试侧旧引用；只清底层模块但保留仍引用旧对象的
 上层模块不算等效重置。无法证明完整重置时，每条用例使用新的 Lua 进程或 VM。
+
+验证类表或模块表共享状态导致的“同一 VM 多实例污染”时，A 与 B 必须在同一个 Lua VM 内创建，
+否则测试前置条件已经把风险隔离掉。但 TestCase 的 `expected_result` 仍写正确产品契约：A 的一次
+事件只执行 A 自己的 callback，B 的字段不改变。`callback_count > 1`、共享 callback 表包含 A/B 两套
+注册、A 的事件触发 B 的闭包等只能写进同一步骤的 `failure_observation`，不能写成测试通过标准。
+
+callback 表严格按 `connect` 实际发生顺序排列，不按实例或 callback 类型自动交错。实例 A 完整初始化后
+再初始化 B 时，顺序是 `A.C1,A.C2,A.C3,B.C1,B.C2,B.C3`；A.C2 报错并使 emit 立即返回时，B 的
+任何 callback 都尚未执行。初始化在 C1 后、C2 前失败再重试时，表为
+`C1_old,C1_new,C2,C3`：正常 emit 的业务计数增量为 2，但审计增量只有 1，不得凭“有两次初始化”
+臆造 `C2_old`。每次都从实际到达的 `connect` 逐项列清单后再计算计数。
+
+callback 自身在写状态之前抛错时，该 callback 的写入不发生，后续 callback 也不执行。正确的错误传播
+只要求入口返回失败及原因，不代表失败 callback 要补写状态，也不代表后续提交 callback 应继续执行。
+因此某 callback 失败后，TestCase 的正确状态预期必须沿已证明的部分完成状态保留；不能把“返回
+false”误解成“所有 callback 最终都成功一次”。
+
+重试计数按实际调用次数计算：连续 `n` 次失败且每次都在 C1 注册后退出，再成功一次时，表中有
+`n+1` 条 C1 和各一条成功路径后续 callback；不能固定写成两条 C1。成功的 `init` 已经写入
+`initialized=true` 时，后续 `emit/update` 若没有该字段写入就必须保持 true，不能把早先失败阶段的
+false 带到成功重试后的终态。
 
 协程风险必须写明谁创建、谁 `resume`、在哪个条件 `yield`、错误如何返回，以及停止或取消时
 谁负责释放外部资源。仅看到 `yield` 或 `resume` 失败不足以证明死锁、泄漏或无法恢复。

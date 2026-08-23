@@ -121,8 +121,14 @@ def filter_inventory_to_sources(inventory: dict, sources: set[tuple[str, str]]) 
     return {**inventory, "files": files, "file_count": len(files)}
 
 
-def match_coverage_records(records: list[dict], inventory: dict) -> dict:
+def match_coverage_records(
+    records: list[dict],
+    inventory: dict,
+    *,
+    path_inventory: dict | None = None,
+) -> dict:
     """Match coverage to in-scope symbols without treating execution as risk coverage."""
+    path_inventory = inventory if path_inventory is None else path_inventory
     symbols: dict[str, list[dict]] = {}
     for file in inventory.get("files", []):
         for function in file.get("functions", []):
@@ -146,7 +152,7 @@ def match_coverage_records(records: list[dict], inventory: dict) -> dict:
         if requested_path:
             candidates = []
             requested_symbol = record["function"]
-            for file in inventory.get("files", []):
+            for file in path_inventory.get("files", []):
                 normalized_path = file["path"].replace("\\", "/").strip("/")
                 if normalized_path != requested_path:
                     continue

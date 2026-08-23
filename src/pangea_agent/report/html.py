@@ -254,14 +254,13 @@ def render_html_report(state: Mapping[str, Any]) -> str:
         if not isinstance(case, Mapping):
             case_parts.append(f"<p>{_escape(case)}</p>")
             continue
-        steps = _items(case.get("steps")); expected = _items(case.get("expected_results"))
-        if len(expected) == 1 and len(steps) > 1:
-            rows = "".join(
-                f"<tr><td>{index}</td><td>{_escape(step)}</td><td>{_escape(expected[0]) if index == 1 else '同一组共同预期'}</td></tr>"
-                for index, step in enumerate(steps, 1)
-            )
-        else:
-            rows = "".join(f"<tr><td>{index}</td><td>{_escape(step)}</td><td>{_escape(expected[index-1] if index-1 < len(expected) else '未提供对应预期结果（语义缺口）')}</td></tr>" for index, step in enumerate(steps, 1))
+        rows = "".join(
+            f"<tr><td>{index}</td><td>{_escape(step.get('action'))}</td>"
+            f"<td>{_escape(step.get('expected_result'))}</td>"
+            f"<td>{_escape(step.get('failure_observation') or '—')}</td></tr>"
+            for index, step in enumerate(_items(case.get("steps")), 1)
+            if isinstance(step, Mapping)
+        )
         case_parts.append(
             f'<details><summary>{_escape(case.get("test_case_id"), "未编号")} · {_escape(case.get("title"))}</summary>'
             f'<div class="detail-body"><dl>'
@@ -272,7 +271,7 @@ def render_html_report(state: Mapping[str, Any]) -> str:
             f'<dt>关联设计/资料</dt><dd>{_escape("、".join(str(v) for v in _items(case.get("linked_material_ids"))) or "无")}</dd>'
             f'<dt>关联 Coverage</dt><dd>{_escape("、".join(str(v) for v in _items(case.get("linked_coverage_ids"))) or "无")}</dd>'
             f'<dt>前置条件</dt><dd>{_list(case.get("preconditions"))}</dd></dl>'
-            f'<table><thead><tr><th>#</th><th>操作目标</th><th>预期结果</th></tr></thead><tbody>{rows}</tbody></table>'
+            f'<table><thead><tr><th>#</th><th>操作目标</th><th>通过标准</th><th>已知失败观测（命中即 FAIL）</th></tr></thead><tbody>{rows}</tbody></table>'
             f'<h4>观测方式</h4>{_list(case.get("observability"))}<h4>清理/恢复</h4>{_list(case.get("cleanup"))}</div></details>'
         )
     rendered_cases = "".join(case_parts) or '<p class="muted">未生成测试用例。</p>'

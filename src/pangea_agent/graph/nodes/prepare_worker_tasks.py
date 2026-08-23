@@ -6,7 +6,13 @@ from pathlib import Path
 from pangea_agent.agent_io import write_json
 from pangea_agent.documents.coverage import filter_inventory_to_sources, match_coverage_records
 from pangea_agent.graph.actions import MAX_PARALLEL_ACTIONS, agent_action
-from pangea_agent.graph.run_store import analysis_result_path, analysis_task_path, run_directory, save_progress
+from pangea_agent.graph.run_store import (
+    analysis_result_path,
+    analysis_task_path,
+    run_directory,
+    save_progress,
+    worker_result_skeleton,
+)
 from pangea_agent.graph.semantic_checks import build_runtime_semantic_checks
 from pangea_agent.graph.state import PangeaState
 from pangea_agent.graph.validation import validate_nonoverlapping_units
@@ -114,13 +120,17 @@ def _related_state_context(relative: str, lines: list[str], signal: str) -> list
 
 
 def _coverage_context(unit: AnalysisUnit, coverage_report: dict) -> list[dict]:
-    scopes = [scope.replace("\\", "/").strip("/") or "." for scope in unit.source_scope]
+    source_scopes = [scope.replace("\\", "/").strip("/") or "." for scope in unit.source_scope]
+    context_scopes = [scope.replace("\\", "/").strip("/") or "." for scope in unit.context_scope]
     context: list[dict] = []
     for record in coverage_report.get("matched", []):
         match = record["matches"][0]
         path = match["path"].replace("\\", "/")
         if match["repo_id"] != unit.repo_id:
             continue
+        scopes = source_scopes
+        if str(record.get("path", "")).strip():
+            scopes = [*source_scopes, *context_scopes]
         if not any(scope == "." or path == scope or path.startswith(f"{scope}/") for scope in scopes):
             continue
         context.append({
@@ -164,6 +174,16 @@ def _source_inventory(unit: AnalysisUnit, inventory: dict) -> dict:
     return filter_inventory_to_sources(
         inventory,
         {(unit.repo_id, path) for path in unit.source_scope},
+    )
+
+
+def _path_coverage_inventory(unit: AnalysisUnit, inventory: dict) -> dict:
+    return filter_inventory_to_sources(
+        inventory,
+        {
+            (unit.repo_id, path)
+            for path in [*unit.source_scope, *unit.context_scope]
+        },
     )
 
 
@@ -332,6 +352,7 @@ def prepare_worker_tasks(state: PangeaState) -> PangeaState:
         coverage_report = match_coverage_records(
             source_manifest.get("coverage_records", []),
             _source_inventory(unit, inventory),
+            path_inventory=_path_coverage_inventory(unit, inventory),
         )
         unit_repositories = [repo for repo in repositories if repo["repo_id"] == unit.repo_id]
         failure_signal_context = _failure_signal_context(unit, unit_repositories)
@@ -360,17 +381,20 @@ def prepare_worker_tasks(state: PangeaState) -> PangeaState:
             unit=unit,
             repositories=unit_repositories,
             index_path=state["index_path"],
-            inventory_path=str(inventory_path),
-            source_manifest_path=str(source_manifest_path),
+            inventory_path=None,
+            source_manifest_path=None,
             checkpoint_rubric_paths=_checkpoint_rubric_paths(unit),
-            coverage_context=_coverage_context(unit, coverage_report),
+            coverage_context=[],
             failure_signal_context=failure_signal_context,
             semantic_check_items=semantic_check_items,
             attempt=0,
             result_path=str(analysis_result_path(state, unit.unit_id, 0)),
         )
-        path = analysis_task_path(state, unit.unit_id)
+        path = analysis_task_path(state, unit.unit_id, "source_checkpoint")
         write_json(path, task.model_dump(mode="json"))
+        result_path = Path(task.result_path)
+        if not result_path.exists():
+            write_json(result_path, worker_result_skeleton(task))
     progress = RunProgress(
         workflow_version=2,
         run_id=state["run_id"],
@@ -391,7 +415,7 @@ def prepare_worker_tasks(state: PangeaState) -> PangeaState:
             role="analysis",
             stage="source_checkpoint",
             unit_id=unit["unit_id"],
-            task_path=analysis_task_path(state, unit["unit_id"]),
+            task_path=analysis_task_path(state, unit["unit_id"], "source_checkpoint"),
         )
         for unit in units[:MAX_PARALLEL_ACTIONS]
     ]

@@ -31,6 +31,7 @@ from pangea_agent.graph.validation import (
     validate_worker_stage_result,
 )
 from pangea_agent.models.run import RunProgress
+from pangea_agent.models.worker import WorkerTask
 
 from .advance_run import (
     _clear_error,
@@ -49,6 +50,7 @@ from .advance_run import (
     _terminate_if_requested,
     _validate_review_inputs,
 )
+from .prepare_worker_tasks import _coverage_context
 
 
 _ANALYSIS_PHASES = {
@@ -81,7 +83,7 @@ def _analysis_actions(
             role="analysis",
             stage=stage,
             unit_id=unit_id,
-            task_path=analysis_task_path(state, unit_id),
+            task_path=analysis_task_path(state, unit_id, stage),
         )
         for unit_id in unit_ids[:MAX_PARALLEL_ACTIONS]
     ]
@@ -137,6 +139,13 @@ def _waiting(
     }
 
 
+def _session_completed(progress: RunProgress, session_key: str) -> bool:
+    session = progress.agent_sessions.get(session_key)
+    if session is None or session.task_id is None:
+        return True
+    return session.status == "completed"
+
+
 def _accept_analysis_stage(
     state: PangeaState,
     expected_stage: str,
@@ -147,13 +156,12 @@ def _accept_analysis_stage(
         raise ArtifactRejected(f"当前 Graph 不在 {expected_stage} 阶段")
     completed: list[str] = []
     for unit_id in progress.analysis_units:
-        task_path = analysis_task_path(state, unit_id)
+        task_path = analysis_task_path(state, unit_id, expected_stage)
         task = load_worker_task(task_path)
         result_path = normalize_worker_result_path(task_path, task)
-        if task.stage != expected_stage:
-            task.stage = expected_stage
-            write_json(task_path, task.model_dump(mode="json"))
         if not result_path.exists():
+            continue
+        if not _session_completed(progress, f"analysis:{unit_id}"):
             continue
         try:
             result = load_worker_result(result_path, task)
@@ -181,13 +189,27 @@ def _prepare_analysis_stage(state: PangeaState, stage: str) -> PangeaState:
     }[stage]
     if progress.phase != previous_phase:
         raise ArtifactRejected(f"不能从 {progress.phase} 进入 {stage}")
+    run_dir = run_directory(state)
+    previous_stage = {
+        "risk_analysis": "source_checkpoint",
+        "test_generation": "risk_analysis",
+    }[stage]
     for unit_id in progress.analysis_units:
-        path = analysis_task_path(state, unit_id)
-        task = load_worker_task(path)
-        task.stage = stage
+        previous_path = analysis_task_path(state, unit_id, previous_stage)
+        path = analysis_task_path(state, unit_id, stage)
+        task = load_worker_task(previous_path)
+        payload = task.model_dump(mode="json")
+        payload.update({
+            "stage": stage,
+            "inventory_path": str(run_dir / "inputs" / "inventory.json"),
+            "source_manifest_path": str(run_dir / "inputs" / "source-manifest.json"),
+            "coverage_context": _coverage_context(task.unit, state.get("coverage_report", {})),
+        })
+        task = WorkerTask.model_validate(payload)
         write_json(path, task.model_dump(mode="json"))
         session = progress.agent_sessions[f"analysis:{unit_id}"]
         session.stage = stage
+        session.status = "pending"
     progress.phase = _ANALYSIS_PHASES[stage]
     save_progress(state, progress)
     return _waiting(
@@ -217,6 +239,16 @@ def accept_test_generation(state: PangeaState) -> PangeaState:
     state, progress = _resume_context(state)
     if progress.phase != "WAITING_TEST_GENERATION":
         raise ArtifactRejected("当前 Graph 不在 test_generation 阶段")
+    unsubmitted = [
+        unit_id for unit_id in progress.analysis_units
+        if not _session_completed(progress, f"analysis:{unit_id}")
+    ]
+    if unsubmitted:
+        return _waiting(
+            state,
+            progress,
+            _analysis_actions(state, progress, "test_generation", unsubmitted),
+        )
     results = _load_analysis_results(state, progress)
     save_progress(state, progress)
     if results is None:
@@ -259,6 +291,12 @@ def accept_independent_review(state: PangeaState) -> PangeaState:
     task_path = review_task_path(state, "independent")
     result_path = review_result_path(state, "independent")
     if not result_path.exists():
+        return _waiting(
+            state,
+            progress,
+            [_review_action(state, progress, "independent_review", task_path)],
+        )
+    if not _session_completed(progress, "review"):
         return _waiting(
             state,
             progress,
@@ -336,6 +374,12 @@ def accept_comparison_review(state: PangeaState) -> PangeaState:
             progress,
             [_review_action(state, progress, "comparison_review", task_path)],
         )
+    if not _session_completed(progress, "review"):
+        return _waiting(
+            state,
+            progress,
+            [_review_action(state, progress, "comparison_review", task_path)],
+        )
     try:
         task = load_review_task(task_path)
         result_path = normalize_review_result_path(task_path, task)
@@ -382,6 +426,19 @@ def accept_rework(state: PangeaState) -> PangeaState:
     terminated = _terminate_if_requested(state, progress)
     if terminated is not None:
         return {**terminated, "next_node": "finalize_report"}
+    unsubmitted: list[str] = []
+    for unit_id in progress.analysis_units:
+        task_path = rework_task_path(state, unit_id)
+        if not task_path.exists():
+            continue
+        task = load_worker_task(task_path)
+        if (
+            normalize_worker_result_path(task_path, task).exists()
+            and not _session_completed(progress, f"rework:{unit_id}")
+        ):
+            unsubmitted.append(unit_id)
+    if unsubmitted:
+        return _waiting(state, progress, _rework_actions(state, progress, unsubmitted))
     results = _load_rework_results(state, progress)
     save_progress(state, progress)
     if results is None:
@@ -440,6 +497,12 @@ def accept_rework_verification(state: PangeaState) -> PangeaState:
         )
         return {**ready, "next_node": "finalize_report"}
     if not result_path.exists():
+        return _waiting(
+            state,
+            progress,
+            [_review_action(state, progress, "rework_verification", task_path)],
+        )
+    if not _session_completed(progress, "review"):
         return _waiting(
             state,
             progress,

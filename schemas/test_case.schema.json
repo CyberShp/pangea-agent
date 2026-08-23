@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "TestCase",
   "type": "object",
-  "required": ["test_case_id", "title", "case_type", "linked_risk_ids", "linked_requirement_ids", "linked_material_ids", "linked_coverage_ids", "preconditions", "steps", "expected_results", "observability", "cleanup"],
+  "required": ["test_case_id", "title", "case_type", "linked_risk_ids", "linked_requirement_ids", "linked_material_ids", "linked_coverage_ids", "preconditions", "steps", "observability", "cleanup"],
   "properties": {
     "test_case_id": {"type": "string"},
     "title": {"type": "string"},
@@ -12,8 +12,20 @@
     "linked_material_ids": {"type": "array", "items": {"type": "string"}},
     "linked_coverage_ids": {"type": "array", "items": {"type": "string"}},
     "preconditions": {"type": "array", "minItems": 1, "items": {"type": "string"}},
-    "steps": {"type": "array", "minItems": 1, "items": {"type": "string"}},
-    "expected_results": {"type": "array", "minItems": 1, "items": {"type": "string"}, "description": "必须与 steps 等长并按数组位置逐项对应"},
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["action", "expected_result"],
+        "properties": {
+          "action": {"type": "string", "minLength": 1},
+          "expected_result": {"type": "string", "minLength": 1, "description": "该 action 完成后立即成立的正确产品结果"},
+          "failure_observation": {"type": ["string", "null"], "minLength": 1, "description": "当前错误实现命中风险时的观测；出现即判 FAIL，不属于通过标准"}
+        },
+        "additionalProperties": false
+      }
+    },
     "observability": {"type": "array", "minItems": 1, "items": {"type": "string"}},
     "cleanup": {"type": "array", "minItems": 1, "items": {"type": "string"}},
     "status": {"type": "string"}
@@ -23,6 +35,22 @@
     {"properties": {"linked_requirement_ids": {"minItems": 1}}},
     {"properties": {"linked_material_ids": {"minItems": 1}}},
     {"properties": {"linked_coverage_ids": {"minItems": 1}}}
+  ],
+  "allOf": [
+    {
+      "if": {"properties": {"linked_risk_ids": {"minItems": 1}}, "required": ["linked_risk_ids"]},
+      "then": {
+        "properties": {
+          "steps": {
+            "contains": {
+              "type": "object",
+              "required": ["failure_observation"],
+              "properties": {"failure_observation": {"type": "string", "minLength": 1}}
+            }
+          }
+        }
+      }
+    }
   ],
   "additionalProperties": false
 }

@@ -28,6 +28,8 @@ from pangea_agent.graph.run_store import (
     save_ready_state,
     save_progress,
     termination_path,
+    review_result_skeleton,
+    worker_result_skeleton,
 )
 from pangea_agent.graph.state import PangeaState
 from pangea_agent.graph.validation import (
@@ -66,7 +68,14 @@ ACTIVE_RESULT_ERROR_KINDS = {
 
 def _hydrate_run_context(state: PangeaState, progress: RunProgress) -> PangeaState:
     run_dir = run_directory(state)
-    tasks = [load_worker_task(analysis_task_path(state, unit_id)) for unit_id in progress.analysis_units]
+    analysis_stage = {
+        "WAITING_SOURCE_CHECKPOINT": "source_checkpoint",
+        "WAITING_RISK_ANALYSIS": "risk_analysis",
+    }.get(progress.phase, "test_generation")
+    tasks = [
+        load_worker_task(analysis_task_path(state, unit_id, analysis_stage))
+        for unit_id in progress.analysis_units
+    ]
     first_task = tasks[0]
     manifest_path = run_dir / "inputs" / "source-manifest.json"
     inventory_path = run_dir / "inputs" / "inventory.json"
@@ -109,6 +118,14 @@ def _hydrate_run_context(state: PangeaState, progress: RunProgress) -> PangeaSta
                     (task.unit.repo_id, path)
                     for task in tasks
                     for path in task.unit.source_scope
+                },
+            ),
+            path_inventory=filter_inventory_to_sources(
+                inventory,
+                {
+                    (task.unit.repo_id, path)
+                    for task in tasks
+                    for path in [*task.unit.source_scope, *task.unit.context_scope]
                 },
             ),
         ),
@@ -154,7 +171,7 @@ def _load_analysis_results(state: PangeaState, progress: RunProgress) -> list[Wo
     results: list[WorkerResult] = []
     completed: list[str] = []
     for unit_id in progress.analysis_units:
-        task_path = analysis_task_path(state, unit_id)
+        task_path = analysis_task_path(state, unit_id, "test_generation")
         task = load_worker_task(task_path)
         path = normalize_worker_result_path(task_path, task)
         if not path.exists():
@@ -182,7 +199,7 @@ def _load_analysis_results(state: PangeaState, progress: RunProgress) -> list[Wo
 
 def _prepare_review(state: PangeaState, progress: RunProgress) -> None:
     analysis_tasks = [
-        load_worker_task(analysis_task_path(state, unit_id))
+        load_worker_task(analysis_task_path(state, unit_id, "test_generation"))
         for unit_id in progress.analysis_units
     ]
     first_task = analysis_tasks[0]
@@ -200,7 +217,10 @@ def _prepare_review(state: PangeaState, progress: RunProgress) -> None:
         stage="independent_review",
         result_path=str(review_result_path(state, "independent")),
         analysis_tasks=[
-            TaskRef(unit_id=unit_id, task_path=str(analysis_task_path(state, unit_id)))
+            TaskRef(
+                unit_id=unit_id,
+                task_path=str(analysis_task_path(state, unit_id, "test_generation")),
+            )
             for unit_id in progress.analysis_units
         ],
     )
@@ -216,7 +236,7 @@ def _expected_independent_checks(state: PangeaState, task: ReviewTask) -> set[tu
     if referenced_units != known_units:
         raise ArtifactRejected("独立复核 task 未绑定全部分析单元")
     for reference in task.analysis_tasks:
-        expected_path = analysis_task_path(state, reference.unit_id)
+        expected_path = analysis_task_path(state, reference.unit_id, "test_generation")
         if reference.task_path != str(expected_path):
             raise ArtifactRejected(f"独立复核 task 路径与当前 Run 不一致：{reference.unit_id}")
         worker_task = load_worker_task(expected_path)
@@ -284,6 +304,16 @@ def _prepare_rework_review(state: PangeaState, progress: RunProgress, results: l
         prior_issues=comparison_review.issues,
     )
     write_json(review_task_path(state, "rework"), task.model_dump(mode="json"))
+    independent_result = load_independent_review_result(
+        Path(task.independent_result_path)
+    )
+    skeleton = review_result_skeleton(
+        task,
+        independent_result,
+        prior_comparison_result=comparison_review,
+    )
+    skeleton["reviewer_id"] = comparison_review.reviewer_id
+    write_json(Path(task.result_path), skeleton)
     review_session = progress.agent_sessions.get("review")
     if review_session is None:
         review_session = AgentSession(role="review", stage="rework_verification")
@@ -298,7 +328,9 @@ def _prepare_rework(state: PangeaState, progress: RunProgress, review) -> None:
     for issue in review.issues:
         issues_by_unit[issue.unit_id].append(issue)
     for unit_id, issues in issues_by_unit.items():
-        original_task = load_worker_task(analysis_task_path(state, unit_id))
+        original_task = load_worker_task(
+            analysis_task_path(state, unit_id, "test_generation")
+        )
         original_result = load_worker_result(Path(original_task.result_path), original_task)
         task = WorkerTask(
             task_type="rework",
@@ -322,6 +354,9 @@ def _prepare_rework(state: PangeaState, progress: RunProgress, review) -> None:
             review_issues=issues,
         )
         write_json(rework_task_path(state, unit_id), task.model_dump(mode="json"))
+        # Graph prepares the only writable rework artifact before dispatch. The
+        # worker never needs to edit or copy the read-only prior result.
+        write_json(Path(task.result_path), worker_result_skeleton(task))
         analysis_session = progress.agent_sessions.get(f"analysis:{unit_id}")
         progress.agent_sessions[f"rework:{unit_id}"] = AgentSession(
             role="rework",
@@ -342,7 +377,9 @@ def _load_rework_results(state: PangeaState, progress: RunProgress) -> list[Work
         if not rework_path.exists():
             original_path = analysis_result_path(state, unit_id, 0)
             try:
-                original_task = load_worker_task(analysis_task_path(state, unit_id))
+                original_task = load_worker_task(
+                    analysis_task_path(state, unit_id, "test_generation")
+                )
                 original_result = load_worker_result(original_path, original_task)
                 validate_worker_result(original_task, original_result)
             except Exception as exc:
@@ -506,7 +543,11 @@ def _terminate_if_requested(state: PangeaState, progress: RunProgress) -> Pangea
 def _validate_review_inputs(state: PangeaState, task: ReviewTask) -> None:
     for reference in task.analysis_results:
         attempt = 1 if task.stage == "rework_verification" and rework_task_path(state, reference.unit_id).exists() else 0
-        task_path = rework_task_path(state, reference.unit_id) if attempt == 1 else analysis_task_path(state, reference.unit_id)
+        task_path = (
+            rework_task_path(state, reference.unit_id)
+            if attempt == 1
+            else analysis_task_path(state, reference.unit_id, "test_generation")
+        )
         worker_task = load_worker_task(task_path)
         result_path = analysis_result_path(state, reference.unit_id, attempt)
         if reference.result_path != str(result_path):

@@ -7,8 +7,17 @@
   "linked_material_ids": [],
   "linked_coverage_ids": [],
   "preconditions": ["准备可观测资源余量和业务能力的测试环境"],
-  "steps": ["逐步增加并发超过规格上限", "回落到规格内并持续观察"],
-  "expected_results": ["系统进入已定义的超规格处理状态", "压力解除后资源余量和业务能力恢复"],
+  "steps": [
+    {
+      "action": "逐步增加并发超过规格上限",
+      "expected_result": "系统进入已定义的超规格处理状态",
+      "failure_observation": "系统无保护地继续接收请求并出现资源耗尽"
+    },
+    {
+      "action": "回落到规格内并持续观察",
+      "expected_result": "压力解除后资源余量和业务能力恢复"
+    }
+  ],
   "observability": ["CLI、日志、指标、业务建立结果"],
   "cleanup": ["停止压力并恢复环境"]
 }

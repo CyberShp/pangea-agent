@@ -50,6 +50,7 @@ def expand_lua_context(
             module_index.setdefault(_normalized_module(module), []).append(relative)
 
     imports_by_path: dict[str, list[dict]] = {}
+    framework_paths: set[str] = set()
     unresolved: list[dict] = []
     for path, relative in lua_paths.items():
         try:
@@ -63,6 +64,8 @@ def expand_lua_context(
             })
             continue
         imports_by_path[relative] = parsed["imports"]
+        if parsed["framework_signals"]:
+            framework_paths.add(relative)
 
     context_files: list[dict] = []
     resolved_dependencies: list[dict] = []
@@ -75,44 +78,59 @@ def expand_lua_context(
             for module in _module_names(relative)
         }
 
-        for relative in source_lua:
-            for item in imports_by_path.get(relative, []):
-                module = item["module"]
-                if module is None:
-                    unresolved.append({
-                        "path": relative,
-                        "line": item["line"],
-                        "module": None,
-                        "reason": "dynamic_require",
-                        "expression": item.get("expression", ""),
-                    })
-                    continue
-                candidates = sorted(set(module_index.get(_normalized_module(module), [])))
-                if len(candidates) != 1:
-                    unresolved.append({
+        frontier = source_lua
+        for depth in range(2):
+            next_frontier: list[str] = []
+            for relative in frontier:
+                for item in imports_by_path.get(relative, []):
+                    module = item["module"]
+                    if depth == 1 and (
+                        module is None or _normalized_module(module) != "mc"
+                    ):
+                        continue
+                    if module is None:
+                        unresolved.append({
+                            "path": relative,
+                            "line": item["line"],
+                            "module": None,
+                            "reason": "dynamic_require",
+                            "expression": item.get("expression", ""),
+                        })
+                        continue
+                    candidates = sorted(set(module_index.get(_normalized_module(module), [])))
+                    if len(candidates) != 1:
+                        unresolved.append({
+                            "path": relative,
+                            "line": item["line"],
+                            "module": module,
+                            "reason": "not_found" if not candidates else "ambiguous",
+                            "candidates": candidates,
+                        })
+                        continue
+                    dependency = candidates[0]
+                    item["resolved_path"] = dependency
+                    resolved_dependencies.append({
+                        "repo_id": group["repo_id"],
                         "path": relative,
                         "line": item["line"],
                         "module": module,
-                        "reason": "not_found" if not candidates else "ambiguous",
-                        "candidates": candidates,
+                        "resolved_path": dependency,
                     })
-                    continue
-                dependency = candidates[0]
-                item["resolved_path"] = dependency
-                resolved_dependencies.append({
-                    "repo_id": group["repo_id"],
-                    "path": relative,
-                    "line": item["line"],
-                    "module": module,
-                    "resolved_path": dependency,
-                })
-                if dependency not in owned:
+                    if dependency in owned:
+                        continue
                     group["context_paths"].append(dependency)
                     context_files.append({
                         "repo_id": group["repo_id"],
                         "path": dependency,
-                        "reason": f"lua_require:{module}",
+                        "reason": (
+                            f"lua_require:{module}"
+                            if depth == 0
+                            else f"lua_framework_require:{module}"
+                        ),
                     })
+                    if depth == 0 and dependency in framework_paths:
+                        next_frontier.append(dependency)
+            frontier = sorted(set(next_frontier))
 
         if source_modules:
             for relative, imports in imports_by_path.items():

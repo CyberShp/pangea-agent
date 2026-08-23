@@ -14,6 +14,9 @@ tools:
 ## 运行入口
 
 - 用户已经给出 `data_root`、`repository`、`target` 和 `source_scope` 时，新主 Agent会话首次执行 `module-analysis` 前只确认源码仓路径，删除固定临时路径 `pangea-data/.pangea/pending-task-contract.json` 后根据当前请求新建；不得读取旧 pending 内容。不得调用 `pangea_status`，不得列举或读取旧 Run，也不得复用已有 pending contract。
+- `pangea-data/.pangea/pending-task-contract.json` 是仓库级固定字面路径，永远不随自定义
+  `data_root` 改成 `<data_root>/.pangea/...`。不要预先创建/检查 `data_root`；删除 pending 与写入 pending
+  必须是两个独立工具调用，不夹带 mkdir 或其他命令。
 - pending contract 直接使用用户给出的 `data_root`、`repository`、`target`、`source_scope`，固定 `mode=module_analysis`。单仓分析只写 `repository: "<repo_id>"`，不得同时写 `repositories`；多仓分析只写非空 `repositories`，不得同时写 `repository`。`source_scope` 的每个路径都相对所选仓库根目录，并统一使用 `/` 分隔，即使在 Windows 也不把反斜杠路径直接写入 JSON；例如仓库 `acceptance-demo` 的 `module` 目录只写 `"module"`，不得写 `"acceptance-demo/module"`；即使只有一个路径也必须写成 JSON 数组。`focus` 在 contract 中始终是 JSON 数组：用户只给一个自然语言 focus 时直接写成 `["<focus>"]`，未单列时使用 `[target]`，不得先写标量字符串再依赖 schema 返工。新 Run 的 `run_id` 由 PANGEA 生成，不写入 pending contract。
 - 随后立即使用当前客户端按实际宿主选定的仓库虚拟环境解释器执行
   `-m pangea_agent.cli.main module-analysis --contract pangea-data/.pangea/pending-task-contract.json`。
@@ -29,7 +32,7 @@ tools:
 本项目优先兼容 Windows PowerShell。执行命令时遵循：
 
 - 一次只执行一个明确命令，不把多个正式步骤用 `&&`、`;` 或 shell 包装串联。
-- 删除 pending contract 与检查目录属于两个步骤，必须分成两次工具调用；不得用 `&&` 合并。
+- 删除 pending contract 与检查目录属于两个步骤，必须分成两次工具调用；不得用 `&&` 合并。Run 创建后的删除也必须是只包含字面 pending 路径的单独命令，不能追加 `&& echo` 或任何第二个动作。
 - 不使用 `cd /d`、`source`、`export`、`rm -rf`、`touch` 等 bash-only 写法。
 - 使用当前客户端按实际宿主选定的仓库虚拟环境解释器执行 `-m pangea_agent.cli.main ...`。
   DSH 不改用系统 Python 或安装后的其他入口。
@@ -51,34 +54,40 @@ tools:
 ## Graph 驱动的 Worker 生命周期
 
 - Python 不调用模型 API。`module-analysis` 和 `resume-run` 返回的每条 `action=<JSON>` 是客户端唯一的派发依据；`phase` 只用于展示和故障说明。
+- 根 Agent 不读取 `.opencode/agents/analysis-worker.md`、`.opencode/agents/review-worker.md`、action
+  task 或 `agent-results/`。角色规则和 task 只由派发后的子 Agent 读取；根 Agent 只机械传递 action 的
+  `task_path`。子 Agent 为 `running` 时禁止用 read/bash/find/stat/wc/grep 查看 task、结果文件、目录或
+  修改时间，也不轮询或补发消息。
+- action 角色使用唯一映射：`analysis`、`rework` 加载 `.opencode/agents/analysis-worker.md`，`review` 加载 `.opencode/agents/review-worker.md`。不得沿用上一回合角色，也不得根据 phase、回复摘要或自然语言重新判断 worker 类型。
 - DSH 当前根会话只选择一次仓库虚拟环境解释器并复用：POSIX 使用 `.venv/bin/python`，Windows PowerShell 使用 `& '.\.venv\Scripts\python.exe'`。选定路径不存在时停止并说明需要初始化；不尝试系统 Python、其他虚拟环境或依赖安装。下面的 PANGEA CLI 参数均交给这个已选解释器执行。
 - `module-analysis` 创建 Run 后，把返回的 `data_root` 与 `run_id` 一起绑定。后续每条 run-scoped CLI（`record-agent-session`、`resume-run`、`mark-reviewer-unavailable`）都原样传入 `--data-root <data_root>`，包括默认 `pangea-data`；不得依赖 CLI 默认值或执行失败后再探测。
 - 在 DSH 中派发 `analysis-worker` 或 `review-worker` 时，必须使用可持续子 Agent：调用 `subagent` 时必须显式设置 `run_in_background=true`，保存返回的 `subagent_id`，后续阶段使用 `send_message` 投递到同一子 Agent。不得省略该参数，也不得设置为 `false`；这两种前台调用都会返回一次性结果，无法续接。
-- DSH 主 Agent 不读取 worker 角色文件，也不转述 task 字段、源码位置、步骤或结论。`dispatch_agent` 的 `prompt` 和 `continue_agent` 的续接消息都只包含 action 的 `task_path`；续接只使用 action 的 `task_id`。首次派发或 action 允许的返工替代派发取得 `subagent_id` 后，立即把它作为 `task_id` 执行 `record-agent-session`；普通续接不重复记录。
-- DSH 派发返回 `subagent_id` 后，下一个工具调用必须是 `record-agent-session`；`subagent_id` 不是 `job_id`，不得传给 `job_output`。等待时调用 `list_agents`，目标仍为 `running` 就每次固定用当前宿主 shell 单独等待 20 秒（POSIX 使用 `sleep 20`，PowerShell 使用 `Start-Sleep -Seconds 20`）后再次查询；不得自行延长到 30/45/60 秒，避免宿主工具超时，需要继续时重复同一个 20 秒步骤。只有变为 `ready` 或 `inactive` 后才读取结果文件。等待期间不得发送下一阶段消息。
-- analysis 首次记录时，用已选解释器执行 `-m pangea_agent.cli.main record-agent-session --run-id <run_id> --data-root <data_root> --role analysis --unit-id <unit_id> --task-id <subagent_id> --status dispatched`；review 记录省略 `--unit-id` 并使用 `--role review`；只有原 analysis worker 无法恢复且 graph 允许替代时，替代 worker 使用 `--role rework --unit-id <unit_id>` 记录新 ID。原 worker 能恢复时只发送 rework task 路径，不重记会话。这些参数已确定，不查看 `--help`。
+- DSH 主 Agent 不读取 worker 角色文件，也不转述 task 字段、源码位置、步骤或结论。`dispatch_agent` 的 `prompt` 和 `continue_agent` 的续接消息都只包含 action 的 `task_path`；续接只使用 action 的 `task_id`。`dispatch_agent` 的 action `task_id` 必须为 null；先派发并取得 DSH 返回的真实 UUID `subagent_id`，再立即把该返回值作为 `task_id` 执行 `record-agent-session`，绝不记录 action 的 null、字符串 `"null"`、临时占位值或自造 ID。普通续接不重复记录。
+- DSH 派发返回 `subagent_id` 后，下一个工具调用必须是 `record-agent-session`，也不能先执行 `resume-run`。记录成功后立即结束根回合。`send_message` 接受续接后同样立即结束根回合。不得监控或探测子 Agent、查看 task/result 或补发消息。worker 的 `validate-worker-result PASS` 或 reviewer 的 `check-review-artifact PASS` 会完成当前 task 已绑定的会话；当前 action 的 settled 通知到达后，根 Agent 只执行一次 action 声明的 `resume_run`。命令失败时如实停止；命令成功返回的 action 即使与上一条具有相同 role、stage、task_path 或 task_id，仍是新的唯一执行依据，必须按其 `dispatch_agent` / `continue_agent` 执行，不得通过比较新旧 action 自行决定停止。Graph 返回 `continue_agent` 时必须先对 action 的 `task_id` 发起真实续接，只有调用明确拒绝或找不到会话才算恢复失败。
+- 安装内置唤醒策略的 `dsh-pangea-companion` 后，本工作区的 `subagent-report` 会静默投递，不会在子 Agent 结束前唤醒主 Agent；规则层仍只把 report 作信息展示，不解析其语义、不据此读取产物、不给子 Agent 发送修正建议，也不据此执行 `resume-run`。当前 action 对应的 `subagent-settled` 才负责唤醒主 Agent；主 Agent 不推断 PASS，直接且只执行一次 action 的 `after_completion=resume_run`。Graph 会重新校验绑定会话和产物，只有 Graph 能推进阶段。resume 命令失败时如实停止；成功返回的 action 一律按其内容执行，不因“看起来相同”而停止。一个 action 已执行过一次 resume 后，在返回 action 真正派发或续接前忽略重复的 report/settled 通知。
+- analysis 首次绑定时，用已选解释器执行 `-m pangea_agent.cli.main record-agent-session --run-id <run_id> --data-root <data_root> --role analysis --unit-id <unit_id> --task-id <subagent_id>`；review 首次绑定省略 `--unit-id` 并使用 `--role review`；只有原 analysis worker 无法恢复且 graph 允许替代时，替代 worker 才用 `--role rework --unit-id <unit_id>` 绑定新 ID。原 worker能恢复时只发送 rework task 路径，不重复绑定。这些参数已确定，不查看 `--help`。
 - DSH 子 Agent 继承派发时的文件权限。派发前确认 `data_root` 位于当前 DSH 工作区可写范围；如果不在范围内，停止并说明，不能改用一次性子 Agent、由主 Agent 代写结果或研究 CLI 实现绕过落盘失败。
 - 新主 Agent 会话首次创建 Run 才使用 `module-analysis --contract pangea-data/.pangea/pending-task-contract.json`。不得在项目根目录、`pangea-data/` 一级目录或其他位置另建 task contract。Run 创建成功后删除该 pending 文件。
-- 当前主 Agent 会话已经持有 `run_id` 后，每个 action 对应的 Agent 回合完成并通过当前 task 的提交检查后，立即按 `after_completion=resume_run` 执行 `resume-run --run-id <run_id> --data-root <data_root>`。该命令读取 `runs/<run_id>/inputs/task-contract.json` 中冻结的原始契约，并返回决定下一回合的 action。
+- 当前主 Agent 会话已经持有 `run_id` 后，当前 action 的 settled 通知到达时，立即按 `after_completion=resume_run` 且只执行一次 `resume-run --run-id <run_id> --data-root <data_root>`。根 Agent 不推断提交检查结果，也不再记录完成；该命令读取 `runs/<run_id>/inputs/task-contract.json` 中冻结的原始契约，并返回决定下一回合的唯一 action。
 - 新主 Agent 会话不扫描历史 `runs/` 目录寻找可恢复 Run，也不因为存在旧 Run 而优先恢复。OpenCode 恢复原会话或 DSH 切换回历史会话时，沿用该会话已经持有的 `run_id`；若用户在新会话明确指定历史 Run，再恢复该 Run。
 - `agent-results/` 中结果文件存在不代表已完成；只有 graph 接受后，`progress.completed_analysis_units` / `completed_rework_units` 中的单元才算完成。
 - 主 Agent 不得创建、填写或修正 analysis、rework、review 的语义结果文件；这些文件只能由持有对应 task 的 worker 写入。子 Agent 无法完成时停止并报告，不得由主 Agent 代写。
 - analysis action 最多并发派发 4 个互不重叠的 `analysis-worker`，worker 禁止继续派生 Agent。同一 `unit_id` 的 `source_checkpoint`、`risk_analysis`、`test_generation` 始终使用同一个持续 worker 会话。
 - 派发 analysis-worker 时消息只包含对应 task JSON 路径，不追加验收点、源码结论、风险猜测或文档摘要，避免主 Agent 转述替代 worker 读取冻结输入。
 - analysis-worker 每回合只执行 task 当前 `stage`，将 `completed_stage` 写成相同值，并执行 `validate-worker-result` 到 `PASS`。worker 返回的文本只是人类可读摘要，不作为控制信号。
-- worker 仍为 `running` 时不得预先排队其他消息。回合通过提交检查后，主 Agent 立即执行 `resume-run`；不自行续接下一阶段，下一条 action 是唯一决定。
+- worker 仍为 `running` 时不得预先排队其他消息。提交检查 `PASS` 会完成当前绑定会话；当前 action settled 后，主 Agent只执行一次 `resume-run`，不自行续接下一阶段，下一条 action 是唯一决定。
 - 主 Agent 不读取或解析 worker 回复文本中的阶段名。当前 task 的 `stage`、结果的 `completed_stage` 和下一步 action 均由 graph 契约确定。
-- 仅 `dispatch_agent` 成功后立即执行 `record-agent-session`。普通 `continue_agent` 不重记、不替换 `task_id`；续接严格使用 action 已提供的 `task_id`。
+- 仅 `dispatch_agent` 成功后立即用 `record-agent-session` 绑定真实 ID。普通 `continue_agent` 不重复记录、不替换 `task_id`；续接严格使用 action 已提供的 `task_id`。完成状态只由当前 task 的提交检查写入。
 - Worker 必须在 Python 生成的结果骨架上填写分析内容，并在结束前执行 `validate-worker-result`。**只有该命令返回 `PASS`，这个 Worker 才算提交完成。**
 - `validate-worker-result` 返回 JSON/schema 错误时，不进入正式 rework，也不增加 `attempt`。优先恢复同一个 analysis-worker 会话，让它根据本次完整错误列表和当前 schema 修正同一 `result_path`，直到 `PASS`。不得由主 Agent 编写 `fix_all.py`、临时脚本或手工拼 JSON 代替 Worker 修复实质分析内容。
 - PANGEA 只自动恢复 `run_id`、`unit_id`、`attempt`、分析范围等机械字段，以及能够确定性定位的 evidence 引用；**不会自动补写** `business_flows`、`visual_findings`、`risks`、`test_cases` 的缺失字段、空步骤、空证据或旧字段体系。不得再以“字段问题会自动规范化”为理由跳过校验失败。
 - 若 Worker 会话在未 `PASS` 时结束，主 Agent 不得执行 `resume-run` 期待 graph 接受该结果；必须先恢复该 Worker 完成同一 task。原 Worker 无法恢复时停止并报告，等待 graph action 明确是否允许替代。
 - Agent 回复为空不会改变 action 契约；只根据当前 task 结果是否写入且提交检查是否 `PASS` 判断回合成功。结果未通过时恢复当前 Agent 修正同一结果；替代只能由后续 action 授权。
 - `role=review, stage=independent_review`：只有全部 analysis unit 都已被 graph 接受后，才按 action 派发 1 个 `review-worker`；该 task 不含 worker result。reviewer 在一次回合内完成独立复核并通过 `check-review-artifact`，主 Agent 随即执行 `resume-run --run-id <run_id> --data-root <data_root>`。
-- `role=review, stage=comparison_review`：按 `continue_agent` 的 `task_id` 恢复同一 reviewer，只发送 action 的 `task_path`；完成 worker 对照、资料、Coverage 与用例闭环复核并通过提交检查后立即执行 `resume-run --run-id <run_id> --data-root <data_root>`。
-- `role=rework, stage=rework`：正式返工最多一次。按 action 续接原 worker；只有 `dispatch_agent` 且 `replacement_allowed=true` 时才派发替代 worker并记录新 ID。worker 在一次回合内处理全部 `review_issues`，同步修改 checkpoint、证据、业务流程、风险和测试，通过提交检查后立即执行 `resume-run --run-id <run_id> --data-root <data_root>`。
+- `role=review, stage=comparison_review`：按 `continue_agent` 的 `task_id` 恢复同一 reviewer，只发送 action 的 `task_path`；完成 worker 对照、资料、Coverage 与用例闭环复核并通过提交检查后，主 Agent 只执行 `resume-run --run-id <run_id> --data-root <data_root>`。
+- `role=rework, stage=rework`：正式返工最多一次。按 action 续接原 worker；只有 `dispatch_agent` 且 `replacement_allowed=true` 时才派发替代 worker并绑定新 ID。worker 在一次回合内处理全部 `review_issues`，同步修改 checkpoint、证据、业务流程、风险和测试，通过提交检查后，主 Agent 只执行 `resume-run --run-id <run_id> --data-root <data_root>`。
 - `role=review, stage=rework_verification`：必须按 action 恢复原 reviewer，不得新建 reviewer。`task_id` 缺失或恢复失败时，执行 `mark-reviewer-unavailable --run-id <run_id> --data-root <data_root> --reviewer-id <same_reviewer_id> --reason "<真实原因>"`，再执行 `resume-run --run-id <run_id> --data-root <data_root>` 形成 `UNRESOLVED`。
-- 每个 action 回合通过对应提交检查后，立即执行 `resume-run --run-id <run_id> --data-root <data_root>`；不根据 phase 或 Agent 回复文本增加等待步骤。
+- 每个 action 的完成只能来自对应提交检查 `PASS`。当前 action settled 后，主 Agent 只执行一次 `resume-run --run-id <run_id> --data-root <data_root>`；不监控 Agent、不读取产物，也不根据 phase 或 Agent 回复文本决定下一阶段。
 
 ## 初始化约定
 

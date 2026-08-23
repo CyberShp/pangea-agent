@@ -22,7 +22,10 @@ class RiskCard(BaseModel):
 
     risk_id: str = Field(min_length=1)
     title: str = Field(min_length=1)
-    affected_paths: list[str] = Field(min_length=1)
+    affected_paths: list[str] = Field(
+        min_length=1,
+        description="真实发生该风险的 repo-relative 源码路径，不是 semantic check ID",
+    )
     dfx: list[str] = Field(min_length=1)
     severity: Literal["Low", "Medium", "High", "Critical"]
     confidence: Literal["low", "medium", "high"]

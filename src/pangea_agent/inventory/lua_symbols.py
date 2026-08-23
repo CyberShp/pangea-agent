@@ -170,6 +170,7 @@ def parse_lua_file(path: Path) -> dict:
     branches: list[dict] = []
     imports: list[dict] = []
     calls: list[dict] = []
+    returns: list[dict] = []
     parse_errors: list[dict] = []
     class_symbols: set[str] = set()
     signal_scopes: dict[str, str | None] = {}
@@ -264,6 +265,28 @@ def parse_lua_file(path: Path) -> dict:
                     "symbol": symbol,
                     "related_lines": [line],
                 })
+        if node.type == "return_statement":
+            function_symbol, owner_function_symbol = _enclosing_function_symbols(node, source)
+            returned = {
+                "line": line,
+                "end_line": end_line,
+                "statement": _text(node, source).strip(),
+            }
+            ancestor = node.parent
+            while ancestor is not None and ancestor.type not in {
+                "function_declaration", "function_definition"
+            }:
+                if ancestor.type in {"if_statement", "elseif_statement", "elseif_clause"}:
+                    condition = ancestor.child_by_field_name("condition")
+                    if condition is not None:
+                        returned["guard"] = _text(condition, source).strip()
+                    break
+                ancestor = ancestor.parent
+            if function_symbol:
+                returned["function_symbol"] = function_symbol
+            if owner_function_symbol and owner_function_symbol != function_symbol:
+                returned["owner_function_symbol"] = owner_function_symbol
+            returns.append(returned)
 
     for candidate in lifecycle_candidates:
         receiver, _ = _receiver_and_method(candidate["symbol"])
@@ -320,6 +343,7 @@ def parse_lua_file(path: Path) -> dict:
         "types": [],
         "imports": imports,
         "calls": calls,
+        "returns": returns,
         "frameworks": frameworks,
         "framework_signals": framework_signals,
         "parse_errors": parse_errors,

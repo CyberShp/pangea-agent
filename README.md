@@ -12,6 +12,10 @@ DSH 只读取当前仓库的 `AGENTS.local.md`、`.agents/skills/pangea-agent/` 
 `.agents/pangea/dsh.md`，不安装全局 PANGEA 规则，也不使用独立 graph 或 bridge。根 Agent
 负责自然语言冷启动、Run 创建、持续子 Agent 派发和 graph 推进。CLI 返回的
 `action=<JSON>` 唯一决定客户端是派发还是续接、使用哪个 task 与执行哪个 stage；
+DSH profile 安装 `dsh-pangea-companion` 后，会同时获得只读工作台和本工作区的 report 唤醒策略：
+`subagent-report` 只投递信息、不提前唤醒根 Agent，并继续由原生 `subagent-settled` 唤醒后按
+Graph action 推进。Companion 不包含 PANGEA 流程、阶段判断或结果写入，其他工作区仍保持 DSH
+默认 report 行为。
 analysis-worker 每回合只执行 task 当前 stage，独立复核、对照复核和返工验证沿用同一 reviewer。
 
 ## 初始化

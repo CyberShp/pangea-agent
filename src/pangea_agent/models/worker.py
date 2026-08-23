@@ -157,8 +157,6 @@ class CoverageDecision(StrictModel):
         if self.disposition == "unreachable_from_supported_entry":
             if self.linked_test_case_ids:
                 raise ValueError("不可从支持入口触达的 Coverage 缺口不能关联测试用例")
-        elif not self.linked_test_case_ids:
-            raise ValueError("已闭合的 Coverage 缺口必须关联至少一条测试用例")
         return self
 
 
@@ -187,8 +185,8 @@ class WorkerTask(StrictModel):
     unit: AnalysisUnit
     repositories: list[RepositoryRef] = Field(min_length=1)
     index_path: str = Field(min_length=1)
-    inventory_path: str = Field(min_length=1)
-    source_manifest_path: str = Field(min_length=1)
+    inventory_path: str | None
+    source_manifest_path: str | None
     checkpoint_rubric_paths: list[str] = Field(
         default_factory=lambda: ["src/pangea_agent/rubrics/builtin/c_cpp_analysis.md"],
         min_length=1,
@@ -207,6 +205,14 @@ class WorkerTask(StrictModel):
 
     @model_validator(mode="after")
     def validate_task_type(self) -> "WorkerTask":
+        if self.task_type == "analysis" and self.stage == "source_checkpoint" and (
+            self.inventory_path or self.source_manifest_path or self.coverage_context
+        ):
+            raise ValueError("source_checkpoint task 不能暴露后续阶段输入")
+        if self.stage != "source_checkpoint" and (
+            not self.inventory_path or not self.source_manifest_path
+        ):
+            raise ValueError("risk、test 和 rework task 必须包含冻结资料路径")
         if self.task_type == "analysis" and (
             self.stage == "rework"
             or self.attempt != 0
@@ -350,6 +356,18 @@ class IndependentFinding(StrictModel):
     finding: str = Field(min_length=1)
     evidence: list[str] = Field(min_length=1)
     worker_disposition: Literal["covered", "reasonably_excluded", "missing", "contradiction"]
+    linked_worker_risk_ids: list[str] = Field(default_factory=list)
+    linked_worker_test_case_ids: list[str] = Field(default_factory=list)
+
+
+class TestCaseCheck(StrictModel):
+    unit_id: str = Field(min_length=1)
+    test_case_id: str = Field(min_length=1)
+    expected_results: list[str] = Field(min_length=1)
+    failure_observations: list[str | None] = Field(min_length=1)
+    current_behavior: str = Field(min_length=1)
+    verdict: Literal["valid", "invalid", "unresolved"]
+    reason: str = Field(min_length=1)
 
 
 class ReviewResult(StrictModel):
@@ -362,6 +380,7 @@ class ReviewResult(StrictModel):
     issues: list[ReviewIssue] = Field(default_factory=list)
     reviewed_units: list[str] = Field(min_length=1)
     independent_findings: list[IndependentFinding] = Field(default_factory=list)
+    test_case_checks: list[TestCaseCheck] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_status(self) -> "ReviewResult":

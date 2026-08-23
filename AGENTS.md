@@ -73,7 +73,7 @@
 - 三个客户端应遵循同一套 graph / schema / rubric 分层。
 - Python 不调用模型 API。当前主 Agent 读取 `agent-tasks/` 文件，最多并发派发
   4 个互不重叠的 `analysis-worker`；worker 不得再派发子 Agent。
-- CLI 每次创建或恢复 Run 后返回 `action=<JSON>`。主 Agent 只按 action 的 `action`、`role`、`stage`、`task_path`、`task_id`、`replacement_allowed` 和 `after_completion` 派发或续接对应 Agent；不得用 `phase`、Agent 回复文本或自定阶段提示代替 action。新 Run 返回的 `data_root` 与 `run_id` 一起绑定，所有 run-scoped CLI 都必须显式传 `--data-root <data_root>`。主 Agent 不得创建、填写或修正 `agent-results/analysis/`、`agent-results/rework/` 或 review 语义结果。worker 无法完成时如实停止，不得由主 Agent 代写结果。
+- CLI 每次创建或恢复 Run 后返回 `action=<JSON>`。主 Agent 只按 action 的 `action`、`role`、`stage`、`task_path`、`task_id`、`replacement_allowed` 和 `after_completion` 派发或续接对应 Agent；不得用 `phase`、Agent 回复文本或自定阶段提示代替 action。worker 的 `validate-worker-result` 或 reviewer 的 `check-review-artifact` 只有在当前 task 校验 `PASS` 后才记录其已绑定会话完成；`after_completion=resume_run` 表示根 Agent 收到该 Agent 的回合完成报告后只执行 `resume-run`，不得自行记录完成、轮询 Agent、读取产物或决定下一阶段。Graph 会再次验证完成状态和产物，并生成唯一的下一条 action。新 Run 返回的 `data_root` 与 `run_id` 一起绑定，所有 run-scoped CLI 都必须显式传 `--data-root <data_root>`。主 Agent 不得创建、填写或修正 `agent-results/analysis/`、`agent-results/rework/` 或 review 语义结果。worker 无法完成时如实停止，不得由主 Agent 代写结果。
 - analysis 结果齐备后，只启动 1 个 `review-worker`。初审和返工验证属于同一轮
   review lifecycle，返工最多一次，且返工验证必须由原 reviewer 完成。
 - 初审固定为同一 reviewer 的两个 checkpoint：`independent_review` task 不提供 worker result；

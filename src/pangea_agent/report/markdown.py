@@ -585,22 +585,21 @@ def render_report(state: "PangeaState | Mapping[str, Any]") -> str:
         )
         for item in _items(case.get("preconditions")):
             lines.append(f"  - {_text(item)}")
-        lines.append("- **步骤与预期结果**：")
+        lines.append("- **步骤、通过标准与失败观测**：")
         steps = _items(case.get("steps"))
-        expected = _items(case.get("expected_results"))
-        if steps and len(expected) == 1 and len(steps) > 1:
-            for index, step in enumerate(steps, 1):
-                lines.append(f"  {index}. **操作目标**：{_text(step)}")
-            lines.append(f"  - **上述步骤共同预期**：{_text(expected[0])}")
-        elif steps:
-            for index, step in enumerate(steps, 1):
-                result = expected[index - 1] if index - 1 < len(expected) else "未提供对应预期结果（语义缺口）"
-                lines.append(f"  {index}. **操作目标**：{_text(step)}  ")
-                lines.append(f"     **预期结果**：{_text(result)}")
-        elif expected:
-            lines.append(f"  - 多步骤共同预期：{'；'.join(_text(item) for item in expected)}")
-        else:
+        if not steps:
             lines.append("  - 未提供")
+        for index, step in enumerate(steps, 1):
+            if not isinstance(step, Mapping):
+                lines.append(f"  {index}. **操作目标**：{_text(step)}")
+                continue
+            lines.append(f"  {index}. **操作目标**：{_text(step.get('action'))}  ")
+            lines.append(f"     **通过标准**：{_text(step.get('expected_result'))}")
+            if step.get("failure_observation"):
+                lines.append(
+                    f"     **已知失败观测（命中即 FAIL）**："
+                    f"{_text(step.get('failure_observation'))}"
+                )
         lines.append("- **观测方式**：")
         for item in _items(case.get("observability")) or ["未提供"]:
             lines.append(f"  - {_text(item)}")

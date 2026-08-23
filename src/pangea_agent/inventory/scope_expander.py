@@ -10,6 +10,7 @@ from .source_languages import (
     C_CPP_SOURCE_SUFFIXES,
     C_CPP_SUFFIXES,
     LANGUAGE_CAPABILITIES,
+    LUA_SUFFIXES,
 )
 
 SOURCE_SUFFIXES = C_CPP_SOURCE_SUFFIXES
@@ -193,6 +194,7 @@ def expand_analysis_scope(repositories: list[dict], requested_scopes: list[str],
         for group in repo_groups:
             group["code_paths"] = sorted(dict.fromkeys(group["code_paths"]))
             group["context_paths"] = sorted(dict.fromkeys(group["context_paths"]))
+        repo_groups = _merge_mutually_dependent_lua_groups(repo_groups)
         groups.extend(repo_groups)
 
     return {
@@ -202,7 +204,7 @@ def expand_analysis_scope(repositories: list[dict], requested_scopes: list[str],
         "added_files": _unique_records(added_files),
         "unresolved_dependencies": unresolved_dependencies,
         "resolved_dependencies": resolved_dependencies,
-        "boundary": "source_scope = explicit scope + C/C++ declared implementations; context_scope = C/C++ inline/function-pointer dependencies + direct callers + direct Lua require dependencies/requirers + target-related config/docs/tests",
+        "boundary": "source_scope = explicit scope + C/C++ declared implementations; context_scope = C/C++ inline/function-pointer dependencies + direct callers + direct Lua require dependencies/requirers + one framework-implementation require hop + target-related config/docs/tests",
     }
 
 
@@ -406,6 +408,55 @@ def _merge_overlapping_groups(groups: list[dict]) -> list[dict]:
                 merged[left]["requested_scope"] = sorted(dict.fromkeys(merged[left]["requested_scope"] + merged[right]["requested_scope"]))
                 merged[left]["code_paths"] = sorted(dict.fromkeys(merged[left]["code_paths"] + merged[right]["code_paths"]))
                 merged[left]["context_paths"] = sorted(dict.fromkeys(merged[left]["context_paths"] + merged[right]["context_paths"]))
+                merged.pop(right)
+                changed = True
+                break
+            if changed:
+                break
+    return merged
+
+
+def _merge_mutually_dependent_lua_groups(groups: list[dict]) -> list[dict]:
+    merged = [
+        {
+            **group,
+            "requested_scope": list(group["requested_scope"]),
+            "code_paths": list(group["code_paths"]),
+            "context_paths": list(group["context_paths"]),
+        }
+        for group in groups
+    ]
+    changed = True
+    while changed:
+        changed = False
+        for left in range(len(merged)):
+            left_lua = {
+                path for path in merged[left]["code_paths"]
+                if PurePosixPath(path).suffix.lower() in LUA_SUFFIXES
+            }
+            for right in range(left + 1, len(merged)):
+                right_lua = {
+                    path for path in merged[right]["code_paths"]
+                    if PurePosixPath(path).suffix.lower() in LUA_SUFFIXES
+                }
+                if not left_lua or not right_lua:
+                    continue
+                if not (
+                    left_lua.intersection(merged[right]["context_paths"])
+                    and right_lua.intersection(merged[left]["context_paths"])
+                ):
+                    continue
+                code_paths = sorted(dict.fromkeys(
+                    merged[left]["code_paths"] + merged[right]["code_paths"]
+                ))
+                merged[left]["requested_scope"] = sorted(dict.fromkeys(
+                    merged[left]["requested_scope"] + merged[right]["requested_scope"]
+                ))
+                merged[left]["code_paths"] = code_paths
+                merged[left]["context_paths"] = sorted(
+                    set(merged[left]["context_paths"] + merged[right]["context_paths"])
+                    - set(code_paths)
+                )
                 merged.pop(right)
                 changed = True
                 break

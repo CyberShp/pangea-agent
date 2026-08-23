@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
+import os
 from pathlib import Path
+from typing import Iterator
 
 from pangea_agent.agent_io import read_json, write_json
 from pangea_agent.models.run import RunProgress
@@ -37,8 +40,47 @@ def save_progress(state: dict, progress: RunProgress) -> None:
     write_json(progress_path(state), progress.model_dump(mode="json"))
 
 
-def analysis_task_path(state: dict, unit_id: str) -> Path:
-    return run_directory(state) / "agent-tasks" / "analysis" / f"{unit_id}.json"
+@contextmanager
+def edit_progress(state: dict) -> Iterator[RunProgress]:
+    """Serialize the small progress update made by parallel Agent completions."""
+
+    lock_path = run_directory(state) / ".progress.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+b") as handle:
+        handle.seek(0, os.SEEK_END)
+        if handle.tell() == 0:
+            handle.write(b"0")
+            handle.flush()
+        handle.seek(0)
+        if os.name == "nt":
+            import msvcrt
+
+            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            progress = load_progress(state)
+            if progress is None:
+                raise ValueError("指定 Run 不存在")
+            yield progress
+            save_progress(state, progress)
+        finally:
+            handle.seek(0)
+            if os.name == "nt":
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def analysis_task_path(state: dict, unit_id: str, stage: str) -> Path:
+    return (
+        run_directory(state)
+        / "agent-tasks"
+        / "analysis"
+        / f"{unit_id}-{stage}.json"
+    )
 
 
 def analysis_result_path(state: dict, unit_id: str, attempt: int) -> Path:
@@ -140,13 +182,34 @@ def normalize_worker_result_path(task_path: Path, task: WorkerTask) -> Path:
 
 
 def worker_result_skeleton(task: WorkerTask) -> dict:
+    if task.task_type == "rework":
+        if not task.prior_result_path:
+            raise ValueError("rework task 缺少 prior_result_path")
+        prior_payload = read_json(Path(task.prior_result_path))
+        prior_result = WorkerResult.model_validate(prior_payload)
+        result = prior_result.model_dump(mode="json")
+        result.update({
+            "schema_version": "1.0",
+            "run_id": task.run_id,
+            "unit_id": task.unit.unit_id,
+            "worker_id": "",
+            "attempt": task.attempt,
+            "completed_stage": task.stage,
+            "finish_reason": "stop",
+            "analyzed_scope": list(task.unit.source_scope),
+            "analyzed_context_scope": list(task.unit.context_scope),
+            "addressed_review_issue_ids": [],
+            "errors": [],
+        })
+        return result
+
     return {
         "schema_version": "1.0",
         "run_id": task.run_id,
         "unit_id": task.unit.unit_id,
         "worker_id": "",
         "attempt": task.attempt,
-        "completed_stage": "pending",
+        "completed_stage": task.stage,
         "finish_reason": "stop",
         "summary": "",
         "analyzed_scope": list(task.unit.source_scope),
@@ -159,7 +222,7 @@ def worker_result_skeleton(task: WorkerTask) -> dict:
         "addressed_review_issue_ids": [],
         "errors": [],
         "analysis_checkpoint": {
-            "source_paths_reviewed": [],
+            "source_paths_reviewed": list(task.unit.source_scope),
             "lifecycle_stages_checked": [],
             "failure_paths": [],
             "material_decisions": [],
@@ -174,15 +237,53 @@ def worker_result_skeleton(task: WorkerTask) -> dict:
 def review_result_skeleton(
     task: ReviewTask,
     independent_result: IndependentReviewResult | None = None,
+    prior_comparison_result: ReviewResult | None = None,
 ) -> dict:
     reviewer_id = ""
     independent_findings: list[dict] = []
     if task.stage in {"comparison_review", "rework_verification"} and independent_result is not None:
         reviewer_id = independent_result.reviewer_id
         independent_findings = [
-            finding.model_dump(mode="json")
+            {
+                **finding.model_dump(mode="json"),
+                "linked_worker_risk_ids": [],
+                "linked_worker_test_case_ids": [],
+            }
             for finding in independent_result.findings
         ]
+        if task.stage == "rework_verification" and prior_comparison_result is not None:
+            previous = {
+                (finding.unit_id, finding.check_id): finding
+                for finding in prior_comparison_result.independent_findings
+            }
+            for finding in independent_findings:
+                prior = previous.get((finding["unit_id"], finding["check_id"]))
+                if prior is None:
+                    continue
+                finding.update({
+                    "worker_disposition": prior.worker_disposition,
+                    "linked_worker_risk_ids": list(prior.linked_worker_risk_ids),
+                    "linked_worker_test_case_ids": list(prior.linked_worker_test_case_ids),
+                })
+    test_case_checks: list[dict] = []
+    for result_ref in task.analysis_results:
+        worker_result = load_worker_result(Path(result_ref.result_path))
+        test_case_checks.extend(
+            {
+                "unit_id": result_ref.unit_id,
+                "test_case_id": case.test_case_id,
+                "expected_results": [
+                    step.expected_result for step in case.steps
+                ],
+                "failure_observations": [
+                    step.failure_observation for step in case.steps
+                ],
+                "current_behavior": "待 reviewer 按冻结源码独立填写",
+                "verdict": "unresolved",
+                "reason": "待 reviewer 对照正确产品通过标准与当前实现行为",
+            }
+            for case in worker_result.test_cases
+        )
     return {
         "schema_version": "1.0",
         "run_id": task.run_id,
@@ -193,6 +294,7 @@ def review_result_skeleton(
         "issues": [],
         "reviewed_units": [item.unit_id for item in task.analysis_results],
         "independent_findings": independent_findings,
+        "test_case_checks": test_case_checks,
     }
 
 

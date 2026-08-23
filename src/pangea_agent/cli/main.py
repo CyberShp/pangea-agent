@@ -7,6 +7,7 @@ from pathlib import Path
 from pangea_agent.agent_io import read_json, write_json
 from pangea_agent.graph.run_store import (
     independent_review_result_skeleton,
+    edit_progress,
     load_independent_review_result,
     load_progress,
     load_review_result,
@@ -59,7 +60,7 @@ def _expected_review_checks(task) -> set[tuple[str, str]]:
     return expected
 
 
-def _require_current_task(task_path: Path, task) -> None:
+def _require_current_task(task_path: Path, task):
     resolved = task_path.resolve()
     agent_tasks = next((parent for parent in resolved.parents if parent.name == "agent-tasks"), None)
     if agent_tasks is None:
@@ -77,7 +78,12 @@ def _require_current_task(task_path: Path, task) -> None:
             "rework": "WAITING_REWORK",
         }[task.stage]
         folder = "analysis" if task.task_type == "analysis" else "rework"
-        expected = agent_tasks / folder / f"{task.unit.unit_id}.json"
+        name = (
+            f"{task.unit.unit_id}-{task.stage}.json"
+            if task.task_type == "analysis"
+            else f"{task.unit.unit_id}.json"
+        )
+        expected = agent_tasks / folder / name
     else:
         phase = {
             "independent_review": "WAITING_INDEPENDENT_REVIEW",
@@ -97,12 +103,50 @@ def _require_current_task(task_path: Path, task) -> None:
             f"Agent task 不是当前 Graph 阶段任务：task={getattr(task, 'stage', 'unknown')} "
             f"progress={progress.phase}"
         )
+    return progress
+
+
+def _bound_agent_id(progress, task) -> str | None:
+    if hasattr(task, "task_type"):
+        role = "analysis" if task.task_type == "analysis" else "rework"
+        key = f"{role}:{task.unit.unit_id}"
+    else:
+        key = "review"
+    session = progress.agent_sessions.get(key)
+    return session.task_id if session is not None else None
+
+
+def _complete_current_task_session(task_path: Path, task) -> None:
+    resolved = task_path.resolve()
+    agent_tasks = next(parent for parent in resolved.parents if parent.name == "agent-tasks")
+    run_dir = agent_tasks.parent
+    state = {"run_id": run_dir.name, "data_root": str(run_dir.parent.parent)}
+    if hasattr(task, "task_type"):
+        role = "analysis" if task.task_type == "analysis" else "rework"
+        key = f"{role}:{task.unit.unit_id}"
+    else:
+        key = "review"
+    with edit_progress(state) as progress:
+        session = progress.agent_sessions.get(key)
+        if session is None:
+            return
+        if session.stage != task.stage:
+            raise ValueError(
+                f"Agent 会话不是当前 task 阶段：session={session.stage} task={task.stage}"
+            )
+        session.status = "completed"
 
 
 def _check_review_artifact(task_path: Path) -> None:
     task = load_review_task(task_path)
-    _require_current_task(task_path, task)
+    progress = _require_current_task(task_path, task)
     result_path = normalize_review_result_path(task_path, task)
+    reviewer_id = _bound_agent_id(progress, task)
+    if reviewer_id and result_path.exists():
+        payload = read_json(result_path)
+        if isinstance(payload, dict) and payload.get("reviewer_id") != reviewer_id:
+            payload["reviewer_id"] = reviewer_id
+            write_json(result_path, payload)
 
     if task.stage == "independent_review":
         result = load_independent_review_result(result_path, task)
@@ -151,6 +195,7 @@ def main() -> None:
     prepare.add_argument("--task", required=True)
     prepare_review = sub.add_parser("prepare-review-result")
     prepare_review.add_argument("--task", required=True)
+    prepare_review.add_argument("--fresh", action="store_true")
     check_review = sub.add_parser("check-review-artifact")
     check_review.add_argument("--task", required=True)
     material = sub.add_parser("read-material")
@@ -164,7 +209,6 @@ def main() -> None:
     session.add_argument("--role", choices=("analysis", "review", "rework"), required=True)
     session.add_argument("--unit-id")
     session.add_argument("--task-id")
-    session.add_argument("--status", choices=("dispatched", "completed"), default="dispatched")
     unavailable = sub.add_parser("mark-reviewer-unavailable")
     unavailable.add_argument("--run-id", required=True)
     unavailable.add_argument("--data-root", default="pangea-data")
@@ -183,17 +227,21 @@ def main() -> None:
     elif args.command == "prepare-worker-result":
         task_path = Path(args.task)
         task = load_worker_task(task_path)
-        _require_current_task(task_path, task)
+        progress = _require_current_task(task_path, task)
         result_path = normalize_worker_result_path(task_path, task)
         if not result_path.exists():
-            write_json(result_path, worker_result_skeleton(task))
+            skeleton = worker_result_skeleton(task)
+            worker_id = _bound_agent_id(progress, task)
+            if worker_id:
+                skeleton["worker_id"] = worker_id
+            write_json(result_path, skeleton)
         print(result_path)
     elif args.command == "prepare-review-result":
         task_path = Path(args.task)
         task = load_review_task(task_path)
-        _require_current_task(task_path, task)
+        progress = _require_current_task(task_path, task)
         result_path = normalize_review_result_path(task_path, task)
-        if not result_path.exists():
+        if args.fresh or not result_path.exists():
             if task.stage == "independent_review":
                 skeleton = independent_review_result_skeleton(task)
             elif task.stage in {"comparison_review", "rework_verification"} and task.independent_result_path:
@@ -203,11 +251,17 @@ def main() -> None:
                 skeleton = review_result_skeleton(task, independent_result)
             else:
                 skeleton = review_result_skeleton(task)
+            reviewer_id = _bound_agent_id(progress, task)
+            if reviewer_id:
+                skeleton["reviewer_id"] = reviewer_id
             write_json(result_path, skeleton)
         print(result_path)
     elif args.command == "check-review-artifact":
         try:
-            _check_review_artifact(Path(args.task))
+            task_path = Path(args.task)
+            task = load_review_task(task_path)
+            _check_review_artifact(task_path)
+            _complete_current_task_session(task_path, task)
         except Exception as exc:
             parser.exit(
                 1,
@@ -236,11 +290,18 @@ def main() -> None:
         try:
             task_path = Path(args.task)
             task = load_worker_task(task_path)
-            _require_current_task(task_path, task)
+            progress = _require_current_task(task_path, task)
             result_path = normalize_worker_result_path(task_path, task)
+            worker_id = _bound_agent_id(progress, task)
+            if worker_id and result_path.exists():
+                payload = read_json(result_path)
+                if isinstance(payload, dict) and payload.get("worker_id") != worker_id:
+                    payload["worker_id"] = worker_id
+                    write_json(result_path, payload)
             result = load_worker_result(result_path, task)
             validate_worker_stage_result(task, result, task.stage)
             write_json(result_path, result.model_dump(mode="json"))
+            _complete_current_task_session(task_path, task)
         except Exception as exc:
             detail = validation_message(exc)
             parser.exit(
@@ -258,7 +319,7 @@ def main() -> None:
                 "role": args.role,
                 "unit_id": args.unit_id,
                 "task_id": args.task_id,
-                "status": args.status,
+                "status": "dispatched",
             })
         except ValueError as exc:
             parser.error(str(exc))
