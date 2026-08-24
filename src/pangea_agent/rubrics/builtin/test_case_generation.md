@@ -4,12 +4,12 @@
 
 ## 测试依据与强制闭环
 
-PANGEA 的测试用例以风险驱动为基础，需求/设计资料和 Coverage 是可选输入；但可选只表示用户可以不提供。一旦用户提供的资料或 Coverage 与当前分析对象相关，就必须参与测试设计并完成闭环，不能只作为分析参考。
+PANGEA 的测试用例以风险驱动为基础。需求/设计资料一旦判为 `current` 就必须闭环；Coverage 是可选补测提示。
 
 - **风险驱动是基础**：`translation_status=Blackbox-ready/Graybox-ready` 的每条风险必须至少关联一条真实 TestCase；`Developer-confirm` 只保留需要开发确认的可达性缺口，不强行伪造用例。
 - **需求/设计资料是条件强制**：risks 阶段已经通过 `material_decisions` 判断资料与当前单元的关系。`decision=current` 表示该资料与当前分析对象直接相关；tests 阶段必须把其中可测试的需求、设计行为、状态约束和外部契约转成 TestCase。资料 ID 固定使用 `MAT:<material_decision.path>`，写入 `linked_material_ids`；资料中存在真实需求 ID 时同时写入 `linked_requirement_ids`。不得把相关设计资料标成 `context` 只为绕过用例生成。
 - **已确认历史问题是回归线索**：`historical-issues/<issue_id>.md` 只在人工确认后进入当前 Run。它与当前模块和受支持入口确实相关、且能从现行需求/设计或已确认的外部契约得到正确通过标准时，使用 `MAT:historical-issues/<issue_id>.md` 生成回归用例。历史故障现象和旧错误结果只能作为触发线索或 `failure_observation`，不得直接写成 `expected_result`；缺少现行通过标准时将该资料判为 `context`，不猜测预期。
-- **Coverage 是条件强制**：只有 task 中 `coverage_context[].gaps[]` 才是与当前分析单元唯一匹配的有效 Coverage 缺口。每个 gap 必须在 `analysis_checkpoint.coverage_decisions` 中有且只有一个闭环结论：被已有用例覆盖、新生成 Coverage 用例、或确实无法从受支持业务入口触达。
+- **Coverage 是可选补测**：task 中 `coverage_context[].gaps[]` 只包含当前单元唯一匹配的函数级 `count=0`。能形成清晰业务入口或灰盒方案时尽量生成；不能可靠补测时允许不处理。
 - **已有用例优先复用**：风险/资料用例本身已经命中某个 Coverage gap 时，直接给该用例增加对应 `linked_coverage_ids`，并把 gap 记录为 `covered_by_existing_case`；不要为同一触发条件重复造一条 Coverage-only 用例。
 - **Coverage-only 用例合法**：没有对应风险或需求时，可以只填写 `linked_coverage_ids`；设计资料没有稳定需求编号时，可以只填写 `linked_material_ids`。不得伪造 Risk/Requirement ID 来满足结构。
 
@@ -34,9 +34,9 @@ PANGEA 的测试用例以风险驱动为基础，需求/设计资料和 Coverage
 - `Graybox-ready`：允许在前置条件中说明需要开发协助制造内部条件，但实际测试步骤和主要观测仍从业务入口执行。
 - `Developer-confirm`：业务可达性尚未确认时，不强行生成可执行用例；保留风险及需要确认的可达性缺口。
 
-Coverage 只指出需要补覆盖的函数或路径。对于 `coverage_context[].gaps[]` 中的函数未执行或单侧分支未执行，必须继续向上找到调用入口和业务触发条件，再生成或复用用例；不得以直接执行目标函数作为补覆盖方式。
+Coverage 只指出需要补覆盖的函数。选择处理 `coverage_context[].gaps[]` 时，继续向上找到业务入口，或使用明确的灰盒前置条件；不得把直接调用内部函数伪装成黑盒步骤。
 
-每个 Coverage gap 的闭环记录固定写入 `analysis_checkpoint.coverage_decisions[]`：
+实际选择处理的 Coverage gap 写入 `analysis_checkpoint.coverage_decisions[]`：
 
 - `covered_by_existing_case`：现有风险/资料/需求用例已经真实进入该 gap；`linked_test_case_ids` 列出这些用例，且用例必须反向写入对应 `linked_coverage_ids`。
 - `new_coverage_case`：为 gap 新生成一条或多条 TestCase，测试从产品/协议支持入口进入目标路径；`linked_test_case_ids` 指向新用例，且用例反向写入 `linked_coverage_ids`。
@@ -105,7 +105,7 @@ Coverage 只指出需要补覆盖的函数或路径。对于 `coverage_context[]
 
 - 不得只生成正常流程。风险驱动始终是基础，结合源码覆盖异常、分支、初始化、运行、停止、恢复和卸载。
 - 对 `decision=current` 的每份资料，先列出其中所有与当前分析对象相关且可测试的需求/设计行为，再为每项指向至少一条真实 TestCase。没有需求编号的设计行为使用 `linked_material_ids=["MAT:<path>"]` 保持追踪；不能用风险用例数量、Coverage 文本或相邻需求代替资料闭环。
-- 对 task 中每个 `coverage_context[].gaps[]`，逐项形成 `coverage_decisions`；不能因为“未发现风险”就跳过 Coverage-only 用例，也不能因为已有测试名称相似就声称已覆盖。
+- 对实际选择补测的 `coverage_context[].gaps[]` 形成 `coverage_decisions`；未选择的 gap 不需要伪造结论或用例。
 - 参数维度、值域、默认值和代表性组合必须来自源码或当前实现规格；已有测试用例只作为表达和环境参考，不能证明风险或 Coverage gap 已覆盖。
 - 一个风险允许对应多个用例；一个用例也可以同时关联风险、需求/设计资料和 Coverage gap，只要实际触发条件与验证目标一致。
 - 低置信度风险仍可生成验证用例，但必须保留置信度和证据缺口。

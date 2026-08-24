@@ -74,6 +74,32 @@ CODE_SUFFIXES = set().union(*(
     capability.suffixes for capability in LANGUAGE_CAPABILITIES
 ))
 
+_SPECIALIZED_RUBRICS = (
+    ("storage_iscsi", "src/pangea_agent/rubrics/builtin/storage_iscsi.md"),
+    ("storage_nvmeof", "src/pangea_agent/rubrics/builtin/storage_nvmeof.md"),
+    (
+        "storage_resource_recovery",
+        "src/pangea_agent/rubrics/builtin/storage_resource_recovery.md",
+    ),
+    ("vendor_dpdk", "src/pangea_agent/rubrics/builtin/vendor_dpdk.md"),
+    ("vendor_mlx_rdma", "src/pangea_agent/rubrics/builtin/vendor_mlx_rdma.md"),
+    ("vendor_nvidia_doca", "src/pangea_agent/rubrics/builtin/vendor_nvidia_doca.md"),
+)
+_RESOURCE_KEYWORDS = {
+    "alloc",
+    "cache",
+    "calloc",
+    "close",
+    "destroy",
+    "free",
+    "queue",
+    "ref",
+    "register",
+    "release",
+    "timer",
+    "unregister",
+}
+
 _CAPABILITY_BY_SOURCE_LANGUAGE = {
     language: capability
     for capability in LANGUAGE_CAPABILITIES
@@ -125,7 +151,14 @@ def inventory_context_for_path(path: Path) -> bool:
     )
 
 
-def checkpoint_rubrics(languages: list[str], frameworks: list[str]) -> list[str]:
+def checkpoint_rubrics(
+    languages: list[str],
+    frameworks: list[str],
+    *,
+    repo_id: str | None = None,
+    source_paths: list[str] | None = None,
+    inventory: dict | None = None,
+) -> list[str]:
     framework_capabilities = _framework_capabilities(languages, frameworks)
     paths = [
         capability.rubric_path
@@ -136,7 +169,49 @@ def checkpoint_rubrics(languages: list[str], frameworks: list[str]) -> list[str]
         capability.rubric_path
         for capability in framework_capabilities
     )
+    paths.extend(
+        _specialized_rubric_paths(
+            repo_id=repo_id,
+            source_paths=source_paths or [],
+            inventory=inventory or {},
+        )
+    )
     return paths
+
+
+def _specialized_rubric_paths(
+    *, repo_id: str | None, source_paths: list[str], inventory: dict
+) -> list[str]:
+    normalized_paths = [path.replace("\\", "/").lower() for path in source_paths]
+    path_text = "\n".join(normalized_paths)
+    owned = set(normalized_paths)
+    source_items = [
+        item
+        for item in inventory.get("files", [])
+        if item.get("repo_id") == repo_id
+        and str(item.get("path", "")).replace("\\", "/").lower() in owned
+    ]
+    resource_keywords = {
+        keyword
+        for item in source_items
+        for signal in item.get("resource_signals", [])
+        for keyword in signal.get("keywords", [])
+    }
+    matched = {
+        "storage_iscsi": "iscsi" in path_text,
+        "storage_nvmeof": any(
+            token in path_text
+            for token in ("/nvmf/", "nvme_tcp", "nvme_rdma", "nvme_fabric")
+        ),
+        "storage_resource_recovery": bool(resource_keywords & _RESOURCE_KEYWORDS),
+        "vendor_dpdk": "dpdk" in path_text,
+        "vendor_mlx_rdma": any(
+            token in path_text
+            for token in ("mlx4", "mlx5", "/rdma", "rdma_", "_rdma")
+        ),
+        "vendor_nvidia_doca": "doca" in path_text,
+    }
+    return [path for rubric_id, path in _SPECIALIZED_RUBRICS if matched[rubric_id]]
 
 
 def semantic_providers(languages: list[str], frameworks: list[str]) -> set[str]:

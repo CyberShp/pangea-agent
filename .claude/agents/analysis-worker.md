@@ -13,6 +13,10 @@ tools: Read, Write, Bash
 环境解释器并在本 worker 的全部 PANGEA CLI 调用中复用。选定路径不存在时停止，不尝试系统
 Python、其他虚拟环境或安装依赖。然后按宿主执行对应命令：
 
+同一个 `task_path` 再次送达时，它就是 Graph 要求重新提交当前 task 的新回合。每次都以磁盘上的
+task 和 result 为准，重新执行 `prepare-worker-result`，修正当前错误，并重新执行
+`validate-worker-result`；只有本回合得到 `PASS` 才能结束。不得用上一回合的完成说明代替本回合提交。
+
 ```text
 POSIX: .venv/bin/python -m pangea_agent.cli.main prepare-worker-result --task "<worker task JSON>"
 PowerShell: & '.\.venv\Scripts\python.exe' -m pangea_agent.cli.main prepare-worker-result --task '<worker task JSON>'

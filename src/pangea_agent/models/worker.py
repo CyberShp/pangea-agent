@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from pangea_agent.agent_io import agent_path
 
 from .evidence import EvidenceRef
 from .risk import RiskCard
@@ -40,6 +42,11 @@ class RepositoryRef(StrictModel):
     source_root: str = Field(min_length=1)
     git: dict = Field(default_factory=dict)
 
+    @field_validator("source_root", mode="before")
+    @classmethod
+    def normalize_source_root(cls, value: str) -> str:
+        return agent_path(value)
+
 
 class CoverageGap(StrictModel):
     coverage_id: str = Field(min_length=1)
@@ -72,20 +79,6 @@ class CoverageContext(StrictModel):
                     gap="function_not_executed",
                 )]
             return self
-        if not self.branch_id:
-            return self
-        gaps: list[CoverageGap] = []
-        if self.true_count == 0:
-            gaps.append(CoverageGap(
-                coverage_id=f"{prefix}:{self.branch_id}:true",
-                gap="true_not_executed",
-            ))
-        if self.false_count == 0:
-            gaps.append(CoverageGap(
-                coverage_id=f"{prefix}:{self.branch_id}:false",
-                gap="false_not_executed",
-            ))
-        self.gaps = gaps
         return self
 
 
@@ -161,8 +154,8 @@ class CoverageDecision(StrictModel):
 
 
 class AnalysisCheckpoint(StrictModel):
-    source_paths_reviewed: list[str] = Field(min_length=1)
-    lifecycle_stages_checked: list[str] = Field(min_length=1)
+    source_paths_reviewed: list[str]
+    lifecycle_stages_checked: list[str]
     failure_paths: list[FailurePathCheck] = Field(default_factory=list)
     material_decisions: list[MaterialDecision] = Field(default_factory=list)
     coverage_priorities: list[str] = Field(default_factory=list)
@@ -187,6 +180,7 @@ class WorkerTask(StrictModel):
     index_path: str = Field(min_length=1)
     inventory_path: str | None
     source_manifest_path: str | None
+    allowed_material_paths: list[str] = Field(default_factory=list)
     checkpoint_rubric_paths: list[str] = Field(
         default_factory=lambda: ["src/pangea_agent/rubrics/builtin/c_cpp_analysis.md"],
         min_length=1,
@@ -196,17 +190,32 @@ class WorkerTask(StrictModel):
     semantic_check_items: list[SemanticCheckItem] = Field(default_factory=list)
     attempt: Literal[0, 1]
     result_path: str = Field(min_length=1)
-    max_parallel_workers: Literal[4] = 4
+    max_parallel_workers: Literal[8] = 8
     may_spawn_workers: Literal[False] = False
     preferred_worker_id: str | None = None
     replacement_allowed: bool = False
     prior_result_path: str | None = None
     review_issues: list[ReviewIssue] = Field(default_factory=list)
 
+    @field_validator(
+        "index_path",
+        "inventory_path",
+        "source_manifest_path",
+        "result_path",
+        "prior_result_path",
+        mode="before",
+    )
+    @classmethod
+    def normalize_paths(cls, value: str | None) -> str | None:
+        return None if value is None else agent_path(value)
+
     @model_validator(mode="after")
     def validate_task_type(self) -> "WorkerTask":
         if self.task_type == "analysis" and self.stage == "source_checkpoint" and (
-            self.inventory_path or self.source_manifest_path or self.coverage_context
+            self.inventory_path
+            or self.source_manifest_path
+            or self.allowed_material_paths
+            or self.coverage_context
         ):
             raise ValueError("source_checkpoint task 不能暴露后续阶段输入")
         if self.stage != "source_checkpoint" and (
@@ -277,10 +286,20 @@ class ResultRef(StrictModel):
     unit_id: str
     result_path: str
 
+    @field_validator("result_path", mode="before")
+    @classmethod
+    def normalize_result_path(cls, value: str) -> str:
+        return agent_path(value)
+
 
 class TaskRef(StrictModel):
     unit_id: str
     task_path: str
+
+    @field_validator("task_path", mode="before")
+    @classmethod
+    def normalize_task_path(cls, value: str) -> str:
+        return agent_path(value)
 
 
 class ReviewTask(StrictModel):
@@ -303,6 +322,17 @@ class ReviewTask(StrictModel):
     review_round: Literal[1] = 1
     same_reviewer_id: str | None = None
     prior_issues: list[ReviewIssue] = Field(default_factory=list)
+
+    @field_validator(
+        "inventory_path",
+        "source_manifest_path",
+        "result_path",
+        "independent_result_path",
+        mode="before",
+    )
+    @classmethod
+    def normalize_paths(cls, value: str | None) -> str | None:
+        return None if value is None else agent_path(value)
 
     @model_validator(mode="after")
     def validate_stage(self) -> "ReviewTask":

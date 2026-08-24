@@ -13,7 +13,6 @@ from .markdown import (
     _boundary_text,
     _case_source,
     _coverage_gap_rows,
-    _coverage_rows,
     _contract_rows,
     _inventory_language_counts,
     _items,
@@ -170,7 +169,7 @@ def render_html_report(state: Mapping[str, Any]) -> str:
         ("文档告警", len(_items(manifest.get("warnings"))) if isinstance(manifest, Mapping) else 0),
         ("缺少依赖", len(_items(manifest.get("missing_dependencies"))) if isinstance(manifest, Mapping) else 0),
         ("图片附件", len(_items(manifest.get("attachments"))) if isinstance(manifest, Mapping) else 0),
-        ("Coverage 记录", len(_items(manifest.get("coverage_records"))) if isinstance(manifest, Mapping) else 0),
+        ("当前范围零覆盖记录", len(_items((state.get("coverage_report") or {}).get("matched")))),
     ])
     summary_rows = [
         (item.get("unit_id"), item.get("worker_id"), item.get("summary"))
@@ -178,6 +177,25 @@ def render_html_report(state: Mapping[str, Any]) -> str:
         if isinstance(item, Mapping)
     ]
     summaries_html = _table(("分析单元", "Worker", "结论"), summary_rows, {0, 1})
+    size_rows = [
+        (
+            item.get("unit_id"),
+            item.get("assigned_source_files"),
+            item.get("reviewed_source_files"),
+            item.get("function_count"),
+            item.get("failure_path_count"),
+            item.get("risk_count"),
+            item.get("test_case_count"),
+            item.get("direct_callee_context_count"),
+        )
+        for item in _items(state.get("analysis_summaries"))
+        if isinstance(item, Mapping)
+    ]
+    sizes_html = _table(
+        ("分析单元", "分配源码", "已检查源码", "函数", "Failure path", "风险", "用例", "直接 Callee 上下文"),
+        size_rows,
+        {0},
+    )
     material_evidence_rows = [
         (item.get("unit_id"), item.get("location") or item.get("chunk_id"), item.get("observation"), item.get("status"))
         for item in _items(state.get("material_evidence"))
@@ -186,7 +204,7 @@ def render_html_report(state: Mapping[str, Any]) -> str:
     material_evidence_html = _table(("分析单元", "引用位置", "使用结论", "状态"), material_evidence_rows, {0, 1, 3})
     body = [
         f'<section id="contract"><a class="back" href="#top">回到顶部</a><h2>1. 任务契约</h2>{contract_html}</section>',
-        f'<section id="scope"><a class="back" href="#top">回到顶部</a><h2>2. 分析引用范围</h2><h3>源码引用范围</h3>{scope_html}{boundary_html}<h3>源码仓</h3>{repositories_html}<h3>资料引用</h3>{material_evidence_html}<h3>分析结论摘要</h3>{summaries_html}<h3>引用清单摘要</h3>{manifest_html}</section>',
+        f'<section id="scope"><a class="back" href="#top">回到顶部</a><h2>2. 分析引用范围</h2><h3>源码引用范围</h3>{scope_html}{boundary_html}<h3>源码仓</h3>{repositories_html}<h3>资料引用</h3>{material_evidence_html}<h3>分析单元规模</h3>{sizes_html}<h3>分析结论摘要</h3>{summaries_html}<h3>引用清单摘要</h3>{manifest_html}</section>',
     ]
 
     flow_parts = []
@@ -240,13 +258,11 @@ def render_html_report(state: Mapping[str, Any]) -> str:
     body.append(f'<section id="risks"><a class="back" href="#top">回到顶部</a><h2>4. 六维 DFX 风险</h2>{dimension_summary}<h3>风险明细</h3>{rendered_cards}</section>')
 
     coverage = state.get("coverage_report") or state.get("coverage")
-    if isinstance(coverage, Mapping) and any(key in coverage for key in ("matched", "ambiguous", "unmatched")):
+    if isinstance(coverage, Mapping) and _items(coverage.get("matched")):
         gap_html = _table(("Coverage ID", "缺口", "函数/条件", "执行次数", "Coverage 来源"), _coverage_gap_rows(coverage), {0, 2, 4})
-        match_html = _table(("状态", "类型", "函数/分支", "执行次数", "Coverage 来源", "源码位置"), _coverage_rows(coverage), {2, 4, 5})
-        coverage_html = f'<h3>有效缺口</h3>{gap_html}<h3>Coverage 输入匹配</h3>{match_html}'
-        coverage_html += '<p class="muted">未出现在 Coverage 文件中的函数或分支状态为“未提供/未知”，不按 0 次执行处理。</p>'
+        coverage_html = f'<h3>当前范围零覆盖记录</h3>{gap_html}'
     else:
-        coverage_html = _list(coverage, "未提供覆盖率文件或匹配结果。")
+        coverage_html = '<p class="muted">当前分析范围没有唯一匹配的函数级 count=0 Coverage 记录。</p>'
     body.append(f'<section id="coverage"><a class="back" href="#top">回到顶部</a><h2>5. 覆盖率缺口</h2>{coverage_html}</section>')
 
     case_parts = []

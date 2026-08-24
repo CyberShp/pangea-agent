@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Callable
 
@@ -14,16 +15,19 @@ from docx import Document
 from PIL import Image
 from openpyxl import Workbook
 
-from pangea_agent.agent_io import read_json, write_json
+from pangea_agent.agent_io import agent_path, read_json, write_json
 from pangea_agent.cli.run_module_analysis import (
+    _reserve_run_id,
     resume_module_analysis,
     run_module_analysis,
+    start_module_analysis,
 )
 from pangea_agent.documents.coverage import match_coverage_records, parse_coverage_xlsx
 from pangea_agent.graph.nodes.load_contract import load_contract
 from pangea_agent.graph.nodes.resolve_repositories import resolve_repositories
 from pangea_agent.graph.nodes.locate_module import locate_module
 from pangea_agent.graph.nodes.index_materials import index_materials
+from pangea_agent.graph.nodes.make_analysis_units import _cluster_groups
 from pangea_agent.graph.nodes.prepare_worker_tasks import (
     _coverage_context,
     _related_state_context,
@@ -37,8 +41,11 @@ from pangea_agent.models.worker import (
     IndependentReviewResult,
     ReviewTask,
 )
+from pangea_agent.models.contract import TaskContract
 from pangea_agent.inventory.source_scanner import _known_macro_parse_artifact
 from pangea_agent.inventory.lua_symbols import parse_lua_file
+from pangea_agent.inventory.scope_expander import MAX_DIRECT_CALLERS_PER_GROUP
+from pangea_agent.inventory.source_languages import checkpoint_rubrics
 from pangea_agent.report.html import render_html_report
 from pangea_agent.report.markdown import render_report
 
@@ -246,8 +253,27 @@ def _validate_review_task(task_path: Path) -> None:
     )
 
 
+def _bind_analysis_actions(state: dict) -> None:
+    for index, action in enumerate(state.get("agent_actions", [])):
+        if action.get("role") != "analysis" or action.get("task_id") is not None:
+            continue
+        task_path = Path(action["task_path"])
+        run_dir = task_path.parents[2]
+        session_id = f"10000000-0000-4000-8000-{index + 1:012d}"
+        subprocess.run(
+            [
+                sys.executable, "-m", "pangea_agent.cli.main", "record-agent-session",
+                "--run-id", run_dir.name, "--data-root", str(run_dir.parent.parent),
+                "--role", "analysis", "--unit-id", action["unit_id"], "--task-id", session_id,
+            ],
+            check=True,
+            capture_output=True,
+        )
+
+
 def _advance_to_test_generation(state: dict) -> dict:
     while state["phase"] in {"WAITING_SOURCE_CHECKPOINT", "WAITING_RISK_ANALYSIS"}:
+        _bind_analysis_actions(state)
         task_paths = [Path(path) for path in state["agent_task_paths"]]
         for task_path in task_paths:
             task = read_json(task_path)
@@ -530,6 +556,7 @@ def _derived_semantic_path_does_not_rewrite_main_path() -> None:
 
 def _write_all_analysis(state: dict) -> None:
     state = _advance_to_test_generation(state)
+    _bind_analysis_actions(state)
     for task_path in state["agent_task_paths"]:
         task = read_json(Path(task_path))
         write_json(Path(task["result_path"]), _task_result(task))
@@ -547,6 +574,17 @@ def _advance_to_review_comparison(
     task = read_json(run_dir / "agent-tasks" / "review-independent.json")
     assert task["stage"] == "independent_review"
     assert task["analysis_results"] == []
+    progress = read_json(run_dir / "progress.json")
+    if progress["agent_sessions"]["review"]["task_id"] is None:
+        subprocess.run(
+            [
+                sys.executable, "-m", "pangea_agent.cli.main", "record-agent-session",
+                "--run-id", run_id, "--data-root", str(data_root),
+                "--role", "review", "--task-id", _REVIEW_SESSION_ID,
+            ],
+            check=True,
+            capture_output=True,
+        )
     findings = []
     for reference in task["analysis_tasks"]:
         worker_task = read_json(Path(reference["task_path"]))
@@ -1064,6 +1102,38 @@ def _rework_same_reviewer() -> None:
     assert run_module_analysis(str(contract))["phase"] == "COMPLETE"
 
 
+def _rework_preserves_allowed_material_paths() -> None:
+    _, data_root, contract = _workspace()
+    inbox = data_root / "inbox"
+    inbox.mkdir(parents=True, exist_ok=True)
+    material_path = "inbox/rework-requirement.md"
+    (data_root / material_path).write_text(
+        "# Rework requirement\n\nThe component must recover after initialization failure.\n",
+        encoding="utf-8",
+    )
+    state = run_module_analysis(str(contract))
+    _write_all_analysis(state)
+    assert run_module_analysis(str(contract))["phase"] == "WAITING_INDEPENDENT_REVIEW"
+    _review(data_root, "smoke-01", status="REWORK")
+    state = run_module_analysis(str(contract))
+    assert state["phase"] == "WAITING_REWORK"
+    run_dir = data_root / "runs" / "smoke-01"
+    analysis_task = read_json(
+        run_dir / "agent-tasks" / "analysis" / "U00-test_generation.json"
+    )
+    rework_task_path = run_dir / "agent-tasks" / "rework" / "U00.json"
+    rework_task = read_json(rework_task_path)
+    assert material_path in analysis_task["allowed_material_paths"]
+    assert rework_task["allowed_material_paths"] == analysis_task["allowed_material_paths"]
+    rework_task["allowed_material_paths"] = []
+    write_json(rework_task_path, rework_task)
+    repaired_task = load_worker_task(rework_task_path)
+    assert repaired_task.allowed_material_paths == analysis_task["allowed_material_paths"]
+    rework_task = repaired_task.model_dump(mode="json")
+    write_json(Path(rework_task["result_path"]), _task_result(rework_task))
+    _validate_worker_task(rework_task_path)
+
+
 def _truncated_correction() -> None:
     _, data_root, contract = _workspace()
     state = run_module_analysis(str(contract))
@@ -1406,16 +1476,15 @@ def _coverage_reference_only() -> None:
     workbook.save(coverage / "coverage.xlsx")
     state = run_module_analysis(str(contract))
     report = state["coverage_report"]
-    assert len(report["matched"]) == 1 and len(report["unmatched"]) == 1
-    assert report["matched"][0]["meaning"] == "function_execution_reference_only"
+    assert report["matched"] == [] and report["unmatched"] == []
     source_task = read_json(Path(state["agent_task_paths"][0]))
     assert source_task["coverage_context"] == []
     state = _advance_to_test_generation(state)
     task = read_json(Path(state["agent_task_paths"][0]))
-    assert task["coverage_context"][0]["gaps"] == []
+    assert task["coverage_context"] == []
 
 
-def _coverage_gap_requires_test_case() -> None:
+def _coverage_gap_is_optional_but_linkage_is_strict() -> None:
     _, data_root, contract = _workspace()
     coverage = data_root / "coverage"
     coverage.mkdir()
@@ -1430,9 +1499,20 @@ def _coverage_gap_requires_test_case() -> None:
     gap_id = task["coverage_context"][0]["gaps"][0]["coverage_id"]
     result = _task_result(task)
     write_json(Path(task["result_path"]), result)
-    assert run_module_analysis(str(contract))["phase"] == "WAITING_TEST_GENERATION"
-    errors = read_json(data_root / "runs" / "smoke-01" / "progress.json")["errors"]
-    assert any("Coverage 缺口尚未闭环" in item["reason"] for item in errors)
+    assert run_module_analysis(str(contract))["phase"] == "WAITING_INDEPENDENT_REVIEW"
+
+    _, data_root, contract = _workspace()
+    coverage = data_root / "coverage"
+    coverage.mkdir()
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(["模块", "函数", "覆盖次数"])
+    sheet.append(["module", "demo_start", 0])
+    workbook.save(coverage / "coverage.xlsx")
+    state = _advance_to_test_generation(run_module_analysis(str(contract)))
+    task = read_json(Path(state["agent_task_paths"][0]))
+    gap_id = task["coverage_context"][0]["gaps"][0]["coverage_id"]
+    result = _task_result(task)
     result["test_cases"] = [
         _test_case("U00-COV-TC1", requirement_ids=["REQ-COV-01"], title="Coverage 缺口补测一"),
         _test_case("U00-COV-TC2", requirement_ids=["REQ-COV-02"], title="Coverage 缺口补测二"),
@@ -1452,6 +1532,31 @@ def _coverage_gap_requires_test_case() -> None:
         case["linked_coverage_ids"] = [gap_id]
     write_json(Path(task["result_path"]), result)
     assert run_module_analysis(str(contract))["phase"] == "WAITING_INDEPENDENT_REVIEW"
+
+
+def _coverage_report_only_shows_current_zero_functions() -> None:
+    _, data_root, contract = _workspace()
+    coverage = data_root / "coverage"
+    coverage.mkdir()
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(["模块", "函数", "覆盖次数"])
+    sheet.append(["module", "demo_start", 0])
+    sheet.append(["other", "not_in_scope", 0])
+    sheet.append(["module", "already_executed", 3])
+    workbook.save(coverage / "coverage.xlsx")
+    state = run_module_analysis(str(contract))
+    assert [item["function"] for item in state["coverage_report"]["matched"]] == ["demo_start"]
+    _write_all_analysis(state)
+    run_module_analysis(str(contract))
+    _review(data_root, "smoke-01", status="PASS")
+    complete = run_module_analysis(str(contract))
+    assert complete["phase"] == "COMPLETE"
+    for report_path in (complete["report_path"], complete["html_report_path"]):
+        report = Path(report_path).read_text(encoding="utf-8")
+        assert "demo_start" in report
+        assert "not_in_scope" not in report
+        assert "already_executed" not in report
 
 
 def _empty_coverage_rejects_claimed_gap() -> None:
@@ -1581,6 +1686,7 @@ def _material_traceability_report() -> None:
     state = run_module_analysis(str(contract))
     state = _advance_to_test_generation(state)
     task = read_json(Path(state["agent_task_paths"][0]))
+    assert task["allowed_material_paths"] == ["inbox/current.md"]
     result = _task_result(task)
     result["analysis_checkpoint"]["material_decisions"] = [{
         "path": "Component.changed 类表共享",
@@ -1911,6 +2017,363 @@ def _unchanged_result_edit_does_not_block() -> None:
     assert state["phase"] == "WAITING_REWORK_VERIFICATION"
 
 
+def _run_ids_are_reserved_atomically() -> None:
+    root = Path(tempfile.mkdtemp(prefix="pangea-run-id-smoke-"))
+    _TEMP_ROOTS.append(root)
+    contract = {"target": "CHAP", "data_root": str(root / "data")}
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        run_ids = list(executor.map(lambda _: _reserve_run_id(contract), range(16)))
+    assert len(set(run_ids)) == 16
+    assert all((root / "data" / "runs" / run_id).is_dir() for run_id in run_ids)
+
+
+def _module_analysis_owns_pending_contract_cleanup() -> None:
+    _, _, contract = _workspace()
+    pending = Path("pangea-data/.pangea/pending-task-contract-smoke-owned.json")
+    pending.parent.mkdir(parents=True, exist_ok=True)
+    write_json(pending, read_json(contract))
+    start_module_analysis(str(pending))
+    assert not pending.exists()
+
+    start_module_analysis(str(contract))
+    assert contract.exists()
+
+
+def _agent_paths_and_contract_scope_are_posix() -> None:
+    assert agent_path(Path(r"agent-tasks\analysis\U00.json")) == "agent-tasks/analysis/U00.json"
+    base = {
+        "run_id": "scope-path-smoke",
+        "repository": "demo",
+        "target": "CHAP",
+    }
+    for invalid_scope in (r"module\entry.c", "module\nentry.c"):
+        try:
+            TaskContract.model_validate({**base, "source_scope": [invalid_scope]})
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"非法 source_scope 未被拒绝：{invalid_scope!r}")
+    valid = TaskContract.model_validate({**base, "source_scope": ["module/entry.c"]})
+    assert valid.source_scope == ["module/entry.c"]
+
+
+def _directory_scope_splits_file_families_and_adds_unique_direct_callee() -> None:
+    _, data_root, contract = _workspace()
+    repo = data_root / "repositories" / "demo"
+    module = repo / "module"
+    (module / "helper.h").write_text("int tls_handshake(void);\n", encoding="utf-8")
+    (module / "helper.c").write_text(
+        '#include "helper.h"\nint tls_handshake(void) { return 7; }\n',
+        encoding="utf-8",
+    )
+    (module / "entry.c").write_text(
+        '#include "helper.h"\nint demo_start(void) { return tls_handshake(); }\n',
+        encoding="utf-8",
+    )
+    state = run_module_analysis(str(contract))
+    tasks = [read_json(Path(path)) for path in state["agent_task_paths"]]
+    assert len(tasks) == 1
+    source_scopes = [set(task["unit"]["source_scope"]) for task in tasks]
+    assert {frozenset(scope) for scope in source_scopes} == {
+        frozenset({"module/entry.c", "module/helper.c", "module/helper.h"}),
+    }
+    assert len(set().union(*source_scopes)) == sum(len(scope) for scope in source_scopes)
+    entry_task = next(task for task in tasks if "module/entry.c" in task["unit"]["source_scope"])
+    assert "module/helper.c" not in entry_task["unit"]["context_scope"]
+    _write_all_analysis(state)
+    run_module_analysis(str(contract))
+    _review(data_root, "smoke-01", status="PASS")
+    complete = run_module_analysis(str(contract))
+    summaries = {item["unit_id"]: item for item in complete["analysis_summaries"]}
+    entry_summary = summaries[entry_task["unit"]["unit_id"]]
+    assert entry_summary["assigned_source_files"] == 3
+    assert entry_summary["reviewed_source_files"] == 3
+    assert entry_summary["function_count"] == 2
+    assert entry_summary["direct_callee_context_count"] == 0
+    assert "分析单元规模" in Path(complete["report_path"]).read_text(encoding="utf-8")
+
+
+def _large_distinct_families_do_not_merge_into_one_unit() -> None:
+    groups = [
+        {
+            "repo_id": "demo",
+            "requested_scope": ["module/auth.c"],
+            "code_paths": ["module/auth.c"],
+            "context_paths": ["module/transport.c"],
+        },
+        {
+            "repo_id": "demo",
+            "requested_scope": ["module/transport.c"],
+            "code_paths": ["module/transport.c"],
+            "context_paths": [],
+        },
+    ]
+    inventory = {
+        "files": [
+            {
+                "repo_id": "demo",
+                "path": "module/auth.c",
+                "line_count": 1300,
+                "functions": [{"symbol": f"auth_{index}"} for index in range(30)],
+            },
+            {
+                "repo_id": "demo",
+                "path": "module/transport.c",
+                "line_count": 3153,
+                "functions": [{"symbol": f"transport_{index}"} for index in range(90)],
+            },
+        ]
+    }
+    clustered = _cluster_groups(
+        groups,
+        inventory,
+        [{
+            "repo_id": "demo",
+            "path": "module/transport.c",
+            "reason": "direct_callee:transport_start",
+        }],
+    )
+    assert [item["code_paths"] for item in clustered] == [
+        ["module/auth.c"],
+        ["module/transport.c"],
+    ]
+
+
+def _direct_caller_context_is_bounded() -> None:
+    _, data_root, contract = _workspace()
+    repo = data_root / "repositories" / "demo"
+    payload = read_json(contract)
+    payload["source_scope"] = ["module/entry.c"]
+    write_json(contract, payload)
+    callers = repo / "callers"
+    callers.mkdir()
+    for index in range(MAX_DIRECT_CALLERS_PER_GROUP + 10):
+        (callers / f"caller_{index:02d}.c").write_text(
+            "int demo_start(void);\n"
+            f"int caller_{index:02d}(void) {{ return demo_start(); }}\n",
+            encoding="utf-8",
+        )
+    (callers / "oversized.c").write_text(
+        "\n".join([*("/* context */" for _ in range(900)), "int demo_start(void);", "int oversized(void) { return demo_start(); }"]),
+        encoding="utf-8",
+    )
+    state = run_module_analysis(str(contract))
+    direct_callers = [
+        item
+        for item in state["scope_expansion"]["context_files"]
+        if str(item.get("reason", "")).startswith("direct_caller:")
+    ]
+    assert len(direct_callers) == MAX_DIRECT_CALLERS_PER_GROUP
+    assert not any(item["path"].endswith("oversized.c") for item in direct_callers)
+
+
+def _preprocessor_macro_is_not_a_function_definition() -> None:
+    _, data_root, contract = _workspace()
+    repo = data_root / "repositories" / "demo"
+    (repo / "module" / "stubs.c").write_text(
+        "#ifndef HAVE_REAL_HOOK\n"
+        "LOG_REGISTER_COMPONENT(demo)\n"
+        "#endif\n"
+        "#ifndef HAVE_REAL_HOOK\n"
+        "void\n"
+        "demo_init_hooks(void)\n"
+        "{\n"
+        "}\n"
+        "#endif\n",
+        encoding="utf-8",
+    )
+    (repo / "module" / "real.c").write_text(
+        "void demo_init_hooks(void)\n"
+        "{\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (repo / "module" / "macro_user.c").write_text(
+        "void macro_user(void) { LOG_REGISTER_COMPONENT(other); }\n",
+        encoding="utf-8",
+    )
+    payload = read_json(contract)
+    payload["source_scope"] = ["module/stubs.c"]
+    write_json(contract, payload)
+    state = run_module_analysis(str(contract))
+    task = read_json(Path(state["agent_task_paths"][0]))
+    assert "module/real.c" not in task["unit"]["context_scope"]
+    assert "module/macro_user.c" not in task["unit"]["context_scope"]
+
+
+def _multiline_condition_is_not_a_function_definition() -> None:
+    _, data_root, contract = _workspace()
+    repo = data_root / "repositories" / "demo"
+    (repo / "module" / "common.c").write_text(
+        "int demo_unlikely(int value);\n"
+        "int common_entry(void) { return demo_unlikely(1); }\n",
+        encoding="utf-8",
+    )
+    (repo / "app").mkdir()
+    (repo / "app" / "reactor.c").write_text(
+        "void unrelated(void)\n"
+        "{\n"
+        "    if (\n"
+        "        demo_unlikely(1)) {\n"
+        "    }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (repo / "scripts").mkdir()
+    (repo / "scripts" / "common.sh").write_text(
+        "common common common common common common common common common common\n",
+        encoding="utf-8",
+    )
+    payload = read_json(contract)
+    payload["source_scope"] = ["module/common.c"]
+    write_json(contract, payload)
+    state = run_module_analysis(str(contract))
+    task = read_json(Path(state["agent_task_paths"][0]))
+    assert "app/reactor.c" not in task["unit"]["context_scope"]
+    assert "scripts/common.sh" not in task["unit"]["context_scope"]
+
+
+def _block_macro_is_not_an_exported_symbol() -> None:
+    _, data_root, contract = _workspace()
+    repo = data_root / "repositories" / "demo"
+    (repo / "module" / "entry.c").write_text(
+        "int demo_start(void)\n"
+        "{\n"
+        "    TAILQ_FOREACH(item, &items, link) {\n"
+        "    }\n"
+        "    return 0;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (repo / "docs").mkdir()
+    (repo / "docs" / "queues.md").write_text(
+        "TAILQ_FOREACH(item, queue, link) is a generic queue macro.\n",
+        encoding="utf-8",
+    )
+    payload = read_json(contract)
+    payload["source_scope"] = ["module/entry.c"]
+    write_json(contract, payload)
+    state = run_module_analysis(str(contract))
+    task = read_json(Path(state["agent_task_paths"][0]))
+    assert "docs/queues.md" not in task["unit"]["context_scope"]
+
+
+def _oversized_direct_callee_is_not_frozen() -> None:
+    _, data_root, contract = _workspace()
+    repo = data_root / "repositories" / "demo"
+    (repo / "module" / "entry.c").write_text(
+        "int external_helper(void);\n"
+        "int demo_start(void) { return external_helper(); }\n",
+        encoding="utf-8",
+    )
+    (repo / "module" / "large_impl.c").write_text(
+        "\n".join([
+            *("/* implementation context */" for _ in range(900)),
+            "int external_helper(void) { return 0; }",
+        ]),
+        encoding="utf-8",
+    )
+    payload = read_json(contract)
+    payload["source_scope"] = ["module/entry.c"]
+    write_json(contract, payload)
+    state = run_module_analysis(str(contract))
+    task = read_json(Path(state["agent_task_paths"][0]))
+    assert "module/large_impl.c" not in task["unit"]["context_scope"]
+    assert any(
+        item.get("path") == "module/large_impl.c"
+        and item.get("reason") == "direct_callee_context_too_large"
+        for item in state["scope_expansion"]["unresolved_dependencies"]
+    )
+
+
+def _specialized_rubrics_follow_source_scope() -> None:
+    cases = {
+        "lib/iscsi/login.c": "storage_iscsi.md",
+        "lib/nvmf/transport.c": "storage_nvmeof.md",
+        "lib/env_dpdk/memory.c": "vendor_dpdk.md",
+        "lib/rdma_utils/rdma_utils.c": "vendor_mlx_rdma.md",
+        "lib/doca/task.c": "vendor_nvidia_doca.md",
+    }
+    for source_path, expected_name in cases.items():
+        paths = checkpoint_rubrics(
+            ["c_cpp"],
+            [],
+            repo_id="demo",
+            source_paths=[source_path],
+            inventory={"files": []},
+        )
+        assert any(path.endswith(expected_name) for path in paths), paths
+
+    recovery_paths = checkpoint_rubrics(
+        ["c_cpp"],
+        [],
+        repo_id="demo",
+        source_paths=["module/session.c"],
+        inventory={
+            "files": [{
+                "repo_id": "demo",
+                "path": "module/session.c",
+                "resource_signals": [{"keywords": ["alloc", "free"]}],
+            }]
+        },
+    )
+    assert any(path.endswith("storage_resource_recovery.md") for path in recovery_paths)
+
+    unrelated = checkpoint_rubrics(
+        ["c_cpp"],
+        [],
+        repo_id="demo",
+        source_paths=["module/feature.c"],
+        inventory={"files": []},
+    )
+    assert unrelated == ["src/pangea_agent/rubrics/builtin/c_cpp_analysis.md"]
+
+
+def _doca_submit_cleanup_becomes_a_semantic_check() -> None:
+    _, data_root, contract = _workspace()
+    repo = data_root / "repositories" / "demo"
+    source = repo / "module" / "doca_task.c"
+    source.write_text(
+        "int doca_task_alloc_init(void *ctx, void **task);\n"
+        "int doca_task_submit(void *task);\n"
+        "int run(void *ctx) {\n"
+        "  void *task = 0;\n"
+        "  if (doca_task_alloc_init(ctx, &task) != 0) return -1;\n"
+        "  if (doca_task_submit(task) != 0) return -2;\n"
+        "  return 0;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    payload = read_json(contract)
+    payload["source_scope"] = ["module/doca_task.c"]
+    write_json(contract, payload)
+    state = run_module_analysis(str(contract))
+    task = read_json(Path(state["agent_task_paths"][0]))
+    checks = task["semantic_check_items"]
+    assert len(checks) == 1
+    assert checks[0]["check_id"] == "DOCA-SUBMIT-01"
+    assert checks[0]["subject_path"] == "module/doca_task.c"
+    assert "task free" in checks[0]["instruction"]
+
+
+def _explicit_scope_keeps_external_implementation_as_context() -> None:
+    _, data_root, contract = _workspace()
+    repo = data_root / "repositories" / "demo"
+    (repo / "module" / "api.h").write_text("int demo_external_api(void);\n", encoding="utf-8")
+    (repo / "test").mkdir()
+    (repo / "test" / "api.c").write_text(
+        '#include "../module/api.h"\nint demo_external_api(void) { return 1; }\n',
+        encoding="utf-8",
+    )
+    payload = read_json(contract)
+    payload["source_scope"] = ["module/api.h"]
+    write_json(contract, payload)
+    state = run_module_analysis(str(contract))
+    task = read_json(Path(state["agent_task_paths"][0]))
+    assert task["unit"]["source_scope"] == ["module/api.h"]
+    assert "test/api.c" in task["unit"]["context_scope"]
+
+
 def _bounded_scope_expansion() -> None:
     _, _, contract = _workspace()
     repo = Path(read_json(contract)["data_root"]) / "repositories" / "demo"
@@ -1946,6 +2409,11 @@ def _bounded_scope_expansion() -> None:
     (repo / "unrelated" / "noise.c").write_text("int unrelated(void) { return 0; }\n", encoding="utf-8")
     (repo / "test" / "e2e").mkdir(parents=True)
     (repo / "test" / "e2e" / "demo.sh").write_text("demo_feature_start()\n", encoding="utf-8")
+    (repo / "docs").mkdir()
+    (repo / "docs" / "demo.md").write_text(
+        "demo feature context " * 20,
+        encoding="utf-8",
+    )
     payload = read_json(contract)
     payload["target"] = "demo feature"
     payload["source_scope"] = ["module/entry.c"]
@@ -1955,6 +2423,7 @@ def _bounded_scope_expansion() -> None:
     assert "module/entry.c" in task["unit"]["source_scope"]
     assert "module/demo_internal.h" in task["unit"]["context_scope"]
     assert "module/unused_internal.h" not in task["unit"]["context_scope"]
+    assert "docs/demo.md" not in task["unit"]["context_scope"]
     assert task["failure_signal_context"] == [
         {
             "path": "module/demo_internal.h",
@@ -2009,20 +2478,18 @@ def _bounded_scope_expansion() -> None:
     assert "unrelated/noise.c" not in task["unit"]["source_scope"]
     assert "test/e2e/demo.sh" in task["unit"]["context_scope"]
     assert len(task["unit"]["context_scope"]) <= 10
-    assert task["max_parallel_workers"] == 4 and task["may_spawn_workers"] is False
+    assert task["max_parallel_workers"] == 8 and task["may_spawn_workers"] is False
     semantic_checks = task["semantic_check_items"]
     semantic_kinds = [item["kind"] for item in semantic_checks]
     assert semantic_kinds == [
         "assertion_reachability",
         "assertion_reachability",
         "paired_operation",
-        "paired_operation",
         "assertion_reachability",
         "resource_reconfiguration",
         "resource_reconfiguration",
     ], semantic_kinds
-    assert [item["subject_path"] for item in semantic_checks[2:4]] == [
-        "app/rpc.c",
+    assert [item["subject_path"] for item in semantic_checks[2:3]] == [
         "module/entry.c",
     ]
     assert len({item["check_id"] for item in semantic_checks}) == len(semantic_checks)
@@ -2172,7 +2639,21 @@ def _agent_start_checkpoint() -> None:
     result_path = Path(read_json(task_path)["result_path"])
     prepared_result = read_json(result_path)
     assert prepared_result["completed_stage"] == "source_checkpoint"
-    assert prepared_result["analysis_checkpoint"]["source_paths_reviewed"] == ["module/entry.c"]
+    assert prepared_result["analysis_checkpoint"]["source_paths_reviewed"] == []
+    prepared_result["worker_id"] = "worker-empty-checkpoint"
+    prepared_result["summary"] = "尚未填写源码 checkpoint"
+    write_json(result_path, prepared_result)
+    rejected = subprocess.run(
+        [
+            sys.executable, "-m", "pangea_agent.cli.main", "validate-worker-result",
+            "--task", str(task_path),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert rejected.returncode != 0
+    assert "lifecycle_stages_checked" in rejected.stderr
     source_task = read_json(task_path)
     assert source_task["inventory_path"] is None
     assert source_task["source_manifest_path"] is None
@@ -2529,7 +3010,7 @@ def _graph_v2_stage_actions_reach_complete() -> None:
     assert initial_result_path.is_file()
     initial_result = read_json(initial_result_path)
     assert initial_result["completed_stage"] == "source_checkpoint"
-    assert initial_result["analysis_checkpoint"]["source_paths_reviewed"] == initial_task["unit"]["source_scope"]
+    assert initial_result["analysis_checkpoint"]["source_paths_reviewed"] == []
     assert initial_result["risks"] == []
     assert initial_result["test_cases"] == []
     assert state["agent_actions"] == [{
@@ -2682,27 +3163,54 @@ def _graph_v2_two_unit_stage_barrier() -> None:
     assert {action["unit_id"] for action in state["agent_actions"]} == {"U00", "U01"}
 
 
-def _graph_v2_limits_each_action_batch_to_four() -> None:
+def _graph_v2_limits_each_action_batch_to_eight() -> None:
     _, _, contract = _workspace(
-        repositories=("repo-a", "repo-b", "repo-c", "repo-d", "repo-e")
+        repositories=(
+            "repo-a", "repo-b", "repo-c", "repo-d", "repo-e",
+            "repo-f", "repo-g", "repo-h", "repo-i",
+        )
     )
+    data_root = Path(read_json(contract)["data_root"])
     state = run_module_analysis(str(contract))
     assert state["phase"] == "WAITING_SOURCE_CHECKPOINT"
-    assert len(state["agent_actions"]) == 4
-    assert len(state["agent_task_paths"]) == 4
-    for action in state["agent_actions"]:
-        task = read_json(Path(action["task_path"]))
+    assert len(state["agent_actions"]) == 8
+    assert len(state["agent_task_paths"]) == 8
+    initial_actions = list(state["agent_actions"])
+
+    untouched = run_module_analysis(str(contract))
+    assert [action["unit_id"] for action in untouched["agent_actions"]] == [
+        action["unit_id"] for action in initial_actions
+    ]
+    progress = read_json(data_root / "runs" / "smoke-01" / "progress.json")
+    assert progress["errors"] == []
+
+    for index, action in enumerate(initial_actions):
+        session_id = f"00000000-0000-4000-8000-{index + 1:012d}"
+        subprocess.run(
+            [
+                sys.executable, "-m", "pangea_agent.cli.main", "record-agent-session",
+                "--run-id", "smoke-01", "--data-root", str(data_root),
+                "--role", "analysis", "--unit-id", action["unit_id"], "--task-id", session_id,
+            ],
+            check=True,
+            capture_output=True,
+        )
+
+    for action in initial_actions[:3]:
+        task_path = Path(action["task_path"])
+        task = read_json(task_path)
         write_json(Path(task["result_path"]), _task_result(task))
+        _validate_worker_task(task_path)
 
     state = run_module_analysis(str(contract))
     assert state["phase"] == "WAITING_SOURCE_CHECKPOINT"
-    assert [action["unit_id"] for action in state["agent_actions"]] == ["U04"]
-    final_task = read_json(Path(state["agent_actions"][0]["task_path"]))
-    write_json(Path(final_task["result_path"]), _task_result(final_task))
-
-    state = run_module_analysis(str(contract))
-    assert state["phase"] == "WAITING_RISK_ANALYSIS"
-    assert len(state["agent_actions"]) == 4
+    assert [action["unit_id"] for action in state["agent_actions"]] == ["U08"]
+    progress = read_json(data_root / "runs" / "smoke-01" / "progress.json")
+    assert sum(
+        session["status"] == "dispatched"
+        for session in progress["agent_sessions"].values()
+    ) == 5
+    assert all(action["unit_id"] not in {item["unit_id"] for item in initial_actions[3:]} for action in state["agent_actions"])
 
 
 def _graph_v2_cli_rejects_stale_stage_task() -> None:
@@ -3374,7 +3882,7 @@ def _coverage_ignores_context_symbol_collisions() -> None:
         path_inventory=inventory,
     )
     exact_context_items = _coverage_context(unit, exact_context)
-    assert exact_context_items[0]["path"] == "module/context.lua"
+    assert exact_context_items == []
 
 
 def _lua_context_path_coverage_reaches_worker() -> None:
@@ -3409,11 +3917,7 @@ def _lua_context_path_coverage_reaches_worker() -> None:
     assert state["coverage_report"]["matched"][0]["matches"][0]["path"] == "module/component.lua"
     state = _advance_to_test_generation(state)
     task = read_json(Path(state["agent_task_paths"][0]))
-    item = next(
-        entry for entry in task["coverage_context"]
-        if entry["path"] == "module/component.lua"
-    )
-    assert item["gaps"][0]["coverage_id"].startswith("COV:lua-demo:")
+    assert task["coverage_context"] == []
 
 
 def _source_prefix_evidence_is_normalized() -> None:
@@ -3700,6 +4204,7 @@ def _graph_control_contract_reaches_all_clients() -> None:
         assert "禁止用 Bash、Python、正则或临时脚本批量重写/修复 JSON" in rules
         assert "触发风险的调用步骤必须同时写完整返回值和完整调用后状态" in rules
         assert "普通“失败后修复重试”只执行" in rules
+        assert "Graph 要求重新提交当前 task" in rules
     for relative_path in (
         ".opencode/agents/review-worker.md",
         ".claude/agents/review-worker.md",
@@ -3714,6 +4219,7 @@ def _graph_control_contract_reaches_all_clients() -> None:
         assert "后续“检查状态”中的任何字段与触发调用真实终态" in rules
         assert "当前实现必须至少违反" in rules
         assert "相同调用连续出现几次就累计几次注册/计数" in rules
+        assert "Graph 要求重新提交当前 task" in rules
     lua_rules = (root / "src/pangea_agent/rubrics/builtin/lua_analysis.md").read_text()
     assert "该函数体同步调用的全部下层函数" in lua_rules
     assert "只要它是在受保护函数的动态调用链中执行，就会被捕获" in lua_rules
@@ -3733,6 +4239,7 @@ SCENARIOS: tuple[tuple[str, Scenario], ...] = (
     ("reviewer 自身误判不得制造 worker 返工", _comparison_does_not_rework_worker_for_reviewer_mistake),
     ("对照复核不能丢弃独立 finding", _comparison_cannot_drop_independent_findings),
     ("REWORK 同 reviewer 通过", _rework_same_reviewer),
+    ("返工任务保留冻结资料路径", _rework_preserves_allowed_material_paths),
     ("原 reviewer 无法恢复时显式 UNRESOLVED", _reviewer_unavailable_has_explicit_unresolved_path),
     ("截断结果覆盖修正", _truncated_correction),
     ("黑盒步骤必须直接绑定预期", _unpaired_test_step_rejected),
@@ -3751,13 +4258,27 @@ SCENARIOS: tuple[tuple[str, Scenario], ...] = (
     ("终态报告恢复", _report_recovery),
     ("文档缺口强制不完整", _document_gap),
     ("有 Coverage 记录但无缺口时不强制补测", _coverage_reference_only),
-    ("Coverage 缺口必须闭环到用例", _coverage_gap_requires_test_case),
+    ("Coverage 缺口可选补测但已选择关联必须闭环", _coverage_gap_is_optional_but_linkage_is_strict),
+    ("Coverage 报告只展示当前范围函数级零覆盖", _coverage_report_only_shows_current_zero_functions),
     ("空 Coverage 输入拒绝伪造缺口结论", _empty_coverage_rejects_claimed_gap),
     ("风险阶段可先规划 Coverage 且用例阶段必须闭环", _risk_stage_can_plan_coverage_before_test_ids_exist),
     ("相关资料必须闭环且报告不展示排除章节", _material_traceability_report),
     ("已确认历史问题作为只读回归参考进入 Run", _confirmed_historical_issues_are_frozen_as_references),
     ("多 repo 单元隔离", _multi_repo_isolation),
     ("返工期间未返工结果编辑不阻塞", _unchanged_result_edit_does_not_block),
+    ("Run ID 并发原子占位", _run_ids_are_reserved_atomically),
+    ("module-analysis 自动清理本会话 pending contract", _module_analysis_owns_pending_contract_cleanup),
+    ("Agent 路径统一且非法 source_scope 拒绝", _agent_paths_and_contract_scope_are_posix),
+    ("目录 scope 按文件族拆分并补充唯一直接被调函数", _directory_scope_splits_file_families_and_adds_unique_direct_callee),
+    ("超过目标规模的不同职责文件不合并", _large_distinct_families_do_not_merge_into_one_unit),
+    ("直接调用者上下文数量有界", _direct_caller_context_is_bounded),
+    ("预处理宏不会吞并后续函数定义", _preprocessor_macro_is_not_a_function_definition),
+    ("多行条件不会冒充函数定义", _multiline_condition_is_not_a_function_definition),
+    ("块宏不会冒充导出函数", _block_macro_is_not_an_exported_symbol),
+    ("超大直接依赖不冻结整文件", _oversized_direct_callee_is_not_frozen),
+    ("专项方法只按当前源码范围选择", _specialized_rubrics_follow_source_scope),
+    ("DOCA submit 失败清理进入语义检查", _doca_submit_cleanup_becomes_a_semantic_check),
+    ("显式 scope 外实现只作为上下文", _explicit_scope_keeps_external_implementation_as_context),
     ("范围只扩到直接调用与相关上下文", _bounded_scope_expansion),
     ("状态上下文均衡保留生命周期与重配置", _state_context_balances_lifecycle_and_reconfiguration),
     ("预期行为不能列为风险", _expected_behavior_not_risk),
@@ -3772,7 +4293,7 @@ SCENARIOS: tuple[tuple[str, Scenario], ...] = (
     ("未执行 callback 不得被归因写入状态", _nonexecuted_callback_cannot_write_state),
     ("Graph V2 阶段与 Agent action 严格推进到 COMPLETE", _graph_v2_stage_actions_reach_complete),
     ("Graph V2 两单元阶段 barrier", _graph_v2_two_unit_stage_barrier),
-    ("Graph V2 每批最多返回四个 Agent action", _graph_v2_limits_each_action_batch_to_four),
+    ("Graph V2 每批最多返回八个 Agent action", _graph_v2_limits_each_action_batch_to_eight),
     ("Graph V2 CLI 拒绝旧阶段 task", _graph_v2_cli_rejects_stale_stage_task),
     ("Graph V2 只读旧 COMPLETE 并拒绝旧非终态", _graph_v2_legacy_resume_is_read_only),
     ("Graph V2 拒绝缺失或越级 completed_stage", _graph_v2_rejects_missing_or_future_completed_stage),

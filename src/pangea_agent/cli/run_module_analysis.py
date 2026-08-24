@@ -5,21 +5,28 @@ import re
 from datetime import date
 from pathlib import Path
 
+from pangea_agent.agent_io import agent_path
 from pangea_agent.graph.graph import graph
 from pangea_agent.inventory.scope_expander import preflight_source_scopes
 from pangea_agent.repositories.resolver import resolve_repositories_from_contract
 
 
-def _default_run_id(contract: dict) -> str:
+def _reserve_run_id(contract: dict) -> str:
     target = re.sub(r"[^A-Za-z0-9_-]+", "-", str(contract.get("target", "analysis"))).strip("-").lower()
     target = (target or "analysis")[:24]
     stamp = date.today().strftime("%y%m%d")
     runs_root = Path(contract.get("data_root", "pangea-data")) / "runs"
+    runs_root.mkdir(parents=True, exist_ok=True)
     prefix = f"{target}-{stamp}"
     sequence = 1
-    while (runs_root / f"{prefix}-{sequence:02d}").exists():
-        sequence += 1
-    return f"{prefix}-{sequence:02d}"
+    while True:
+        run_id = f"{prefix}-{sequence:02d}"
+        try:
+            (runs_root / run_id).mkdir()
+        except FileExistsError:
+            sequence += 1
+            continue
+        return run_id
 
 
 def _invoke_contract(contract: dict) -> dict:
@@ -53,12 +60,21 @@ def _preflight_new_contract(contract: dict) -> None:
     preflight_source_scopes(repositories, list(scope))
 
 
+def _remove_pending_contract(path: Path) -> None:
+    if (
+        path.parent.resolve() == Path("pangea-data/.pangea").resolve()
+        and path.name.startswith("pending-task-contract-")
+        and path.suffix == ".json"
+    ):
+        path.unlink()
+
+
 def run_module_analysis(contract_path: str) -> dict:
     path = Path(contract_path)
     contract = json.loads(path.read_text(encoding="utf-8"))
     if not contract.get("run_id"):
         _preflight_new_contract(contract)
-        contract["run_id"] = _default_run_id(contract)
+        contract["run_id"] = _reserve_run_id(contract)
     return _invoke_contract(contract)
 
 
@@ -67,7 +83,8 @@ def start_module_analysis(contract_path: str) -> dict:
     contract = json.loads(path.read_text(encoding="utf-8"))
     contract.pop("run_id", None)
     _preflight_new_contract(contract)
-    contract["run_id"] = _default_run_id(contract)
+    _remove_pending_contract(path)
+    contract["run_id"] = _reserve_run_id(contract)
     return _invoke_contract(contract)
 
 
@@ -89,11 +106,11 @@ def resume_module_analysis(run_id: str, data_root: str = "pangea-data") -> dict:
                 "run_id": run_id,
                 "data_root": data_root,
                 "phase": "COMPLETE",
-                "report_path": str(report_path),
+                "report_path": agent_path(report_path),
             }
             html_path = run_dir / "report.html"
             if html_path.is_file():
-                result["html_report_path"] = str(html_path)
+                result["html_report_path"] = agent_path(html_path)
             return result
         raise ValueError(
             "该 Run 使用旧版文本阶段流程，Graph V2 只读既有 COMPLETE 报告；"
@@ -103,7 +120,7 @@ def resume_module_analysis(run_id: str, data_root: str = "pangea-data") -> dict:
     if not contract_path.is_file():
         raise ValueError(
             f"冻结 task contract 不存在：{contract_path}。"
-            "该 Run 可能是在旧版本初始化阶段中断；请使用原 pending-task-contract.json "
-            "重新执行 module-analysis 以建立可恢复状态。"
+            "该 Run 可能是在旧版本初始化阶段中断；请新建一次 module-analysis "
+            "以建立可恢复状态。"
         )
     return run_module_analysis(str(contract_path))

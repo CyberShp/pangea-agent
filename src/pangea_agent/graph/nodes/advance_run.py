@@ -3,7 +3,8 @@ from __future__ import annotations
 from collections import defaultdict
 from pathlib import Path
 
-from pangea_agent.agent_io import read_json, write_json
+from pangea_agent.agent_io import agent_path, read_json, write_json
+from pangea_agent.documents.coverage import relevant_zero_coverage
 from pangea_agent.graph.actions import agent_action
 from pangea_agent.graph.run_store import (
     analysis_result_path,
@@ -110,24 +111,26 @@ def _hydrate_run_context(state: PangeaState, progress: RunProgress) -> PangeaSta
         "source_manifest": source_manifest,
         "index_path": first_task.index_path,
         "inventory": inventory,
-        "coverage_report": match_coverage_records(
-            source_manifest.get("coverage_records", []),
-            filter_inventory_to_sources(
-                inventory,
-                {
-                    (task.unit.repo_id, path)
-                    for task in tasks
-                    for path in task.unit.source_scope
-                },
-            ),
-            path_inventory=filter_inventory_to_sources(
-                inventory,
-                {
-                    (task.unit.repo_id, path)
-                    for task in tasks
-                    for path in [*task.unit.source_scope, *task.unit.context_scope]
-                },
-            ),
+        "coverage_report": relevant_zero_coverage(
+            match_coverage_records(
+                source_manifest.get("coverage_records", []),
+                filter_inventory_to_sources(
+                    inventory,
+                    {
+                        (task.unit.repo_id, path)
+                        for task in tasks
+                        for path in task.unit.source_scope
+                    },
+                ),
+                path_inventory=filter_inventory_to_sources(
+                    inventory,
+                    {
+                        (task.unit.repo_id, path)
+                        for task in tasks
+                        for path in [*task.unit.source_scope, *task.unit.context_scope]
+                    },
+                ),
+            )
         ),
         "analysis_units": [
             task.unit.model_dump(mode="json") for task in tasks
@@ -159,6 +162,12 @@ def _complete_session(progress: RunProgress, key: str) -> None:
         session.status = "completed"
 
 
+def _mark_session_pending(progress: RunProgress, key: str) -> None:
+    session = progress.agent_sessions.get(key)
+    if session is not None:
+        session.status = "pending"
+
+
 def _sync_state_errors(state: PangeaState, progress: RunProgress) -> PangeaState:
     environment_errors = [
         error for error in state.get("errors", [])
@@ -182,6 +191,7 @@ def _load_analysis_results(state: PangeaState, progress: RunProgress) -> list[Wo
             write_json(path, result.model_dump(mode="json"))
         except Exception as exc:
             _record_error(progress, "analysis_result_rejected", path, exc)
+            _mark_session_pending(progress, f"analysis:{unit_id}")
             continue
         completed.append(unit_id)
         _complete_session(progress, f"analysis:{unit_id}")
@@ -237,7 +247,7 @@ def _expected_independent_checks(state: PangeaState, task: ReviewTask) -> set[tu
         raise ArtifactRejected("独立复核 task 未绑定全部分析单元")
     for reference in task.analysis_tasks:
         expected_path = analysis_task_path(state, reference.unit_id, "test_generation")
-        if reference.task_path != str(expected_path):
+        if reference.task_path != agent_path(expected_path):
             raise ArtifactRejected(f"独立复核 task 路径与当前 Run 不一致：{reference.unit_id}")
         worker_task = load_worker_task(expected_path)
         expected.update(
@@ -342,6 +352,7 @@ def _prepare_rework(state: PangeaState, progress: RunProgress, review) -> None:
             index_path=original_task.index_path,
             inventory_path=original_task.inventory_path,
             source_manifest_path=original_task.source_manifest_path,
+            allowed_material_paths=original_task.allowed_material_paths,
             checkpoint_rubric_paths=original_task.checkpoint_rubric_paths,
             coverage_context=original_task.coverage_context,
             failure_signal_context=original_task.failure_signal_context,
@@ -398,6 +409,7 @@ def _load_rework_results(state: PangeaState, progress: RunProgress) -> list[Work
             write_json(result_path, result.model_dump(mode="json"))
         except Exception as exc:
             _record_error(progress, "rework_result_rejected", result_path, exc)
+            _mark_session_pending(progress, f"rework:{unit_id}")
             continue
         completed_rework.append(unit_id)
         _complete_session(progress, f"rework:{unit_id}")
@@ -413,6 +425,38 @@ def _load_rework_results(state: PangeaState, progress: RunProgress) -> list[Work
         write_json(analysis_result_path(state, result.unit_id, attempt), result.model_dump(mode="json"))
     _clear_error(progress, "rework_results_rejected", run_directory(state) / "agent-results" / "rework")
     return final_results
+
+
+def _analysis_summary(state: PangeaState, result: WorkerResult) -> dict:
+    unit = next(
+        item for item in state.get("analysis_units", [])
+        if item.get("unit_id") == result.unit_id
+    )
+    owned = {(unit["repo_id"], path) for path in unit.get("source_scope", [])}
+    function_count = sum(
+        len(item.get("functions", []))
+        for item in state.get("inventory", {}).get("files", [])
+        if (item.get("repo_id"), item.get("path")) in owned
+    )
+    direct_callee_paths = {
+        item.get("path")
+        for item in state.get("scope_expansion", {}).get("context_files", [])
+        if item.get("repo_id") == unit["repo_id"]
+        and str(item.get("reason", "")).startswith("direct_callee:")
+        and item.get("path") in unit.get("context_scope", [])
+    }
+    return {
+        "unit_id": result.unit_id,
+        "worker_id": result.worker_id,
+        "summary": result.summary,
+        "assigned_source_files": len(unit.get("source_scope", [])),
+        "reviewed_source_files": len(set(result.analysis_checkpoint.source_paths_reviewed)),
+        "function_count": function_count,
+        "failure_path_count": len(result.analysis_checkpoint.failure_paths),
+        "risk_count": len(result.risks),
+        "test_case_count": len(result.test_cases),
+        "direct_callee_context_count": len(direct_callee_paths),
+    }
 
 
 def _state_with_results(state: PangeaState, results: list[WorkerResult], status: str, unresolved: list[dict]) -> PangeaState:
@@ -451,10 +495,7 @@ def _state_with_results(state: PangeaState, results: list[WorkerResult], status:
     )
     return {
         **state,
-        "analysis_summaries": [
-            {"unit_id": result.unit_id, "worker_id": result.worker_id, "summary": result.summary}
-            for result in results
-        ],
+        "analysis_summaries": [_analysis_summary(state, result) for result in results],
         "material_decisions": [
             {"unit_id": result.unit_id, **decision.model_dump(mode="json")}
             for result in results
@@ -550,7 +591,7 @@ def _validate_review_inputs(state: PangeaState, task: ReviewTask) -> None:
         )
         worker_task = load_worker_task(task_path)
         result_path = analysis_result_path(state, reference.unit_id, attempt)
-        if reference.result_path != str(result_path):
+        if reference.result_path != agent_path(result_path):
             raise ArtifactRejected(f"review 输入路径与当前 Run 不一致：{reference.unit_id}")
         result = load_worker_result(result_path, worker_task)
         validate_worker_result(worker_task, result)
@@ -562,7 +603,7 @@ def _load_bound_independent_review(
     task: ReviewTask,
 ) -> IndependentReviewResult:
     expected_path = review_result_path(state, "independent")
-    if task.independent_result_path != str(expected_path):
+    if task.independent_result_path != agent_path(expected_path):
         raise ArtifactRejected("对照复核绑定的独立复核结果路径与当前 Run 不一致")
     independent_task = load_review_task(review_task_path(state, "independent"))
     independent_result = load_independent_review_result(expected_path, independent_task)

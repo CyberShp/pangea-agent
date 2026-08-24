@@ -6,6 +6,12 @@ from pathlib import Path
 from typing import Any
 
 
+def agent_path(path: str | Path) -> str:
+    """Serialize a filesystem path for agent JSON and commands."""
+
+    return str(path).replace("\\", "/")
+
+
 def read_json(path: Path) -> Any:
     try:
         return json.loads(path.read_text(encoding="utf-8"))

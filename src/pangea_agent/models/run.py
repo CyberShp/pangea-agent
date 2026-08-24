@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from pangea_agent.agent_io import agent_path
 
 
 RunPhase = Literal[
@@ -65,6 +67,11 @@ class AgentAction(BaseModel):
     task_id: str | None = None
     replacement_allowed: bool = False
     after_completion: Literal["resume_run"] = "resume_run"
+
+    @field_validator("task_path", mode="before")
+    @classmethod
+    def normalize_task_path(cls, value: str) -> str:
+        return agent_path(value)
 
 
 class RunProgress(BaseModel):

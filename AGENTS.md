@@ -43,7 +43,7 @@
 
 - 用户不需要显式说 `module-analysis`。只要用户要求对业务源码、模块或目录做测试分析、风险分析、业务流程分析、Coverage 缺口分析或生成测试用例，就按一次新的 PANGEA 模块分析处理；`/module-analysis` 只是显式快捷入口。
 - 新根 Agent 会话默认没有当前 Run。若当前会话尚未通过本次分析创建并持有明确 `run_id`，且用户没有明确指定历史 `run_id`，创建新 Run 前不得调用 `pangea_status`，不得列举或读取 `pangea-data/runs/`、历史 `progress.json` / `agent_sessions`、报告或 Companion 状态。
-- 新分析意图与显式 `/module-analysis` 执行同一入口：确定目标仓和最小 `source_scope`；`source_scope` 路径相对所选仓库根目录，不包含 `repo_id` 前缀，并在所有宿主上统一使用 `/` 分隔。先删除固定临时路径 `pangea-data/.pangea/pending-task-contract.json`，不读取其旧内容，再根据当前请求新建；随后执行 `python -m pangea_agent.cli.main module-analysis --contract <pending-contract>` 创建新 Run。新 Run 的 `run_id` 由 PANGEA 生成，创建成功后删除 pending contract。
+- 新分析意图与显式 `/module-analysis` 执行同一入口：确定目标仓和最小 `source_scope`；`source_scope` 路径相对所选仓库根目录，不包含 `repo_id` 前缀，并在所有宿主上统一使用 `/` 分隔。为当前根会话新建唯一临时文件 `pangea-data/.pangea/pending-task-contract-<uuid>.json`，不得读取或复用其他 pending contract；随后执行 `python -m pangea_agent.cli.main module-analysis --contract <pending-contract>` 创建新 Run。新 Run 的 `run_id` 由 PANGEA 生成；CLI 在进入 Graph 前自动删除本会话的 pending contract，根 Agent 不再执行删除命令。
 - 只有两种情况允许执行 `resume-run`：当前会话已经由本次分析获得明确 `run_id`；或用户在当前请求中明确指定要恢复的历史 Run / 历史会话。新会话中的“继续之前的”如果没有明确 Run，不得自行扫描历史 Run 猜测。
 - 查看历史 Run、打开报告、浏览 Companion 看板或调用只读状态工具不会把该 Run 绑定为当前会话 Run，也不会授权恢复。
 - 修改 `pangea-agent` 自身代码、graph、schema、rubric、Agent 规则或 DSH/OpenCode 适配属于产品开发，不启动 PANGEA 分析 Run。
@@ -52,7 +52,7 @@
 
 - 风险必须包含复现条件、系统结果、外部观测和排除条件。
 - 测试用例必须包含前置条件、步骤、预期结果、观测方式和清理/恢复。
-- 风险驱动始终是测试用例基础；需求/设计资料和 Coverage 是可选输入，但一旦与当前分析对象相关就必须闭环到测试用例或明确的不可触达结论，不得只读取不转化。
+- 风险驱动始终是测试用例基础；相关需求/设计资料必须闭环到测试用例。Coverage 只把当前范围唯一匹配的函数级 `count=0` 作为可选补测提示，选择处理时保持真实 ID 和用例双向关联。
 - 质量门禁输出 `PASS`、`REWORK` 或 `UNRESOLVED`。
 - 所有正式产物优先使用 `schemas/` 中的结构。
 
@@ -72,7 +72,7 @@
 - DSH 派发 PANGEA 子 Agent 时，子 Agent 先按 `.agents/pangea/dsh.md` 选择并读取仓库内对应 worker 规则；不得只把 task JSON 路径交给一个未加载 PANGEA worker 规则的通用子 Agent。
 - 三个客户端应遵循同一套 graph / schema / rubric 分层。
 - Python 不调用模型 API。当前主 Agent 读取 `agent-tasks/` 文件，最多并发派发
-  4 个互不重叠的 `analysis-worker`；worker 不得再派发子 Agent。
+  8 个互不重叠的 `analysis-worker`；worker 不得再派发子 Agent。
 - CLI 每次创建或恢复 Run 后返回 `action=<JSON>`。主 Agent 只按 action 的 `action`、`role`、`stage`、`task_path`、`task_id`、`replacement_allowed` 和 `after_completion` 派发或续接对应 Agent；不得用 `phase`、Agent 回复文本或自定阶段提示代替 action。worker 的 `validate-worker-result` 或 reviewer 的 `check-review-artifact` 只有在当前 task 校验 `PASS` 后才记录其已绑定会话完成；`after_completion=resume_run` 表示根 Agent 收到该 Agent 的回合完成报告后只执行 `resume-run`，不得自行记录完成、轮询 Agent、读取产物或决定下一阶段。Graph 会再次验证完成状态和产物，并生成唯一的下一条 action。新 Run 返回的 `data_root` 与 `run_id` 一起绑定，所有 run-scoped CLI 都必须显式传 `--data-root <data_root>`。主 Agent 不得创建、填写或修正 `agent-results/analysis/`、`agent-results/rework/` 或 review 语义结果。worker 无法完成时如实停止，不得由主 Agent 代写结果。
 - analysis 结果齐备后，只启动 1 个 `review-worker`。初审和返工验证属于同一轮
   review lifecycle，返工最多一次，且返工验证必须由原 reviewer 完成。

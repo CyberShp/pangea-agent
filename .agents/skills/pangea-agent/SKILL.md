@@ -27,11 +27,18 @@ actual DSH tool shell.
 Choose the repository virtual-environment interpreter once for the current DSH root session and
 reuse that exact command for every PANGEA CLI call:
 
-- POSIX host: `.venv/bin/python`
+- POSIX host: derive `workspace_root` from the absolute path returned when reading
+  `.agents/pangea/dsh.md`, then use `/usr/bin/env -C "<workspace_root>"
+  "<workspace_root>/.venv/bin/python"`
 - Windows PowerShell host: `& '.\.venv\Scripts\python.exe'`
 
 If the selected path does not exist, stop and report that PANGEA must be initialized. Do not try a
 different Python executable, install packages, or build a fallback chain.
+
+The DSH file tools resolve paths from the selected workspace, while `bash` may start in its parent.
+When repository and `source_scope` are already supplied, do not shell-check them and do not search
+for `pangea-data`; let `module-analysis` perform the exact validation. On POSIX, pass the pending
+contract to the CLI as an absolute path under `workspace_root`.
 
 ## Start a new analysis
 
@@ -47,10 +54,9 @@ When the user requests a new analysis and does not explicitly name a historical 
    `acceptance-demo` and directory `module`, write `"module"`, never
    `"acceptance-demo/module"` or a backslash path. If the request already supplies them, do not
    explore further.
-3. Delete the exact temporary path `pangea-data/.pangea/pending-task-contract.json` without
-   reading it. Use `rm -f` for that file only on POSIX. On Windows PowerShell use
-   `Remove-Item -LiteralPath 'pangea-data/.pangea/pending-task-contract.json' -Force -ErrorAction SilentlyContinue`.
-   Then write it from the current request. For one
+3. Choose one UUID for this root session and write the unique temporary path
+   `pangea-data/.pangea/pending-task-contract-<uuid>.json` from the current request. Do not read,
+   delete, or reuse another session's pending contract. For one
    repository, include `repository: "<repo_id>"` and omit `repositories`; for multiple
    repositories, include a non-empty `repositories` list and omit `repository`. Also include
    only `data_root`, `mode=module_analysis`, `target`, `source_scope`, and optional `focus`.
@@ -58,17 +64,19 @@ When the user requests a new analysis and does not explicitly name a historical 
    one-item array, and an omitted focus becomes `[target]`.
    `source_scope` is always a JSON array, even for one path. Never include a `run_id` or reuse
    old contract content.
-   This temporary path is literal and repository-level: it never moves under `data_root`. Even
+   This unique temporary path is repository-level: it never moves under `data_root`. Even
    when `data_root=pangea-data/acceptance/example`, do not create or use
-   `<data_root>/.pangea/pending-task-contract.json`, and do not create/check `data_root` before
-   writing the fixed pending contract. Delete and write remain separate tool calls.
+   `<data_root>/.pangea/pending-task-contract-<uuid>.json`, and do not create/check `data_root` before
+   writing the pending contract.
 4. With the interpreter selected above, run the matching command: POSIX
-   `.venv/bin/python -m pangea_agent.cli.main module-analysis --contract
-   pangea-data/.pangea/pending-task-contract.json`; this cleanup must be one standalone command with no `&& echo` or second action. Windows PowerShell
+   `/usr/bin/env -C "<workspace_root>" "<workspace_root>/.venv/bin/python" -m
+   pangea_agent.cli.main module-analysis --contract
+   "<workspace_root>/pangea-data/.pangea/pending-task-contract-<uuid>.json"`. Windows PowerShell
    `& '.\.venv\Scripts\python.exe' -m pangea_agent.cli.main module-analysis --contract
-   'pangea-data/.pangea/pending-task-contract.json'`.
-5. After the command returns the new `run_id`, delete the pending contract in a separate tool
-   call. Keep that `run_id` as the only current Run for this DSH root session.
+   'pangea-data/.pangea/pending-task-contract-<uuid>.json'`.
+5. The CLI deletes that exact pending contract before entering the Graph. Do not issue a separate
+   delete command after `module-analysis`. Keep the returned `run_id` as the only current Run for
+   this DSH root session.
 
 Do not inspect CLI help, schemas, dependencies, historical Runs, or reports before starting.
 If the selected virtual-environment interpreter is unavailable, stop and report the initialization

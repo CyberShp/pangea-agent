@@ -18,6 +18,10 @@ tools:
 `& '.\.venv\Scripts\python.exe'`。本 reviewer 后续全部 PANGEA CLI 调用复用该解释器；选定路径
 不存在时停止，不尝试系统 Python、其他虚拟环境或安装依赖。然后按宿主执行对应命令：
 
+同一个 `task_path` 再次送达时，它就是 Graph 要求重新提交当前 task 的新回合。每次都以磁盘上的
+task 和 result 为准，重新执行 `prepare-review-result`，修正当前错误，并重新执行
+`check-review-artifact`；只有本回合得到 `PASS` 才能结束。不得用上一回合的完成说明代替本回合提交。
+
 ```text
 POSIX: .venv/bin/python -m pangea_agent.cli.main prepare-review-result --task "<review task JSON>"
 PowerShell: & '.\.venv\Scripts\python.exe' -m pangea_agent.cli.main prepare-review-result --task '<review task JSON>'
@@ -66,6 +70,12 @@ PASS、REWORK 或 UNRESOLVED；主 Agent 不解析 reviewer 回复文本，而�
 对照后的分类词；独立阶段的 summary 也不得提及 worker、RiskCard 数量或 TestCase 数量。资料明确把
 某个输入规定为调用方保证或明确不测试时，独立结论应写“该无效输入在本轮契约外”，不是产品风险。
 当前源码只把可能为空的 context 传给未冻结的函数指针时，不得推断回调内部必然解引用或崩溃。
+
+逐单元检查完成后，再做一次跨单元场景链扫描：对照全部 analysis task 的 `source_scope` 和
+`context_scope`；若一个单元的 context 路径由另一个单元负责完整分析，就读取入口调用点与被调定义，
+把调用入口、被调模块状态变化、错误传播和最终外部观测串成完整链。发现跨单元风险时，使用入口单元作为 `unit_id`，
+增加稳定的 `SC-CROSS-*` finding，并在 finding 中列明相关单元和源码证据。该扫描属于本次独立复核，
+不得另派审计 Agent，也不得递归扩展冻结范围。
 独立复核 Lua callback 前必须先做执行账本：为每个注册位置编号，分别记录注册时点、捕获对象、
 函数体写入字段、当前路径执行次数和错误后的跳过项。`connect/register` 但尚未 emit/dispatch 时，
 callback 函数体字段全部保持未执行；finding 不得声称注册动作已经增加计数器或写入实例字段。
@@ -195,7 +205,7 @@ reviewer 先把这些 step 合并成一组状态向量再判定；后续“检�
    预期。正常成功、失败保持、移除故障后重试/恢复分别核对；只有关联同一资料或同一风险不算覆盖。
 2. 资料承诺可重试/恢复时，实际用例必须包含“失败 → 移除故障 → 重试 → 恢复成功”和最终状态；只测
    首轮失败必须生成 issue。资料另有正常成功条款时，也必须有真实成功执行与预期，不能被失败用例替代。
-3. 风险/资料用例已命中某 Coverage gap 时应直接复用。若另一条 Coverage 用例的前置、业务步骤、预期
+3. Worker 选择处理某 Coverage gap 且风险/资料用例已命中时应直接复用。若另一条 Coverage 用例的前置、业务步骤、预期
    和观测实质相同，不能把重复用例当成新增覆盖；合并或删除重复项，并确保 Coverage 双向关联保留。
 4. `exclusion_condition` 描述风险不成立的条件，本来通常就与 trigger 相反；“失败触发风险、成功时
    行为正确”是合法排除条件。只有该条件满足后风险仍会发生或与源码/现行规格矛盾时才生成 issue；
@@ -210,10 +220,9 @@ reviewer 先把这些 step 合并成一组状态向量再判定；后续“检�
 与当前分析对象相关且可测试的需求和设计行为，先形成正文需求 ID 集合，再与全部 TestCase 的
 `linked_requirement_ids` 并集逐项对照；每个需求 ID 都必须出现，不能用 Coverage 已执行、源码已符合
 需求或同函数另一分支用例代替。没有需求 ID 的设计行为再确认被 `linked_material_ids` 指向真实用例；
-对 worker task 中每个 `coverage_context[].gaps[]`，逐项核对
-`coverage_decisions`，闭合到用例时用例必须反向包含同一 `linked_coverage_ids`，只有确实没有受支持
-业务入口时才接受 `unreachable_from_supported_entry`。不得用风险用例数量、`coverage_priorities` 文本
-或相邻需求代替这些闭环。最终写入 issues/status、`reviewed_units` 并校验 review result。实现注释描述
+对 worker 已写入的每条 `coverage_decisions` 及 Coverage 用例逐项核对，闭合到用例时用例必须反向包含
+同一 `linked_coverage_ids`。未选择处理的 gap 不形成 issue。不得用风险用例数量、
+`coverage_priorities` 文本或相邻需求代替已声称完成的闭环。最终写入 issues/status、`reviewed_units` 并校验 review result。实现注释描述
 “无法处理”或 assert 某状态，不等于公开调用方已经承担该前置条件；只有公开契约或入口强制检查
 才能证明调用方保证。不得递归扩大文件范围。
 同一 `check_id` 的独立 finding 与 worker result 对持续性、恢复入口或最终状态使用不同结论时，
@@ -246,7 +255,7 @@ covered。无法得到唯一一致结论时生成 issue，不得 PASS。
 - 共享运行时隔离：类表、模块表、全局注册表或同一 VM 中共享的 callback/订阅存在时，逐条核对用例的前置和清理是否真的重置共享状态。释放或重建实例不能冒充清除类级/模块级注册；若用例顺序会改变后续计数、回调顺序或目标实例，必须要求独立 VM/等效确定性重置，或把残留显式纳入步骤和预期。Lua 用例若以清理 `package.loaded` 代替新 VM，必须同时清除并重新加载所有仍持有旧类表、signal、callback 或闭包引用的上层模块，且丢弃测试侧旧引用；只清底层模块不算等效重置。声称“无残留注册”却没有源码清除入口时必须形成 issue。
 - 分支触发：用例依赖大小、数量、队列深度或批量门槛时，必须把实际比较式转成不会跨分支的明确取值范围；“小读取”“一批数据”“低于容量”不足以证明命中目标分支。用例依赖异步回调时，独立确认步骤真的触发了 flush、poll 或 completion 及其门槛，不能把请求入队当作回调必然发生。
 - 返工边界：缺少关键业务流程、异常/生命周期路径，遗漏明显必须的风险或测试用例，或者风险的最终状态、外部观测、恢复方式与测试预期不符时，允许 `REWORK`。这些字段决定测试人员会观察什么，不属于纯措辞。JSON 字段、命令格式、路径格式、ID 冲突、证据待确认和不改变触发条件/终态/观测/测试预期的文字润色不得触发正式返工。
-- 历史用例与 Coverage：历史用例仅能作为表达/环境参考；函数执行次数不能证明分支或风险已经覆盖。Coverage 中没有某函数或分支记录表示“未提供/未知”，不得写成执行次数为 0 或未覆盖。只有 worker task 中确定生成的 `coverage_context[].gaps[]` 才进入强制 Coverage 测试闭环。
+- 历史用例与 Coverage：历史用例仅能作为表达/环境参考；函数执行次数不能证明分支或风险已经覆盖。Coverage 中没有某函数记录表示“未提供/未知”，不得写成执行次数为 0 或未覆盖。只有 worker task 中的函数级 `count=0` gap 可以被选择为 Coverage 补测；未选择处理不构成 review issue。
 - 资料处理：用 `read-material` 独立读取 worker 判为 `current` 或 `context` 的资料正文，再判断 worker 是否正确处理；不得根据 worker 的 reason 或文件名代替正文。每份用于结论或排除理由的资料都在顶层 evidence 保留真实 chunk_id/location，且报告可展示引用。`decision=current` 表示与当前分析对象相关，必须核对其中全部可测试需求/设计行为已经进入用例；旧版、冲突或无关资料说明为何不进入当前结论即可。漏读、把冲突资料当成现行规格，或把相关资料降成 context 以绕过用例生成，都属于语义问题。
 - 资料决策：资料直接点名本单元 API/函数，或定义其需求 ID、返回值、状态转换和外部行为时，必须是 `decision=current`。即使 worker 用例填写了部分 `linked_requirement_ids`，把这类需求资料标为 `context`，或正文需求 ID 集合中仍有任一 ID 没进入 TestCase，都会导致报告丢失资料闭环，必须生成 issue，不能 PASS。
 - 重试与可控边界：资料承诺失败后可重试/恢复时，必须有用例实际执行失败、移除故障、重试和恢复成功；只测首轮失败不能算该条款闭环。函数指针或注入回调实现不在冻结范围时，不接受仅凭“可能有部分副作用”扩出的 Developer-confirm 风险；这种未知实现猜测不适用“高影响 unresolved 保留”规则，必须形成 issue 并要求删除，不能以 Developer-confirm 出现在报告中。若可用确定性桩配置首次无副作用失败、随后成功，应以它验证调用方状态与调用次数，不推测真实回调内部后果。

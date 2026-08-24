@@ -4,7 +4,7 @@ import re
 from pathlib import Path
 
 from pangea_agent.agent_io import write_json
-from pangea_agent.documents.coverage import filter_inventory_to_sources, match_coverage_records
+from pangea_agent.documents.coverage import filter_inventory_to_sources
 from pangea_agent.graph.actions import MAX_PARALLEL_ACTIONS, agent_action
 from pangea_agent.graph.run_store import (
     analysis_result_path,
@@ -15,7 +15,10 @@ from pangea_agent.graph.run_store import (
 )
 from pangea_agent.graph.semantic_checks import build_runtime_semantic_checks
 from pangea_agent.graph.state import PangeaState
-from pangea_agent.graph.validation import validate_nonoverlapping_units
+from pangea_agent.graph.validation import (
+    validate_complete_unit_coverage,
+    validate_nonoverlapping_units,
+)
 from pangea_agent.inventory.source_languages import (
     checkpoint_rubrics,
     semantic_providers,
@@ -35,10 +38,27 @@ _CODE_SUFFIXES = {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp"}
 _IMPLEMENTATION_SUFFIXES = {".c", ".cc", ".cpp", ".cxx"}
 _MAP_INSERT_CALL_RE = re.compile(r"\bspdk_sock_map_insert\s*\([^;{}]*\)\s*;", re.DOTALL)
 _MAP_RELEASE_CALL_RE = re.compile(r"\bspdk_sock_map_release\s*\([^;{}]*\)\s*;", re.DOTALL)
+_DOCA_TASK_ALLOC_RE = re.compile(
+    r"\bdoca_[A-Za-z0-9_]*task[A-Za-z0-9_]*alloc_init\s*\("
+)
+_DOCA_TASK_SUBMIT_RE = re.compile(r"\bdoca_task_submit\s*\(")
+_SEMANTIC_CONTEXT_REASONS = (
+    "companion_source",
+    "declared_definition:",
+    "direct_callee:",
+    "direct_inline_dependency:",
+    "function_pointer_implementation:",
+)
 
 
-def _checkpoint_rubric_paths(unit: AnalysisUnit) -> list[str]:
-    return checkpoint_rubrics(unit.languages, unit.frameworks)
+def _checkpoint_rubric_paths(unit: AnalysisUnit, inventory: dict) -> list[str]:
+    return checkpoint_rubrics(
+        unit.languages,
+        unit.frameworks,
+        repo_id=unit.repo_id,
+        source_paths=unit.source_scope,
+        inventory=inventory,
+    )
 
 
 def _failure_signal_focus(signal: str) -> str:
@@ -121,17 +141,18 @@ def _related_state_context(relative: str, lines: list[str], signal: str) -> list
 
 def _coverage_context(unit: AnalysisUnit, coverage_report: dict) -> list[dict]:
     source_scopes = [scope.replace("\\", "/").strip("/") or "." for scope in unit.source_scope]
-    context_scopes = [scope.replace("\\", "/").strip("/") or "." for scope in unit.context_scope]
     context: list[dict] = []
     for record in coverage_report.get("matched", []):
+        if record.get("coverage_type", "function") != "function" or record.get("count") != 0:
+            continue
         match = record["matches"][0]
         path = match["path"].replace("\\", "/")
         if match["repo_id"] != unit.repo_id:
             continue
-        scopes = source_scopes
-        if str(record.get("path", "")).strip():
-            scopes = [*source_scopes, *context_scopes]
-        if not any(scope == "." or path == scope or path.startswith(f"{scope}/") for scope in scopes):
+        if not any(
+            scope == "." or path == scope or path.startswith(f"{scope}/")
+            for scope in source_scopes
+        ):
             continue
         context.append({
             "repo_id": match["repo_id"],
@@ -146,28 +167,23 @@ def _coverage_context(unit: AnalysisUnit, coverage_report: dict) -> list[dict]:
             "true_count": record.get("true_count"),
             "false_count": record.get("false_count"),
         })
-    # An executed branch proves the function ran, so a zero function count cannot be a real gap.
-    executed_by_branch = {
-        (item["repo_id"], item["path"], item["function"])
-        for item in context
-        if item.get("coverage_type") == "branch" and item.get("count", 0) > 0
-    }
-    consistent_context = [
-        item
-        for item in context
-        if not (
-            item.get("coverage_type") == "function"
-            and item.get("count") == 0
-            and (item["repo_id"], item["path"], item["function"])
-            in executed_by_branch
-        )
-    ]
     return sorted(
-        consistent_context,
+        context,
         key=lambda item: (
             item["path"], item["line"] or 0, item["function"], item.get("branch_id") or ""
         ),
     )
+
+
+def _allowed_material_paths(source_manifest: dict) -> list[str]:
+    return sorted({
+        item["path"]
+        for item in source_manifest.get("material_catalog", [])
+        if isinstance(item, dict)
+        and item.get("type") == "material"
+        and str(item.get("parse_status", "")).startswith("parsed")
+        and item.get("path")
+    })
 
 
 def _source_inventory(unit: AnalysisUnit, inventory: dict) -> dict:
@@ -187,13 +203,17 @@ def _path_coverage_inventory(unit: AnalysisUnit, inventory: dict) -> dict:
     )
 
 
-def _failure_signal_context(unit: AnalysisUnit, repositories: list[dict]) -> list[dict]:
+def _failure_signal_context(
+    unit: AnalysisUnit,
+    repositories: list[dict],
+    semantic_context_scope: list[str],
+) -> list[dict]:
     repository = next((item for item in repositories if item["repo_id"] == unit.repo_id), None)
     if repository is None:
         return []
     root = Path(repository["source_root"])
     signals: list[dict] = []
-    for relative in sorted(dict.fromkeys([*unit.source_scope, *unit.context_scope])):
+    for relative in sorted(dict.fromkeys([*unit.source_scope, *semantic_context_scope])):
         path = root / relative
         if path.suffix.lower() not in _CODE_SUFFIXES or not path.is_file():
             continue
@@ -216,12 +236,13 @@ def _semantic_check_items(
     unit: AnalysisUnit,
     repositories: list[dict],
     signals: list[dict],
+    semantic_context_scope: list[str],
 ) -> list[dict]:
     repository = next((item for item in repositories if item["repo_id"] == unit.repo_id), None)
     if repository is None:
         return []
     root = Path(repository["source_root"])
-    paths = sorted(dict.fromkeys([*unit.source_scope, *unit.context_scope]))
+    paths = sorted(dict.fromkeys([*unit.source_scope, *semantic_context_scope]))
     paired_paths: list[str] = []
     for relative in paths:
         path = root / relative
@@ -308,6 +329,36 @@ def _semantic_check_items(
     return checks
 
 
+def _doca_semantic_check_items(
+    unit: AnalysisUnit, repositories: list[dict]
+) -> list[dict]:
+    repository = next((item for item in repositories if item["repo_id"] == unit.repo_id), None)
+    if repository is None:
+        return []
+    root = Path(repository["source_root"])
+    checks = []
+    for relative in unit.source_scope:
+        path = root / relative
+        if path.suffix.lower() not in _IMPLEMENTATION_SUFFIXES or not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        if not (_DOCA_TASK_ALLOC_RE.search(text) and _DOCA_TASK_SUBMIT_RE.search(text)):
+            continue
+        checks.append({
+            "check_id": f"DOCA-SUBMIT-{len(checks) + 1:02d}",
+            "kind": "paired_operation",
+            "subject_path": relative,
+            "instruction": (
+                "从 DOCA task 分配成功开始，分别重放 doca_task_submit 成功与失败。"
+                "submit 失败分支必须逐步说明 task 所有权、是否调用 task free、context stop 前"
+                "是否仍有 in-flight task，以及清理后的下一次提交能力；不能用返回错误或不重试"
+                "代替资源终态。"
+            ),
+            "context_paths": [relative],
+        })
+    return checks
+
+
 def prepare_worker_tasks(state: PangeaState) -> PangeaState:
     units = state.get("analysis_units", [])
     if not units:
@@ -330,6 +381,10 @@ def prepare_worker_tasks(state: PangeaState) -> PangeaState:
     if empty_units:
         raise ValueError(f"分析单元没有可分析源码：{', '.join(empty_units)}")
     validate_nonoverlapping_units(units)
+    validate_complete_unit_coverage(
+        units,
+        state.get("scope_expansion", {}).get("groups", []),
+    )
     run_dir = run_directory(state)
     inventory_path = run_dir / "inputs" / "inventory.json"
     source_manifest_path = run_dir / "inputs" / "source-manifest.json"
@@ -341,6 +396,11 @@ def prepare_worker_tasks(state: PangeaState) -> PangeaState:
         {"repo_id": repo["repo_id"], "source_root": repo["source_root"], "git": repo.get("git", {})}
         for repo in state.get("repositories", [])
     ]
+    context_reasons = {
+        (item.get("repo_id"), item.get("path")): str(item.get("reason", ""))
+        for item in state.get("scope_expansion", {}).get("context_files", [])
+        if isinstance(item, dict)
+    }
     missing_inputs = [
         str(path) for path in (inventory_path, source_manifest_path, Path(state["index_path"]))
         if not path.is_file()
@@ -349,13 +409,17 @@ def prepare_worker_tasks(state: PangeaState) -> PangeaState:
         raise ValueError(f"worker 冻结输入不存在：{missing_inputs}")
     for raw_unit in units:
         unit = AnalysisUnit.model_validate(raw_unit)
-        coverage_report = match_coverage_records(
-            source_manifest.get("coverage_records", []),
-            _source_inventory(unit, inventory),
-            path_inventory=_path_coverage_inventory(unit, inventory),
-        )
         unit_repositories = [repo for repo in repositories if repo["repo_id"] == unit.repo_id]
-        failure_signal_context = _failure_signal_context(unit, unit_repositories)
+        semantic_context_scope = [
+            path
+            for path in unit.context_scope
+            if context_reasons.get((unit.repo_id, path), "").startswith(
+                _SEMANTIC_CONTEXT_REASONS
+            )
+        ]
+        failure_signal_context = _failure_signal_context(
+            unit, unit_repositories, semantic_context_scope
+        )
         providers = semantic_providers(unit.languages, unit.frameworks)
         unsupported_providers = providers - {"c_cpp", "lua", "openubmc"}
         if unsupported_providers:
@@ -365,8 +429,14 @@ def prepare_worker_tasks(state: PangeaState) -> PangeaState:
         semantic_check_items = []
         if "c_cpp" in providers:
             semantic_check_items.extend(_semantic_check_items(
-                unit, unit_repositories, failure_signal_context
+                unit,
+                unit_repositories,
+                failure_signal_context,
+                semantic_context_scope,
             ))
+            semantic_check_items.extend(
+                _doca_semantic_check_items(unit, unit_repositories)
+            )
         if providers & {"lua", "openubmc"}:
             semantic_check_items.extend(build_runtime_semantic_checks(
                 unit,
@@ -383,7 +453,8 @@ def prepare_worker_tasks(state: PangeaState) -> PangeaState:
             index_path=state["index_path"],
             inventory_path=None,
             source_manifest_path=None,
-            checkpoint_rubric_paths=_checkpoint_rubric_paths(unit),
+            allowed_material_paths=[],
+            checkpoint_rubric_paths=_checkpoint_rubric_paths(unit, inventory),
             coverage_context=[],
             failure_signal_context=failure_signal_context,
             semantic_check_items=semantic_check_items,

@@ -5,7 +5,7 @@ from pathlib import Path
 from pangea_agent.models.run import AgentAction, RunProgress
 
 
-MAX_PARALLEL_ACTIONS = 4
+MAX_PARALLEL_ACTIONS = 8
 
 
 def agent_action(
@@ -19,6 +19,10 @@ def agent_action(
     replacement_allowed: bool = False,
 ) -> dict:
     session = progress.agent_sessions[session_key]
+    if session.status != "pending":
+        raise ValueError(
+            f"Agent action 只能为 pending 会话生成：{session_key}={session.status}"
+        )
     action = AgentAction(
         action="continue_agent" if session.task_id else "dispatch_agent",
         role=role,

@@ -8,16 +8,22 @@
 - DSH 的 `bash` 工具执行当前宿主 shell。当前工具是 POSIX shell 时使用 POSIX 命令，
   不把 `Get-ChildItem`、`Select-Object` 等 PowerShell cmdlet 交给 `bash`。项目的
   Windows / PowerShell 兼容约定仍用于产品命令和文档，不覆盖 DSH 工具的真实 shell。
-- 当前根会话只选择一次仓库虚拟环境解释器并在所有 PANGEA CLI 调用中复用：POSIX 使用
-  `.venv/bin/python`，Windows PowerShell 使用 `& '.\.venv\Scripts\python.exe'`。选定路径不存在时
+- DSH 的文件工具以所选工作区为根，但 `bash` 的当前目录可能是工作区父目录。把读取本文件时返回的
+  绝对路径去掉 `/.agents/pangea/dsh.md`，所得目录就是唯一 `workspace_root`；不得用 `pwd`、`ls`、
+  `find`、glob 或失败后的父目录搜索重新猜根目录。用户已经给出仓库和 `source_scope` 时不做 shell
+  路径预检，直接让 `module-analysis` 校验。
+- 当前根会话只选择一次仓库虚拟环境解释器并在所有 PANGEA CLI 调用中复用：POSIX 的每条 CLI 都用
+  `/usr/bin/env -C "<workspace_root>" "<workspace_root>/.venv/bin/python" -m pangea_agent.cli.main ...`；
+  pending contract 参数也写成 `<workspace_root>/pangea-data/.pangea/...`。Windows PowerShell 使用
+  工作区根目录下的 `& '.\.venv\Scripts\python.exe'`。选定路径不存在时
   停止并说明需要初始化；不再尝试系统 Python、其他虚拟环境或安装依赖。
 - `module-analysis` 创建 Run 后，把返回的 `data_root` 与 `run_id` 一起绑定到当前根会话。后续每条 run-scoped CLI（`record-agent-session`、`resume-run`、`mark-reviewer-unavailable`）都必须原样传入 `--data-root <data_root>`，包括默认 `pangea-data`；不得依赖 CLI 默认值或执行失败后再探测。
 - DSH 启动时由根目录 `AGENTS.local.md` 要求先加载仓库内 `pangea-agent` Skill；该 Skill 再要求读取本 adapter。Skill 未成功加载时停止，不要靠通用会话自行摸索 PANGEA 流程。
 - DSH 新建根会话时当前 Run 固定为空。即使工作区中存在未完成的历史 Run，或 Companion / `pangea_status` 能读取到某个历史 Run，也不得因此执行 `resume-run`。
-- 新根会话命中新分析意图后，在 `module-analysis` 返回新 `run_id` 前，不调用 `pangea_status`，不列举或读取 `pangea-data/runs/`，不读取或复用已有 pending contract。先删除固定临时路径 `pangea-data/.pangea/pending-task-contract.json`，再根据当前请求新建；POSIX 对这个文件单独使用 `rm -f`，PowerShell 使用 `Remove-Item -LiteralPath 'pangea-data/.pangea/pending-task-contract.json' -Force -ErrorAction SilentlyContinue`。Run 创建成功后再次用同一条单独删除命令删除它；命令中不能追加 `&& echo`、目录检查或第二个动作。
-- 上述 pending 路径是仓库级固定字面值，绝不改成 `<data_root>/.pangea/pending-task-contract.json`；
+- 新根会话命中新分析意图后，在 `module-analysis` 返回新 `run_id` 前，不调用 `pangea_status`，不列举或读取 `pangea-data/runs/`，不读取或复用已有 pending contract。为当前根会话选择一次 UUID，并新建唯一临时文件 `pangea-data/.pangea/pending-task-contract-<uuid>.json`；CLI 在进入 Graph 前自动删除这个实际文件，根 Agent 不再执行删除命令。
+- 上述 pending 路径是仓库级唯一临时路径，绝不改成 `<data_root>/.pangea/pending-task-contract-<uuid>.json`；
   自定义 `data_root` 只写入 contract 字段和后续 CLI 参数。根 Agent 不预先创建或检查 `data_root`，也不
-  把删除 pending、建目录或其他动作合并进同一条 bash 命令。
+  把建目录或其他动作合并进同一条 bash 命令。
 - pending contract 中的 `source_scope` 始终写成仓库根目录下使用 `/` 分隔的相对路径；即使宿主是 Windows，也不得把工具返回的反斜杠路径直接写入 JSON。
 - 用户用自然语言要求分析业务源码、模块、测试风险、业务流程、Coverage 缺口或生成测试用例时，与显式 `module-analysis` 完全等价：当前根会话没有明确 `run_id` 就创建新 Run，不要求用户补写命令名。
 - DSH 只有在当前根会话已经由本次分析获得明确 `run_id`，或用户明确指定历史 `run_id` / 历史会话时，才能恢复 Run。不得从 `runs/`、`progress.json`、`agent_sessions` 或 Companion 的“当前/最近 Run”反推恢复目标。

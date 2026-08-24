@@ -163,38 +163,6 @@ def _risk_dimension_rows(risks: list[Any]) -> list[tuple[Any, ...]]:
     return rows
 
 
-def _coverage_rows(coverage: Mapping[str, Any]) -> list[tuple[Any, ...]]:
-    labels = {"matched": "已匹配", "ambiguous": "匹配不唯一", "unmatched": "未匹配"}
-    rows: list[tuple[Any, ...]] = []
-    for status in ("matched", "ambiguous", "unmatched"):
-        for record in _items(coverage.get(status)):
-            if not isinstance(record, Mapping):
-                rows.append((labels[status], "未说明", record, "未说明", "未说明", "未说明"))
-                continue
-            coverage_type = record.get("coverage_type") or "未说明"
-            subject = record.get("function") or record.get("branch_id") or "未说明"
-            if coverage_type == "branch" and record.get("branch_id"):
-                subject = f"{subject} / {record.get('branch_id')}"
-            counts = (
-                f"true={_text(record.get('true_count'))}, false={_text(record.get('false_count'))}"
-                if coverage_type == "branch"
-                else _text(record.get("count"))
-            )
-            source = " · ".join(
-                part for part in (
-                    _text(record.get("source"), ""),
-                    f"{_text(record.get('sheet'), '')}:{_text(record.get('row'), '')}".strip(":"),
-                ) if part
-            ) or "未说明"
-            locations = [
-                f"{_text(match.get('repo_id'))}:{_text(match.get('path'))}:{_text(match.get('line'))}"
-                for match in _items(record.get("matches"))
-                if isinstance(match, Mapping)
-            ]
-            rows.append((labels[status], coverage_type, subject, counts, source, locations or "无唯一源码位置"))
-    return rows
-
-
 def _coverage_gap_rows(coverage: Mapping[str, Any]) -> list[tuple[Any, ...]]:
     rows: list[tuple[Any, ...]] = []
     for record in _items(coverage.get("matched")):
@@ -216,14 +184,7 @@ def _coverage_gap_rows(coverage: Mapping[str, Any]) -> list[tuple[Any, ...]]:
                 f"{_text(record.get('sheet'), '')}:{_text(record.get('row'), '')}".strip(":"),
             ) if part
         ) or "未说明"
-        if record.get("coverage_type") == "branch" and record.get("branch_id"):
-            branch_id = _text(record.get("branch_id"), "")
-            counts = f"true={_text(record.get('true_count'))}, false={_text(record.get('false_count'))}"
-            if record.get("true_count") == 0:
-                rows.append((f"{prefix}:{branch_id}:true", "真分支未执行", record.get("condition"), counts, source))
-            if record.get("false_count") == 0:
-                rows.append((f"{prefix}:{branch_id}:false", "假分支未执行", record.get("condition"), counts, source))
-        elif record.get("count") == 0:
+        if record.get("coverage_type", "function") == "function" and record.get("count") == 0:
             rows.append((f"{prefix}:function", "函数未执行", function, record.get("count"), source))
     return rows
 
@@ -442,6 +403,24 @@ def render_report(state: "PangeaState | Mapping[str, Any]") -> str:
         ]))
     summaries = _items(state.get("analysis_summaries"))
     if summaries:
+        lines.extend(["", "### 分析单元规模", ""])
+        lines.extend(_markdown_table(
+            ("分析单元", "分配源码", "已检查源码", "函数", "Failure path", "风险", "用例", "直接 Callee 上下文"),
+            [
+                (
+                    item.get("unit_id"),
+                    item.get("assigned_source_files"),
+                    item.get("reviewed_source_files"),
+                    item.get("function_count"),
+                    item.get("failure_path_count"),
+                    item.get("risk_count"),
+                    item.get("test_case_count"),
+                    item.get("direct_callee_context_count"),
+                )
+                for item in summaries
+                if isinstance(item, Mapping)
+            ],
+        ))
         lines.extend(["", "### 分析结论摘要", ""])
         lines.extend(_markdown_table(("分析单元", "Worker", "结论"), [
             (item.get("unit_id"), item.get("worker_id"), item.get("summary"))
@@ -466,7 +445,7 @@ def render_report(state: "PangeaState | Mapping[str, Any]") -> str:
                 ("文档告警", len(_items(manifest.get("warnings")))),
                 ("缺少依赖", len(_items(manifest.get("missing_dependencies")))),
                 ("图片附件", len(_items(manifest.get("attachments")))),
-                ("Coverage 记录", len(_items(manifest.get("coverage_records")))),
+                ("当前范围零覆盖记录", len(_items((state.get("coverage_report") or {}).get("matched")))),
             ]))
         else:
             lines.append(f"- {_text(manifest)}")
@@ -550,14 +529,11 @@ def render_report(state: "PangeaState | Mapping[str, Any]") -> str:
     lines.extend(["## 5. 覆盖率缺口", ""])
     coverage = state.get("coverage_report") or state.get("coverage") or {}
     if isinstance(coverage, Mapping):
-        if coverage and any(key in coverage for key in ("matched", "ambiguous", "unmatched")):
-            lines.extend(["### 有效缺口", ""])
+        if _items(coverage.get("matched")):
+            lines.extend(["### 当前范围零覆盖记录", ""])
             lines.extend(_markdown_table(("Coverage ID", "缺口", "函数/条件", "执行次数", "Coverage 来源"), _coverage_gap_rows(coverage)))
-            lines.extend(["", "### Coverage 输入匹配", ""])
-            lines.extend(_markdown_table(("状态", "类型", "函数/分支", "执行次数", "Coverage 来源", "源码位置"), _coverage_rows(coverage)))
-            lines.extend(["", "未出现在 Coverage 文件中的函数或分支状态为“未提供/未知”，不按 0 次执行处理。"])
         else:
-            lines.extend(_mapping_lines(coverage) if coverage else ["- 未提供覆盖率文件或匹配结果。"])
+            lines.append("- 当前分析范围没有唯一匹配的函数级 count=0 Coverage 记录。")
     else:
         _append_list(lines, coverage, "- 未提供覆盖率文件或匹配结果。")
 

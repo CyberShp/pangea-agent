@@ -184,3 +184,15 @@ def match_coverage_records(
         else:
             unmatched.append(item)
     return {"matched": matched, "ambiguous": ambiguous, "unmatched": unmatched}
+
+
+def relevant_zero_coverage(report: dict) -> dict:
+    """Keep only uniquely matched function records whose explicit count is zero."""
+
+    matched = [
+        record
+        for record in report.get("matched", [])
+        if record.get("coverage_type", "function") == "function"
+        and record.get("count") == 0
+    ]
+    return {"matched": matched, "ambiguous": [], "unmatched": []}

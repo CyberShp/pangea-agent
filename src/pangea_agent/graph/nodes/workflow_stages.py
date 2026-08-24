@@ -41,6 +41,7 @@ from .advance_run import (
     _load_analysis_results,
     _load_bound_independent_review,
     _load_rework_results,
+    _mark_session_pending,
     _prepare_rework,
     _prepare_rework_review,
     _prepare_review,
@@ -50,7 +51,7 @@ from .advance_run import (
     _terminate_if_requested,
     _validate_review_inputs,
 )
-from .prepare_worker_tasks import _coverage_context
+from .prepare_worker_tasks import _allowed_material_paths, _coverage_context
 
 
 _ANALYSIS_PHASES = {
@@ -76,6 +77,16 @@ def _analysis_actions(
     stage: str,
     unit_ids: list[str],
 ) -> list[dict]:
+    active = sum(
+        session.stage == stage and session.status == "dispatched"
+        for key, session in progress.agent_sessions.items()
+        if key.startswith("analysis:")
+    )
+    available = max(0, MAX_PARALLEL_ACTIONS - active)
+    eligible = [
+        unit_id for unit_id in unit_ids
+        if progress.agent_sessions[f"analysis:{unit_id}"].status == "pending"
+    ][:available]
     return [
         agent_action(
             progress,
@@ -85,23 +96,25 @@ def _analysis_actions(
             unit_id=unit_id,
             task_path=analysis_task_path(state, unit_id, stage),
         )
-        for unit_id in unit_ids[:MAX_PARALLEL_ACTIONS]
+        for unit_id in eligible
     ]
 
 
-def _review_action(
+def _review_actions(
     state: PangeaState,
     progress: RunProgress,
     stage: str,
     task_path: Path,
-) -> dict:
-    return agent_action(
+) -> list[dict]:
+    if progress.agent_sessions["review"].status != "pending":
+        return []
+    return [agent_action(
         progress,
         session_key="review",
         role="review",
         stage=stage,
         task_path=task_path,
-    )
+    )]
 
 
 def _rework_actions(
@@ -110,7 +123,17 @@ def _rework_actions(
     unit_ids: list[str],
 ) -> list[dict]:
     actions: list[dict] = []
-    for unit_id in unit_ids[:MAX_PARALLEL_ACTIONS]:
+    active = sum(
+        session.stage == "rework" and session.status == "dispatched"
+        for key, session in progress.agent_sessions.items()
+        if key.startswith("rework:")
+    )
+    available = max(0, MAX_PARALLEL_ACTIONS - active)
+    eligible = [
+        unit_id for unit_id in unit_ids
+        if progress.agent_sessions[f"rework:{unit_id}"].status == "pending"
+    ][:available]
+    for unit_id in eligible:
         task_path = rework_task_path(state, unit_id)
         task = load_worker_task(task_path)
         actions.append(agent_action(
@@ -141,9 +164,11 @@ def _waiting(
 
 def _session_completed(progress: RunProgress, session_key: str) -> bool:
     session = progress.agent_sessions.get(session_key)
-    if session is None or session.task_id is None:
-        return True
-    return session.status == "completed"
+    return (
+        session is not None
+        and session.task_id is not None
+        and session.status == "completed"
+    )
 
 
 def _accept_analysis_stage(
@@ -169,6 +194,7 @@ def _accept_analysis_stage(
             write_json(result_path, result.model_dump(mode="json"))
         except Exception as exc:
             _record_error(progress, "analysis_result_rejected", result_path, exc)
+            _mark_session_pending(progress, f"analysis:{unit_id}")
             continue
         _clear_error(progress, "analysis_result_rejected", result_path)
         completed.append(unit_id)
@@ -203,6 +229,7 @@ def _prepare_analysis_stage(state: PangeaState, stage: str) -> PangeaState:
             "stage": stage,
             "inventory_path": str(run_dir / "inputs" / "inventory.json"),
             "source_manifest_path": str(run_dir / "inputs" / "source-manifest.json"),
+            "allowed_material_paths": _allowed_material_paths(state.get("source_manifest", {})),
             "coverage_context": _coverage_context(task.unit, state.get("coverage_report", {})),
         })
         task = WorkerTask.model_validate(payload)
@@ -272,13 +299,13 @@ def prepare_independent_review(state: PangeaState) -> PangeaState:
         raise ArtifactRejected(f"不能从 {progress.phase} 进入 independent_review")
     _prepare_review(state, progress)
     save_progress(state, progress)
-    action = _review_action(
+    actions = _review_actions(
         state,
         progress,
         "independent_review",
         review_task_path(state, "independent"),
     )
-    return _waiting(state, progress, [action])
+    return _waiting(state, progress, actions)
 
 
 def accept_independent_review(state: PangeaState) -> PangeaState:
@@ -294,13 +321,13 @@ def accept_independent_review(state: PangeaState) -> PangeaState:
         return _waiting(
             state,
             progress,
-            [_review_action(state, progress, "independent_review", task_path)],
+            _review_actions(state, progress, "independent_review", task_path),
         )
     if not _session_completed(progress, "review"):
         return _waiting(
             state,
             progress,
-            [_review_action(state, progress, "independent_review", task_path)],
+            _review_actions(state, progress, "independent_review", task_path),
         )
     try:
         task = load_review_task(task_path)
@@ -314,11 +341,12 @@ def accept_independent_review(state: PangeaState) -> PangeaState:
         write_json(result_path, result.model_dump(mode="json"))
     except Exception as exc:
         _record_error(progress, "independent_review_rejected", result_path, exc)
+        _mark_session_pending(progress, "review")
         save_progress(state, progress)
         return _waiting(
             state,
             progress,
-            [_review_action(state, progress, "independent_review", task_path)],
+            _review_actions(state, progress, "independent_review", task_path),
         )
     _clear_error(progress, "independent_review_rejected", result_path)
     save_progress(state, progress)
@@ -350,13 +378,13 @@ def prepare_comparison_review(state: PangeaState) -> PangeaState:
         results,
     )
     save_progress(state, progress)
-    action = _review_action(
+    actions = _review_actions(
         state,
         progress,
         "comparison_review",
         review_task_path(state),
     )
-    return _waiting(state, progress, [action])
+    return _waiting(state, progress, actions)
 
 
 def accept_comparison_review(state: PangeaState) -> PangeaState:
@@ -372,13 +400,13 @@ def accept_comparison_review(state: PangeaState) -> PangeaState:
         return _waiting(
             state,
             progress,
-            [_review_action(state, progress, "comparison_review", task_path)],
+            _review_actions(state, progress, "comparison_review", task_path),
         )
     if not _session_completed(progress, "review"):
         return _waiting(
             state,
             progress,
-            [_review_action(state, progress, "comparison_review", task_path)],
+            _review_actions(state, progress, "comparison_review", task_path),
         )
     try:
         task = load_review_task(task_path)
@@ -390,11 +418,12 @@ def accept_comparison_review(state: PangeaState) -> PangeaState:
         write_json(result_path, result.model_dump(mode="json"))
     except Exception as exc:
         _record_error(progress, "review_result_rejected", result_path, exc)
+        _mark_session_pending(progress, "review")
         save_progress(state, progress)
         return _waiting(
             state,
             progress,
-            [_review_action(state, progress, "comparison_review", task_path)],
+            _review_actions(state, progress, "comparison_review", task_path),
         )
     _clear_error(progress, "review_result_rejected", result_path)
     save_progress(state, progress)
@@ -463,13 +492,13 @@ def prepare_rework_verification(state: PangeaState) -> PangeaState:
         raise ArtifactRejected("生成 rework_verification task 前返工结果不完整")
     _prepare_rework_review(state, progress, results)
     save_progress(state, progress)
-    action = _review_action(
+    actions = _review_actions(
         state,
         progress,
         "rework_verification",
         review_task_path(state, "rework"),
     )
-    return _waiting(state, progress, [action])
+    return _waiting(state, progress, actions)
 
 
 def accept_rework_verification(state: PangeaState) -> PangeaState:
@@ -500,13 +529,13 @@ def accept_rework_verification(state: PangeaState) -> PangeaState:
         return _waiting(
             state,
             progress,
-            [_review_action(state, progress, "rework_verification", task_path)],
+            _review_actions(state, progress, "rework_verification", task_path),
         )
     if not _session_completed(progress, "review"):
         return _waiting(
             state,
             progress,
-            [_review_action(state, progress, "rework_verification", task_path)],
+            _review_actions(state, progress, "rework_verification", task_path),
         )
     try:
         task = load_review_task(task_path)
@@ -527,11 +556,12 @@ def accept_rework_verification(state: PangeaState) -> PangeaState:
         write_json(result_path, result.model_dump(mode="json"))
     except Exception as exc:
         _record_error(progress, "rework_review_rejected", result_path, exc)
+        _mark_session_pending(progress, "review")
         save_progress(state, progress)
         return _waiting(
             state,
             progress,
-            [_review_action(state, progress, "rework_verification", task_path)],
+            _review_actions(state, progress, "rework_verification", task_path),
         )
     _clear_error(progress, "rework_review_rejected", result_path)
     _complete_session(progress, "review")

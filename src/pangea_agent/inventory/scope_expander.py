@@ -21,7 +21,13 @@ SOFT_IGNORED_PARTS = {"build", "dist", "third_party", "node_modules"}
 DEFAULT_IGNORED_PARTS = HARD_IGNORED_PARTS | SOFT_IGNORED_PARTS
 COMMON_FUNCTIONS = {"main", "free", "calloc", "malloc", "memcpy", "memset", "strcmp", "strlen"}
 GENERIC_TERMS = {"analysis", "feature", "include", "module", "source", "test", "功能", "模块", "分析"}
+GENERIC_SOURCE_STEMS = {"common", "helper", "helpers", "stub", "stubs", "util", "utils"}
 MAX_TARGET_CONTEXT_PER_GROUP = 8
+MAX_DIRECT_CALLERS_PER_GROUP = 12
+MAX_DIRECT_CALLER_LINES_PER_FILE = 800
+MAX_DIRECT_CALLER_LINES_PER_GROUP = 1600
+MAX_DIRECT_CALLEE_LINES_PER_FILE = 800
+MAX_DIRECT_CALLEE_LINES_PER_GROUP = 1600
 _CALL_RE = re.compile(r"\b([A-Za-z_]\w{5,})\s*\(")
 _MEMBER_CALL_RE = re.compile(r"(?:->|\.)\s*([A-Za-z_]\w*)\s*\(")
 _FUNCTION_POINTER_RE = re.compile(r"\(\s*\*\s*([A-Za-z_]\w*)\s*\)\s*\(")
@@ -34,13 +40,17 @@ _INLINE_DEF_RE = re.compile(
     re.MULTILINE,
 )
 _DECL_RE = re.compile(r"^[ \t]*(?:extern[ \t]+)?(?:[A-Za-z_]\w*[ \t*]+)+([A-Za-z_]\w*)[ \t]*\([^;{}]*\)[ \t]*;", re.MULTILINE)
-_DEF_RE = re.compile(r"^[ \t]*(?!if\b|for\b|while\b|switch\b)(?:[A-Za-z_]\w*[ \t*]+)+([A-Za-z_]\w*)[ \t]*\([^;{}]*\)[ \t\n]*\{", re.MULTILINE)
+_DEF_RE = re.compile(
+    r"^[ \t]*(?!if\b|for\b|while\b|switch\b|else\b|do\b)"
+    r"(?:[A-Za-z_]\w*[ \t\n*]+)+([A-Za-z_]\w*)[ \t]*"
+    r"\([^;{}#()]*\)[ \t\n]*\{",
+    re.MULTILINE,
+)
 _SCOPE_EXPANDERS = {"lua": expand_lua_context}
 
 
 def expand_analysis_scope(repositories: list[dict], requested_scopes: list[str], *, target: str, focus: list[str]) -> dict:
     normalized_scopes = [_normalize(value) for value in requested_scopes or ["."]]
-    requested_groups = _group_requested_scopes(normalized_scopes)
     domain_terms = _domain_terms(target, focus, normalized_scopes)
     groups: list[dict] = []
     context_files: list[dict] = []
@@ -62,9 +72,11 @@ def expand_analysis_scope(repositories: list[dict], requested_scopes: list[str],
         }
         function_pointer_implementations = _function_pointer_implementation_index(c_cpp_code_paths)
         explicit_paths = {relative for relative in code_paths.values() if any(_inside_scope(relative, scope) for scope in normalized_scopes)}
+        requested_groups = _group_requested_scopes(normalized_scopes, code_paths.values())
         declarations_by_group = [_declared_symbols(scopes, root) for scopes in requested_groups]
         wanted_definitions = set().union(*declarations_by_group) if declarations_by_group else set()
         definition_symbols_by_path = _definition_symbols_by_path(wanted_definitions, code_paths)
+        definition_paths_by_symbol = _definition_paths_by_symbol(code_paths)
         repo_groups = []
         for group_index, scopes in enumerate(requested_groups):
             paths = {relative for relative in code_paths.values() if any(_inside_scope(relative, scope) for scope in scopes)}
@@ -81,8 +93,20 @@ def expand_analysis_scope(repositories: list[dict], requested_scopes: list[str],
             for relative, symbols in sorted(definitions.items()):
                 if relative not in explicit_paths:
                     added_files.append({"repo_id": repo_id, "path": relative, "reason": f"declared_definition:{','.join(symbols[:5])}"})
-            paths.update(companions)
-            paths.update(definitions)
+                    context_files.append({
+                        "repo_id": repo_id,
+                        "path": relative,
+                        "reason": f"declared_definition:{','.join(symbols[:5])}",
+                    })
+            companion_context = companions - explicit_paths
+            for relative in sorted(companion_context):
+                context_files.append({
+                    "repo_id": repo_id,
+                    "path": relative,
+                    "reason": "companion_source",
+                })
+            paths.update(companions & explicit_paths)
+            declared_context = set(definitions) - explicit_paths
             inline_headers = _called_inline_headers(
                 (
                     root / relative
@@ -115,11 +139,55 @@ def expand_analysis_scope(repositories: list[dict], requested_scopes: list[str],
                     "path": relative,
                     "reason": f"function_pointer_implementation:{','.join(ordered_members[:5])}",
                 })
+            direct_callees = _called_direct_callees(
+                (root / relative for relative in paths),
+                definition_paths_by_symbol,
+                set(paths),
+                explicit_paths,
+            )
+            selected_direct_callees: dict[str, set[str]] = {}
+            selected_callee_lines = 0
+            for relative, symbols in sorted(
+                direct_callees.items(),
+                key=lambda item: (
+                    -len(item[1]),
+                    _line_count(root / item[0]),
+                    item[0],
+                ),
+            ):
+                line_count = _line_count(root / relative)
+                if (
+                    line_count > MAX_DIRECT_CALLEE_LINES_PER_FILE
+                    or selected_callee_lines + line_count > MAX_DIRECT_CALLEE_LINES_PER_GROUP
+                ):
+                    unresolved_dependencies.append({
+                        "repo_id": repo_id,
+                        "path": relative,
+                        "reason": "direct_callee_context_too_large",
+                        "symbols": sorted(symbols),
+                        "line_count": line_count,
+                    })
+                    continue
+                selected_direct_callees[relative] = symbols
+                selected_callee_lines += line_count
+            direct_callees = selected_direct_callees
+            for relative, symbols in sorted(direct_callees.items()):
+                context_files.append({
+                    "repo_id": repo_id,
+                    "path": relative,
+                    "reason": f"direct_callee:{','.join(sorted(symbols)[:5])}",
+                })
             repo_groups.append({
                 "repo_id": repo_id,
                 "requested_scope": list(scopes),
                 "code_paths": sorted(paths),
-                "context_paths": sorted(set(pointer_implementations) | set(inline_headers)),
+                "context_paths": sorted(
+                    companion_context
+                    | declared_context
+                    | set(pointer_implementations)
+                    | set(inline_headers)
+                    | set(direct_callees)
+                ),
             })
 
         repo_groups = _merge_overlapping_groups(repo_groups)
@@ -136,6 +204,9 @@ def expand_analysis_scope(repositories: list[dict], requested_scopes: list[str],
             for group in repo_groups
         ]
         all_symbols = set().union(*symbols_by_group) if symbols_by_group else set()
+        direct_caller_candidates: list[list[tuple[int, int, str, list[str]]]] = [
+            [] for _ in repo_groups
+        ]
         target_context_candidates: list[list[tuple[int, str]]] = [[] for _ in repo_groups]
 
         for path in code_files:
@@ -145,13 +216,36 @@ def expand_analysis_scope(repositories: list[dict], requested_scopes: list[str],
             if relative in owned:
                 continue
             text = path.read_text(encoding="utf-8", errors="replace")
-            calls = set(_CALL_RE.findall(text)) & all_symbols
+            calls = _called_symbols(text) & all_symbols
             if not calls:
                 continue
             group_index = _select_group(relative, calls, repo_groups, symbols_by_group)
-            record = {"repo_id": repo_id, "path": relative, "reason": f"direct_caller:{','.join(sorted(calls)[:5])}"}
-            repo_groups[group_index]["context_paths"].append(relative)
-            context_files.append(record)
+            direct_caller_candidates[group_index].append(
+                (len(calls), len(text.splitlines()), relative, sorted(calls))
+            )
+
+        for group_index, candidates in enumerate(direct_caller_candidates):
+            selected: list[tuple[int, int, str, list[str]]] = []
+            selected_lines = 0
+            for candidate in sorted(
+                candidates, key=lambda item: (-item[0], item[1], item[2])
+            ):
+                _, line_count, _, _ = candidate
+                if line_count > MAX_DIRECT_CALLER_LINES_PER_FILE:
+                    continue
+                if selected_lines + line_count > MAX_DIRECT_CALLER_LINES_PER_GROUP:
+                    continue
+                selected.append(candidate)
+                selected_lines += line_count
+                if len(selected) == MAX_DIRECT_CALLERS_PER_GROUP:
+                    break
+            for _, _, relative, calls in selected:
+                repo_groups[group_index]["context_paths"].append(relative)
+                context_files.append({
+                    "repo_id": repo_id,
+                    "path": relative,
+                    "reason": f"direct_caller:{','.join(calls[:5])}",
+                })
 
         for path in _iter_files(root, CONTEXT_SUFFIXES):
             relative = _relative(path, root)
@@ -162,7 +256,11 @@ def expand_analysis_scope(repositories: list[dict], requested_scopes: list[str],
                 record = {"repo_id": repo_id, "path": relative, "reason": f"direct_reference:{','.join(sorted(calls)[:5])}" if calls else "target_context"}
                 repo_groups[group_index]["context_paths"].append(relative)
                 context_files.append(record)
-            elif owned and _matches_domain(relative, text, domain_terms):
+            elif (
+                owned
+                and not _all_explicit_code_files(repo_groups[group_index]["requested_scope"])
+                and _matches_domain(relative, text, domain_terms)
+            ):
                 score = _target_context_score(relative, text, domain_terms)
                 if score >= 10:
                     target_context_candidates[group_index].append((score, relative))
@@ -204,7 +302,7 @@ def expand_analysis_scope(repositories: list[dict], requested_scopes: list[str],
         "added_files": _unique_records(added_files),
         "unresolved_dependencies": unresolved_dependencies,
         "resolved_dependencies": resolved_dependencies,
-        "boundary": "source_scope = explicit scope + C/C++ declared implementations; context_scope = C/C++ inline/function-pointer dependencies + direct callers + direct Lua require dependencies/requirers + one framework-implementation require hop + target-related config/docs/tests",
+        "boundary": "source_scope = code files inside the requested scope; context_scope = companion/declared implementations outside the request + one-hop unique C/C++ direct callees + inline/function-pointer dependencies + bounded direct callers + direct Lua require dependencies/requirers + one framework-implementation require hop + target-related config/docs/tests",
     }
 
 
@@ -263,20 +361,43 @@ def _scope_path(repository: dict, scope: str) -> Path | None:
     return candidate if candidate.exists() else None
 
 
-def _group_requested_scopes(scopes: list[str]) -> list[list[str]]:
+def _all_explicit_code_files(scopes: list[str]) -> bool:
+    return bool(scopes) and all(
+        PurePosixPath(scope).suffix.lower() in CODE_SUFFIXES
+        for scope in scopes
+    )
+
+
+def _line_count(path: Path) -> int:
+    return len(path.read_text(encoding="utf-8", errors="replace").splitlines())
+
+
+def _group_requested_scopes(scopes: list[str], code_paths=()) -> list[list[str]]:
     groups: list[list[str]] = []
     file_groups: dict[tuple[str, str, str], list[str]] = {}
+
+    def add_file(scope: str) -> None:
+        path = PurePosixPath(scope)
+        family = "c_cpp" if path.suffix.lower() in C_CPP_SUFFIXES else path.suffix.lower()
+        key = (str(path.parent), path.stem, family)
+        if key not in file_groups:
+            file_groups[key] = []
+            groups.append(file_groups[key])
+        if scope not in file_groups[key]:
+            file_groups[key].append(scope)
+
+    available_paths = sorted(set(code_paths))
     for scope in scopes:
         path = PurePosixPath(scope)
         if path.suffix.lower() in CODE_SUFFIXES:
-            family = "c_cpp" if path.suffix.lower() in C_CPP_SUFFIXES else path.suffix.lower()
-            key = (str(path.parent), path.stem, family)
-            if key not in file_groups:
-                file_groups[key] = []
-                groups.append(file_groups[key])
-            file_groups[key].append(scope)
-        else:
+            add_file(scope)
+            continue
+        expanded = [relative for relative in available_paths if _inside_scope(relative, scope)]
+        if not expanded:
             groups.append([scope])
+            continue
+        for relative in expanded:
+            add_file(relative)
     return groups
 
 
@@ -313,6 +434,44 @@ def _definition_symbols_by_path(wanted: set[str], code_paths: dict[Path, str]) -
         if matched:
             definitions[relative] = matched
     return definitions
+
+
+def _definition_paths_by_symbol(code_paths: dict[Path, str]) -> dict[str, set[str]]:
+    definitions: dict[str, set[str]] = {}
+    for path, relative in code_paths.items():
+        if path.suffix.lower() not in SOURCE_SUFFIXES:
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for symbol in _DEF_RE.findall(text):
+            if symbol not in COMMON_FUNCTIONS:
+                definitions.setdefault(symbol, set()).add(relative)
+    return definitions
+
+
+def _called_direct_callees(
+    source_paths,
+    definition_paths_by_symbol: dict[str, set[str]],
+    owned_paths: set[str],
+    preferred_paths: set[str],
+) -> dict[str, set[str]]:
+    called: set[str] = set()
+    for path in source_paths:
+        if path.suffix.lower() not in C_CPP_SUFFIXES or not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        called.update(_called_symbols(text))
+    callees: dict[str, set[str]] = {}
+    for symbol in called:
+        candidates = definition_paths_by_symbol.get(symbol, set())
+        preferred = candidates & preferred_paths
+        if len(preferred) == 1:
+            candidates = preferred
+        if len(candidates) != 1:
+            continue
+        target = next(iter(candidates))
+        if target not in owned_paths:
+            callees.setdefault(target, set()).add(symbol)
+    return callees
 
 
 def _struct_bodies(text: str):
@@ -371,7 +530,7 @@ def _called_inline_headers(paths, code_paths: dict[Path, str]) -> dict[str, set[
         if not source_path.is_file():
             continue
         text = source_path.read_text(encoding="utf-8", errors="replace")
-        calls = set(_CALL_RE.findall(text))
+        calls = _called_symbols(text)
         source_relative = code_paths.get(source_path)
         if source_relative is None:
             continue
@@ -393,6 +552,10 @@ def _called_inline_headers(paths, code_paths: dict[Path, str]) -> dict[str, set[
             if used:
                 dependencies.setdefault(header_relative, set()).update(used)
     return dependencies
+
+
+def _called_symbols(text: str) -> set[str]:
+    return set(_CALL_RE.findall(text)) - set(_DEF_RE.findall(text))
 
 
 def _merge_overlapping_groups(groups: list[dict]) -> list[dict]:
@@ -508,6 +671,8 @@ def _domain_terms(target: str, focus: list[str], requested_scopes: list[str] | N
         parent = re.sub(r"[^a-z0-9]+", "_", path.parent.name.lower()).strip("_")
         if stem in {"tcp", "conn", "qpair", "transport"} and parent:
             stem = f"{parent}_{stem}"
+        elif stem in GENERIC_SOURCE_STEMS and parent:
+            stem = parent
         if stem:
             scope_terms.add(stem)
     if scope_terms:

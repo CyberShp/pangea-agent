@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 from typing import Iterator
 
-from pangea_agent.agent_io import read_json, write_json
+from pangea_agent.agent_io import agent_path, read_json, write_json
 from pangea_agent.models.run import RunProgress
 from pangea_agent.models.worker import (
     IndependentReviewResult,
@@ -129,6 +129,15 @@ def ready_state_path(state: dict) -> Path:
 def load_worker_task(path: Path) -> WorkerTask:
     payload = read_json(path)
     task = WorkerTask.model_validate(payload)
+    if task.task_type == "rework":
+        original_path = (
+            path.parent.parent
+            / "analysis"
+            / f"{task.unit.unit_id}-test_generation.json"
+        )
+        if original_path.exists():
+            original_task = WorkerTask.model_validate(read_json(original_path))
+            task.allowed_material_paths = list(original_task.allowed_material_paths)
     normalized = task.model_dump(mode="json")
     if normalized != payload:
         write_json(path, normalized)
@@ -175,8 +184,9 @@ def normalize_worker_result_path(task_path: Path, task: WorkerTask) -> Path:
         raise ValueError(f"worker task 不在当前 Run 的 agent-tasks 目录中：{task_path}")
     folder = "analysis" if task.task_type == "analysis" else "rework"
     result_path = run_dir.parent / "agent-results" / folder / f"{task.unit.unit_id}.json"
-    if task.result_path != str(result_path):
-        task.result_path = str(result_path)
+    expected_result_path = agent_path(result_path)
+    if task.result_path != expected_result_path:
+        task.result_path = expected_result_path
         write_json(task_path, task.model_dump(mode="json"))
     return result_path
 
@@ -222,7 +232,7 @@ def worker_result_skeleton(task: WorkerTask) -> dict:
         "addressed_review_issue_ids": [],
         "errors": [],
         "analysis_checkpoint": {
-            "source_paths_reviewed": list(task.unit.source_scope),
+            "source_paths_reviewed": [],
             "lifecycle_stages_checked": [],
             "failure_paths": [],
             "material_decisions": [],
@@ -352,8 +362,9 @@ def normalize_review_result_path(task_path: Path, task: ReviewTask) -> Path:
     if resolved_task.parent.name != "agent-tasks":
         raise ValueError(f"review task 不在当前 Run 的 agent-tasks 目录中：{task_path}")
     result_path = resolved_task.parent.parent / "agent-results" / resolved_task.name
-    if task.result_path != str(result_path):
-        task.result_path = str(result_path)
+    expected_result_path = agent_path(result_path)
+    if task.result_path != expected_result_path:
+        task.result_path = expected_result_path
         write_json(task_path, task.model_dump(mode="json"))
     return result_path
 

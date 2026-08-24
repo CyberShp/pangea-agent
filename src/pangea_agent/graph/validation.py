@@ -364,7 +364,7 @@ def _validate_test_basis_closure(task: WorkerTask, result: WorkerResult) -> None
         if not any(risk.risk_id in case.linked_risk_ids for case in result.test_cases):
             raise ArtifactRejected(f"可执行风险 {risk.risk_id} 尚未闭环到测试用例")
 
-    # Coverage 只有在与当前分析单元唯一匹配并形成 gap 时才升级为强制输入。
+    # Coverage 是可选补测提示；选择处理时仍必须引用当前单元的真实 gap。
     known_coverage_ids = {
         gap.coverage_id
         for coverage in task.coverage_context
@@ -387,9 +387,11 @@ def _validate_test_basis_closure(task: WorkerTask, result: WorkerResult) -> None
     unknown_decisions = set(decision_by_id) - known_coverage_ids
     if unknown_decisions:
         raise ArtifactRejected(f"Coverage 闭环引用了当前单元不存在的缺口：{sorted(unknown_decisions)}")
-    missing_decisions = known_coverage_ids - set(decision_by_id)
-    if missing_decisions:
-        raise ArtifactRejected(f"Coverage 缺口尚未闭环：{sorted(missing_decisions)}")
+    missing_linked_decisions = linked_coverage_ids - set(decision_by_id)
+    if missing_linked_decisions:
+        raise ArtifactRejected(
+            f"已生成 Coverage 用例但缺少对应闭环记录：{sorted(missing_linked_decisions)}"
+        )
     coverage_link_errors: list[str] = []
     for coverage_id, decision in decision_by_id.items():
         if decision.disposition == "unreachable_from_supported_entry":
@@ -434,6 +436,8 @@ def _validate_test_basis_closure(task: WorkerTask, result: WorkerResult) -> None
         for path, item in material_catalog.items()
         if str(item.get("parse_status", "")).startswith("parsed")
     }
+    if set(task.allowed_material_paths) != parsed_material_paths:
+        raise ArtifactRejected("worker task 的 allowed_material_paths 与冻结资料清单不一致")
     missing_decision_paths = sorted(parsed_material_paths - set(decision_paths))
     if missing_decision_paths:
         raise ArtifactRejected(
@@ -477,6 +481,24 @@ def validate_nonoverlapping_units(units: list[dict]) -> None:
                 ):
                     raise ArtifactRejected(f"分析单元源码范围重叠：{owner} 与 {unit} ({scope})")
             owners[(raw_unit["repo_id"], normalized)] = unit
+
+
+def validate_complete_unit_coverage(units: list[dict], groups: list[dict]) -> None:
+    expected = {
+        (group["repo_id"], path)
+        for group in groups
+        for path in group.get("code_paths", [])
+    }
+    assigned = {
+        (unit["repo_id"], path)
+        for unit in units
+        for path in unit.get("source_scope", [])
+    }
+    if assigned != expected:
+        raise ArtifactRejected(
+            "Analysis Unit 源码分配不完整："
+            f"missing={sorted(expected - assigned)}, unexpected={sorted(assigned - expected)}"
+        )
 
 
 def _bind_worker_result(task: WorkerTask, result: WorkerResult) -> None:
@@ -641,6 +663,8 @@ def validate_worker_stage_result(
         )
 
     checkpoint = result.analysis_checkpoint
+    if not checkpoint.lifecycle_stages_checked:
+        raise ArtifactRejected("当前阶段必须填写 lifecycle_stages_checked")
     _validate_failure_path_internal_consistency(result)
     _validate_explicit_semantic_scenarios(task, result)
     if expected_stage == "source_checkpoint":

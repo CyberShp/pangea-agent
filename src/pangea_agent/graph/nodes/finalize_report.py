@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from pangea_agent.agent_io import agent_path
 from pangea_agent.graph.state import PangeaState
 from pangea_agent.graph.run_store import load_progress, save_final_state, save_progress
 from pangea_agent.report import write_reports
@@ -20,6 +21,10 @@ def finalize_report(state: PangeaState) -> PangeaState:
     if progress is not None:
         progress.phase = terminal_phase
         save_progress(state, progress)
-    completed = {**final_state, "report_path": str(markdown_path), "html_report_path": str(html_path)}
+    completed = {
+        **final_state,
+        "report_path": agent_path(markdown_path),
+        "html_report_path": agent_path(html_path),
+    }
     save_final_state(completed)
     return completed

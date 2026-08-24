@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class TaskContract(BaseModel):
@@ -17,6 +17,16 @@ class TaskContract(BaseModel):
     source_scope: list[str] = Field(default_factory=list)
     focus: list[str] = Field(default_factory=list)
     mr_url: str | None = None
+
+    @field_validator("source_scope")
+    @classmethod
+    def validate_source_scope(cls, scopes: list[str]) -> list[str]:
+        for scope in scopes:
+            if not scope or any(ord(char) < 32 for char in scope):
+                raise ValueError("source_scope 不能包含空路径或控制字符")
+            if "\\" in scope:
+                raise ValueError("source_scope 必须使用 / 分隔，不能使用反斜杠")
+        return scopes
 
     @model_validator(mode="after")
     def validate_mode(self) -> "TaskContract":

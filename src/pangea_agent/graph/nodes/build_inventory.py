@@ -4,7 +4,11 @@ from pathlib import Path
 from time import perf_counter
 
 from pangea_agent.agent_io import write_json
-from pangea_agent.documents.coverage import filter_inventory_to_sources, match_coverage_records
+from pangea_agent.documents.coverage import (
+    filter_inventory_to_sources,
+    match_coverage_records,
+    relevant_zero_coverage,
+)
 from pangea_agent.graph.run_store import load_progress, save_progress
 from pangea_agent.graph.state import PangeaState
 from pangea_agent.inventory.source_scanner import build_lightweight_inventory
@@ -78,10 +82,12 @@ def build_inventory(state: PangeaState) -> PangeaState:
         for group in groups
         for path in [*group.get("code_paths", []), *group.get("context_paths", [])]
     }
-    coverage_report = match_coverage_records(
-        state.get("source_manifest", {}).get("coverage_records", []),
-        filter_inventory_to_sources(inventory, source_paths),
-        path_inventory=filter_inventory_to_sources(inventory, path_coverage_paths),
+    coverage_report = relevant_zero_coverage(
+        match_coverage_records(
+            state.get("source_manifest", {}).get("coverage_records", []),
+            filter_inventory_to_sources(inventory, source_paths),
+            path_inventory=filter_inventory_to_sources(inventory, path_coverage_paths),
+        )
     )
     errors = list(state.get("errors", []))
     errors.extend(
