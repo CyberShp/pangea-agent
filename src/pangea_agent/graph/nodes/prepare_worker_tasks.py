@@ -232,6 +232,32 @@ def _failure_signal_context(
     return signals
 
 
+def _prioritize_discovery(unit: AnalysisUnit, checks: list[dict]) -> list[dict]:
+    instruction = (
+        "在执行本项以及后续 semantic_check_items / failure_signal_context 前，先对 unit.source_scope 全部"
+        "冻结源码做一轮独立风险发现。不要把后续清单当作风险候选目录或结论边界；先自行建立入口、"
+        "状态、资源、副作用、错误传播、清理与恢复关系，主动寻找预定义检查没有点名、但从真实入口"
+        "可达并形成独立最终状态的异常链。每条可信新发现直接新增独立 failure path，path_id 使用"
+        " `DISC:<稳定短名>` 并按正常规则关联风险；这些新发现不能塞进本项的同 ID failure path。"
+        "完成并记录自由发现后，再执行本项原定检查。"
+    )
+    if checks:
+        first = dict(checks[0])
+        first["instruction"] = f"{instruction}{first['instruction']}"
+        return [first, *checks[1:]]
+    return [{
+        "check_id": "DISCOVERY-FIRST",
+        "kind": "runtime_semantics",
+        "subject_path": unit.source_scope[0],
+        "instruction": (
+            f"{instruction}当前单元没有其他预定义 semantic check；主 DISCOVERY-FIRST failure path 只记录"
+            "自由发现扫描已经完成，linked_risk_ids 保持空，disposition=excluded；没有可信新路径时不为"
+            "凑数制造风险。"
+        ),
+        "context_paths": [unit.source_scope[0]],
+    }]
+
+
 def _semantic_check_items(
     unit: AnalysisUnit,
     repositories: list[dict],
@@ -443,6 +469,7 @@ def prepare_worker_tasks(state: PangeaState) -> PangeaState:
                 inventory,
                 state.get("scope_expansion", {}).get("unresolved_dependencies", []),
             ))
+        semantic_check_items = _prioritize_discovery(unit, semantic_check_items)
         task = WorkerTask(
             task_type="analysis",
             stage="source_checkpoint",

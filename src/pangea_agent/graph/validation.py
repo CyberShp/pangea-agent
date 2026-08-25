@@ -561,32 +561,6 @@ def _validate_semantic_check_closure(task: WorkerTask, result: WorkerResult) -> 
                 raise ArtifactRejected(
                     f"风险 {risk_id} 未声明 semantic check {check_id} 的受影响路径 {check.subject_path}"
                 )
-    semantic_subjects = {
-        _semantic_path(check.subject_path, task.unit.repo_id)
-        for check in task.semantic_check_items
-    }
-    def owning_check_id(path_id: str) -> str | None:
-        if path_id in check_by_id:
-            return path_id
-        base_id = path_id.split(":", 1)[0]
-        return base_id if base_id in check_by_id else None
-
-    supported_pairs = {
-        (
-            risk_id,
-            _semantic_path(check_by_id[check_id].subject_path, task.unit.repo_id),
-        )
-        for path in result.analysis_checkpoint.failure_paths
-        if (check_id := owning_check_id(path.path_id)) is not None
-        and path.disposition == "risk"
-        for risk_id in path.linked_risk_ids
-    }
-    for risk in result.risks:
-        for affected_path in risk_paths[risk.risk_id] & semantic_subjects:
-            if (risk.risk_id, affected_path) not in supported_pairs:
-                raise ArtifactRejected(
-                    f"风险 {risk.risk_id} 声明受影响路径 {affected_path}，但对应 semantic check 未判定并关联该风险"
-                )
 
 
 def _validate_failure_path_internal_consistency(result: WorkerResult) -> None:
