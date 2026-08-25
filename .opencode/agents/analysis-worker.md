@@ -51,8 +51,10 @@ Graph 在 `source_checkpoint` task 中把 `inventory_path`、`source_manifest_pa
 
 - `unit.source_scope`：必须逐文件分析的源码，已经包含 PANGEA 确定性找到的接口实现和必要源码。
 - `unit.context_scope`：函数指针的直接实现，以及调用入口、配置、规格和测试等语义范围。直接实现用于核对回调的部分副作用，不像 `source_scope` 那样逐文件完整读取：先用 `rg -n` 定位 semantic check、failure signal、相关 setter/close/add/remove/create 函数，再用 offset/limit 读取所需片段；单次片段不超过 240 行，避免重叠，不得整文件读取大型 posix/uring 实现，也不得继续 find/glob 扩展文件范围。
-- `coverage_context`：当前单元唯一匹配到的函数级 `count=0` Coverage 提示。每个 gap 的
-  `coverage_id` 是选择补测时的唯一引用；非零、分支、歧义、未匹配和其他模块记录不会进入 task。
+- `coverage_context`：当前单元唯一匹配到的函数级 `count=0` Coverage 缺口。每个 `gaps[].coverage_id`
+  是该缺口唯一引用；Coverage 文件本身是可选输入，但只要 task 已出现 gap，就必须在 `test_generation`
+  为每个 gap 写一条 `coverage_decisions`：复用已有用例、生成 Coverage-only 用例，或有证据地判定
+  `unreachable_from_supported_entry`。非零、分支、歧义、未匹配和其他模块记录不会进入 task。
 - `failure_signal_context`：Python 从当前任务的冻结源码中定位出的少量高影响失败信号。它只告诉你位置，不证明可达、危害或风险成立；必须逐项读取源码上下文，并按每项附带的 `analysis_focus` 做语义判断。若附带 `related_state_context`，必须打开这些位置判断真实时序，不能把候选本身当成风险结论。
 - `semantic_check_items`：本轮必须逐项完成的短任务清单。每项只要求一个明确结论；用它的 `check_id` 作为对应 `analysis_checkpoint.failure_paths[].path_id`。该 failure path 用 `linked_risk_ids` 指向由本项支撑的风险；风险的 `affected_paths` 必须填写本项 `subject_path` 所指向的真实 repo-relative 源码路径，不能填写 check ID 或说明文字。不要合并不同实现，也不要让断言结论替代资源重配置结论。这是分析顺序，不是自动风险判定。
 - `index_path`、`source_manifest_path`：`risk_analysis` 使用的冻结证据与资料目录。`inventory_path` 由 Python 用于范围冻结和校验，worker 不整份读取；task 中的 scope 已是本单元权威范围。
@@ -163,11 +165,13 @@ Lua/openUBMC task 在 `test_generation` 提交前先执行两项退出检查：�
    失败保持、移除故障后重试/恢复等不能互相替代的行为；先为每项指定实际验证它的用例步骤和预期，
    再分别确认每一项至少被一条
    TestCase 的 `linked_requirement_ids` 或 `linked_material_ids` 指向；已有 Coverage 执行次数不算需求
-   TestCase，不能因为某分支已经执行过就省略对应需求。完成这份逐项对照后，再从 task 的
-   `coverage_context[].gaps[]` 中选择有清晰业务入口、适合补测的条目；优先复用已经命中该 gap 的
-   风险/资料用例，也可以生成 Coverage-only 灰盒用例。只有实际选择处理的 gap 才写
-   `coverage_decisions` 和双向关联；未选择的 gap 保持无 decision、无用例。资料没有稳定
-   需求编号时使用 `linked_material_ids=["MAT:<path>"]`；Coverage 用例使用 task 给出的真实
+   TestCase，不能因为某分支已经执行过就省略对应需求。完成这份逐项对照后，再逐项处理 task 的
+   `coverage_context[].gaps[]`。每个 gap 都必须形成且只形成一条 `coverage_decisions`：优先复用已经
+   真正命中该 gap 的风险/资料用例并标记 `covered_by_existing_case`；否则从受支持业务入口或明确的
+   灰盒前置条件生成 Coverage-only 用例并标记 `new_coverage_case`；只有冻结源码确实无法建立受支持入口
+   时才能标记 `unreachable_from_supported_entry`，且不得生成伪用例。前两种 decision 的
+   `linked_test_case_ids` 与 TestCase 的 `linked_coverage_ids` 必须双向一致。不得静默跳过 task 中的 gap。
+   资料没有稳定需求编号时使用 `linked_material_ids=["MAT:<path>"]`；Coverage 用例使用 task 给出的真实
    `linked_coverage_ids`，不得伪造 Risk/Requirement ID。随后执行提交前反例检查：每条风险重放完整
    状态转换，每条 TestCase 检查故障注入没有提前销毁观测依赖、每个状态变化都有显式步骤、每个
    expected result 只有一个固定结果与观测位置。最后对每个 `linked_risk_id` 将 RiskCard 的 `title`、`system_result`、`external_observation` 与关联 TestCase 的步骤、预期和观测逐字段对照，确保它们描述同一个状态向量。完成后改写最终 summary，写入 `completed_stage="test_generation"`。
@@ -176,7 +180,7 @@ Lua/openUBMC task 在 `test_generation` 提交前先执行两项退出检查：�
    风险/资料用例已经真实命中 Coverage gap 时，直接复用并增加 Coverage 关联；不得再生成一条前置、
    步骤、预期和观测实质相同的 Coverage-only 用例。
    完成上游语义核对后，`upstream_semantics.conclusion=expected_behavior` 的对象不得保留在 `risks`；
-   将对应 failure path 改为 `excluded` 并清空 `linked_risk_ids`。若正常行为仍需验证，只用真实的需求、
+   将对应 failure path 改为 `excluded` 并清空其 `linked_risk_ids`。若正常行为仍需验证，只用真实的需求、
    资料或 Coverage 关联生成非风险用例，不得为闭环继续挂到相邻风险。
    当前需求/设计已规定正确结果但源码与之冲突时，TestCase expected result 必须写资料要求的正确值，
    源码的错误现状只写进对应步骤的 `failure_observation`，不能写成预期通过。`steps[].expected_result` 每项整句都是通过判据；禁止
@@ -252,11 +256,13 @@ review issue 改写成 B=2/2，也不能把 A.C2 的 trip 失败延续为 normal
    API/函数、定义其需求 ID、返回值、状态转换或外部行为时必须判为 `current`；`context` 只用于没有
    当前可测试行为的背景信息，不能因为源码已经符合需求就把对应需求资料降为 `context`。
 5. 最后读取 `coverage_context`。缺少记录表示未知，不能写成未覆盖；Coverage 不能证明风险成立。
-   `gaps[]` 只提供函数级零覆盖补测候选。能形成清晰业务或灰盒测试时尽量生成；不能形成可靠用例时可以
-   不处理，不需要为每个 gap 强制填写 `coverage_decisions`。
+   `gaps=[]` 表示本单元没有明确 Coverage 补测缺口；一旦存在 `gaps[]`，每个 gap 都必须在 tests 阶段
+   形成 `coverage_decisions`。先尝试复用风险/资料用例；否则生成 Coverage-only 黑盒/灰盒用例；只有
+   冻结范围内确实找不到受支持入口时才使用 `unreachable_from_supported_entry`。`coverage_priorities`
+   只是排序和规划，不能代替 gap 闭环。
 6. 按六个 DFX 维度和初始化、运行、停止、恢复、卸载生命周期检查候选问题；风险必须说明复现条件、系统结果、外部观测、排除条件、严重度、置信度和真实源码证据。首次分析产生的新风险 `status` 固定为 `pending`。
 7. 在生成测试用例前完成上游约束和反证检查，把最终风险集合固定下来，并将 `risk_set_frozen=true`。之后不得为了凑用例临时新增风险。
-8. 写入 `test_cases` 前读取固定的 `src/pangea_agent/rubrics/builtin/product_blackbox_test_case.md`，并执行 `test_case_generation.md` 的转换步骤。不要调用客户端专属 Skill 或复制另一套用例规则。风险验证用例填写真实 `linked_risk_ids`；资料/需求用例填写真实 `linked_material_ids` 和存在时的 `linked_requirement_ids`；选择生成的 Coverage 补测使用 task 中真实 `linked_coverage_ids`。四个关联数组都必须保留，至少一个非空。风险驱动是基础：`Blackbox-ready/Graybox-ready` 风险必须有用例；`decision=current` 资料必须参与用例闭环；Coverage gap 是可选补测提示。不得为了过 schema 把正常需求、资料或 Coverage 用例挂到相邻风险。先为每条风险列出测试变体，每个变体只含一种构建、一种运行模式和一个唯一终态，再逐行生成独立 TestCase；Debug 与 Release 等对照必须在生成步骤前拆开。某个变体的终态是进程/服务崩溃、退出或停止时，若还要验证恢复，下一步先写“重启并等待服务恢复”，再写后续业务操作。每个步骤与预期结果一一对应；故障注入只制造触发条件，测试人员仍从业务入口执行、观察并恢复。前置条件只描述第 1 步开始前已经成立的状态；测试开始后的配置切换、销毁、重建、恢复或再次发送都必须写成独立步骤并给出同位置预期，不能用前置条件中的“随后”“之后恢复”代替触发链中的状态转换。
+8. 写入 `test_cases` 前读取固定的 `src/pangea_agent/rubrics/builtin/product_blackbox_test_case.md`，并执行 `test_case_generation.md` 的转换步骤。不要调用客户端专属 Skill 或复制另一套用例规则。风险验证用例填写真实 `linked_risk_ids`；资料/需求用例填写真实 `linked_material_ids` 和存在时的 `linked_requirement_ids`；Coverage 补测使用 task 中真实 `linked_coverage_ids`。四个关联数组都必须保留，至少一个非空。风险驱动是基础：`Blackbox-ready/Graybox-ready` 风险必须有用例；`decision=current` 资料必须参与用例闭环；task 中的每个 Coverage gap 也必须闭环，但 `unreachable_from_supported_entry` 不强制伪造用例。不得为了过 schema 把正常需求、资料或 Coverage 用例挂到相邻风险。先为每条风险列出测试变体，每个变体只含一种构建、一种运行模式和一个唯一终态，再逐行生成独立 TestCase；Debug 与 Release 等对照必须在生成步骤前拆开。某个变体的终态是进程/服务崩溃、退出或停止时，若还要验证恢复，下一步先写“重启并等待服务恢复”，再写后续业务操作。每个步骤与预期结果一一对应；故障注入只制造触发条件，测试人员仍从业务入口执行、观察并恢复。前置条件只描述第 1 步开始前已经成立的状态；测试开始后的配置切换、销毁、重建、恢复或再次发送都必须写成独立步骤并给出同位置预期，不能用前置条件中的“随后”“之后恢复”代替触发链中的状态转换。
    若用例包含“失败后在同一实例重试”，关联 RiskCard 必须描述同一条重试路径，不能只关联“首次失败后继续调用”的相邻风险。对类表或模块级 signal，提交前写出首次失败残留注册、重试新增注册和一次 emit/update 的实际调用向量；用例 expected result 可以写需求规定的正确值，但风险正文必须写当前实现的真实错误值，并把该差异作为 FAIL 判据。
    对 `decision=current` 资料，在提交前把正文中抽取的需求 ID 集合与所有 TestCase 的
    `linked_requirement_ids` 并集做一次逐项对照；正文中的每个当前需求 ID 都必须出现在并集中。
@@ -288,10 +294,9 @@ review issue 改写成 B=2/2，也不能把 A.C2 的 trip 失败延续为 normal
 - `visual_findings[]`：只允许 `attachment_path`、`observation`，以及可选的 `status`、`pending_reason`。如果 manifest 没有真实图片附件，保持空数组；不得把架构图、状态机或资源关系的文字描述伪造成 visual finding，也不得写 `type`、`title`、`description`、`structure`、`states`、`transitions`、`ownership`、`key_invariants` 等额外字段。
 - `risks[]`：必须使用 `risk_id`、`title`、`affected_paths`、`dfx`、`severity`、`confidence`、`trigger`、`system_result`、`external_observation`、`exclusion_condition`、`upstream_semantics`、`translation_status`、`status`、`evidence`。`affected_paths` 只列真实发生该风险的实现路径，不因共享 helper 或相似标题加入安全实现；`dfx` 必须是数组；`severity` 只能是 `Low/Medium/High/Critical`；`confidence` 只能是 `low/medium/high`；首次分析的 `status` 为 `pending`。不得使用 `dfx_dimension`、`category`、`reproducibility`、`reproduction_conditions`、`exclusion_conditions` 等旧字段。
 - `test_cases[]`：必须保留 `linked_risk_ids`、`linked_requirement_ids`、`linked_material_ids`、`linked_coverage_ids` 四个数组，至少一个非空。Risk、真实需求 ID、`MAT:<path>`、`COV:...` 各自只写入对应数组，不得跨类型伪造关联。
-- `analysis_checkpoint.coverage_decisions[]`：只记录实际选择处理的 Coverage gap；闭合到用例时
-  `linked_test_case_ids` 与用例的 `linked_coverage_ids` 必须双向一致。
+- `analysis_checkpoint.coverage_decisions[]`：task 中每个 `coverage_context[].gaps[]` 必须有且只有一条同 `coverage_id` 的闭环结论；闭合到用例时 `linked_test_case_ids` 与用例的 `linked_coverage_ids` 必须双向一致。
 - `upstream_semantics` 必须完整包含 `reachability`、`caller_constraints`、`documented_behavior`、`existing_tests`、`conclusion`；`conclusion` 只能是 `risk_remains/expected_behavior/unresolved`。
-- `risks`、`test_cases` 可以为空，但已经写入的对象必须完整符合各自 schema；不得通过空字符串、空步骤、空 evidence 或占位文本绕过校验。若存在可执行风险或 `decision=current` 资料，则对应测试闭环约束仍然必须满足；Coverage gap 本身不强制生成用例。
+- `risks`、`test_cases` 可以为空，但已经写入的对象必须完整符合各自 schema；不得通过空字符串、空步骤、空 evidence 或占位文本绕过校验。若存在可执行风险、`decision=current` 资料或 Coverage gap，则相应闭环仍必须满足；Coverage gap 只有在 `unreachable_from_supported_entry` 时才允许不生成用例。
 - `analysis_checkpoint`：边分析边更新，不在最后凭记忆补写。提交时必须包含已读源码、生命周期检查、候选失败路径处置、资料决策、Coverage 优先级与闭环、风险冻结状态和反例检查。
 
 ## 写入结果
@@ -316,4 +321,4 @@ PowerShell: & '.\.venv\Scripts\python.exe' -m pangea_agent.cli.main validate-wor
 - 若返回 `FAIL`，留在当前 Worker 会话中，读取错误消息以及对应 schema，一次处理该次输出列出的全部 JSON/schema 错误，再重新执行同一个验证命令。
 - 若某次 Edit 造成 JSON 语法错误，只回看报错位置并用 Edit 修正该字段；不得整文件重写、正则替换或创建 `fix_all.py` / 临时修复脚本。结构修复不属于正式 rework，不增加 `attempt`，也不新建 Run。
 - PANGEA 只会自动恢复少量机械字段以及可确定的 evidence 位置；不会自动补写 `business_flows`、`visual_findings`、`risks`、`test_cases` 的缺失字段或实质内容。
-- 缺少 `steps`、流程 `evidence`、风险 `upstream_semantics`、资料闭环或已声明完成的 Coverage 双向关联等实质内容时，必须回到当前单元已经读取的源码/资料中补齐真实分析内容，禁止用占位值骗过 schema。
+- 缺少 `steps`、流程 `evidence`、风险 `upstream_semantics`、资料闭环或 Coverage gap 逐项闭环等实质内容时，必须回到当前单元已经读取的源码/资料中补齐真实分析内容，禁止用占位值骗过 schema。
