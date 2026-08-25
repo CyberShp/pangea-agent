@@ -364,7 +364,7 @@ def _validate_test_basis_closure(task: WorkerTask, result: WorkerResult) -> None
         if not any(risk.risk_id in case.linked_risk_ids for case in result.test_cases):
             raise ArtifactRejected(f"可执行风险 {risk.risk_id} 尚未闭环到测试用例")
 
-    # Coverage 是可选补测提示；选择处理时仍必须引用当前单元的真实 gap。
+    # Coverage 输入可选；一旦 task 中存在真实 gap，就必须逐项闭环。
     known_coverage_ids = {
         gap.coverage_id
         for coverage in task.coverage_context
@@ -387,6 +387,9 @@ def _validate_test_basis_closure(task: WorkerTask, result: WorkerResult) -> None
     unknown_decisions = set(decision_by_id) - known_coverage_ids
     if unknown_decisions:
         raise ArtifactRejected(f"Coverage 闭环引用了当前单元不存在的缺口：{sorted(unknown_decisions)}")
+    missing_decisions = known_coverage_ids - set(decision_by_id)
+    if missing_decisions:
+        raise ArtifactRejected(f"Coverage 缺口尚未逐项闭环：{sorted(missing_decisions)}")
     missing_linked_decisions = linked_coverage_ids - set(decision_by_id)
     if missing_linked_decisions:
         raise ArtifactRejected(
