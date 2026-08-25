@@ -1,4 +1,4 @@
-"""File contracts exchanged with OpenCode or Claude Code agents."""
+"""JSON file contracts exchanged with semantic agents."""
 
 from .files import read_json, write_json
 

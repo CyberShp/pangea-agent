@@ -1,108 +1,303 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "RunProgress",
-  "type": "object",
-  "required": [
-    "schema_version",
-    "run_id",
-    "phase",
-    "analysis_units",
-    "completed_analysis_units",
-    "completed_rework_units",
-    "errors",
-    "error_history",
-    "agent_sessions"
-  ],
-  "properties": {
-    "schema_version": {
-      "const": "1.0"
-    },
-    "run_id": {
-      "type": "string",
-      "minLength": 1
-    },
-    "phase": {
-      "enum": [
-        "PREPARING",
-        "WAITING_ANALYSIS",
-        "WAITING_REVIEW",
-        "WAITING_REWORK",
-        "WAITING_REWORK_REVIEW",
-        "READY_TO_FINALIZE",
-        "COMPLETE",
-        "INCOMPLETE"
-      ]
-    },
-    "init_step": {
-      "type": [
-        "string",
-        "null"
-      ],
-      "enum": [
-        "CONTRACT_FROZEN",
-        "SOURCE_READY",
-        "INDEX_READY",
-        "INVENTORY_READY",
-        null
-      ]
-    },
-    "analysis_units": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
-    },
-    "completed_analysis_units": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
-    },
-    "completed_rework_units": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
-    },
-    "quality_status": {
-      "type": [
-        "string",
-        "null"
-      ],
-      "enum": [
-        "PASS",
-        "REWORK",
-        "UNRESOLVED",
-        null
-      ]
-    },
-    "errors": {
-      "type": "array",
-      "items": {
-        "type": "object"
-      }
-    },
-    "error_history": {
-      "type": "array",
-      "items": {
-        "type": "object"
-      }
-    },
-    "agent_sessions": {
-      "type": "object",
-      "additionalProperties": {
-        "type": "object",
-        "required": ["role", "unit_id", "stage", "task_id", "status"],
-        "properties": {
-          "role": {"enum": ["analysis", "review", "rework"]},
-          "unit_id": {"type": ["string", "null"]},
-          "stage": {"enum": ["analysis", "initial_review", "rework", "rework_verification"]},
-          "task_id": {"type": ["string", "null"]},
-          "status": {"enum": ["pending", "dispatched", "completed"]}
+  "$defs": {
+    "ActionState": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "title": "Schema Version",
+          "type": "string"
         },
-        "additionalProperties": false
-      }
+        "action_id": {
+          "minLength": 1,
+          "title": "Action Id",
+          "type": "string"
+        },
+        "action": {
+          "enum": [
+            "dispatch_agent",
+            "continue_agent"
+          ],
+          "title": "Action",
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "asset_extraction",
+            "planning",
+            "analysis",
+            "review",
+            "closure"
+          ],
+          "title": "Role",
+          "type": "string"
+        },
+        "stage": {
+          "enum": [
+            "structured_extraction",
+            "unit_planning",
+            "unit_analysis",
+            "independent_review",
+            "comparison_review",
+            "targeted_closure"
+          ],
+          "title": "Stage",
+          "type": "string"
+        },
+        "task_path": {
+          "minLength": 1,
+          "title": "Task Path",
+          "type": "string"
+        },
+        "task_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Task Id"
+        },
+        "status": {
+          "default": "pending",
+          "enum": [
+            "pending",
+            "dispatched",
+            "settled",
+            "accepted",
+            "failed"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        }
+      },
+      "required": [
+        "action_id",
+        "action",
+        "role",
+        "stage",
+        "task_path"
+      ],
+      "title": "ActionState",
+      "type": "object"
+    },
+    "AnalysisUnit": {
+      "additionalProperties": false,
+      "properties": {
+        "repo_id": {
+          "minLength": 1,
+          "title": "Repo Id",
+          "type": "string"
+        },
+        "title": {
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "source_scope": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Source Scope",
+          "type": "array"
+        },
+        "context_scope": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Context Scope",
+          "type": "array"
+        },
+        "rationale": {
+          "minLength": 1,
+          "title": "Rationale",
+          "type": "string"
+        },
+        "asset_item_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Asset Item Ids",
+          "type": "array"
+        },
+        "coverage_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Coverage Ids",
+          "type": "array"
+        },
+        "mechanism_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Mechanism Ids",
+          "type": "array"
+        },
+        "unit_id": {
+          "minLength": 1,
+          "title": "Unit Id",
+          "type": "string"
+        },
+        "line_count": {
+          "minimum": 0,
+          "title": "Line Count",
+          "type": "integer"
+        },
+        "function_count": {
+          "minimum": 0,
+          "title": "Function Count",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "repo_id",
+        "title",
+        "source_scope",
+        "rationale",
+        "unit_id",
+        "line_count",
+        "function_count"
+      ],
+      "title": "AnalysisUnit",
+      "type": "object"
     }
   },
-  "additionalProperties": false
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "3.0",
+      "default": "3.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "run_id": {
+      "minLength": 1,
+      "title": "Run Id",
+      "type": "string"
+    },
+    "lifecycle_status": {
+      "default": "running",
+      "enum": [
+        "running",
+        "complete",
+        "stopped",
+        "failed"
+      ],
+      "title": "Lifecycle Status",
+      "type": "string"
+    },
+    "stage": {
+      "default": "preparing",
+      "enum": [
+        "preparing",
+        "planning",
+        "analyzing",
+        "reviewing",
+        "closing",
+        "reporting",
+        "complete"
+      ],
+      "title": "Stage",
+      "type": "string"
+    },
+    "quality_status": {
+      "anyOf": [
+        {
+          "enum": [
+            "PASS",
+            "UNRESOLVED"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Quality Status"
+    },
+    "analysis_units": {
+      "items": {
+        "$ref": "#/$defs/AnalysisUnit"
+      },
+      "title": "Analysis Units",
+      "type": "array"
+    },
+    "completed_analysis_units": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Completed Analysis Units",
+      "type": "array"
+    },
+    "completed_closure_units": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Completed Closure Units",
+      "type": "array"
+    },
+    "actions": {
+      "additionalProperties": {
+        "$ref": "#/$defs/ActionState"
+      },
+      "title": "Actions",
+      "type": "object"
+    },
+    "errors": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Errors",
+      "type": "array"
+    },
+    "report_path": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Report Path"
+    },
+    "html_report_path": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Html Report Path"
+    }
+  },
+  "required": [
+    "run_id"
+  ],
+  "title": "WorkflowProgress",
+  "type": "object"
 }

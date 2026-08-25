@@ -1,138 +1,230 @@
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 
-from pangea_agent.agent_io import write_json
-from pangea_agent.graph.run_store import (
-    load_progress,
-    load_review_task,
-    load_worker_result,
-    load_worker_task,
-    normalize_worker_result_path,
-    normalize_review_result_path,
-    review_result_skeleton,
-    save_progress,
-    worker_result_skeleton,
+from .adapter_api import (
+    bind_action,
+    bind_asset_action,
+    next_actions,
+    settle_action,
+    settle_asset_action,
+    validate_action,
+    validate_asset_action,
 )
-from pangea_agent.graph.validation import validate_worker_result, validation_message
-
 from .init_data import init_data
-from .index_repo import print_repositories
+from .json_api import print_error, print_success
+from .public_api import (
+    archive_asset,
+    asset_detail,
+    import_asset,
+    list_assets,
+    list_runs,
+    prepare_asset_extraction,
+    review_asset,
+    run_detail,
+    run_report,
+    system_capabilities,
+    stop_run,
+    update_asset_result,
+)
 from .run_module_analysis import resume_module_analysis, run_module_analysis
-
-
-def _print_run_result(result: dict) -> None:
-    if result.get("report_path"):
-        print(result["report_path"])
-        if result.get("html_report_path"):
-            print(result["html_report_path"])
-        return
-    print(f"run_id={result.get('run_id', 'UNKNOWN')}")
-    print(f"phase={result.get('phase', 'UNKNOWN')}")
-    for task_path in result.get("agent_task_paths", []):
-        print(task_path)
-
-
-def _mark_session_started(task_path: Path, key: str) -> None:
-    agent_tasks = next((parent for parent in task_path.resolve().parents if parent.name == "agent-tasks"), None)
-    if agent_tasks is None:
-        raise ValueError(f"Agent task 不在 Run 的 agent-tasks 目录中：{task_path}")
-    run_dir = agent_tasks.parent
-    state = {"run_id": run_dir.name, "data_root": str(run_dir.parent.parent)}
-    progress = load_progress(state)
-    if progress is None or key not in progress.agent_sessions:
-        raise ValueError(f"progress.json 中没有待启动会话：{key}")
-    progress.agent_sessions[key].status = "dispatched"
-    save_progress(state, progress)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(prog="pangea")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("init-data")
-    sub.add_parser("list-repos")
     run = sub.add_parser("module-analysis")
     run.add_argument("--contract", required=True)
     resume = sub.add_parser("resume-run")
     resume.add_argument("--run-id", required=True)
     resume.add_argument("--data-root", default="pangea-data")
-    prepare = sub.add_parser("prepare-worker-result")
-    prepare.add_argument("--task", required=True)
-    prepare_review = sub.add_parser("prepare-review-result")
-    prepare_review.add_argument("--task", required=True)
-    validate = sub.add_parser("validate-worker-result")
-    validate.add_argument("--task", required=True)
-    session = sub.add_parser("record-agent-session")
-    session.add_argument("--run-id", required=True)
-    session.add_argument("--data-root", default="pangea-data")
-    session.add_argument("--role", choices=("analysis", "review", "rework"), required=True)
-    session.add_argument("--unit-id")
-    session.add_argument("--task-id")
-    session.add_argument("--status", choices=("dispatched", "completed"), default="dispatched")
+    assets = sub.add_parser("assets")
+    asset_commands = assets.add_subparsers(dest="asset_command", required=True)
+    asset_import = asset_commands.add_parser("import")
+    asset_import.add_argument("--data-root", default="pangea-data")
+    asset_import.add_argument("--path", required=True)
+    asset_import.add_argument(
+        "--type",
+        required=True,
+        choices=("requirement", "design", "historical_defect", "reference", "coverage"),
+    )
+    asset_import.add_argument("--title")
+    asset_list = asset_commands.add_parser("list")
+    asset_list.add_argument("--data-root", default="pangea-data")
+    asset_list.add_argument("--cursor", type=int, default=0)
+    asset_list.add_argument("--limit", type=int, default=50)
+    asset_list.add_argument("--type")
+    asset_list.add_argument("--status")
+    asset_list.add_argument("--query")
+    asset_get = asset_commands.add_parser("get")
+    asset_get.add_argument("--data-root", default="pangea-data")
+    asset_get.add_argument("--asset-id", required=True)
+    asset_extract = asset_commands.add_parser("extract")
+    asset_extract.add_argument("--data-root", default="pangea-data")
+    asset_extract.add_argument("--asset-id", required=True)
+    asset_review = asset_commands.add_parser("review")
+    asset_review.add_argument("--data-root", default="pangea-data")
+    asset_review.add_argument("--asset-id", required=True)
+    asset_review.add_argument("--decision", required=True, choices=("approve", "reject"))
+    asset_update = asset_commands.add_parser("update-result")
+    asset_update.add_argument("--data-root", default="pangea-data")
+    asset_update.add_argument("--asset-id", required=True)
+    asset_update.add_argument("--result", required=True)
+    asset_archive = asset_commands.add_parser("archive")
+    asset_archive.add_argument("--data-root", default="pangea-data")
+    asset_archive.add_argument("--asset-id", required=True)
+
+    runs = sub.add_parser("runs")
+    run_commands = runs.add_subparsers(dest="run_command", required=True)
+    run_list = run_commands.add_parser("list")
+    run_list.add_argument("--data-root", default="pangea-data")
+    run_list.add_argument("--cursor", type=int, default=0)
+    run_list.add_argument("--limit", type=int, default=50)
+    run_get = run_commands.add_parser("get")
+    run_get.add_argument("--data-root", default="pangea-data")
+    run_get.add_argument("--run-id", required=True)
+    report = run_commands.add_parser("report")
+    report.add_argument("--data-root", default="pangea-data")
+    report.add_argument("--run-id", required=True)
+    report.add_argument("--format", required=True, choices=("html", "markdown"))
+    run_create = run_commands.add_parser("create")
+    run_create.add_argument("--contract", required=True)
+    run_stop = run_commands.add_parser("stop")
+    run_stop.add_argument("--data-root", default="pangea-data")
+    run_stop.add_argument("--run-id", required=True)
+
+    system = sub.add_parser("system")
+    system_commands = system.add_subparsers(dest="system_command", required=True)
+    capabilities = system_commands.add_parser("capabilities")
+    capabilities.add_argument("--data-root", default="pangea-data")
+
+    adapter = sub.add_parser("adapter")
+    adapter_commands = adapter.add_subparsers(dest="adapter_command", required=True)
+    adapter_next = adapter_commands.add_parser("next")
+    adapter_next.add_argument("--data-root", default="pangea-data")
+    adapter_next.add_argument("--run-id", required=True)
+    adapter_next.add_argument("--limit", type=int, default=8)
+    adapter_bind = adapter_commands.add_parser("bind")
+    adapter_bind.add_argument("--data-root", default="pangea-data")
+    adapter_bind_target = adapter_bind.add_mutually_exclusive_group(required=True)
+    adapter_bind_target.add_argument("--run-id")
+    adapter_bind_target.add_argument("--asset-id")
+    adapter_bind.add_argument("--action-id", required=True)
+    adapter_bind.add_argument("--task-id", required=True)
+    adapter_validate = adapter_commands.add_parser("validate")
+    adapter_validate.add_argument("--data-root", default="pangea-data")
+    adapter_validate_target = adapter_validate.add_mutually_exclusive_group(required=True)
+    adapter_validate_target.add_argument("--run-id")
+    adapter_validate_target.add_argument("--asset-id")
+    adapter_validate.add_argument("--action-id", required=True)
+    adapter_settle = adapter_commands.add_parser("settle")
+    adapter_settle.add_argument("--data-root", default="pangea-data")
+    adapter_settle_target = adapter_settle.add_mutually_exclusive_group(required=True)
+    adapter_settle_target.add_argument("--run-id")
+    adapter_settle_target.add_argument("--asset-id")
+    adapter_settle.add_argument("--action-id", required=True)
     args = parser.parse_args()
 
     if args.command == "init-data":
         init_data()
-    elif args.command == "list-repos":
-        print_repositories()
+        print_success({"initialized": True, "data_root": "pangea-data"})
     elif args.command == "module-analysis":
-        _print_run_result(run_module_analysis(args.contract))
-    elif args.command == "resume-run":
-        _print_run_result(resume_module_analysis(args.run_id, args.data_root))
-    elif args.command == "prepare-worker-result":
-        task_path = Path(args.task)
-        task = load_worker_task(task_path)
-        result_path = normalize_worker_result_path(task_path, task)
-        if not result_path.exists():
-            write_json(result_path, worker_result_skeleton(task))
-        role = "analysis" if task.task_type == "analysis" else "rework"
-        _mark_session_started(task_path, f"{role}:{task.unit.unit_id}")
-        print(result_path)
-    elif args.command == "prepare-review-result":
-        task_path = Path(args.task)
-        task = load_review_task(task_path)
-        result_path = normalize_review_result_path(task_path, task)
-        if not result_path.exists():
-            write_json(result_path, review_result_skeleton(task))
-        _mark_session_started(task_path, "review")
-        print(result_path)
-    elif args.command == "validate-worker-result":
         try:
-            task_path = Path(args.task)
-            task = load_worker_task(task_path)
-            result_path = normalize_worker_result_path(task_path, task)
-            result = load_worker_result(result_path, task)
-            validate_worker_result(task, result)
-            write_json(result_path, result.model_dump(mode="json"))
+            print_success(run_module_analysis(args.contract))
         except Exception as exc:
-            detail = validation_message(exc)
-            parser.exit(
-                1,
-                "FAIL 当前 worker result 尚未满足提交契约。"
-                "PANGEA 只会自动恢复 run_id/unit_id/attempt/analyzed_scope/analyzed_context_scope "
-                "以及可确定的 evidence 位置；business_flows、visual_findings、risks、test_cases 的结构和实质内容不会自动补写。"
-                f"请在当前 Worker 内一次处理下列全部错误后重新执行 validate-worker-result：{detail}\n",
-            )
-        print("PASS")
-    elif args.command == "record-agent-session":
-        state = {"run_id": args.run_id, "data_root": args.data_root}
-        progress = load_progress(state)
-        if progress is None:
-            parser.error("指定 Run 不存在")
-        key = "review" if args.role == "review" else f"{args.role}:{args.unit_id or ''}"
-        record = progress.agent_sessions.get(key)
-        if record is None:
-            parser.error(f"当前 Run 没有待记录的 Agent 会话：{key}")
-        if args.status == "dispatched" and not args.task_id:
-            parser.error("记录 dispatched 状态时必须提供 --task-id")
-        if record.task_id and args.task_id and record.task_id != args.task_id:
-            parser.error("同一 Agent 会话不能替换 task_id")
-        if args.task_id:
-            record.task_id = args.task_id
-        record.status = args.status
-        save_progress(state, progress)
-        print(f"{key}={record.status}")
+            print_error(exc)
+            raise SystemExit(1) from exc
+    elif args.command == "resume-run":
+        try:
+            print_success(resume_module_analysis(args.run_id, args.data_root))
+        except Exception as exc:
+            print_error(exc)
+            raise SystemExit(1) from exc
+    elif args.command == "assets":
+        try:
+            if args.asset_command == "import":
+                result = import_asset(args.data_root, args.path, args.type, args.title)
+                print_success(result.model_dump(mode="json"))
+            elif args.asset_command == "list":
+                print_success(list_assets(
+                    args.data_root,
+                    cursor=args.cursor,
+                    limit=args.limit,
+                    asset_type=args.type,
+                    status=args.status,
+                    query=args.query,
+                ))
+            elif args.asset_command == "get":
+                print_success(asset_detail(args.data_root, args.asset_id))
+            elif args.asset_command == "extract":
+                print_success(prepare_asset_extraction(args.data_root, args.asset_id))
+            elif args.asset_command == "review":
+                result = review_asset(args.data_root, args.asset_id, args.decision)
+                print_success(result.model_dump(mode="json"))
+            elif args.asset_command == "update-result":
+                result = update_asset_result(args.data_root, args.asset_id, args.result)
+                print_success(result.model_dump(mode="json"))
+            elif args.asset_command == "archive":
+                result = archive_asset(args.data_root, args.asset_id)
+                print_success(result.model_dump(mode="json"))
+        except Exception as exc:
+            print_error(exc)
+            raise SystemExit(1) from exc
+    elif args.command == "runs":
+        try:
+            if args.run_command == "list":
+                print_success(list_runs(args.data_root, cursor=args.cursor, limit=args.limit))
+            elif args.run_command == "get":
+                print_success(run_detail(args.data_root, args.run_id))
+            elif args.run_command == "report":
+                print_success(run_report(args.data_root, args.run_id, args.format))
+            elif args.run_command == "create":
+                print_success(run_module_analysis(args.contract))
+            elif args.run_command == "stop":
+                print_success(stop_run(args.data_root, args.run_id))
+        except Exception as exc:
+            print_error(exc)
+            raise SystemExit(1) from exc
+    elif args.command == "system":
+        try:
+            print_success(system_capabilities(args.data_root))
+        except Exception as exc:
+            print_error(exc)
+            raise SystemExit(1) from exc
+    elif args.command == "adapter":
+        try:
+            if args.adapter_command == "next":
+                print_success(next_actions(args.data_root, args.run_id, args.limit))
+            elif args.adapter_command == "bind":
+                if args.run_id:
+                    result = bind_action(
+                        args.data_root, args.run_id, args.action_id, args.task_id
+                    )
+                else:
+                    result = bind_asset_action(
+                        args.data_root, args.asset_id, args.action_id, args.task_id
+                    )
+                print_success(result)
+            elif args.adapter_command == "validate":
+                if args.run_id:
+                    result = validate_action(args.data_root, args.run_id, args.action_id)
+                else:
+                    result = validate_asset_action(
+                        args.data_root, args.asset_id, args.action_id
+                    )
+                print_success(result)
+            elif args.adapter_command == "settle":
+                if args.run_id:
+                    result = settle_action(args.data_root, args.run_id, args.action_id)
+                else:
+                    result = settle_asset_action(
+                        args.data_root, args.asset_id, args.action_id
+                    )
+                print_success(result)
+        except Exception as exc:
+            print_error(exc)
+            raise SystemExit(1) from exc
 
 
 if __name__ == "__main__":

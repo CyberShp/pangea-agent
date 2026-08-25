@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 class TaskContract(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    run_id: str
+    run_id: str | None = None
     data_root: str = "pangea-data"
     mode: Literal["module_analysis", "mr_analysis"] = "module_analysis"
     repository: str | None = None
@@ -16,6 +16,8 @@ class TaskContract(BaseModel):
     target: str
     source_scope: list[str] = Field(default_factory=list)
     focus: list[str] = Field(default_factory=list)
+    asset_ids: list[str] = Field(default_factory=list)
+    test_case_examples: list[str] = Field(default_factory=list)
     mr_url: str | None = None
 
     @model_validator(mode="after")

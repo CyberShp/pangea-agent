@@ -403,7 +403,35 @@ def render_report(state: "PangeaState | Mapping[str, Any]") -> str:
                 lines.append(f"- {_text(finding)}")
         lines.append("")
 
-    lines.extend(["## 4. 六维 DFX 风险", ""])
+    lines.extend(["## 4. 资料与代码一致性", ""])
+    input_decisions = _items(state.get("input_decisions"))
+    lines.extend(_markdown_table(("分析单元", "资料条目", "结论", "说明"), [
+        (item.get("unit_id"), item.get("item_id"), item.get("disposition"), item.get("conclusion"))
+        for item in input_decisions
+        if isinstance(item, Mapping)
+    ]))
+
+    lines.extend(["", "## 5. 缺陷机理检查", ""])
+    mechanism_decisions = _items(state.get("mechanism_decisions"))
+    if not mechanism_decisions:
+        lines.append("- 当前范围没有关联的已确认缺陷机理。")
+    for item in mechanism_decisions:
+        if not isinstance(item, Mapping):
+            continue
+        lines.extend([
+            f"### {_text(item.get('mechanism_id'))}",
+            "",
+            f"- **分析单元**：{_text(item.get('unit_id'))}",
+            f"- **判断**：{_text(item.get('disposition'))}",
+            f"- **当前因果链**：{' → '.join(_text(value) for value in _items(item.get('current_causal_chain'))) or '无'}",
+            f"- **关联用例**：{'、'.join(_text(value) for value in _items(item.get('test_case_ids'))) or '无'}",
+            f"- **结论**：{_text(item.get('conclusion'))}",
+            "- **源码证据**：",
+        ])
+        lines.extend(_evidence_lines(item.get("evidence")))
+        lines.append("")
+
+    lines.extend(["## 6. 六维 DFX 风险", ""])
     risks = _items(state.get("risks"))
     lines.extend(_markdown_table(("DFX 维度", "风险数", "风险编号"), _risk_dimension_rows(risks)))
     lines.extend(["", "### 风险明细", ""])
@@ -445,7 +473,7 @@ def render_report(state: "PangeaState | Mapping[str, Any]") -> str:
         lines.extend(_evidence_lines(risk.get("evidence")))
         lines.append("")
 
-    lines.extend(["## 5. 覆盖率缺口", ""])
+    lines.extend(["## 7. 覆盖率缺口", ""])
     coverage = state.get("coverage_report") or state.get("coverage") or {}
     if isinstance(coverage, Mapping):
         if coverage and any(key in coverage for key in ("matched", "ambiguous", "unmatched")):
@@ -455,8 +483,20 @@ def render_report(state: "PangeaState | Mapping[str, Any]") -> str:
             lines.extend(_mapping_lines(coverage) if coverage else ["- 未提供覆盖率文件或匹配结果。"])
     else:
         _append_list(lines, coverage, "- 未提供覆盖率文件或匹配结果。")
+    lines.extend(["", "### 用例闭环", ""])
+    lines.extend(_markdown_table(("分析单元", "Coverage", "处理", "关联用例", "说明"), [
+        (
+            item.get("unit_id"),
+            item.get("coverage_id"),
+            item.get("disposition"),
+            item.get("test_case_ids"),
+            item.get("reason"),
+        )
+        for item in _items(state.get("coverage_decisions"))
+        if isinstance(item, Mapping)
+    ]))
 
-    lines.extend(["", "## 6. 测试用例与风险映射", ""])
+    lines.extend(["", "## 8. 测试用例与风险映射", ""])
     cases = _items(state.get("test_cases"))
     if not cases:
         lines.append("- 未生成测试用例。")
@@ -470,6 +510,8 @@ def render_report(state: "PangeaState | Mapping[str, Any]") -> str:
                 f"### {case_id} · {_text(case.get('title'))}",
                 "",
                 f"- **用例类型**：{_text(case.get('case_type') or case.get('type') or case.get('test_type'))}",
+                f"- **设计依据**：{'、'.join(_text(item) for item in _items(case.get('basis'))) or '未提供'}",
+                f"- **关联输入**：{', '.join(_text(item) for item in _items(case.get('linked_input_ids'))) or '无'}",
                 f"- **关联风险**：{', '.join(_text(item) for item in _items(case.get('linked_risk_ids'))) or '无'}",
                 "- **前置条件**：",
             ]
@@ -500,7 +542,7 @@ def render_report(state: "PangeaState | Mapping[str, Any]") -> str:
             lines.append(f"  - {_text(item)}")
         lines.append("")
 
-    lines.extend(["## 7. 不完整项与未解析证据", "", "### 解析失败", ""])
+    lines.extend(["## 9. 不完整项与未解析证据", "", "### 解析失败", ""])
     _append_list(lines, _parse_failures(state))
     lines.extend(["", "### 未读图片", ""])
     _append_list(lines, state.get("unread_images") or state.get("unparsed_images"))
@@ -513,7 +555,7 @@ def render_report(state: "PangeaState | Mapping[str, Any]") -> str:
     ]
     _append_list(lines, unresolved_units)
 
-    lines.extend(["", "## 8. 质量门禁", ""])
+    lines.extend(["", "## 10. 质量门禁", ""])
     quality = state.get("quality_report") or {}
     lines.append(_quality_summary(state, incomplete))
     if isinstance(quality, Mapping) and quality.get("checks"):

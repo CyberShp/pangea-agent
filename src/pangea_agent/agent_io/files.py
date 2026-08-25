@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -17,9 +18,17 @@ def write_json(path: Path, value: Any) -> None:
     """Atomically replace a JSON artifact so an interrupted write is never accepted."""
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.tmp")
-    temporary.write_text(
-        json.dumps(value, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
+    payload = json.dumps(value, ensure_ascii=False, indent=2) + "\n"
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        text=True,
     )
-    os.replace(temporary, path)
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            stream.write(payload)
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)

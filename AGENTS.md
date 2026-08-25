@@ -4,12 +4,20 @@
 
 ## 项目目标
 
-`pangea-agent` 是面向测试分析的项目级 Agent。核心工作是把源码、设计资料、覆盖率和已有用例转化为：
+`pangea-agent` 是面向测试分析的项目级 Agent。核心工作是把源码、结构化资料和覆盖率转化为：
 
 - 代码与流程理解。
 - 六维 DFX 风险账本。
 - 可执行测试用例。
 - 测试报告。
+
+已有用例不作为长期管理资产。用户可以在单次 Run 中提供少量用例示例，它们只用于表达和环境参考。
+
+## 独立判断
+
+- 先检查用户说法是否包含错误前提、逻辑跳跃或缺失信息，不以附和代替判断。
+- 区分已验证事实、基于证据的推测和主观取舍。
+- 不同意时直接说明依据、风险和替代解释，并主动指出容易忽略的变量、成本和偏差。
 
 ## 开发边界
 
@@ -43,28 +51,26 @@
 
 - 风险必须包含复现条件、系统结果、外部观测和排除条件。
 - 测试用例必须包含前置条件、步骤、预期结果、观测方式和清理/恢复。
-- 质量门禁输出 `PASS`、`REWORK` 或 `UNRESOLVED`。
+- 最终质量门禁输出 `PASS` 或 `UNRESOLVED`；不能把未完成工作描述为完成。
 - 所有正式产物优先使用 `schemas/` 中的结构。
 
 ## 实现约定
 
 - 新节点放在 `src/pangea_agent/graph/nodes/`。
 - 新数据模型放在 `src/pangea_agent/models/`。
-- 新索引能力放在 `src/pangea_agent/index/`。
+- 新的确定性输入处理放在 `src/pangea_agent/documents/` 或 `inventory/`。
 - 新分析方法论放在 `src/pangea_agent/rubrics/builtin/`。
 - CLI 能力放在 `src/pangea_agent/cli/`。
 
 ## Agent 客户端
 
-- OpenCode 读取本文件和 `.opencode/agents/pangea-agent.md`。
-- Claude Code 读取 `CLAUDE.md`。
-- 两个客户端应遵循同一套 graph / schema / rubric 分层。
-- Python 不调用模型 API。当前主 Agent 读取 `agent-tasks/` 文件，最多并发派发
-  4 个互不重叠的 `analysis-worker`；worker 不得再派发子 Agent。
-- analysis 结果齐备后，只启动 1 个 `review-worker`。初审和返工验证属于同一轮
-  review lifecycle，返工最多一次，且返工验证必须由原 reviewer 完成。
-- 每次运行 `module-analysis` 后检查 `phase`：等待阶段由 Agent 完成对应 task 文件，
-  再沿用同一 contract 继续运行；不得用占位风险冒充语义分析结果。
+- 各客户端只读取自己的入口和 Agent 规则。客户端目录中的内容不得引用或调用另一个客户端的规则文件。
+- 共享范围只包括 graph、schema、rubric 和 CLI 契约；客户端专有的命令、会话轨迹和 Agent 调用方式不得写入共享方法论。
+- Python 不调用模型 API，也不做语义拆分。一个 Planning Agent 按功能模块或文件族规划单元。
+- 首轮 analysis 最多同时派发 8 个互不重叠单元，总单元数不受 8 限制；worker 不得再派发子 Agent。
+- analysis 结果齐备后只启动 1 个盲审 Agent。盲审 task 不包含 analysis result。
+- 盲审发现实质遗漏时，只为受影响单元生成一次定向补齐任务；补齐后直接聚合，不再启动比较复核或补齐验证 Agent。
+- 主 Agent 只执行 CLI 返回的 action，并通过 adapter 完成 `bind`、`validate`、`settle`。不得自行填写或修正语义结果。
 
 ## Private House Code Policy
 

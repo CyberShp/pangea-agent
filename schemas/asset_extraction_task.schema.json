@@ -1,0 +1,76 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "task_type": {
+      "const": "asset_extraction",
+      "default": "asset_extraction",
+      "title": "Task Type",
+      "type": "string"
+    },
+    "asset_id": {
+      "minLength": 1,
+      "title": "Asset Id",
+      "type": "string"
+    },
+    "asset_type": {
+      "enum": [
+        "requirement",
+        "design",
+        "historical_defect",
+        "reference"
+      ],
+      "title": "Asset Type",
+      "type": "string"
+    },
+    "title": {
+      "minLength": 1,
+      "title": "Title",
+      "type": "string"
+    },
+    "source_path": {
+      "minLength": 1,
+      "title": "Source Path",
+      "type": "string"
+    },
+    "extracted_text_path": {
+      "minLength": 1,
+      "title": "Extracted Text Path",
+      "type": "string"
+    },
+    "attachments": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Attachments",
+      "type": "array"
+    },
+    "result_schema_path": {
+      "default": "schemas/asset_extraction_result.schema.json",
+      "minLength": 1,
+      "title": "Result Schema Path",
+      "type": "string"
+    },
+    "result_path": {
+      "minLength": 1,
+      "title": "Result Path",
+      "type": "string"
+    }
+  },
+  "required": [
+    "asset_id",
+    "asset_type",
+    "title",
+    "source_path",
+    "extracted_text_path",
+    "result_path"
+  ],
+  "title": "AssetExtractionTask",
+  "type": "object"
+}

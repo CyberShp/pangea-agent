@@ -1,0 +1,115 @@
+{
+  "$defs": {
+    "RepositoryRef": {
+      "additionalProperties": false,
+      "properties": {
+        "repo_id": {
+          "minLength": 1,
+          "title": "Repo Id",
+          "type": "string"
+        },
+        "source_root": {
+          "minLength": 1,
+          "title": "Source Root",
+          "type": "string"
+        },
+        "git": {
+          "additionalProperties": true,
+          "title": "Git",
+          "type": "object"
+        }
+      },
+      "required": [
+        "repo_id",
+        "source_root"
+      ],
+      "title": "RepositoryRef",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "task_type": {
+      "const": "independent_review",
+      "default": "independent_review",
+      "title": "Task Type",
+      "type": "string"
+    },
+    "run_id": {
+      "minLength": 1,
+      "title": "Run Id",
+      "type": "string"
+    },
+    "target": {
+      "minLength": 1,
+      "title": "Target",
+      "type": "string"
+    },
+    "repositories": {
+      "items": {
+        "$ref": "#/$defs/RepositoryRef"
+      },
+      "minItems": 1,
+      "title": "Repositories",
+      "type": "array"
+    },
+    "unit_plan_path": {
+      "minLength": 1,
+      "title": "Unit Plan Path",
+      "type": "string"
+    },
+    "inventory_path": {
+      "minLength": 1,
+      "title": "Inventory Path",
+      "type": "string"
+    },
+    "source_manifest_path": {
+      "minLength": 1,
+      "title": "Source Manifest Path",
+      "type": "string"
+    },
+    "selected_inputs_path": {
+      "minLength": 1,
+      "title": "Selected Inputs Path",
+      "type": "string"
+    },
+    "rubric_paths": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Rubric Paths",
+      "type": "array"
+    },
+    "result_schema_path": {
+      "default": "schemas/independent_review_result.schema.json",
+      "minLength": 1,
+      "title": "Result Schema Path",
+      "type": "string"
+    },
+    "result_path": {
+      "minLength": 1,
+      "title": "Result Path",
+      "type": "string"
+    }
+  },
+  "required": [
+    "run_id",
+    "target",
+    "repositories",
+    "unit_plan_path",
+    "inventory_path",
+    "source_manifest_path",
+    "selected_inputs_path",
+    "rubric_paths",
+    "result_path"
+  ],
+  "title": "IndependentReviewTask",
+  "type": "object"
+}

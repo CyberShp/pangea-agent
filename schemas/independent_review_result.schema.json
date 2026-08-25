@@ -1,0 +1,149 @@
+{
+  "$defs": {
+    "ReviewFinding": {
+      "additionalProperties": false,
+      "properties": {
+        "finding_key": {
+          "minLength": 1,
+          "title": "Finding Key",
+          "type": "string"
+        },
+        "category": {
+          "enum": [
+            "missed_flow",
+            "document_delta",
+            "coverage_gap",
+            "defect_mechanism",
+            "risk",
+            "test_oracle",
+            "incorrect_conclusion"
+          ],
+          "title": "Category",
+          "type": "string"
+        },
+        "affected_unit_ids": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Affected Unit Ids",
+          "type": "array"
+        },
+        "linked_input_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Linked Input Ids",
+          "type": "array"
+        },
+        "summary": {
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        },
+        "required_check": {
+          "minLength": 1,
+          "title": "Required Check",
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/SourceEvidence"
+          },
+          "minItems": 1,
+          "title": "Evidence",
+          "type": "array"
+        }
+      },
+      "required": [
+        "finding_key",
+        "category",
+        "affected_unit_ids",
+        "summary",
+        "required_check",
+        "evidence"
+      ],
+      "title": "ReviewFinding",
+      "type": "object"
+    },
+    "SourceEvidence": {
+      "additionalProperties": false,
+      "properties": {
+        "repo_id": {
+          "minLength": 1,
+          "title": "Repo Id",
+          "type": "string"
+        },
+        "path": {
+          "minLength": 1,
+          "title": "Path",
+          "type": "string"
+        },
+        "line_start": {
+          "exclusiveMinimum": 0,
+          "title": "Line Start",
+          "type": "integer"
+        },
+        "line_end": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Line End"
+        },
+        "observation": {
+          "minLength": 1,
+          "title": "Observation",
+          "type": "string"
+        }
+      },
+      "required": [
+        "repo_id",
+        "path",
+        "line_start",
+        "observation"
+      ],
+      "title": "SourceEvidence",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "summary": {
+      "minLength": 1,
+      "title": "Summary",
+      "type": "string"
+    },
+    "findings": {
+      "items": {
+        "$ref": "#/$defs/ReviewFinding"
+      },
+      "title": "Findings",
+      "type": "array"
+    },
+    "unresolved": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Unresolved",
+      "type": "array"
+    }
+  },
+  "required": [
+    "summary"
+  ],
+  "title": "IndependentReviewResult",
+  "type": "object"
+}

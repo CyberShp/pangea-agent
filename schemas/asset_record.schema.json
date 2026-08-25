@@ -1,0 +1,120 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "asset_id": {
+      "minLength": 1,
+      "title": "Asset Id",
+      "type": "string"
+    },
+    "asset_type": {
+      "enum": [
+        "requirement",
+        "design",
+        "historical_defect",
+        "reference",
+        "coverage"
+      ],
+      "title": "Asset Type",
+      "type": "string"
+    },
+    "title": {
+      "minLength": 1,
+      "title": "Title",
+      "type": "string"
+    },
+    "source_path": {
+      "minLength": 1,
+      "title": "Source Path",
+      "type": "string"
+    },
+    "created_at": {
+      "minLength": 1,
+      "title": "Created At",
+      "type": "string"
+    },
+    "updated_at": {
+      "minLength": 1,
+      "title": "Updated At",
+      "type": "string"
+    },
+    "status": {
+      "default": "imported",
+      "enum": [
+        "imported",
+        "extracting",
+        "awaiting_review",
+        "available",
+        "no_items",
+        "rejected",
+        "failed",
+        "archived"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "review_status": {
+      "default": "not_required",
+      "enum": [
+        "not_required",
+        "pending",
+        "approved",
+        "rejected"
+      ],
+      "title": "Review Status",
+      "type": "string"
+    },
+    "structured_item_count": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Structured Item Count",
+      "type": "integer"
+    },
+    "extraction_task_path": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Extraction Task Path"
+    },
+    "result_path": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Result Path"
+    },
+    "warnings": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Warnings",
+      "type": "array"
+    }
+  },
+  "required": [
+    "asset_id",
+    "asset_type",
+    "title",
+    "source_path",
+    "created_at",
+    "updated_at"
+  ],
+  "title": "AssetRecord",
+  "type": "object"
+}

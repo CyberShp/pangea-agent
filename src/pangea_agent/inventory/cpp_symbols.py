@@ -59,6 +59,23 @@ def _first_identifier(node, source: bytes) -> str | None:
     return None
 
 
+def _last_identifier(node, source: bytes) -> str | None:
+    identifiers = [
+        child
+        for child in _walk(node)
+        if child.type in {
+            "identifier",
+            "field_identifier",
+            "operator_name",
+            "destructor_name",
+        }
+    ]
+    if not identifiers:
+        return None
+    child = identifiers[-1]
+    return source[child.start_byte:child.end_byte].decode("utf-8", errors="replace")
+
+
 def _function_name(node, source: bytes) -> str | None:
     for child in _walk(node):
         if child.type == "function_declarator":
@@ -84,6 +101,7 @@ def parse_cpp_file(path: Path) -> dict:
     preprocessor: list[dict] = []
     parse_errors: list[dict] = []
     types: list[dict] = []
+    calls: list[dict] = []
     branch_kinds = {
         "if_statement": "if",
         "switch_statement": "switch",
@@ -105,6 +123,11 @@ def parse_cpp_file(path: Path) -> dict:
                 "symbol": _function_name(declarator, source) or "<unknown>",
                 "parser": "tree_sitter",
             })
+        if node.type == "call_expression":
+            function = node.child_by_field_name("function")
+            symbol = _last_identifier(function, source) if function is not None else None
+            if symbol:
+                calls.append({"line": line, "symbol": symbol})
         if node.type in branch_kinds:
             branches.append({"line": line, "end_line": end_line, "kind": branch_kinds[node.type], "parser": "tree_sitter"})
         if node.type.startswith("preproc_if") or node.type in {"preproc_elif", "preproc_else", "preproc_def", "preproc_function_def"}:
@@ -141,5 +164,6 @@ def parse_cpp_file(path: Path) -> dict:
         "branches": branches,
         "preprocessor": preprocessor,
         "types": types,
+        "calls": calls,
         "parse_errors": parse_errors,
     }

@@ -1,20 +1,12 @@
 # pangea-agent
 
-`pangea-agent` 是部署在测试人员 Windows 电脑上的项目级测试分析 Agent。用户在
-OpenCode 或 Claude Code 中用自然语言提出模块分析任务，Agent 结合当前本地 C/C++
-源码、长期资料和函数覆盖率，输出可追溯风险、测试用例以及离线报告。
+`pangea-agent` 是部署在测试人员 Windows 电脑上的 C/C++ 测试分析 Agent。它把冻结源码、经审核的历史缺陷机理、结构化需求/设计资料和相关 Coverage 转成代码流程、资料/代码差异、六维 DFX 风险、测试用例和离线报告。
 
-Python 只负责确定性解析、索引、任务拆分、状态、校验和报告，不调用模型 API。
-语义分析由当前客户端最多并发派发 4 个 `analysis-worker` 完成，再由 1 个
-`review-worker` 做独立复核。
+Python 只负责确定性工作：文件发现、C/C++ 结构解析、Coverage 匹配、状态、JSON 契约、聚合和报告。单元规划、源码理解、独立复核和资料提取由当前客户端派发 Agent 完成。Python 不调用模型 API。
 
 ## 初始化
 
-支持 Windows x86-64 和 Python 3.10～3.12。用户告诉 Agent“初始化 PANGEA”后，
-Agent 先明确回复“正在初始化 PANGEA”，检查 `py -0p`、现有 `.venv` 和 pip；若没有
-兼容版本则停止并说明，若需要新建或重建环境则先列出 Python 版本、目标路径和安装
-动作，得到确认后一次执行一个命令。下面以 Python 3.12 为例，Agent 应自动选择电脑
-已有的 3.10、3.11 或 3.12：
+支持 Windows x86-64 和 Python 3.10～3.12：
 
 ```powershell
 py -3.12 -m venv ".venv"
@@ -28,98 +20,71 @@ py -3.12 -m venv ".venv"
 & ".\.venv\Scripts\python.exe" -m pangea_agent.cli.main init-data
 ```
 
-`pip` 直接使用电脑已配置的内部源，项目不指定或尝试公网源。内部源安装失败时，
-Agent 应先说明失败，再询问是否使用仓库随版本提供的 Windows x86-64 离线 wheel；
-不得静默切换安装来源。
-
-用户确认使用离线 wheel 后执行：
-
-```powershell
-& ".\.venv\Scripts\python.exe" -m pip install --no-index --find-links "vendor\wheels\win_amd64" "setuptools>=68"
-```
-
-```powershell
-& ".\.venv\Scripts\python.exe" -m pip install --no-index --find-links "vendor\wheels\win_amd64" --no-build-isolation -e .
-```
-
-维护者在可访问内部 Python 源的环境执行
-`python tools/download_offline_wheels.py`，生成并提交
-`vendor/wheels/win_amd64/`。脚本只下载 Python 3.10、3.11、3.12 的 Windows
-x86-64 wheel，不下载源码包。
+安装沿用电脑已有的内部 pip 源。只有用户明确同意后，才使用仓库提供的 Windows 离线 wheel。
 
 ## 本地数据
 
 ```text
 pangea-data/
-├── repositories/              # 每个一级目录视为一个源码仓，可为 Git 或普通目录
-├── inbox/                     # 长期资料：Markdown/TXT/PDF/DOCX/XLSX
-├── coverage/                  # 模块—函数—覆盖次数 Excel
-└── runs/                      # 任务、结果、进度、证据和报告
+├── repositories/       # 用户源码仓，可为 Git 或普通目录
+├── inbox/              # 导入的需求、设计、历史缺陷和参考资料
+├── coverage/           # 导入的 Coverage XLSX
+├── assets/             # 资产状态、提取任务和结构化结果
+└── runs/               # Run 输入、Agent 任务、结果、进度和报告
 ```
 
-项目不自动对 `repositories/` 内的用户源码执行 `git pull`、`reset`、`stash`、
-`checkout` 或格式化。`inbox/` 文件不会被移动；其文本索引长期保存在
-`pangea-data/.pangea/materials.sqlite`。资料中的测试用例只作为表达和环境参考，
-不能证明某项风险已经覆盖。
+项目不会对 `repositories/` 中的用户源码执行 `pull`、`reset`、`stash`、`checkout` 或格式化。已有用例不进入资产库；单次 Run 可附带少量用例示例，仅供表达和环境参考。
 
 ## 分析流程
 
-准备任务契约后运行：
-
-```powershell
-& ".\.venv\Scripts\python.exe" -m pangea_agent.cli.main module-analysis --contract "examples/task_contract.module-analysis.example.json"
-```
-
-命令是可恢复的阶段推进器：
-
 ```text
-准备源码、资料和 inventory
-→ WAITING_ANALYSIS（最多 4 个 analysis-worker）
-→ WAITING_REVIEW（1 个 review-worker）
-→ 可选 WAITING_REWORK（最多一次）
-→ 可选 WAITING_REWORK_REVIEW（原 reviewer 验证）
-→ COMPLETE / INCOMPLETE
+准备并冻结输入
+→ Planning Agent 按功能模块/文件族规划单元
+→ 最多 8 个 analysis Agent 并行完成首轮分析
+→ 1 个看不到首轮结果的独立复核 Agent
+→ 必要时只补齐受影响单元
+→ 聚合 report.md 和 report.html
 ```
 
-用户指定的 `source_scope` 是起点，不是盲目的硬边界。准备阶段会做一次有界扩展：
-加入直接调用该范围公开函数的源码，以及与目标直接相关的配置入口、规格和测试；不做
-递归调用链扩张，也不因此扫描整仓。每个 worker 同时收到必须分析的源码清单和上游
-语义清单。风险进入报告前必须核对入口可达性、调用方限制或补救、规格/API 定义和已有
-测试；已经被定义为预期行为的结论不能列为风险。该规则不增加新的 Agent 类型或复核层。
+“最多 8 个”是并发上限，不是整个 Run 的单元总数。首轮 analysis 已经负责代码/设计理解、主干与异常流程、调用链、资料/代码差异、Coverage 缺口、缺陷机理、风险和用例；独立复核用于寻找遗漏，不再做逐字段比较审计。
 
-当前 Agent 读取 `pangea-data/runs/<run-id>/agent-tasks/`，把结果写到 task 声明的
-`result_path`，再使用同一 contract 重复运行命令推进。worker 禁止派生子 Agent；
-返工 worker 可以替代失败的原 worker，但不增加返工轮次；返工复核必须沿用原
-reviewer，否则生成不完整报告。
+主 Agent 只处理 CLI 返回的 action：
 
-截断、格式错误、任务摘要不匹配、范围遗漏或缺少证据的结果不会被接受。最终固定输出：
+1. 派发 action 指定的 Agent 和 task 文件；
+2. 用 `adapter bind` 记录真实客户端任务 ID；
+3. Agent 写入 task 指定的 `result_path`；
+4. 用 `adapter validate` 校验当前结果；
+5. 校验通过后用 `adapter settle` 推进 graph。
+
+结果文件只包含语义内容。`run_id`、`unit_id`、Agent 任务 ID、路径和状态由 Python 保存，Agent 不重复回填这些机械字段。Python 不生成空结果骨架。
+
+## 输入与用例设计
+
+- 历史缺陷资料先提取“事实 + 可迁移缺陷机理”，必须人工审核后才可用于 Run。
+- 需求、设计和参考资料先结构化，分析时只把相关条目送入单元。
+- Coverage 只处理与当前源码唯一匹配且 `count=0` 的函数。每项都尝试转成用例；无法触达时如实记录原因。
+- 与当前范围无关的 Coverage 不进入分析结果和报告。
+- 用例设计顺序是：Coverage 与代码流程为基础，需求/设计约束次之，历史缺陷机理和六维 DFX 风险补充。
+- 黑盒优先；纯黑盒不可行时允许灰盒，但必须保留业务入口、外部观测和清理/恢复。
+
+## 对外 JSON 接口
+
+CLI 每次只向 stdout 输出一个 JSON envelope。主要能力分为：
+
+- `assets`：导入、列表、详情、结构化提取、历史缺陷审核、归档；
+- `runs`：创建、列表、详情、停止、打开 Markdown/HTML 报告；
+- `system capabilities`：返回当前支持语言和接口版本；
+- `adapter`：供客户端绑定、校验和提交 Agent action。
+
+当前只宣布 `c_cpp` 支持。Lua 会在 C/C++ 流程稳定后单独实现，不预建跨语言抽象层。
+
+## 报告
+
+每个 Run 固定生成：
 
 ```text
 pangea-data/runs/<run-id>/report.md
 pangea-data/runs/<run-id>/report.html
 ```
 
-HTML 是无外链的离线单文件，支持目录跳转和内容折叠。Mermaid 在未内嵌运行库时
-保留可读源码，不虚假显示为已渲染图。
-
-## V1 能力边界
-
-- C/C++ 使用 Python `tree-sitter` 提取函数、类型、分支和条件编译；失败文件继续
-  原始文本分析，并在报告中标明范围。
-- 文本型 PDF、Word、Excel 和 Markdown 可索引；文档图片提取为 evidence
-  attachment，客户端不能看图时标为未解析。
-- Coverage 只证明函数执行线索，不证明代码分支或风险已覆盖。
-- 使用六维 DFX：功能与状态、资源与规格、性能与压力、并发与异常、升级与兼容、
-  可靠性与一致性。
-- V1 不包含安全专项、SFMEA、OCR、向量数据库、编译工具链、测试自动执行、代码
-  改进建议、实现质量评价以及自动更新用户源码。
-
-## 项目结构
-
-- `src/pangea_agent/graph/`：阶段流程和恢复状态。
-- `src/pangea_agent/index/`、`documents/`、`inventory/`：确定性解析与检索。
-- `src/pangea_agent/models/`、`schemas/`：worker 和报告数据契约。
-- `src/pangea_agent/rubrics/builtin/`：V1 分析方法。
-- `src/pangea_agent/report/`：Markdown 和离线 HTML。
-
-更新源码后无需重装 editable package；只有依赖清单变化时才需要再次安装。
+HTML 是无外链单文件，并直接渲染主干、分支、异常传播和恢复流程图。报告只展示与当前范围相关并已经处理的输入。

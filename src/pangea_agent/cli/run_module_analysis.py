@@ -11,7 +11,7 @@ from pangea_agent.graph.graph import graph
 
 def _default_run_id(contract: dict) -> str:
     target = re.sub(r"[^A-Za-z0-9_-]+", "-", str(contract.get("target", "analysis"))).strip("-").lower()
-    target = (target or "analysis")[:24]
+    target = ((target or "analysis")[:24].rstrip("-_") or "analysis")
     stamp = date.today().strftime("%y%m%d")
     runs_root = Path(contract.get("data_root", "pangea-data")) / "runs"
     prefix = f"{target}-{stamp}"
@@ -40,9 +40,5 @@ def run_module_analysis(contract_path: str) -> dict:
 def resume_module_analysis(run_id: str, data_root: str = "pangea-data") -> dict:
     contract_path = Path(data_root) / "runs" / run_id / "inputs" / "task-contract.json"
     if not contract_path.is_file():
-        raise ValueError(
-            f"冻结 task contract 不存在：{contract_path}。"
-            "该 Run 可能是在旧版本初始化阶段中断；请使用原 pending-task-contract.json "
-            "重新执行 module-analysis 以建立可恢复状态。"
-        )
+        raise ValueError(f"冻结 task contract 不存在，不能恢复 Run：{contract_path}")
     return run_module_analysis(str(contract_path))

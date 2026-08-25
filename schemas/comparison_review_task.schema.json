@@ -1,0 +1,90 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "task_type": {
+      "const": "comparison_review",
+      "default": "comparison_review",
+      "title": "Task Type",
+      "type": "string"
+    },
+    "run_id": {
+      "minLength": 1,
+      "title": "Run Id",
+      "type": "string"
+    },
+    "target": {
+      "minLength": 1,
+      "title": "Target",
+      "type": "string"
+    },
+    "unit_plan_path": {
+      "minLength": 1,
+      "title": "Unit Plan Path",
+      "type": "string"
+    },
+    "analysis_task_paths": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "minProperties": 1,
+      "title": "Analysis Task Paths",
+      "type": "object"
+    },
+    "analysis_result_paths": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "minProperties": 1,
+      "title": "Analysis Result Paths",
+      "type": "object"
+    },
+    "independent_review_result_path": {
+      "minLength": 1,
+      "title": "Independent Review Result Path",
+      "type": "string"
+    },
+    "selected_inputs_path": {
+      "minLength": 1,
+      "title": "Selected Inputs Path",
+      "type": "string"
+    },
+    "rubric_paths": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Rubric Paths",
+      "type": "array"
+    },
+    "result_schema_path": {
+      "default": "schemas/comparison_review_result.schema.json",
+      "minLength": 1,
+      "title": "Result Schema Path",
+      "type": "string"
+    },
+    "result_path": {
+      "minLength": 1,
+      "title": "Result Path",
+      "type": "string"
+    }
+  },
+  "required": [
+    "run_id",
+    "target",
+    "unit_plan_path",
+    "analysis_task_paths",
+    "analysis_result_paths",
+    "independent_review_result_path",
+    "selected_inputs_path",
+    "rubric_paths",
+    "result_path"
+  ],
+  "title": "ComparisonReviewTask",
+  "type": "object"
+}

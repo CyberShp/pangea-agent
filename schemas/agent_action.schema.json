@@ -1,0 +1,73 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "action_id": {
+      "minLength": 1,
+      "title": "Action Id",
+      "type": "string"
+    },
+    "action": {
+      "enum": [
+        "dispatch_agent",
+        "continue_agent"
+      ],
+      "title": "Action",
+      "type": "string"
+    },
+    "role": {
+      "enum": [
+        "asset_extraction",
+        "planning",
+        "analysis",
+        "review",
+        "closure"
+      ],
+      "title": "Role",
+      "type": "string"
+    },
+    "stage": {
+      "enum": [
+        "structured_extraction",
+        "unit_planning",
+        "unit_analysis",
+        "independent_review",
+        "comparison_review",
+        "targeted_closure"
+      ],
+      "title": "Stage",
+      "type": "string"
+    },
+    "task_path": {
+      "minLength": 1,
+      "title": "Task Path",
+      "type": "string"
+    },
+    "task_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Task Id"
+    }
+  },
+  "required": [
+    "action_id",
+    "action",
+    "role",
+    "stage",
+    "task_path"
+  ],
+  "title": "AgentAction",
+  "type": "object"
+}

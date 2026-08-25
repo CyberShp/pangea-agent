@@ -1,0 +1,127 @@
+{
+  "$defs": {
+    "RepositoryRef": {
+      "additionalProperties": false,
+      "properties": {
+        "repo_id": {
+          "minLength": 1,
+          "title": "Repo Id",
+          "type": "string"
+        },
+        "source_root": {
+          "minLength": 1,
+          "title": "Source Root",
+          "type": "string"
+        },
+        "git": {
+          "additionalProperties": true,
+          "title": "Git",
+          "type": "object"
+        }
+      },
+      "required": [
+        "repo_id",
+        "source_root"
+      ],
+      "title": "RepositoryRef",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "task_type": {
+      "const": "unit_planning",
+      "default": "unit_planning",
+      "title": "Task Type",
+      "type": "string"
+    },
+    "run_id": {
+      "minLength": 1,
+      "title": "Run Id",
+      "type": "string"
+    },
+    "target": {
+      "minLength": 1,
+      "title": "Target",
+      "type": "string"
+    },
+    "repositories": {
+      "items": {
+        "$ref": "#/$defs/RepositoryRef"
+      },
+      "minItems": 1,
+      "title": "Repositories",
+      "type": "array"
+    },
+    "requested_scope": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Requested Scope",
+      "type": "array"
+    },
+    "compact_metadata_path": {
+      "minLength": 1,
+      "title": "Compact Metadata Path",
+      "type": "string"
+    },
+    "asset_candidates_path": {
+      "minLength": 1,
+      "title": "Asset Candidates Path",
+      "type": "string"
+    },
+    "result_schema_path": {
+      "default": "schemas/planning_result.schema.json",
+      "minLength": 1,
+      "title": "Result Schema Path",
+      "type": "string"
+    },
+    "result_path": {
+      "minLength": 1,
+      "title": "Result Path",
+      "type": "string"
+    },
+    "max_unit_lines": {
+      "default": 5000,
+      "exclusiveMinimum": 0,
+      "title": "Max Unit Lines",
+      "type": "integer"
+    },
+    "max_unit_functions": {
+      "default": 140,
+      "exclusiveMinimum": 0,
+      "title": "Max Unit Functions",
+      "type": "integer"
+    },
+    "merge_direct_call_chain_max_lines": {
+      "default": 800,
+      "exclusiveMinimum": 0,
+      "title": "Merge Direct Call Chain Max Lines",
+      "type": "integer"
+    },
+    "merge_direct_call_chain_max_functions": {
+      "default": 30,
+      "exclusiveMinimum": 0,
+      "title": "Merge Direct Call Chain Max Functions",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "run_id",
+    "target",
+    "repositories",
+    "requested_scope",
+    "compact_metadata_path",
+    "asset_candidates_path",
+    "result_path"
+  ],
+  "title": "PlanningTask",
+  "type": "object"
+}

@@ -1,67 +1,18 @@
-# Claude Code Instructions for pangea-agent
+# PANGEA action 协议
 
-## Language
+本仓库的测试分析以 CLI action 为唯一流程指令。主会话只创建/推进 Run 和派发与 action `role` 对应的专用 Agent，不自行读取全部源码、分析语义或填写结果。具体客户端的角色规则只存放在该客户端自己的目录中。
 
-Use Chinese for project discussion, planning, review notes, and user-facing explanations. Keep code symbols, protocol fields, configuration keys, paths, and error messages in their original language.
+## Run 生命周期
 
-## Project intent
+- 新模块分析先形成最小 `source_scope`，再通过当前客户端提供的稳定 Run 创建入口启动；临时契约由该入口管理。
+- 没有当前会话明确 `run_id` 时，不扫描历史 Run 猜测恢复对象。
+- 同时派发最多 8 个 action；8 是并发上限，不是整个 Run 的单元总数。
+- 每次派发后通过 action adapter 保存真实子任务 ID；子 Agent 返回后先校验，通过后再接收并取得下一条 action。
+- 校验失败时恢复同一子任务修正同一 `result_path`，主会话不代写。
+- 只按 CLI JSON 中的 action 继续，不根据 Agent 回复文字推断阶段。
 
-`pangea-agent` is a project-level testing-analysis agent. It turns source code, design materials, coverage information, and existing test cases into structured risks, test cases, and reports.
+角色映射：`planning`、`analysis`、`review`、`closure`、`asset_extraction`。
 
-## Architecture source of truth
+Python 只负责确定性解析、状态、契约和报告。首轮 analysis 已包含流程、调用链、资料/代码差异、Coverage、缺陷机理、风险和用例。review 由同一个 Reviewer 完成两个 checkpoint：先在看不到首轮结果时独立检查，再对照首轮结果与源码排除错误结论并找出遗漏。这是对同一批分析的先盲审、后对照，不是审计上一次审计。有实质问题时只补齐受影响单元，之后聚合。
 
-- Workflow: `src/pangea_agent/graph/`
-- Node implementations: `src/pangea_agent/graph/nodes/`
-- Data contracts: `schemas/`
-- Analysis rubrics: `src/pangea_agent/rubrics/builtin/`
-- Local user data layout: `pangea-data/`
-
-Do not redefine workflow, schemas, or rubrics in ad-hoc prompts. Update the corresponding source file instead.
-
-## Windows / PowerShell compatibility
-
-Assume the primary local shell may be Windows PowerShell.
-
-- Prefer one command per execution.
-- Do not use `cd /d ... && ...`, POSIX path rewrites, `source`, `export`, `rm -rf`, or bash-only command chaining.
-- Prefer Python module entrypoints: `python -m pangea_agent.cli.main ...` or the installed `pangea ...` command.
-- Quote paths that may contain spaces or Chinese characters.
-- Use project-file edit/read capabilities for file changes instead of shell redirection when possible.
-- Never run destructive Git commands against user source repositories under `pangea-data/repositories/`.
-
-## Development rules
-
-- Keep the package name `pangea_agent` and project name `pangea-agent`.
-- Prefer small, focused changes.
-- Preserve user data directories listed in `.gitignore`.
-- Do not add `tests/` to Git in the current project stage.
-- Keep generated outputs, SQLite indexes, local source repositories, and run artifacts out of Git.
-
-## Testing-analysis rules
-
-- Source evidence should use repository-relative paths and line references.
-- Risk output should explain reproducible trigger, system result, external observation, and exclusion condition.
-- Test cases should include preconditions, steps, expected results, observability, and cleanup.
-- When evidence is insufficient, record `UNRESOLVED` rather than inventing a conclusion.
-- Treat `source_scope` as the starting point. Deterministically include direct callers and target-related configuration, specifications, and tests without recursively expanding the call graph. Each analysis worker must complete both `source_scope` and `context_scope`.
-- Before retaining a risk, check reachability, caller constraints or remedies, documented high-level behavior, and existing tests. Expected behavior must not be reported as a risk. Do not add another agent or review layer for this check.
-- Analyze frozen source first, then consult the run-scoped material catalog and finally use Coverage only to prioritize tests. Freeze the risk set before writing test cases.
-
-## Client compatibility
-
-This repository also includes `AGENTS.md` for OpenCode and other agent clients. Keep `CLAUDE.md` and `AGENTS.md` aligned when changing project-level rules.
-
-## V1 worker lifecycle
-
-- Python never calls a model API. Read the JSON tasks under the current run and write results to each declared `result_path`.
-- Dispatch at most four non-overlapping `analysis-worker` tasks concurrently. Workers must not spawn child workers.
-- Use one `review-worker` after analysis. Initial review and rework verification are one review lifecycle; allow at most one rework and require the same reviewer for verification.
-- After each Agent dispatch, record the returned task ID with `record-agent-session`. Restore task IDs from `progress.agent_sessions` after a main-session restart.
-- Re-run the same contract after completing the tasks for the current `phase`. Never replace missing worker output with placeholder risks.
-
-## Initialization contract
-
-- When the user asks to initialize PANGEA, say that initialization is starting, then inspect `py -0p`, `.venv`, and pip.
-- Select only Python 3.10, 3.11, or 3.12. Stop and explain if none is installed; do not install Python silently.
-- Before creating or recreating `.venv` or installing dependencies, show the selected version, path, and actions, then ask for confirmation.
-- Keep the machine's internal pip source unchanged. If it fails, ask before using the repository's offline wheels and never rewrite pip configuration.
+命令按 Windows PowerShell 可执行方式组织，一次执行一个命令。不得修改 `pangea-data/repositories/` 下用户源码的 Git 状态。

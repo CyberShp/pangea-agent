@@ -1,28 +1,99 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "TaskContract",
-  "type": "object",
-  "required": ["run_id", "data_root", "mode", "target"],
+  "additionalProperties": false,
   "properties": {
-    "run_id": {"type": "string"},
-    "data_root": {"type": "string", "default": "pangea-data"},
-    "mode": {"enum": ["module_analysis", "mr_analysis"]},
-    "repository": {"type": "string"},
-    "repositories": {"type": "array", "items": {"type": "string"}},
-    "target": {"type": "string"},
-    "mr_url": {"type": "string"},
-    "source_scope": {"type": "array", "items": {"type": "string"}},
-    "focus": {"type": "array", "items": {"type": "string"}}
-  },
-  "oneOf": [
-    {"required": ["repository"], "not": {"required": ["repositories"]}},
-    {"required": ["repositories"], "not": {"required": ["repository"]}}
-  ],
-  "allOf": [
-    {
-      "if": {"properties": {"mode": {"const": "mr_analysis"}}},
-      "then": {"required": ["mr_url"]}
+    "run_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Run Id"
+    },
+    "data_root": {
+      "default": "pangea-data",
+      "title": "Data Root",
+      "type": "string"
+    },
+    "mode": {
+      "default": "module_analysis",
+      "enum": [
+        "module_analysis",
+        "mr_analysis"
+      ],
+      "title": "Mode",
+      "type": "string"
+    },
+    "repository": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Repository"
+    },
+    "repositories": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Repositories",
+      "type": "array"
+    },
+    "target": {
+      "title": "Target",
+      "type": "string"
+    },
+    "source_scope": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Source Scope",
+      "type": "array"
+    },
+    "focus": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Focus",
+      "type": "array"
+    },
+    "asset_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Asset Ids",
+      "type": "array"
+    },
+    "test_case_examples": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Test Case Examples",
+      "type": "array"
+    },
+    "mr_url": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Mr Url"
     }
+  },
+  "required": [
+    "target"
   ],
-  "additionalProperties": false
+  "title": "TaskContract",
+  "type": "object"
 }

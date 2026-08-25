@@ -1,16 +1,82 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "AnalysisUnit",
-  "type": "object",
-  "required": ["unit_id", "repo_id", "title", "source_scope", "context_scope", "focus", "dfx"],
+  "additionalProperties": false,
   "properties": {
-    "unit_id": {"type": "string"},
-    "repo_id": {"type": "string"},
-    "title": {"type": "string"},
-    "source_scope": {"type": "array", "items": {"type": "string"}},
-    "context_scope": {"type": "array", "items": {"type": "string"}},
-    "focus": {"type": "array", "items": {"type": "string"}},
-    "dfx": {"type": "array", "items": {"type": "string"}, "minItems": 1}
+    "repo_id": {
+      "minLength": 1,
+      "title": "Repo Id",
+      "type": "string"
+    },
+    "title": {
+      "minLength": 1,
+      "title": "Title",
+      "type": "string"
+    },
+    "source_scope": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Source Scope",
+      "type": "array"
+    },
+    "context_scope": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Context Scope",
+      "type": "array"
+    },
+    "rationale": {
+      "minLength": 1,
+      "title": "Rationale",
+      "type": "string"
+    },
+    "asset_item_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Asset Item Ids",
+      "type": "array"
+    },
+    "coverage_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Coverage Ids",
+      "type": "array"
+    },
+    "mechanism_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Mechanism Ids",
+      "type": "array"
+    },
+    "unit_id": {
+      "minLength": 1,
+      "title": "Unit Id",
+      "type": "string"
+    },
+    "line_count": {
+      "minimum": 0,
+      "title": "Line Count",
+      "type": "integer"
+    },
+    "function_count": {
+      "minimum": 0,
+      "title": "Function Count",
+      "type": "integer"
+    }
   },
-  "additionalProperties": false
+  "required": [
+    "repo_id",
+    "title",
+    "source_scope",
+    "rationale",
+    "unit_id",
+    "line_count",
+    "function_count"
+  ],
+  "title": "AnalysisUnit",
+  "type": "object"
 }

@@ -1,0 +1,376 @@
+{
+  "$defs": {
+    "DesignItem": {
+      "additionalProperties": false,
+      "properties": {
+        "item_type": {
+          "const": "design",
+          "default": "design",
+          "title": "Item Type",
+          "type": "string"
+        },
+        "item_id": {
+          "minLength": 1,
+          "title": "Item Id",
+          "type": "string"
+        },
+        "title": {
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "modules": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Modules",
+          "type": "array"
+        },
+        "interfaces": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Interfaces",
+          "type": "array"
+        },
+        "states": {
+          "items": {
+            "type": "string"
+          },
+          "title": "States",
+          "type": "array"
+        },
+        "main_flows": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Main Flows",
+          "type": "array"
+        },
+        "branch_flows": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Branch Flows",
+          "type": "array"
+        },
+        "error_flows": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Error Flows",
+          "type": "array"
+        },
+        "recovery_flows": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Recovery Flows",
+          "type": "array"
+        },
+        "source_references": {
+          "items": {
+            "$ref": "#/$defs/SourceReference"
+          },
+          "minItems": 1,
+          "title": "Source References",
+          "type": "array"
+        }
+      },
+      "required": [
+        "item_id",
+        "title",
+        "source_references"
+      ],
+      "title": "DesignItem",
+      "type": "object"
+    },
+    "HistoricalDefectItem": {
+      "additionalProperties": false,
+      "properties": {
+        "item_type": {
+          "const": "historical_defect",
+          "default": "historical_defect",
+          "title": "Item Type",
+          "type": "string"
+        },
+        "item_id": {
+          "minLength": 1,
+          "title": "Item Id",
+          "type": "string"
+        },
+        "title": {
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "symptom": {
+          "minLength": 1,
+          "title": "Symptom",
+          "type": "string"
+        },
+        "trigger": {
+          "minLength": 1,
+          "title": "Trigger",
+          "type": "string"
+        },
+        "root_cause": {
+          "minLength": 1,
+          "title": "Root Cause",
+          "type": "string"
+        },
+        "propagation": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Propagation",
+          "type": "array"
+        },
+        "defect_mechanism": {
+          "minLength": 1,
+          "title": "Defect Mechanism",
+          "type": "string"
+        },
+        "exclusion_conditions": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Exclusion Conditions",
+          "type": "array"
+        },
+        "source_references": {
+          "items": {
+            "$ref": "#/$defs/SourceReference"
+          },
+          "minItems": 1,
+          "title": "Source References",
+          "type": "array"
+        }
+      },
+      "required": [
+        "item_id",
+        "title",
+        "symptom",
+        "trigger",
+        "root_cause",
+        "propagation",
+        "defect_mechanism",
+        "source_references"
+      ],
+      "title": "HistoricalDefectItem",
+      "type": "object"
+    },
+    "ReferenceItem": {
+      "additionalProperties": false,
+      "properties": {
+        "item_type": {
+          "const": "reference",
+          "default": "reference",
+          "title": "Item Type",
+          "type": "string"
+        },
+        "item_id": {
+          "minLength": 1,
+          "title": "Item Id",
+          "type": "string"
+        },
+        "topic": {
+          "minLength": 1,
+          "title": "Topic",
+          "type": "string"
+        },
+        "applicable_modules": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Applicable Modules",
+          "type": "array"
+        },
+        "key_facts": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Key Facts",
+          "type": "array"
+        },
+        "source_references": {
+          "items": {
+            "$ref": "#/$defs/SourceReference"
+          },
+          "minItems": 1,
+          "title": "Source References",
+          "type": "array"
+        }
+      },
+      "required": [
+        "item_id",
+        "topic",
+        "key_facts",
+        "source_references"
+      ],
+      "title": "ReferenceItem",
+      "type": "object"
+    },
+    "RequirementItem": {
+      "additionalProperties": false,
+      "properties": {
+        "item_type": {
+          "const": "requirement",
+          "default": "requirement",
+          "title": "Item Type",
+          "type": "string"
+        },
+        "item_id": {
+          "minLength": 1,
+          "title": "Item Id",
+          "type": "string"
+        },
+        "title": {
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "requirement_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Requirement Id"
+        },
+        "inputs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Inputs",
+          "type": "array"
+        },
+        "outputs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Outputs",
+          "type": "array"
+        },
+        "constraints": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Constraints",
+          "type": "array"
+        },
+        "acceptance_criteria": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Acceptance Criteria",
+          "type": "array"
+        },
+        "source_references": {
+          "items": {
+            "$ref": "#/$defs/SourceReference"
+          },
+          "minItems": 1,
+          "title": "Source References",
+          "type": "array"
+        }
+      },
+      "required": [
+        "item_id",
+        "title",
+        "source_references"
+      ],
+      "title": "RequirementItem",
+      "type": "object"
+    },
+    "SourceReference": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "minLength": 1,
+          "title": "Path",
+          "type": "string"
+        },
+        "location": {
+          "minLength": 1,
+          "title": "Location",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "location"
+      ],
+      "title": "SourceReference",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "asset_id": {
+      "minLength": 1,
+      "title": "Asset Id",
+      "type": "string"
+    },
+    "summary": {
+      "minLength": 1,
+      "title": "Summary",
+      "type": "string"
+    },
+    "items": {
+      "items": {
+        "discriminator": {
+          "mapping": {
+            "design": "#/$defs/DesignItem",
+            "historical_defect": "#/$defs/HistoricalDefectItem",
+            "reference": "#/$defs/ReferenceItem",
+            "requirement": "#/$defs/RequirementItem"
+          },
+          "propertyName": "item_type"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/RequirementItem"
+          },
+          {
+            "$ref": "#/$defs/DesignItem"
+          },
+          {
+            "$ref": "#/$defs/HistoricalDefectItem"
+          },
+          {
+            "$ref": "#/$defs/ReferenceItem"
+          }
+        ]
+      },
+      "title": "Items",
+      "type": "array"
+    },
+    "warnings": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Warnings",
+      "type": "array"
+    }
+  },
+  "required": [
+    "asset_id",
+    "summary"
+  ],
+  "title": "AssetExtractionResult",
+  "type": "object"
+}

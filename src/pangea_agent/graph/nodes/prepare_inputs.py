@@ -1,0 +1,199 @@
+from __future__ import annotations
+
+import shutil
+from pathlib import Path
+
+from pangea_agent.agent_io import write_json
+from pangea_agent.assets import analysis_asset_inputs
+from pangea_agent.documents.coverage import match_coverage_records, relevant_zero_coverage
+from pangea_agent.graph.state import PangeaState
+from pangea_agent.graph.workflow_store import (
+    add_action,
+    planning_result_path,
+    planning_task_path,
+    project_path,
+    run_directory,
+    save_progress,
+)
+from pangea_agent.inventory.scope_expander import expand_analysis_scope
+from pangea_agent.inventory.source_scanner import build_lightweight_inventory
+from pangea_agent.models.analysis import (
+    ActionState,
+    PlanningTask,
+    RepositoryRef,
+    WorkflowProgress,
+)
+from pangea_agent.repositories.resolver import resolve_repositories_from_contract
+
+
+def _freeze_sources(state: PangeaState, repositories: list[dict], expansion: dict) -> list[dict]:
+    paths_by_repo: dict[str, set[str]] = {}
+    for group in expansion.get("groups", []):
+        paths = paths_by_repo.setdefault(group["repo_id"], set())
+        paths.update(group.get("code_paths", []))
+        paths.update(group.get("context_paths", []))
+
+    run_dir = run_directory(state)
+    staging_root = run_dir / "inputs" / ".source-staging"
+    frozen_root = run_dir / "inputs" / "source"
+    if staging_root.exists():
+        shutil.rmtree(staging_root)
+    staging_root.mkdir(parents=True)
+    frozen_repositories = []
+    for repository in repositories:
+        repo_id = repository["repo_id"]
+        source_root = Path(repository["source_root"]).resolve()
+        destination_root = staging_root / repo_id
+        for relative in sorted(paths_by_repo.get(repo_id, set())):
+            source = (source_root / relative).resolve()
+            try:
+                source.relative_to(source_root)
+            except ValueError as exc:
+                raise ValueError(f"源码范围越过仓库边界：{repo_id}:{relative}") from exc
+            if not source.is_file():
+                raise ValueError(f"源码文件不存在：{repo_id}:{relative}")
+            destination = destination_root / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, destination)
+        frozen_repositories.append({
+            "repo_id": repo_id,
+            "source_root": str(frozen_root / repo_id),
+            "git": repository.get("git", {}),
+        })
+    if frozen_root.exists():
+        shutil.rmtree(frozen_root)
+    staging_root.replace(frozen_root)
+    return frozen_repositories
+
+
+def _compact_inventory(inventory: dict, expansion: dict) -> dict:
+    return {
+        "files": [{
+            "repo_id": item["repo_id"],
+            "path": item["path"],
+            "line_count": item.get("line_count", 0),
+            "parse_complete": item.get("parse_complete", False),
+            "functions": [
+                {"symbol": function["symbol"], "line": function["line"]}
+                for function in item.get("functions", [])
+            ],
+            "branch_count": len(item.get("branches", [])),
+            "calls": item.get("calls", []),
+            "resource_signals": item.get("resource_signals", []),
+        } for item in inventory.get("files", [])],
+        "owned_source_paths": [
+            {"repo_id": group["repo_id"], "path": path}
+            for group in expansion.get("groups", [])
+            for path in group.get("code_paths", [])
+        ],
+        "scope_groups": expansion.get("groups", []),
+        "context_files": expansion.get("context_files", []),
+        "parse_failures": inventory.get("parse_failures", []),
+    }
+
+
+def _freeze_test_case_examples(state: PangeaState, examples: list[str]) -> list[str]:
+    if not examples:
+        return []
+    destination_root = run_directory(state) / "inputs" / "test-case-examples"
+    frozen: list[str] = []
+    for number, raw_path in enumerate(examples, 1):
+        source = Path(raw_path).expanduser().resolve()
+        if not source.is_file():
+            raise ValueError(f"用例示例不是文件：{raw_path}")
+        destination = destination_root / f"{number:03d}-{source.name}"
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
+        frozen.append(str(destination))
+    return frozen
+
+
+def prepare_inputs(state: PangeaState) -> PangeaState:
+    contract = state["task_contract"]
+    repositories = resolve_repositories_from_contract(contract, state["data_root"])
+    requested_scope = list(contract.get("source_scope") or ["."])
+    expansion = expand_analysis_scope(
+        repositories,
+        requested_scope,
+        target=str(contract.get("target", "")),
+        focus=list(contract.get("focus", [])),
+    )
+    if not any(group.get("code_paths") for group in expansion.get("groups", [])):
+        raise ValueError("用户指定范围没有可分析的 C/C++ 源码")
+    frozen_repositories = _freeze_sources(state, repositories, expansion)
+    module_scope = list(dict.fromkeys(
+        path
+        for group in expansion.get("groups", [])
+        for path in group.get("code_paths", [])
+    ))
+    inventory_scope = list(dict.fromkeys([
+        path
+        for group in expansion.get("groups", [])
+        for path in [*group.get("code_paths", []), *group.get("context_paths", [])]
+    ]))
+    inventory = build_lightweight_inventory(frozen_repositories, inventory_scope)
+    assets = analysis_asset_inputs(state["data_root"], contract.get("asset_ids"))
+    coverage_match = match_coverage_records(assets["coverage_records"], inventory)
+    zero_coverage = relevant_zero_coverage(coverage_match)
+    frozen_examples = _freeze_test_case_examples(
+        state,
+        list(contract.get("test_case_examples", [])),
+    )
+
+    run_dir = run_directory(state)
+    compact_path = run_dir / "inputs" / "planning-metadata.json"
+    candidates_path = run_dir / "inputs" / "asset-candidates.json"
+    asset_items_path = run_dir / "inputs" / "asset-items.json"
+    coverage_path = run_dir / "inputs" / "coverage-gaps.json"
+    inventory_path = run_dir / "inputs" / "inventory.json"
+    source_manifest_path = run_dir / "inputs" / "source-manifest.json"
+    write_json(compact_path, _compact_inventory(inventory, expansion))
+    write_json(candidates_path, assets["candidates"])
+    write_json(asset_items_path, assets["items"])
+    write_json(coverage_path, zero_coverage)
+    write_json(run_dir / "inputs" / "test-case-examples.json", frozen_examples)
+    write_json(inventory_path, inventory)
+    write_json(source_manifest_path, {
+        "repositories": frozen_repositories,
+        "requested_scope": requested_scope,
+        "source_scope": module_scope,
+        "scope_expansion": expansion,
+        "coverage_diagnostics": {
+            "ambiguous": len(coverage_match["ambiguous"]),
+            "unmatched": len(coverage_match["unmatched"]),
+        },
+    })
+
+    task = PlanningTask(
+        run_id=state["run_id"],
+        target=contract["target"],
+        repositories=[RepositoryRef.model_validate(item) for item in frozen_repositories],
+        requested_scope=requested_scope,
+        compact_metadata_path=str(compact_path),
+        asset_candidates_path=str(candidates_path),
+        result_schema_path=str(project_path("schemas", "planning_result.schema.json")),
+        result_path=str(planning_result_path(state)),
+    )
+    task_path = planning_task_path(state)
+    write_json(task_path, task.model_dump(mode="json"))
+    action = ActionState(
+        action_id=f"{state['run_id']}:planning",
+        action="dispatch_agent",
+        role="planning",
+        stage="unit_planning",
+        task_path=str(task_path),
+    )
+    progress = WorkflowProgress(run_id=state["run_id"], stage="planning")
+    add_action(progress, action)
+    save_progress(state, progress)
+    return {
+        **state,
+        "repositories": frozen_repositories,
+        "module_scope": module_scope,
+        "scope_expansion": expansion,
+        "inventory": inventory,
+        "coverage_report": {"matched": zero_coverage, "ambiguous": [], "unmatched": []},
+        "lifecycle_status": progress.lifecycle_status,
+        "stage": progress.stage,
+        "agent_actions": [action.model_dump(mode="json")],
+    }

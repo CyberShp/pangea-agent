@@ -1,0 +1,305 @@
+{
+  "$defs": {
+    "AnalysisUnit": {
+      "additionalProperties": false,
+      "properties": {
+        "repo_id": {
+          "minLength": 1,
+          "title": "Repo Id",
+          "type": "string"
+        },
+        "title": {
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "source_scope": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Source Scope",
+          "type": "array"
+        },
+        "context_scope": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Context Scope",
+          "type": "array"
+        },
+        "rationale": {
+          "minLength": 1,
+          "title": "Rationale",
+          "type": "string"
+        },
+        "asset_item_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Asset Item Ids",
+          "type": "array"
+        },
+        "coverage_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Coverage Ids",
+          "type": "array"
+        },
+        "mechanism_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Mechanism Ids",
+          "type": "array"
+        },
+        "unit_id": {
+          "minLength": 1,
+          "title": "Unit Id",
+          "type": "string"
+        },
+        "line_count": {
+          "minimum": 0,
+          "title": "Line Count",
+          "type": "integer"
+        },
+        "function_count": {
+          "minimum": 0,
+          "title": "Function Count",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "repo_id",
+        "title",
+        "source_scope",
+        "rationale",
+        "unit_id",
+        "line_count",
+        "function_count"
+      ],
+      "title": "AnalysisUnit",
+      "type": "object"
+    },
+    "RepositoryRef": {
+      "additionalProperties": false,
+      "properties": {
+        "repo_id": {
+          "minLength": 1,
+          "title": "Repo Id",
+          "type": "string"
+        },
+        "source_root": {
+          "minLength": 1,
+          "title": "Source Root",
+          "type": "string"
+        },
+        "git": {
+          "additionalProperties": true,
+          "title": "Git",
+          "type": "object"
+        }
+      },
+      "required": [
+        "repo_id",
+        "source_root"
+      ],
+      "title": "RepositoryRef",
+      "type": "object"
+    },
+    "ReviewFinding": {
+      "additionalProperties": false,
+      "properties": {
+        "finding_key": {
+          "minLength": 1,
+          "title": "Finding Key",
+          "type": "string"
+        },
+        "category": {
+          "enum": [
+            "missed_flow",
+            "document_delta",
+            "coverage_gap",
+            "defect_mechanism",
+            "risk",
+            "test_oracle",
+            "incorrect_conclusion"
+          ],
+          "title": "Category",
+          "type": "string"
+        },
+        "affected_unit_ids": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Affected Unit Ids",
+          "type": "array"
+        },
+        "linked_input_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Linked Input Ids",
+          "type": "array"
+        },
+        "summary": {
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        },
+        "required_check": {
+          "minLength": 1,
+          "title": "Required Check",
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/SourceEvidence"
+          },
+          "minItems": 1,
+          "title": "Evidence",
+          "type": "array"
+        }
+      },
+      "required": [
+        "finding_key",
+        "category",
+        "affected_unit_ids",
+        "summary",
+        "required_check",
+        "evidence"
+      ],
+      "title": "ReviewFinding",
+      "type": "object"
+    },
+    "SourceEvidence": {
+      "additionalProperties": false,
+      "properties": {
+        "repo_id": {
+          "minLength": 1,
+          "title": "Repo Id",
+          "type": "string"
+        },
+        "path": {
+          "minLength": 1,
+          "title": "Path",
+          "type": "string"
+        },
+        "line_start": {
+          "exclusiveMinimum": 0,
+          "title": "Line Start",
+          "type": "integer"
+        },
+        "line_end": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Line End"
+        },
+        "observation": {
+          "minLength": 1,
+          "title": "Observation",
+          "type": "string"
+        }
+      },
+      "required": [
+        "repo_id",
+        "path",
+        "line_start",
+        "observation"
+      ],
+      "title": "SourceEvidence",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "task_type": {
+      "const": "closure",
+      "default": "closure",
+      "title": "Task Type",
+      "type": "string"
+    },
+    "run_id": {
+      "minLength": 1,
+      "title": "Run Id",
+      "type": "string"
+    },
+    "target": {
+      "minLength": 1,
+      "title": "Target",
+      "type": "string"
+    },
+    "unit": {
+      "$ref": "#/$defs/AnalysisUnit"
+    },
+    "repository": {
+      "$ref": "#/$defs/RepositoryRef"
+    },
+    "original_task_path": {
+      "minLength": 1,
+      "title": "Original Task Path",
+      "type": "string"
+    },
+    "original_result_path": {
+      "minLength": 1,
+      "title": "Original Result Path",
+      "type": "string"
+    },
+    "review_findings": {
+      "items": {
+        "$ref": "#/$defs/ReviewFinding"
+      },
+      "minItems": 1,
+      "title": "Review Findings",
+      "type": "array"
+    },
+    "result_schema_path": {
+      "default": "schemas/analysis_result.schema.json",
+      "minLength": 1,
+      "title": "Result Schema Path",
+      "type": "string"
+    },
+    "result_path": {
+      "minLength": 1,
+      "title": "Result Path",
+      "type": "string"
+    },
+    "rubric_paths": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Rubric Paths",
+      "type": "array"
+    }
+  },
+  "required": [
+    "run_id",
+    "target",
+    "unit",
+    "repository",
+    "original_task_path",
+    "original_result_path",
+    "review_findings",
+    "result_path",
+    "rubric_paths"
+  ],
+  "title": "ClosureTask",
+  "type": "object"
+}

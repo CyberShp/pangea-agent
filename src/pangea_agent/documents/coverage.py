@@ -5,6 +5,7 @@ from pathlib import Path
 from .extract import DependencyUnavailableError
 
 _MODULE_HEADERS = {"module", "模块"}
+_PATH_HEADERS = {"path", "路径"}
 _FUNCTION_HEADERS = {"function", "函数", "函数名"}
 _COUNT_HEADERS = {"count", "coverage", "coverage count", "覆盖次数", "执行次数"}
 _BRANCH_ID_HEADERS = {"branch_id", "branch id", "分支id", "分支编号"}
@@ -38,11 +39,13 @@ def parse_coverage_xlsx(path: Path) -> tuple[list[dict], list[str]]:
                 continue
             headers = ["" if value is None else str(value) for value in first]
             module_index = _column(headers, _MODULE_HEADERS)
+            path_index = _column(headers, _PATH_HEADERS)
             function_index = _column(headers, _FUNCTION_HEADERS)
             count_index = _column(headers, _COUNT_HEADERS)
             if None not in (module_index, function_index, count_index):
                 for row_number, row in enumerate(rows, 2):
                     module = row[module_index] if module_index < len(row) else None
+                    source_path = row[path_index] if path_index is not None and path_index < len(row) else None
                     function = row[function_index] if function_index < len(row) else None
                     count = row[count_index] if count_index < len(row) else None
                     if module is None and function is None and count is None:
@@ -55,6 +58,7 @@ def parse_coverage_xlsx(path: Path) -> tuple[list[dict], list[str]]:
                     records.append({
                         "coverage_type": "function",
                         "module": "" if module is None else str(module),
+                        "path": "" if source_path is None else str(source_path),
                         "function": "" if function is None else str(function),
                         "count": numeric_count,
                         "source": str(path),
@@ -71,6 +75,7 @@ def parse_coverage_xlsx(path: Path) -> tuple[list[dict], list[str]]:
                 continue
             for row_number, row in enumerate(rows, 2):
                 branch_id = row[branch_id_index] if branch_id_index < len(row) else None
+                source_path = row[path_index] if path_index is not None and path_index < len(row) else None
                 function = row[function_index] if function_index < len(row) else None
                 condition = row[condition_index] if condition_index < len(row) else None
                 true_count = row[true_count_index] if true_count_index < len(row) else None
@@ -90,6 +95,7 @@ def parse_coverage_xlsx(path: Path) -> tuple[list[dict], list[str]]:
                     "coverage_type": "branch",
                     "branch_id": "" if branch_id is None else str(branch_id),
                     "module": "",
+                    "path": "" if source_path is None else str(source_path),
                     "function": "" if function is None else str(function),
                     "condition": "" if condition is None else str(condition),
                     "true_count": numeric_true,
@@ -118,7 +124,26 @@ def match_coverage_records(records: list[dict], inventory: dict) -> dict:
     unmatched: list[dict] = []
     ambiguous: list[dict] = []
     for record in records:
-        candidates = symbols.get(record["function"], [])
+        requested_path = str(record.get("path", "")).replace("\\", "/").strip("/")
+        if requested_path:
+            candidates = [
+                {
+                    "repo_id": file["repo_id"],
+                    "path": file["path"],
+                    "line": function["line"],
+                }
+                for file in inventory.get("files", [])
+                if (
+                    file["path"].replace("\\", "/").strip("/") == requested_path
+                    or requested_path.endswith(
+                        "/" + file["path"].replace("\\", "/").strip("/")
+                    )
+                )
+                for function in file.get("functions", [])
+                if function["symbol"] == record["function"]
+            ]
+        else:
+            candidates = symbols.get(record["function"], [])
         meaning = (
             "branch_execution_reference_only"
             if record.get("coverage_type") == "branch"
@@ -132,3 +157,15 @@ def match_coverage_records(records: list[dict], inventory: dict) -> dict:
         else:
             unmatched.append(item)
     return {"matched": matched, "ambiguous": ambiguous, "unmatched": unmatched}
+
+
+def relevant_zero_coverage(report: dict) -> list[dict]:
+    return [
+        record
+        for record in report.get("matched", [])
+        if record.get("count") == 0
+        or (
+            record.get("coverage_type") == "branch"
+            and (record.get("true_count") == 0 or record.get("false_count") == 0)
+        )
+    ]

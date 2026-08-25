@@ -49,6 +49,7 @@ def build_lightweight_inventory(repositories: list[dict], module_scope: list[str
                         "branches": extract_branches(lines),
                         "preprocessor": _extract_preprocessor(lines),
                         "types": [],
+                        "calls": [],
                         "parse_errors": [],
                     }
                 except (OSError, ValueError, RuntimeError) as exc:
@@ -62,6 +63,7 @@ def build_lightweight_inventory(repositories: list[dict], module_scope: list[str
                         "branches": extract_branches(lines),
                         "preprocessor": _extract_preprocessor(lines),
                         "types": [],
+                        "calls": [],
                         "parse_errors": [{"line": None, "kind": "parser_failure", "text": str(exc)}],
                     }
                 if parsed["has_error"]:
@@ -99,6 +101,7 @@ def build_lightweight_inventory(repositories: list[dict], module_scope: list[str
                     "branches": parsed["branches"],
                     "preprocessor": parsed["preprocessor"],
                     "types": parsed["types"],
+                    "calls": parsed["calls"],
                     "resource_signals": extract_resource_signals(lines),
                 })
     return {
