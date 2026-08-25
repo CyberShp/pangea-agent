@@ -56,7 +56,7 @@
 
 - 风险必须包含复现条件、系统结果、外部观测和排除条件。
 - 测试用例必须包含前置条件、步骤、预期结果、观测方式和清理/恢复。
-- 风险驱动始终是测试用例基础；相关需求/设计资料必须闭环到测试用例。Coverage 只把当前范围唯一匹配的函数级 `count=0` 作为可选补测提示，选择处理时保持真实 ID 和用例双向关联。
+- 风险驱动始终是测试用例基础；相关需求/设计资料必须闭环到测试用例。Coverage 文件本身是可选输入；一旦当前单元产生唯一匹配的函数级 `count=0` gap，每个 gap 都必须在 `test_generation` 通过 `coverage_decisions` 闭环：复用已有用例、生成 Coverage-only 用例，或明确 `unreachable_from_supported_entry`。闭环到用例时保持真实 Coverage ID 与 TestCase 双向关联。
 - 质量门禁输出 `PASS`、`REWORK` 或 `UNRESOLVED`。
 - 所有正式产物优先使用 `schemas/` 中的结构。
 
