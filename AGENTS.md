@@ -42,8 +42,12 @@
 ## 运行入口与会话 Run
 
 - 用户不需要显式说 `module-analysis`。只要用户要求对业务源码、模块或目录做测试分析、风险分析、业务流程分析、Coverage 缺口分析或生成测试用例，就按一次新的 PANGEA 模块分析处理；`/module-analysis` 只是显式快捷入口。
+- **自然语言分析目标是唯一必需的用户输入。** 用户没有显式提供 `data_root`、`repository`、`target`、`source_scope`、资料路径或 Coverage 路径时，客户端必须按项目目录约定自动发现，不得把内部 contract 字段作为参数表要求用户填写。
+- 自动发现固定规则：`data_root` 缺省为 `pangea-data`；`repository` 从 `pangea-data/repositories/` 一级目录中根据目标自动选择；`target` 直接来自用户自然语言；`source_scope` 由客户端在选中仓库中定位入口、接口和核心实现后形成最小范围；`pangea-data/inbox/` 和 `pangea-data/coverage/` 由现有准备/索引流程自行关联。
+- 只有自动发现存在真实且无法自动消歧的多个同等可信候选时才向用户提问，而且只询问造成歧义的事实。例如两个仓库都存在独立完整的同名模块实现时只问选择哪个仓库，不得退化成要求用户提供全部内部参数。
 - 新根 Agent 会话默认没有当前 Run。若当前会话尚未通过本次分析创建并持有明确 `run_id`，且用户没有明确指定历史 `run_id`，创建新 Run 前不得调用 `pangea_status`，不得列举或读取 `pangea-data/runs/`、历史 `progress.json` / `agent_sessions`、报告或 Companion 状态。
-- 新分析意图与显式 `/module-analysis` 执行同一入口：确定目标仓和最小 `source_scope`；`source_scope` 路径相对所选仓库根目录，不包含 `repo_id` 前缀，并在所有宿主上统一使用 `/` 分隔。为当前根会话新建唯一临时文件 `pangea-data/.pangea/pending-task-contract-<uuid>.json`，不得读取或复用其他 pending contract；随后执行 `python -m pangea_agent.cli.main module-analysis --contract <pending-contract>` 创建新 Run。新 Run 的 `run_id` 由 PANGEA 生成；CLI 在进入 Graph 前自动删除本会话的 pending contract，根 Agent 不再执行删除命令。
+- 新分析意图与显式 `/module-analysis` 执行同一入口：自动确定目标仓和最小 `source_scope`；`source_scope` 路径相对所选仓库根目录，不包含 `repo_id` 前缀，并在所有宿主上统一使用 `/` 分隔。为当前根会话新建唯一临时文件 `pangea-data/.pangea/pending-task-contract-<uuid>.json`，不得读取或复用其他 pending contract；随后执行 `python -m pangea_agent.cli.main module-analysis --contract <pending-contract>` 创建新 Run。新 Run 的 `run_id` 由 PANGEA 生成；CLI 在进入 Graph 前自动删除本会话的 pending contract，根 Agent 不再执行删除命令。
+- 自动确定 repository / source_scope 时，允许并需要读取、搜索 `pangea-data/repositories/` 下的用户业务源码；“首次运行前不要研究 PANGEA 自身实现”的限制不禁止这一步业务源码定位。
 - 只有两种情况允许执行 `resume-run`：当前会话已经由本次分析获得明确 `run_id`；或用户在当前请求中明确指定要恢复的历史 Run / 历史会话。新会话中的“继续之前的”如果没有明确 Run，不得自行扫描历史 Run 猜测。
 - 查看历史 Run、打开报告、浏览 Companion 看板或调用只读状态工具不会把该 Run 绑定为当前会话 Run，也不会授权恢复。
 - 修改 `pangea-agent` 自身代码、graph、schema、rubric、Agent 规则或 DSH/OpenCode 适配属于产品开发，不启动 PANGEA 分析 Run。
@@ -79,7 +83,7 @@
 - 初审固定为同一 reviewer 的两个 checkpoint：`independent_review` task 不提供 worker result；
   graph 接受独立结论后才生成 `comparison_review` task。两个阶段各完成一次，不按检查项拆分调用。
 - analysis-worker 每回合只执行 worker task 当前 `stage`，将 `completed_stage` 写成相同值，并在结束前执行 `validate-worker-result --task "<worker task JSON>"` 到 `PASS`。review-worker 每次写完 `independent_review`、`comparison_review` 或 `rework_verification` 结果后，必须执行 `check-review-artifact --task "<review task JSON>"` 并得到 `PASS`。失败由当前 Agent 修正同一结果文件，主 Agent 不得代填或绕过契约。
-- 新主 Agent 会话命中新的模块分析意图时创建新 Run。当前会话已经持有本次运行的明确 `run_id` 后，每个 action 对应的 Agent 回合完成并通过提交检查后，主 Agent 立即执行 action 声明的 `resume_run`；不等待或解析 Agent 回复中的文本标记。不得要求用户为了触发流程显式说 `module-analysis`，不得扫描历史 Run 自动替用户选择恢复目标，也不得用占位风险冒充语义分析结果。
+- 新主 Agent 会话命中新的模块分析意图时创建新 Run。当前会话已经持有本次运行的明确 `run_id` 后，每个 action 对应的 Agent 回合完成并通过提交检查后，主 Agent立即执行 action 声明的 `resume_run`；不等待或解析 Agent 回复中的文本标记。不得要求用户为了触发流程显式说 `module-analysis`，不得扫描历史 Run 自动替用户选择恢复目标，也不得用占位风险冒充语义分析结果。
 
 ## Private House Code Policy
 
