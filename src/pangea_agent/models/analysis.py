@@ -277,6 +277,10 @@ class IndependentReviewTask(StrictModel):
     selected_inputs_path: str = Field(min_length=1)
     rubric_paths: list[str] = Field(min_length=1)
     result_schema_path: str = Field(default="schemas/independent_review_result.schema.json", min_length=1)
+    result_skeleton_path: str = Field(
+        default="schemas/independent_review_result.skeleton.json",
+        min_length=1,
+    )
     result_path: str = Field(min_length=1)
 
 
@@ -317,6 +321,10 @@ class ComparisonReviewTask(StrictModel):
     rubric_paths: list[str] = Field(min_length=1)
     result_schema_path: str = Field(
         default="schemas/comparison_review_result.schema.json", min_length=1
+    )
+    result_skeleton_path: str = Field(
+        default="schemas/comparison_review_result.skeleton.json",
+        min_length=1,
     )
     result_path: str = Field(min_length=1)
 
