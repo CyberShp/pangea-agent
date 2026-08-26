@@ -93,6 +93,12 @@
       "title": "Result Schema Path",
       "type": "string"
     },
+    "result_skeleton_path": {
+      "default": "schemas/independent_review_result.skeleton.json",
+      "minLength": 1,
+      "title": "Result Skeleton Path",
+      "type": "string"
+    },
     "result_path": {
       "minLength": 1,
       "title": "Result Path",
