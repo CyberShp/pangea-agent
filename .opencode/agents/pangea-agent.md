@@ -29,10 +29,10 @@ CLI 返回 `agent_actions` 或 `adapter next` 返回 `actions` 后：
 1. 按 `role` 选择本目录对应 Agent，只传 `task_path`，不转述源码结论。
 2. 同时派发最多 8 个 action；8 是并发上限，不是 Run 单元总数。
 3. 取得真实子任务 ID 后执行 `adapter bind --run-id ... --action-id ... --task-id ...`。
-4. 子 Agent 完成后执行 `adapter validate`。失败时恢复同一子任务修正同一 `result_path`。
+4. 子 Agent 完成后执行 `adapter validate`。失败时恢复**同一个 action 的同一个子任务**，把校验错误交回原角色修正同一 `result_path`，再次 validate；不得由主 Agent 代改，也不得改派其他角色做格式修复。尤其 review 结果校验失败仍由原 `review-worker` 修正，不能调用 `closure-worker` 修 review JSON。
 5. 校验通过后执行 `adapter settle`，只按新的 JSON action 继续。
 
-Review 固定由同一个 `review-worker` 完成两个 checkpoint：先执行不提供首轮结果的 `independent_review`，再按 `continue_agent` action 续接原子任务执行 `comparison_review`。后者对照首轮结果与源码，排除错误结论并找遗漏；不新建第二个 Reviewer。
+Review 固定由同一个 `review-worker` 完成两个 checkpoint：先执行不提供首轮结果的 `independent_review`，再按 `continue_agent` action 续接原子任务执行 `comparison_review`。后者对照首轮结果与源码，排除错误结论并找遗漏；不新建第二个 Reviewer。`closure-worker` 只能处理 comparison review 已通过校验后由 Graph 正式生成的 `closure` action，不能作为 analysis/review 校验失败的通用修复器。
 
 角色映射：`planning` → `planning-worker`，`analysis` → `analysis-worker`，`review` → `review-worker`，`closure` → `closure-worker`，`asset_extraction` → `asset-extraction-worker`。
 
