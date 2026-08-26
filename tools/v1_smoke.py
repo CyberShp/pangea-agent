@@ -23,6 +23,11 @@ from pangea_agent.cli.run_module_analysis import (
     run_module_analysis,
     start_module_analysis,
 )
+from pangea_agent.cli.adapter_api import (
+    bind_action,
+    settle_action,
+    validate_action,
+)
 from pangea_agent.documents.coverage import match_coverage_records, parse_coverage_xlsx
 from pangea_agent.graph.nodes.load_contract import load_contract
 from pangea_agent.graph.nodes.resolve_repositories import resolve_repositories
@@ -5399,6 +5404,43 @@ def _graph_control_contract_reaches_all_clients() -> None:
     ).read_text()
 
 
+def _companion_adapter_advances_current_graph() -> None:
+    _, data_root, contract = _workspace()
+    created_process = subprocess.run(
+        [
+            sys.executable, "-m", "pangea_agent.cli.main", "runs", "create",
+            "--contract", str(contract),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    envelope = json.loads(created_process.stdout.strip().splitlines()[-1])
+    assert envelope["api_version"] == "1.0" and envelope["ok"] is True
+    created = envelope["result"]
+    action = created["agent_actions"][0]
+    assert action["action_id"].endswith("|analysis:U00|source_checkpoint")
+    bound = bind_action(
+        str(data_root), created["run_id"], action["action_id"], _ANALYSIS_SESSION_ID
+    )
+    assert bound["status"] == "dispatched"
+    invalid = validate_action(str(data_root), created["run_id"], action["action_id"])
+    assert invalid["status"] == "invalid"
+    task_path = Path(action["task_path"])
+    task = read_json(task_path)
+    write_json(Path(task["result_path"]), _task_result(task))
+    _validate_worker_task(task_path)
+    assert validate_action(
+        str(data_root), created["run_id"], action["action_id"]
+    )["status"] == "valid"
+    advanced = settle_action(str(data_root), created["run_id"], action["action_id"])
+    assert advanced["phase"] == "WAITING_RISK_ANALYSIS"
+    assert advanced["agent_actions"][0]["action"] == "continue_agent"
+    assert advanced["agent_actions"][0]["action_id"].endswith(
+        "|analysis:U00|risk_analysis"
+    )
+
+
 SCENARIOS: tuple[tuple[str, Scenario], ...] = (
     ("PASS 到双报告", _pass_report),
     ("独立复核后替换失效 Worker 且不重复审计", _late_worker_rejection_reuses_independent_review),
@@ -5495,6 +5537,7 @@ SCENARIOS: tuple[tuple[str, Scenario], ...] = (
     ("混合语言报告显示框架", _mixed_language_reports_show_frameworks),
     ("Lua callback 执行账本同步到各客户端", _lua_callback_methodology_reaches_all_clients),
     ("Graph 控制契约同步到各客户端", _graph_control_contract_reaches_all_clients),
+    ("Companion adapter 推进当前 Graph", _companion_adapter_advances_current_graph),
 )
 
 

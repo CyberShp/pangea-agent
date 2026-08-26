@@ -32,6 +32,18 @@ from .index_repo import print_repositories
 from .run_module_analysis import apply_run_event, resume_module_analysis, start_module_analysis
 
 
+def _print_api_success(result: dict) -> None:
+    print(json.dumps({"api_version": "1.0", "ok": True, "result": result}, ensure_ascii=False))
+
+
+def _print_api_error(exc: Exception) -> None:
+    print(json.dumps({
+        "api_version": "1.0",
+        "ok": False,
+        "error": {"type": exc.__class__.__name__, "message": str(exc)},
+    }, ensure_ascii=False))
+
+
 def _print_run_result(result: dict) -> None:
     print(f"run_id={result.get('run_id', 'UNKNOWN')}")
     print(f"data_root={result.get('data_root', 'pangea-data')}")
@@ -215,6 +227,22 @@ def main() -> None:
     unavailable.add_argument("--data-root", default="pangea-data")
     unavailable.add_argument("--reviewer-id", required=True)
     unavailable.add_argument("--reason", required=True)
+    runs = sub.add_parser("runs")
+    run_commands = runs.add_subparsers(dest="run_command", required=True)
+    run_create = run_commands.add_parser("create")
+    run_create.add_argument("--contract", required=True)
+    adapter = sub.add_parser("adapter")
+    adapter_commands = adapter.add_subparsers(dest="adapter_command", required=True)
+    adapter_bind = adapter_commands.add_parser("bind")
+    adapter_bind.add_argument("--data-root", required=True)
+    adapter_bind.add_argument("--run-id", required=True)
+    adapter_bind.add_argument("--action-id", required=True)
+    adapter_bind.add_argument("--task-id", required=True)
+    for command_name in ("validate", "settle"):
+        command = adapter_commands.add_parser(command_name)
+        command.add_argument("--data-root", required=True)
+        command.add_argument("--run-id", required=True)
+        command.add_argument("--action-id", required=True)
     args = parser.parse_args()
 
     if args.command == "init-data":
@@ -339,6 +367,30 @@ def main() -> None:
         except ValueError as exc:
             parser.error(str(exc))
         print(result["event_result"])
+    elif args.command == "runs":
+        from .adapter_api import expose_actions
+
+        try:
+            _print_api_success(expose_actions(start_module_analysis(args.contract)))
+        except Exception as exc:
+            _print_api_error(exc)
+            raise SystemExit(1) from exc
+    elif args.command == "adapter":
+        from .adapter_api import bind_action, settle_action, validate_action
+
+        try:
+            if args.adapter_command == "bind":
+                result = bind_action(
+                    args.data_root, args.run_id, args.action_id, args.task_id
+                )
+            elif args.adapter_command == "validate":
+                result = validate_action(args.data_root, args.run_id, args.action_id)
+            else:
+                result = settle_action(args.data_root, args.run_id, args.action_id)
+            _print_api_success(result)
+        except Exception as exc:
+            _print_api_error(exc)
+            raise SystemExit(1) from exc
 
 
 if __name__ == "__main__":
