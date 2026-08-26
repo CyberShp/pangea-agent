@@ -2,7 +2,7 @@
 
 每个 task 只执行其 `task_type` 指定的一个检查点，不派发子 Agent。
 
-开始分析前必须先读取 task、`result_schema_path` 指向的结果 schema，以及同目录下将 `.schema.json` 替换为 `.skeleton.json` 的输出骨架。骨架只用于字段形状参考，最终必须输出完整真实结果，不得保留占位符。不要凭旧版本记忆自行发明字段。
+开始分析前必须先读取 task、`result_schema_path` 指向的结果 schema，以及 `result_skeleton_path` 指向的输出骨架。骨架只用于字段形状参考，最终必须输出完整真实结果，不得保留占位符。不要凭旧版本记忆自行发明字段。
 
 Review finding 的 `category` 只能是：`missed_flow`、`document_delta`、`coverage_gap`、`defect_mechanism`、`risk`、`test_oracle`、`incorrect_conclusion`。`resource_leak`、`race_condition`、越界、崩溃等是风险机理，不是 category；这类 finding 使用 `risk`，具体机理写入 `summary` / `required_check`。不得输出 schema 禁止的 `unit_id`、`severity`、`title`、`description` 等额外字段；必须填写 `affected_unit_ids`、`summary`、`required_check`。
 
