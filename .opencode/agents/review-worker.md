@@ -29,6 +29,7 @@ PowerShell: & '.\.venv\Scripts\python.exe' -m pangea_agent.cli.main prepare-revi
 
 再读取命令返回的结果骨架并填写，不从零新建 review result。禁止使用 Write 整体覆盖结果文件，也禁止用 Bash、Python、正则或临时脚本批量重写/修复 JSON；只能在已读取的合法骨架上用 Edit 按字段替换完整 JSON value。每次编辑保持文件可被 JSON 解析。
 编辑前按 task.stage 读取本阶段 schema：`independent_review` 读取 `schemas/independent_review_result.schema.json`；`comparison_review` 和 `rework_verification` 读取 `schemas/review_result.schema.json` 与 `schemas/review_issue.schema.json`。不得等首次提交失败后才补读。
+每次被派发或续接都是一个新的提交回合；即使同一 `task_path` 的 result 已经填写、上一回合已报告“完成”，也必须重新读取 task 和当前 result，再执行一次 `check-review-artifact --task "<review task JSON>"`。只有本回合实际得到 `PASS` 才能再报告完成；若被拒绝，立即在同一 result 修正拒绝原因并重试，不得仅因文件已有内容就返回“上一回合已完成”。
 
 - `run_id`、`stage`、`result_path`、`analysis_tasks`。
 - `may_spawn_workers` 必须为 `false`，`review_round` 必须为 `1`。
@@ -89,12 +90,39 @@ signal 且冻结源码提供可重复调用的公开 create/ctor、又没有 sin
 对象上补充 `worker_disposition`，不得重建 `independent_findings` 数组，不得改写 finding 正文、
 evidence、unit_id 或 check_id；差异写入 issue。每个 worker RiskCard 和 TestCase 必须且只能写入一条
 最直接相关 finding 的 `linked_worker_risk_ids` / `linked_worker_test_case_ids`，不得遗漏或重复挂接。
+若 Worker 产物经冻结源码复核后成立、但所有独立 finding 都不描述该路径，不得把它硬挂到不相关
+finding，也不得改写独立结果。此时可在数组末尾追加一条 `check_id=COMPARISON-<unit>-<short-id>` 的
+对照补充 finding：正文明确写“comparison 阶段从 Worker 产物回查源码确认”，evidence 直接引用冻结
+源码，只关联这组产物。`COMPARISON-` finding 不是独立发现，不得用于补写未读源码的推测风险。
 
 comparison 的第一轮只做逐用例状态对照，完成前不看 Coverage 数量、不写总体结论。对每条风险用例按
 steps 重放当前实现，并把每一步后的返回值和显式字段列成一行；随后强制检查：当前实现必须至少违反
 一项 expected，否则这不是有效风险用例；每个 `failure_observation` 中的显式字段必须与当前重放值
 完全相同；相同调用连续出现几次就累计几次注册/计数；成功步骤写入的状态在后续没有赋值时保持不变。
+所有边界判断先代入 trigger 的具体值再分类，`0 >= 0` 必须判 true，禁止照抄 Worker 写反的真假值；
+所有“调用失败/返回错误”先打开函数声明，返回 `void` 的 API 不存在可检查的失败返回。Worker 若基于
+相反前提生成 RiskCard/TestCase，必须判 contradiction/invalid 并发 issue，不能标 covered/valid。
+对每条风险用例再强制二选一：源码、现行资料或公开接口已把行为定义为 unsupported stub、fail-fast、
+no-op 或固定错误返回时，不能仅因附近函数采用另一种处理方式就判为风险；若有证据证明当前行为是
+缺陷，RiskCard 的当前 `system_result` 必须命中 `failure_observation`，不得同时成为 `expected_result`。
+当前源码行为满足 expected 的风险用例一律 `invalid`，不能用“正确与错误两个视角都成立”放行。
+两个局部变量若在所有到达使用点的路径上由同一次赋值保持相等，通过其中任一个访问同一对象只是写法差异；在没有变量实际分离并导致错误读写的路径时，相关 RiskCard/TestCase 必须判 contradiction/invalid，不能以“当前功能正确但写法不理想”为由标 covered/valid。
+故障注入使内存分配、设备访问或下层调用真实失败时，若公开入口明确返回错误、完成请求并释放已创建资源，先按正常失败处理复核；没有冻结需求规定另一错误码、也没有错误成功、数据损坏、请求未完成、资源泄漏或不可恢复状态时，不得把“命令没有成功”本身判为风险。正确产品在相同故障下本来也应返回同一错误时，Worker 的 RiskCard 与风险用例都应删除；不得要求把这个当前错误返回复制进 risk test 的 expected_result 来保住风险。
+failure path 的 `caller_handling/final_states` 是下游终态的根：若 checkpoint 已确认边界检查返回 Invalid Field、请求完成或资源释放，RiskCard 和 TestCase 仍声称成功交付空数据、请求挂起或泄漏，必须针对这些 Worker 字段形成 issue，不能只修 checkpoint 后放行。
+调用方未检查返回值不自动构成风险。只有冻结实现、声明注释或现行接口契约明确给出非致命失败值，才能接受“API 返回失败但 caller 继续”的 trigger；没有 task 内失败信号时，不得用队列满、内部失败或 callback 不执行补造路径，也不得保留 Developer-confirm。返回 `void` 的 API 不存在可检查失败分支；接口注释若写明错误 fatal、返回值仅兼容且固定为 0，必须把忽略返回值判为预期行为，并删除相关风险与用例。
+对 copy/zero loop 建立指针覆盖表：break 当前元素的已拷贝区间和剩余区间、`++ptr` 后第一个后续元素、后续循环覆盖集合。当前元素剩余已 memset，`for (++ptr; ptr < end; ptr++)` 又 memset 全部后续元素时不得宣称存在未清零 gap；`++ptr` 正是移动到第一个后续元素，不是跳过它。
+对失败分支按花括号和跳转逐行建立可达表。`tmp = realloc(original, n); if (tmp == NULL) { break/return/goto; } original = tmp;` 的 NULL 分支不会执行最后赋值，旧指针仍保留；把它说成被 NULL 覆盖、泄漏或随后返回 NULL 必须判 contradiction。`free(ctx); goto error;` 之后只能执行 `error:` 标签及其后语句，标签前的 async dispatch、generator 或过滤调用不可达；RiskCard/TestCase 若依赖这些未执行调用，必须删除而不是改写观测。
+并发 finding 必须指出实际共享的内存对象或状态。函数每次调用内部 `calloc`/`malloc` 的局部缓冲区若只在该调用中传递和释放，另一调用的同名局部变量不能令它悬空；把变量名相同当作跨请求共享证据必须判 contradiction。
+failure 位于下层函数时，必须继续读直接 caller 的非零返回分支，直到公开入口的返回、断言或进程
+终止，不能看到 destruct/free/unmap 的调用名就认定清理完成。按执行顺序找首个 NULL/悬空指针
+解引用、未映射 MMIO 访问、assert、double-free 或返回；首个终态已经终止进程时，后续 free、unmap、
+detach 都是未到达，RiskCard 和 TestCase 不得把更靠后的缺陷写成当前外部观测。unmap 后指针未清空，
+后续经该指针访问也不能写成“析构正确完成”。callee 直接 `return` 不能作为 caller 跳过清理的证据；
+caller 真正完成统一补偿清理时才排除资源泄漏。继续核对上层是否把非零返回交给 assert、改写或传播，
+TestCase 的公开入口返回/终止方式与源码不一致时必须形成 issue。`/proc/iomem` 只表示物理资源登记，不能证明某进程仍持有 BAR 映射；此类进程映射观测必须
+使用 `/proc/<pid>/maps`/`smaps` 或等价的进程级证据。
 任一项不满足，立即把该 TestCase 判为 `invalid` 并形成 issue，不能因它还命中了另一项正确风险而放行。
+写任何 issue 前，必须重新打开该 issue 所依赖的每条独立 finding 证据行，逐字核对函数名、参数、常量和相邻控制流。若冻结源码推翻了独立 finding，本轮不得要求 Worker 向错误 finding 对齐：把该 finding 设为 `reasonably_excluded`、清空两个关联数组，并在 summary 记录自我纠正；Worker 已有且由其他正确 finding 支撑的产物关联到其他 finding。不得生成“修正独立 finding”或“按错误 finding 新增风险/用例”的 issue。
 若多个独立 finding 都与同一个 worker RiskCard/TestCase 相关，只把该 ID 分配给最直接的一条；其余
 finding 必须原样保留，可以使用空关联数组，不得删除、合并、改写 finding，也不得为了填满数组重复挂接。
 `prepare-review-result` 只在结果文件不存在时创建骨架，不会恢复或覆盖已有文件；comparison 不得删除后
@@ -105,9 +133,10 @@ finding 必须原样保留，可以使用空关联数组，不得删除、合并
 修复方式。
 `issues[].required_change` 只能要求修改 worker result 的 checkpoint、risk、test、evidence、flow 或闭环
 字段，不能要求 worker 修改冻结的独立 finding。独立 finding 若措辞不完整或方向错误，而 worker 与
-冻结源码/现行资料一致，应把 worker 标为 `covered`，在 disposition reason 明确记录“独立 finding
-已被冻结源码推翻，worker 结论正确”，并关联 worker 已正确交付的 RiskCard/TestCase；不得为修正
-reviewer 自己的 finding 派发返工，也不得要求 worker 向错误 finding 对齐。
+冻结源码/现行资料一致，应把该 finding 标为 `reasonably_excluded`、清空两个关联数组，并在 summary
+明确记录“独立 finding 已被冻结源码推翻，worker 结论正确”；worker 已正确交付的 RiskCard/TestCase
+关联到其他证据正确的 finding。不得为修正 reviewer 自己的 finding 派发返工，也不得要求 worker 向错误 finding 对齐。
+`current_behavior`、`verdict` 和整个 `test_case_checks` 都只属于 reviewer 当前结果；必须由你在本阶段填写，任何 issue 都不得要求 Worker 修改这些字段。
 写 issue 前先并排列出资料预期与源码实际的同名状态：是否执行、`true/false/nil`、绝对次数和本次
 增量。两边同为“不执行”、同一布尔值或同一次数时不是冲突，禁止把否定词反转后制造 issue。
 Lua/openUBMC comparison 在填写任何 `covered` 前先逐条检查：共享类表/模块表 signal 的 TestCase
@@ -141,6 +170,9 @@ finding 必须先拆成其中每个有方向的结论：`应保留风险`、`应
 failure path 中标 `excluded` 只表示“不生成 RiskCard”，并不禁止需求/设计成功基线 TestCase。独立
 finding 确认正常行为且 worker 有对应成功用例时，应标 `covered` 并关联该用例；不得制造 issue 要求
 删除成功用例，也不得要求把正常 path 改成 risk。
+同理，RiskCard 的 `upstream_semantics.conclusion=unresolved` 表示源码边界尚不能定性，不等于 comparison
+的 `contradiction`。若 `COMPARISON-` finding 回查源码后确认 Worker 如实保留了这项不确定性，应标
+`covered` 并关联该 RiskCard；只有双方对可达性、清理或最终状态给出相反结论时才是 `contradiction`。
 
 comparison 和 rework verification 都必须为每条 worker TestCase 填写一条
 `test_case_checks[]`。`expected_results` 和 `failure_observations` 按步骤顺序逐字回显当前 TestCase 的
@@ -170,6 +202,8 @@ comparison 的第一条判定规则是区分“测试通过标准”和“当前
 当前已知错误实现命中 `system_result` 时是否 FAIL。任一答案不是“是”，该 issue 无效，不得写入
 `review.json`。禁止产生“把 expected 改成 buggy 实际值”的 `required_change`；风险复现由步骤和
 当前实测失败表达，不由错误预期表达。此检查必须在 comparison 当轮完成，不能留给返工验证纠正。
+上述两问必须使用完全相同的 trigger。故障注入步骤不能拿“无故障时成功”当 expected 与“注入后失败”作比较；expected 必须描述正确实现面对同一次 realloc/分配/发送失败应如何完成、回滚或报错。若 Worker 在 expected 中接受部分条目缺失、垃圾字节或其他 RiskCard 当前错误状态，该用例必须 invalid；不能因为前一步存在成功基线就放行。
+每项 `test_case_checks.current_behavior` 必须能命中同一步至少一项非空 `failure_observation` 才能把风险用例判 valid；当前行为是 INVALID_FIELD 而失败观测写 SUCCESS/partial entries，或当前分支在 generator 前结束而失败观测写 generator 使用 NULL，均必须 invalid 并要求删除/改写 RiskCard 与 TestCase。没有冻结需求或规格证明 offset 边界应返回另一结果时，Reviewer 不得把个人判断写成产品正确契约，也不得要求修改被测源码来解决分析报告。
 
 `analysis task.coverage_context` 是当前单元唯一的 Coverage 闭环依据。它为空时，不得根据 source
 manifest、inventory、报告统计或原始 Coverage 文件要求 worker 补 `coverage_decisions` / Coverage
@@ -271,12 +305,16 @@ covered。无法得到唯一一致结论时生成 issue，不得 PASS。
   finding 虽标为 `covered`，但指出现有风险或用例的触发条件、最终状态、外部观测、恢复步骤、
   测试预期不准确时，也必须生成 issue，不能降级成“描述级 finding”后直接 PASS。
 - `REWORK`：存在一次定向返工可以修复的问题。每个 issue 必须有稳定 `issue_id`、准确 `unit_id`、事实性 `reason` 和可验证的 `required_change`。
+  每条 `missing` 或 `contradiction` finding 都必须由同单元的一条 issue 承接，并在该 issue 的
+  `reason` 或 `required_change` 中原样写出 finding 的 `check_id`；不能只在 summary 提到，也不能用
+  其他相邻 issue 代替。这样 Worker 收到的 `prior_issues` 才不会漏掉已经判定为阻塞的 finding。
 - `UNRESOLVED`：输入损坏/缺失、结果无法读取、范围或语义实质不完整，且问题不能在唯一一次定向返工中可靠修复。单条“证据待确认”不属于此类。
 
 返工验证 `stage=rework_verification`：
 
 - 只能输出 `PASS` 或 `UNRESOLVED`，不得再次输出 `REWORK`。
 - 逐项检查 `prior_issues` 是否真实修复，并确认 failure path、顶层 evidence observation、business flow、风险与用例中都没有残留被否定的旧机制；同时确认修改没有破坏其他已经通过的内容。
+- 新增或改写的 RiskCard 必须被当前 `disposition=risk/unresolved` 的 failure path 关联；这是风险的根因闭环。`counterexamples_checked` 仍按 Worker 契约要求至少一条核心反例，不得临时扩大成“每条 RiskCard 都必须单独新增反例记录”。
 - 对每个被修改的风险和 TestCase 重新重放完整状态链，确认配置切换、容器成员关系、故障注入、
   唯一预期和观测位置仍能同时成立；再核对受影响的 `decision=current` 资料与 `coverage_decisions` 没有因返工重新缺失。
 - 数字类 `prior_issues.required_change` 不是验证 oracle。返工验证必须重新从冻结源码按 callback/条目
@@ -285,7 +323,14 @@ covered。无法得到唯一一致结论时生成 issue，不得 PASS。
 - 同时分别核对“本次调用增量”和“调用后绝对值”；第二次后绝对值为 2 不等于本次增量为 2。重新检查公开入口的 pcall 边界、主/派生场景归属和公开 factory 可达的多实例共享，任一仍混淆都必须 `UNRESOLVED`。
 - 再次逐项对照冻结的 `independent_findings` 与最终 rework result；同一 check 的持续性、恢复 API 或最终状态仍不一致时，即使不在 `prior_issues` 的文字中，也属于新产生的必需语义修复项，必须 `UNRESOLVED`，不得 PASS。
 - Graph 已把 comparison 的 disposition 和关联数组预填到返工验证骨架，它们只是上轮结论，不是本轮答案。逐项按最终 rework result 重新分类：已修复的 `missing/contradiction` 改为 `covered`；仍不一致才保留阻塞分类并返回 `UNRESOLVED`。不得仅因上轮字段仍写 `contradiction` 就宣告无法 PASS。
+- Graph 会移除返工后已经不存在的 risk/test 旧关联。Reviewer 只需把新产物关联到最直接且证据正确的 finding；不得为恢复已删除 ID 再造风险或用例。若重新核对发现某条独立 finding 自身错误，按 comparison 相同规则将其设为 `reasonably_excluded`、清空关联并在 summary 说明，不得因此输出 UNRESOLVED。
+- 当前返工结果里不存在的旧 risk/test 已被 Graph 从骨架关联中移除；尤其 prior issue 已要求 `excluded/expected_behavior` 时，其唯一关联用例随之消失就是正确修复。不得因为 comparison 曾经检查过该旧 ID，就要求 Worker 恢复、补回或以 `invalid` 占位；需要的新测试必须由当前仍成立的风险、需求、资料或 Coverage 独立支撑。
+- 当前 `rework-review.json` 骨架是关联状态的唯一事实：某旧 ID 已不在 `linked_worker_*_ids` 中，就不得根据 prior review 的记忆声称它仍存在。一个 TestCase 同时覆盖拆分后的多个 RiskCard 时，只在最直接的一条 finding 中关联该 TestCase 一次；其他补充 finding 只关联各自 RiskCard，TestCase 数组保持空，不能把这种合法分配写成结构冲突。
 - 对每条返工后的 TestCase 重新执行“正确产品满足 expected 才 PASS、当前错误实现命中 RiskCard 时应 FAIL”的两问，不得只检查 prior issue 的字面修改。共享 signal 用例若把跨实例污染值写成 expected，即使已经改成同一 VM，也必须判 `UNRESOLVED`，不得 PASS。
+- C/C++ 容器宏按其实际指针操作复核：`TAILQ_REMOVE` 不会把未加入队列或已移除的元素当作静默 no-op。以伪造本地结构、double-detach 或 never-attached 元素作为前置时，先核对公开契约是否容忍该输入；没有契约时不得把调用方无效链指针写成可执行产品风险。
+- 每条 TestCase 还要核对构建类型和缺陷信号：同一用例混用 Debug/Release 必须拆分；`expected_result` 出现 ASan/Valgrind 报告、double-free、use-after-free、崩溃、core dump 或断言失败时必须判 invalid，这些只能是 `failure_observation`。返回值正负号必须与冻结源码或现行契约一致。
+- 不得用“step-level logical contradiction persists”“考虑更新某用例”这类没有事实对照的句子阻塞终态。若确有步骤矛盾，reason 必须写出互相冲突的具体前置、动作、返回值或状态，required_change 必须给出唯一可验证的修改；正确产品的 `expected_result` 与当前缺陷的 `failure_observation` 相反是正常 FAIL 判据，本身不是矛盾。
+- 返工验证骨架中的 `test_case_checks[].current_behavior` 是你的待填写占位符，不属于 Worker 返工结果。发现占位符时在当前 review result 中直接填写并重新检查，禁止把它写成 UNRESOLVED issue。
 - 任一语义问题未修复、产生新的必需语义修复项或 reviewer 身份不一致，均为 `UNRESOLVED`。仅存在“证据待确认”不影响正常结论。
 
 ## 写入结果

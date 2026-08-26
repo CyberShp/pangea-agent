@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "WorkerTask",
   "type": "object",
-  "required": ["schema_version", "task_type", "stage", "run_id", "target", "unit", "repositories", "index_path", "inventory_path", "source_manifest_path", "allowed_material_paths", "coverage_context", "failure_signal_context", "semantic_check_items", "attempt", "result_path", "max_parallel_workers", "may_spawn_workers", "replacement_allowed", "prior_result_path", "review_issues"],
+  "required": ["schema_version", "task_type", "stage", "run_id", "target", "unit", "repositories", "index_path", "inventory_path", "source_manifest_path", "allowed_material_paths", "coverage_context", "failure_signal_context", "semantic_check_items", "attempt", "result_path", "max_parallel_workers", "may_spawn_workers", "replacement_allowed", "prior_result_path", "review_issues", "validation_feedback"],
   "properties": {
     "schema_version": {"const": "1.0"},
     "task_type": {"enum": ["analysis", "rework"]},
@@ -97,7 +97,8 @@
     "preferred_worker_id": {"type": ["string", "null"]},
     "replacement_allowed": {"type": "boolean"},
     "prior_result_path": {"type": ["string", "null"]},
-    "review_issues": {"type": "array", "items": {"$ref": "review_issue.schema.json"}}
+    "review_issues": {"type": "array", "items": {"$ref": "review_issue.schema.json"}},
+    "validation_feedback": {"type": "array", "items": {"type": "string", "minLength": 1}}
   },
   "allOf": [
     {

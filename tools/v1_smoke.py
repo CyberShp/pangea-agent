@@ -9,6 +9,7 @@ import sys
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Callable
 
 from docx import Document
@@ -35,11 +36,29 @@ from pangea_agent.graph.nodes.prepare_worker_tasks import (
 )
 from pangea_agent.graph.semantic_checks import build_runtime_semantic_checks
 from pangea_agent.graph.run_store import load_worker_task, review_result_skeleton
-from pangea_agent.graph.validation import ArtifactRejected
+from pangea_agent.graph.validation import (
+    ArtifactRejected,
+    _finding_excludes_linked_leak,
+    _known_c_container_semantic_artifact_ids,
+    _known_local_allocation_concurrency_artifact_ids,
+    _known_c_precheck_order_artifact_ids,
+    _known_c_review_misread_finding_ids,
+    _known_c_unmap_finding_ids,
+    _known_retained_realloc_artifact_ids,
+    _validate_known_c_required_failure_paths,
+    _non_actionable_review_issue_ids,
+    _retained_realloc_source_paths,
+    _reviewer_owned_field_issue_ids,
+    _reviewer_self_correction_issue_ids,
+    _stale_artifact_restoration_issue_ids,
+)
 from pangea_agent.models.worker import (
     AnalysisUnit,
     IndependentReviewResult,
+    ReviewResult,
     ReviewTask,
+    WorkerResult,
+    WorkerTask,
 )
 from pangea_agent.models.contract import TaskContract
 from pangea_agent.inventory.source_scanner import _known_macro_parse_artifact
@@ -245,12 +264,34 @@ def _validate_worker_task(task_path: Path) -> None:
     )
 
 
+def _reject_worker_task(task_path: Path) -> str:
+    rejected = subprocess.run(
+        [sys.executable, "-m", "pangea_agent.cli.main", "validate-worker-result", "--task", str(task_path)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert rejected.returncode != 0
+    return rejected.stderr
+
+
 def _validate_review_task(task_path: Path) -> None:
     subprocess.run(
         [sys.executable, "-m", "pangea_agent.cli.main", "check-review-artifact", "--task", str(task_path)],
         check=True,
         capture_output=True,
     )
+
+
+def _reject_review_task(task_path: Path) -> str:
+    rejected = subprocess.run(
+        [sys.executable, "-m", "pangea_agent.cli.main", "check-review-artifact", "--task", str(task_path)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert rejected.returncode != 0
+    return rejected.stderr
 
 
 def _bind_analysis_actions(state: dict) -> None:
@@ -344,6 +385,12 @@ def _unpaired_test_step_rejected() -> None:
         "status": "pending",
         "evidence": result["evidence"],
     }]
+    result["analysis_checkpoint"]["failure_paths"][0].update({
+        "linked_risk_ids": ["U00-R1"],
+        "failure": "业务操作失败",
+        "final_states": "系统状态异常",
+        "disposition": "risk",
+    })
     result["test_cases"] = [{
         "test_case_id": "U00-TC1",
         "title": "步骤与预期错位",
@@ -358,26 +405,23 @@ def _unpaired_test_step_rejected() -> None:
         "cleanup": ["恢复环境"],
     }]
     write_json(Path(task["result_path"]), result)
-    assert run_module_analysis(str(contract))["phase"] == "WAITING_TEST_GENERATION"
-    errors = read_json(data_root / "runs" / "smoke-01" / "progress.json")["errors"]
-    assert any("expected_result" in item["reason"] for item in errors)
+    rejection = _reject_worker_task(Path(state["agent_task_paths"][0]))
+    assert "expected_result" in rejection
     result["test_cases"][0]["steps"] = [{
         "action": "准备环境",
         "expected_result": "环境准备成功",
     }]
     write_json(Path(task["result_path"]), result)
-    assert run_module_analysis(str(contract))["phase"] == "WAITING_TEST_GENERATION"
-    errors = read_json(data_root / "runs" / "smoke-01" / "progress.json")["errors"]
-    assert any("failure_observation" in item["reason"] for item in errors)
+    rejection = _reject_worker_task(Path(state["agent_task_paths"][0]))
+    assert "failure_observation" in rejection
     result["test_cases"][0]["steps"] = [{
         "action": "检查 B.audit_count",
         "expected_result": "B.audit_count=0（通过标准）",
         "failure_observation": "B.audit_count=0（命中即 FAIL）",
     }]
     write_json(Path(task["result_path"]), result)
-    assert run_module_analysis(str(contract))["phase"] == "WAITING_TEST_GENERATION"
-    errors = read_json(data_root / "runs" / "smoke-01" / "progress.json")["errors"]
-    assert any("PASS 与 FAIL 状态断言相同" in item["reason"] for item in errors)
+    rejection = _reject_worker_task(Path(state["agent_task_paths"][0]))
+    assert "PASS 与 FAIL 状态断言相同" in rejection
 
 
 def _paired_test_steps_render_together() -> None:
@@ -410,13 +454,8 @@ def _expected_result_cannot_include_current_behavior() -> None:
     )
     result["test_cases"] = [case, second, third]
     write_json(Path(task["result_path"]), result)
-    rejected = run_module_analysis(str(contract))
-    assert rejected["phase"] == "WAITING_TEST_GENERATION"
-    errors = read_json(data_root / "runs" / "smoke-01" / "progress.json")["errors"]
-    reason = next(
-        item["reason"] for item in errors
-        if "expected_result 混入当前实现行为" in item["reason"]
-    )
+    reason = _reject_worker_task(Path(state["agent_task_paths"][0]))
+    assert "expected_result 混入当前实现行为" in reason
     assert "TC-ORACLE 第 1 步" in reason
     assert "TC-ORACLE-SECOND 第 1 步" in reason
     assert "TC-ORACLE-CONTRAST 第 1 步" in reason
@@ -434,6 +473,7 @@ def _requirement_only_test_case_is_accepted() -> None:
         title="需求行为补测",
     )]
     write_json(Path(task["result_path"]), result)
+    _validate_worker_task(Path(state["agent_task_paths"][0]))
     assert run_module_analysis(str(contract))["phase"] == "WAITING_INDEPENDENT_REVIEW"
 
 
@@ -485,13 +525,483 @@ def _semantic_check_risk_scope_is_enforced() -> None:
         "disposition": "risk",
     }]
     write_json(Path(task["result_path"]), result)
-    assert run_module_analysis(str(contract))["phase"] == "WAITING_TEST_GENERATION"
-    errors = read_json(data_root / "runs" / "smoke-01" / "progress.json")["errors"]
-    assert any("未声明 semantic check" in item["reason"] for item in errors)
+    rejection = _reject_worker_task(task_path)
+    assert "未落在当前分析单元 source_scope" in rejection
 
-    result["risks"][0]["affected_paths"] = ["demo:module/entry.c:1-8 (paired operation)"]
+    task["semantic_check_items"][0]["subject_path"] = "module/different.c"
+    write_json(task_path, task)
+    result["risks"][0]["affected_paths"] = ["demo:module/entry.c:1-8"]
     write_json(Path(task["result_path"]), result)
+    rejection = _reject_worker_task(task_path)
+    assert "未声明 semantic check" in rejection
+
+    task["semantic_check_items"][0]["subject_path"] = "module/entry.c"
+    write_json(task_path, task)
+    result["risks"][0]["affected_paths"] = ["demo:module/entry.c:1-8 (paired operation)"]
+    result["analysis_checkpoint"]["failure_paths"][0]["linked_risk_ids"] = []
+    result["analysis_checkpoint"]["failure_paths"][0]["disposition"] = "excluded"
+    write_json(Path(task["result_path"]), result)
+    rejection = _reject_worker_task(task_path)
+    assert "没有被当前 risk/unresolved failure path 关联" in rejection
+
+    result["analysis_checkpoint"]["failure_paths"][0]["linked_risk_ids"] = [
+        "U00-R-SCOPE"
+    ]
+    result["analysis_checkpoint"]["failure_paths"][0]["disposition"] = "risk"
+    result["analysis_checkpoint"]["failure_paths"].append({
+        "path_id": "FP-UNLINKED-RISK",
+        "linked_risk_ids": [],
+        "trigger": "另一业务入口调用",
+        "side_effects": "已发生状态变化",
+        "failure": "已确认的故障",
+        "caller_handling": "调用方未清理",
+        "final_states": "模块状态异常",
+        "disposition": "risk",
+    })
+    write_json(Path(task["result_path"]), result)
+    rejection = _reject_worker_task(task_path)
+    assert "risk/unresolved failure path 尚未转换并关联 RiskCard" in rejection
+
+    result["analysis_checkpoint"]["failure_paths"].pop()
+    original_system_result = result["risks"][0]["system_result"]
+    result["risks"][0]["system_result"] = (
+        "TAILQ_REMOVE silently succeeds as a no-op for an element outside the queue"
+    )
+    assert _known_c_container_semantic_artifact_ids(
+        WorkerTask.model_validate(task),
+        WorkerResult.model_validate(result),
+    ) == ["U00-R-SCOPE"]
+
+    result["risks"][0]["system_result"] = original_system_result
+    write_json(Path(task["result_path"]), result)
+    _validate_worker_task(task_path)
     assert run_module_analysis(str(contract))["phase"] == "WAITING_INDEPENDENT_REVIEW"
+
+    frozen_source = Path(task["repositories"][0]["source_root"]) / "module/entry.c"
+    frozen_source.write_text(
+        """void *build(unsigned long size) {
+    void *page;
+    page = calloc(1, size);
+    void *new_page = realloc(page, size + 1);
+    if (new_page == NULL) {
+        break;
+    }
+    page = new_page;
+    page_count++;
+    return page;
+}
+""",
+        encoding="utf-8",
+    )
+    worker_task = WorkerTask.model_validate(task)
+    assert _retained_realloc_source_paths(worker_task) == {"module/entry.c"}
+    realloc_result = WorkerResult.model_validate(result)
+    realloc_result.risks[0].system_result = (
+        "realloc failure breaks without free and leaks the original memory"
+    )
+    assert _known_retained_realloc_artifact_ids(worker_task, realloc_result) == [
+        "U00-R-SCOPE"
+    ]
+    realloc_result.risks[0].system_result = (
+        "When realloc fails, page_count was already incremented and becomes inconsistent"
+    )
+    assert _known_retained_realloc_artifact_ids(worker_task, realloc_result) == [
+        "U00-R-SCOPE"
+    ]
+    realloc_result.risks[0].system_result = (
+        "Two concurrent calls share page; another call frees page and leaves a stale pointer"
+    )
+    assert _known_local_allocation_concurrency_artifact_ids(
+        worker_task,
+        realloc_result,
+    ) == ["U00-R-SCOPE"]
+
+    frozen_source.write_text(
+        """#define AE4DMA_PCIE_BAR 0
+static inline void spdk_mmio_write_4(volatile uint32_t *dst, uint32_t val) {}
+/** spdk_ae4dma_build_copy return 0 on success, negative errno on failure. */
+int build_copy(void *src, void *dst) {
+    psrc_addr = spdk_vtophys(src, &src_len);
+    pdst_addr = spdk_vtophys(dst, &dst_len);
+    if (psrc_addr == SPDK_VTOPHYS_ERROR || pdst_addr == SPDK_VTOPHYS_ERROR) {
+        return -EFAULT;
+    }
+    seg_len = spdk_min(src_len, dst_len);
+    if (seg_len == 0) {
+        return -EINVAL;
+    }
+    if (cmd_q->ring_buff_count >= RING_LIMIT) {
+        return 1;
+    }
+    return ae4dma_prep_copy(dst, src, seg_len);
+}
+int build_batch(void *src, void *dst) {
+    if (spdk_vtophys(src, &src_len) == SPDK_VTOPHYS_ERROR) {
+        return -EFAULT;
+    }
+    cb_desc = ae4dma_prep_copy(dst, src, seg_len);
+    if (!cb_desc) {
+        return -ENOMEM;
+    }
+    last_desc = cb_desc;
+    if (last_desc) {
+        cb_desc->callback_fn = cb_fn;
+    }
+    return 0;
+}
+int process_events(struct cmd_queue *cmd_q) {
+    uint64_t sub_desc_cnt = cmd_q->ring_buff_count;
+    while (sub_desc_cnt) {
+    if (desc_status == AE4DMA_DMA_DESC_SUBMITTED) {
+        break;
+    }
+    if (desc_status != AE4DMA_DMA_DESC_COMPLETED) {
+        desc_err_code = hw_desc->err_code;
+    }
+    assert(cmd_q->ring_buff_count > 0);
+    cmd_q->ring_buff_count--;
+    if (ring[tail].callback_fn) {
+        ring[tail].callback_fn(ring[tail].callback_arg, desc_err_code);
+    }
+    tail = (tail + 1);
+    sub_desc_cnt--;
+    }
+}
+/** Flush previously built descriptors and flush the descriptor to hardware for further processing. */
+void spdk_ae4dma_flush(struct chan *ae4dma, int hwq_id) {}
+static int ae4dma_map_pci_bar(struct chan *ae4dma) {
+    return -1;
+}
+static int ae4dma_unmap_pci_bar(struct chan *ae4dma) {
+    int rc = 0;
+    rc = spdk_pci_device_unmap_bar(ae4dma->device, 0, addr);
+    return rc;
+}
+static bool ae4dma_config_queues_per_device(uint8_t num_hw_queues) {
+    if (num_hw_queues <= AE4DMA_MAX_HW_QUEUES) {
+        return false;
+    }
+    return true;
+}
+static bool ae4dma_desc_cmdq_full(struct cmd_queue *cmd_q) {
+    return cmd_q->count >= (AE4DMA_DESCRIPTORS_PER_CMDQ - 4);
+}
+static void ae4dma_prep_copy(struct cmd_queue *cmd_q) {
+    if (cmd_q->ring_buff_count >= (AE4DMA_DESCRIPTORS_PER_CMDQ - 4)) {
+        return;
+    }
+}
+int ae4dma_channel_start(struct chan *ae4dma) {
+    if (!ae4dma_config_queues_per_device(hw_queues)) {
+        q_per_eng = hw_queues;
+    } else {
+        q_per_eng = AE4DMA_MAX_HW_QUEUES;
+    }
+    size = cmd_q->queue_size;
+    cmd_q->qring_buffer_pa = spdk_vtophys(cmd_q->qbase_addr, &size);
+    cmd_q->ring = calloc(RING_LIMIT, sizeof(*cmd_q->ring));
+    if (!cmd_q->ring) return -ENOMEM;
+}
+void ae4dma_channel_destruct(struct chan *ae4dma) {
+    spdk_pci_device_unmap_bar(ae4dma->device, 0, addr);
+    ae4dma_unmap_pci_bar(ae4dma);
+    spdk_free(ae4dma->cmd_q[0].qbase_addr);
+    free(ae4dma->cmd_q[0].ring);
+}
+void spdk_ae4dma_detach(struct chan *ae4dma) {
+    ae4dma_channel_destruct(ae4dma);
+    free(ae4dma);
+}
+void *ae4dma_attach(struct chan *ae4dma) {
+    if (ae4dma_channel_start(ae4dma) != 0) {
+        ae4dma_channel_destruct(ae4dma);
+        free(ae4dma);
+        return NULL;
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    realloc_result.risks[0].trigger = (
+        "vtophys returns SPDK_VTOPHYS_ERROR; 当前描述符已入队写入 ring"
+    )
+    assert _known_c_precheck_order_artifact_ids(
+        worker_task,
+        realloc_result,
+    ) == ["U00-R-SCOPE"]
+    required_result = WorkerResult.model_validate(result)
+    try:
+        _validate_known_c_required_failure_paths(worker_task, required_result)
+    except ArtifactRejected as exc:
+        assert "ring-full" in str(exc)
+    else:
+        raise AssertionError("ring-full positive return contract omission must be rejected")
+    contract_path = required_result.analysis_checkpoint.failure_paths[0]
+    contract_path.path_id = "prep_copy-ring-full"
+    contract_path.disposition = "risk"
+    contract_path.trigger = "capacity guard is reached"
+    contract_path.failure = "returns positive 1 while public contract requires negative errno"
+    contract_path.caller_handling = "caller observes the contract violation"
+    try:
+        _validate_known_c_required_failure_paths(worker_task, required_result)
+    except ArtifactRejected as exc:
+        assert "unmap" in str(exc)
+    else:
+        raise AssertionError("lost destructor unmap rc omission must be rejected")
+    unmap_path = contract_path.model_copy(deep=True)
+    unmap_path.path_id = "FP-UNMAP-RC"
+    unmap_path.trigger = "detach calls destruct"
+    unmap_path.failure = "destruct ignores the unmap rc return value"
+    unmap_path.caller_handling = "detach drops the nonzero return value"
+    required_result.analysis_checkpoint.failure_paths.append(unmap_path)
+    _validate_known_c_required_failure_paths(worker_task, required_result)
+    callback_path = contract_path.model_copy(deep=True)
+    callback_path.path_id = "prep_copy-callback-wrong-desc"
+    callback_path.trigger = "normal multi-segment completion"
+    callback_path.failure = "functionally correct today but considered a coding-practice issue"
+    callback_path.caller_handling = "verify the final callback placement"
+    required_result.analysis_checkpoint.failure_paths.append(callback_path)
+    assert "prep_copy-callback-wrong-desc" in _known_c_precheck_order_artifact_ids(
+        worker_task,
+        required_result,
+    )
+    required_result.analysis_checkpoint.failure_paths.pop()
+    realloc_result.risks[0].trigger = (
+        "vtophys returns SPDK_VTOPHYS_ERROR; 当前描述符未入队，"
+        "此前成功段的描述符已入队且无法回滚"
+    )
+    assert _known_c_precheck_order_artifact_ids(
+        worker_task,
+        realloc_result,
+    ) == []
+    realloc_result.risks[0].trigger = (
+        "错误状态出现后 callback 未被调用，调用方一直等待"
+    )
+    assert _known_c_precheck_order_artifact_ids(
+        worker_task,
+        realloc_result,
+    ) == ["U00-R-SCOPE"]
+    realloc_result.risks[0].trigger = (
+        "初始化返回 NULL，若调用方未检查就使用会触发空指针崩溃"
+    )
+    assert _known_c_precheck_order_artifact_ids(
+        worker_task,
+        realloc_result,
+    ) == ["U00-R-SCOPE"]
+    realloc_result.risks[0].trigger = (
+        "vtophys 失败后 ring 中存在无效物理地址描述符，硬件将访问错误地址"
+    )
+    assert _known_c_precheck_order_artifact_ids(
+        worker_task,
+        realloc_result,
+    ) == ["U00-R-SCOPE"]
+    realloc_result.risks[0].trigger = (
+        "seg_len=0 返回 -EINVAL，当前 segment 无描述符入队且 ring 无残留"
+    )
+    assert _known_c_precheck_order_artifact_ids(
+        worker_task,
+        realloc_result,
+    ) == ["U00-R-SCOPE"]
+    realloc_result.risks[0].trigger = (
+        "ring full 返回 1；重新调用会覆盖未消费的旧描述符"
+    )
+    assert _known_c_precheck_order_artifact_ids(
+        worker_task,
+        realloc_result,
+    ) == ["U00-R-SCOPE"]
+    realloc_result.risks[0].trigger = (
+        "返回值不含错误状态，但 callback 会收到 err_code"
+    )
+    assert _known_c_precheck_order_artifact_ids(
+        worker_task,
+        realloc_result,
+    ) == ["U00-R-SCOPE"]
+    realloc_result.risks[0].trigger = (
+        "ring calloc 分配失败后 qbase_addr 未释放并发生资源泄漏"
+    )
+    assert _known_c_precheck_order_artifact_ids(
+        worker_task,
+        realloc_result,
+    ) == ["U00-R-SCOPE"]
+    realloc_result.risks[0].trigger = (
+        "process_events 未检查 ring_buff_count 就执行 assert，计数下溢触发断言"
+    )
+    assert _known_c_precheck_order_artifact_ids(
+        worker_task,
+        realloc_result,
+    ) == ["U00-R-SCOPE"]
+    realloc_result.risks[0].trigger = (
+        "spdk_vtophys 的 size 未初始化，长度参数错误"
+    )
+    assert _known_c_precheck_order_artifact_ids(
+        worker_task,
+        realloc_result,
+    ) == ["U00-R-SCOPE"]
+    realloc_result.risks[0].trigger = (
+        "process_events 在 empty ring、ring_buff_count=0 时仍进入循环，"
+        "触发 assert 或 unsigned underflow"
+    )
+    assert _known_c_precheck_order_artifact_ids(
+        worker_task,
+        realloc_result,
+    ) == ["U00-R-SCOPE"]
+    realloc_result.risks[0].trigger = (
+        "ae4dma_unmap_pci_bar unconditionally returns 0 (success) after BAR unmap failure"
+    )
+    assert _known_c_precheck_order_artifact_ids(
+        worker_task,
+        realloc_result,
+    ) == ["U00-R-SCOPE"]
+    realloc_result.risks[0].trigger = (
+        "BAR unmap fails; ae4dma_channel_destruct ignores the nonzero rc return value, "
+        "frees its retry state, and detach cannot report the failure"
+    )
+    assert _known_c_precheck_order_artifact_ids(
+        worker_task,
+        realloc_result,
+    ) == []
+    realloc_result.risks[0].trigger = (
+        "vtophys failure leaves a partial descriptor batch with the user callback attached and invoked"
+    )
+    assert _known_c_precheck_order_artifact_ids(
+        worker_task,
+        realloc_result,
+    ) == ["U00-R-SCOPE"]
+    realloc_result.risks[0].trigger = (
+        "queue configuration logic is inverted and always selects maximum 16 queues"
+    )
+    assert _known_c_precheck_order_artifact_ids(
+        worker_task,
+        realloc_result,
+    ) == ["U00-R-SCOPE"]
+    realloc_result.risks[0].trigger = (
+        "attach failure has no cleanup path"
+    )
+    assert _known_c_precheck_order_artifact_ids(
+        worker_task,
+        realloc_result,
+    ) == ["U00-R-SCOPE"]
+    review_findings = [
+        SimpleNamespace(
+            check_id="C01",
+            finding="描述符环边界检查在 ring_buff_count 递增之后",
+            evidence=[],
+        ),
+        SimpleNamespace(
+            check_id="C02",
+            finding="ring calloc 分配失败时 qbase_addr 未释放并泄漏",
+            evidence=[],
+        ),
+        SimpleNamespace(
+            check_id="C03",
+            finding="递减 ring_buff_count 前无检查，assert 可能触发",
+            evidence=[],
+        ),
+        SimpleNamespace(
+            check_id="C05",
+            finding="spdk_vtophys 的 size 参数需确认是否正确赋值",
+            evidence=[],
+        ),
+        SimpleNamespace(
+            check_id="C06",
+            finding="qbase_lo/qbase_hi MMIO write 失败后资源泄漏",
+            evidence=[],
+        ),
+        SimpleNamespace(
+            check_id="C07",
+            finding="unmap 硬编码 BAR=0 而非 AE4DMA_PCIE_BAR",
+            evidence=[],
+        ),
+        SimpleNamespace(
+            check_id="C08",
+            finding="ERROR 状态处理后仍推进 tail，导致 descriptor 状态混淆",
+            evidence=[],
+        ),
+        SimpleNamespace(
+            check_id="C09",
+            finding="SUBMITTED 状态 break 会让处理永久停止",
+            evidence=[],
+        ),
+        SimpleNamespace(
+            check_id="C10",
+            finding="spdk_ae4dma_flush 不等待 DMA 完成",
+            evidence=[],
+        ),
+        SimpleNamespace(
+            check_id="C11",
+            finding="attach 失败后没有 cleanup",
+            evidence=[],
+        ),
+        SimpleNamespace(
+            check_id="C12",
+            finding="cmd_q_count 在部分初始化失败时计数不一致",
+            evidence=[],
+        ),
+        SimpleNamespace(
+            check_id="C13",
+            finding="ae4dma_map_pci_bar 返回 -1，不符合 errno 约定",
+            evidence=[],
+        ),
+        SimpleNamespace(
+            check_id="C14",
+            finding="公共 API 返回值 -1、void 与 errno 不一致",
+            evidence=[],
+        ),
+        SimpleNamespace(
+            check_id="C15",
+            finding="硬件描述符错误只记日志不传播，调用方无法感知",
+            evidence=[],
+        ),
+        SimpleNamespace(
+            check_id="C16",
+            finding=(
+                "公共 API 的 ring-full 失败返回正数 1，与 negative errno 契约不一致"
+            ),
+            evidence=[],
+        ),
+        SimpleNamespace(
+            check_id="CALLBACK-WRONG-DESC",
+            finding=(
+                "cb_desc 可能不是 last_desc，成功后把 callback 挂到错误 descriptor"
+            ),
+            evidence=[],
+        ),
+        SimpleNamespace(
+            check_id="QUEUE-INVERTED",
+            finding="q_per_eng 的 queue 分支逻辑反置，输入范围与赋值矛盾",
+            evidence=[],
+        ),
+        SimpleNamespace(
+            check_id="RING-THRESHOLD",
+            finding="ring 的 > 与 >= boundary 阈值不一致",
+            evidence=[],
+        ),
+        SimpleNamespace(
+            check_id="VTOPHYS-PARTIAL-CALLBACK",
+            finding="vtophys 失败后此前描述符仍带 callback 并触发回调",
+            evidence=[],
+        ),
+    ]
+    assert _known_c_review_misread_finding_ids(
+        worker_task,
+        review_findings,
+    ) == [
+        "C01", "C02", "C03", "C05", "C06", "C07", "C08",
+        "C09", "C10", "C11", "C12", "C13", "C14", "C15",
+        "CALLBACK-WRONG-DESC", "QUEUE-INVERTED", "RING-THRESHOLD",
+        "VTOPHYS-PARTIAL-CALLBACK",
+    ]
+    unmap_findings = [
+        SimpleNamespace(
+            check_id="C04",
+            finding="detach 忽略 unmap 返回值并继续释放 channel",
+            evidence=[],
+        ),
+    ]
+    assert _known_c_unmap_finding_ids(
+        worker_task,
+        unmap_findings,
+    ) == ["C04"]
 
 
 def _derived_semantic_path_does_not_rewrite_main_path() -> None:
@@ -551,6 +1061,7 @@ def _derived_semantic_path_does_not_rewrite_main_path() -> None:
         "disposition": "risk",
     }]
     write_json(Path(task["result_path"]), result)
+    _validate_worker_task(task_path)
     assert run_module_analysis(str(contract))["phase"] == "WAITING_INDEPENDENT_REVIEW"
 
 
@@ -559,7 +1070,24 @@ def _write_all_analysis(state: dict) -> None:
     _bind_analysis_actions(state)
     for task_path in state["agent_task_paths"]:
         task = read_json(Path(task_path))
-        write_json(Path(task["result_path"]), _task_result(task))
+        result = _task_result(task)
+        gaps = [
+            (context, gap)
+            for context in task.get("coverage_context", [])
+            for gap in context.get("gaps", [])
+        ]
+        for index, (context, gap) in enumerate(gaps, start=1):
+            case_id = f"{task['unit']['unit_id']}-COV-AUTO-{index:02d}"
+            case = _test_case(case_id, title=f"补测零覆盖函数 {context['function']}")
+            case["linked_coverage_ids"] = [gap["coverage_id"]]
+            result["test_cases"].append(case)
+            result["analysis_checkpoint"]["coverage_decisions"].append({
+                "coverage_id": gap["coverage_id"],
+                "disposition": "new_coverage_case",
+                "linked_test_case_ids": [case_id],
+                "reason": "通过当前模块业务入口补齐函数级零覆盖路径。",
+            })
+        write_json(Path(task["result_path"]), result)
         _validate_worker_task(Path(task_path))
 
 
@@ -716,6 +1244,69 @@ def _pass_report() -> None:
     assert "质量门禁已通过。完成" in markdown and "质量门禁已通过。完成" in html_report
 
 
+def _late_worker_rejection_reuses_independent_review() -> None:
+    _, data_root, contract = _workspace()
+    state = run_module_analysis(str(contract))
+    _write_all_analysis(state)
+    state = run_module_analysis(str(contract))
+    assert state["phase"] == "WAITING_INDEPENDENT_REVIEW"
+    run_dir = data_root / "runs" / "smoke-01"
+    independent_task_path = run_dir / "agent-tasks" / "review-independent.json"
+    independent_task = read_json(independent_task_path)
+    subprocess.run(
+        [
+            sys.executable, "-m", "pangea_agent.cli.main", "record-agent-session",
+            "--run-id", "smoke-01", "--data-root", str(data_root),
+            "--role", "review", "--task-id", _REVIEW_SESSION_ID,
+        ],
+        check=True,
+        capture_output=True,
+    )
+    findings = []
+    for reference in independent_task["analysis_tasks"]:
+        worker_task = read_json(Path(reference["task_path"]))
+        findings.extend({
+            "unit_id": reference["unit_id"],
+            "check_id": item["check_id"],
+            "finding": f"独立核对 {item['check_id']} 未发现额外问题",
+            "evidence": [f"{worker_task['unit']['repo_id']}:{item['subject_path']}:1"],
+        } for item in worker_task["semantic_check_items"])
+    write_json(Path(independent_task["result_path"]), {
+        "schema_version": "1.0",
+        "run_id": "smoke-01",
+        "reviewer_id": "reviewer-1",
+        "finish_reason": "stop",
+        "summary": "独立复核完成",
+        "reviewed_units": [item["unit_id"] for item in independent_task["analysis_tasks"]],
+        "findings": findings,
+    })
+    _validate_review_task(independent_task_path)
+
+    worker_task_path = run_dir / "agent-tasks" / "analysis" / "U00-test_generation.json"
+    worker_task = read_json(worker_task_path)
+    worker_result_path = Path(worker_task["result_path"])
+    worker_result = read_json(worker_result_path)
+    worker_result["finish_reason"] = "length"
+    write_json(worker_result_path, worker_result)
+
+    state = run_module_analysis(str(contract))
+    assert state["phase"] == "WAITING_TEST_GENERATION"
+    assert [action["stage"] for action in state["agent_actions"]] == ["test_generation"]
+    assert [action["action"] for action in state["agent_actions"]] == ["dispatch_agent"]
+    retry_task = read_json(worker_task_path)
+    assert retry_task["validation_feedback"]
+
+    worker_result["finish_reason"] = "stop"
+    write_json(worker_result_path, worker_result)
+    _bind_analysis_actions(state)
+    _validate_worker_task(worker_task_path)
+    state = run_module_analysis(str(contract))
+    assert state["phase"] == "WAITING_COMPARISON_REVIEW"
+    assert read_json(run_dir / "agent-tasks" / "review.json")["same_reviewer_id"] == read_json(
+        run_dir / "agent-results" / "review-independent.json"
+    )["reviewer_id"]
+
+
 def _review_missing_finding_cannot_pass() -> None:
     _, data_root, contract = _workspace()
     state = run_module_analysis(str(contract))
@@ -751,10 +1342,65 @@ def _review_missing_finding_cannot_pass() -> None:
         ),
         "test_case_checks": _test_case_checks(task),
     })
-    state = run_module_analysis(str(contract))
-    assert state["phase"] == "WAITING_COMPARISON_REVIEW"
+    rejected = subprocess.run(
+        [
+            sys.executable, "-m", "pangea_agent.cli.main",
+            "check-review-artifact", "--task",
+            str(data_root / "runs" / "smoke-01" / "agent-tasks" / "review.json"),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert rejected.returncode != 0
+    assert "PASS 不能包含 missing" in rejected.stderr
     progress = read_json(data_root / "runs" / "smoke-01" / "progress.json")
-    assert any("PASS 不能包含 missing" in item["reason"] for item in progress["errors"])
+    assert progress["phase"] == "WAITING_COMPARISON_REVIEW"
+
+
+def _review_blocking_finding_must_reach_rework_issue() -> None:
+    _, data_root, contract = _workspace()
+    state = run_module_analysis(str(contract))
+    _write_all_analysis(state)
+    assert run_module_analysis(str(contract))["phase"] == "WAITING_INDEPENDENT_REVIEW"
+    extra = {
+        "unit_id": "U00",
+        "check_id": "LIFECYCLE-U00",
+        "finding": "独立复核发现一条必须返工的生命周期路径",
+        "evidence": ["demo:module/entry.c:1"],
+    }
+    task, findings = _advance_to_review_comparison(
+        data_root,
+        "smoke-01",
+        extra_findings=[extra],
+    )
+    write_json(Path(task["result_path"]), {
+        "schema_version": "1.0",
+        "run_id": "smoke-01",
+        "reviewer_id": "reviewer-1",
+        "finish_reason": "stop",
+        "status": "REWORK",
+        "summary": "识别到生命周期遗漏",
+        "issues": [{
+            "issue_id": "I-001",
+            "unit_id": "U00",
+            "reason": "要求补充遗漏的生命周期路径，但错误地没有标识来源 finding",
+            "required_change": "新增对应风险和测试用例",
+        }],
+        "reviewed_units": [item["unit_id"] for item in task["analysis_results"]],
+        "independent_findings": _compared_findings(
+            task,
+            findings,
+            lambda finding: (
+                "missing" if finding["check_id"] == "LIFECYCLE-U00" else "covered"
+            ),
+        ),
+        "test_case_checks": _test_case_checks(task),
+    })
+    rejected = _reject_review_task(
+        data_root / "runs" / "smoke-01" / "agent-tasks" / "review.json"
+    )
+    assert "确保返工任务不会漏项" in rejected
 
 
 def _comparison_must_account_for_every_worker_artifact() -> None:
@@ -795,6 +1441,7 @@ def _comparison_must_account_for_every_worker_artifact() -> None:
         "disposition": "risk",
     })
     write_json(Path(task["result_path"]), result)
+    _validate_worker_task(Path(state["agent_task_paths"][0]))
     assert run_module_analysis(str(contract))["phase"] == "WAITING_INDEPENDENT_REVIEW"
     task, findings = _advance_to_review_comparison(data_root, "smoke-01")
     compared = _compared_findings(task, findings)
@@ -813,13 +1460,59 @@ def _comparison_must_account_for_every_worker_artifact() -> None:
         "independent_findings": compared,
         "test_case_checks": _test_case_checks(task),
     })
-    rejected = run_module_analysis(str(contract))
-    assert rejected["phase"] == "WAITING_COMPARISON_REVIEW"
-    progress = read_json(data_root / "runs" / "smoke-01" / "progress.json")
-    assert any(
-        "linked_worker_test_case_ids" in item["reason"]
-        for item in progress["errors"]
+    rejected = subprocess.run(
+        [
+            sys.executable, "-m", "pangea_agent.cli.main",
+            "check-review-artifact", "--task",
+            str(data_root / "runs" / "smoke-01" / "agent-tasks" / "review.json"),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
     )
+    assert rejected.returncode != 0
+    assert "linked_worker_test_case_ids" in rejected.stderr
+    compared.append({
+        "unit_id": "U00",
+        "check_id": "WORKER-U00-R-ACCOUNT",
+        "finding": "comparison 阶段从 Worker 产物回查源码确认该失败路径成立",
+        "evidence": ["demo:module/entry.c:1"],
+        "worker_disposition": "covered",
+        "linked_worker_risk_ids": ["U00-R-ACCOUNT"],
+        "linked_worker_test_case_ids": ["U00-TC-ACCOUNT"],
+    })
+    write_json(Path(task["result_path"]), {
+        "schema_version": "1.0",
+        "run_id": "smoke-01",
+        "reviewer_id": "reviewer-1",
+        "finish_reason": "stop",
+        "status": "PASS",
+        "summary": "对照补充 finding 承接独立阶段未覆盖的有效 Worker 产物",
+        "issues": [],
+        "reviewed_units": [item["unit_id"] for item in task["analysis_results"]],
+        "independent_findings": compared,
+        "test_case_checks": _test_case_checks(task),
+    })
+    assert "必须使用 COMPARISON- 前缀" in _reject_review_task(
+        data_root / "runs" / "smoke-01" / "agent-tasks" / "review.json"
+    )
+    compared[-1]["check_id"] = "COMPARISON-U00-R-ACCOUNT"
+    write_json(Path(task["result_path"]), {
+        "schema_version": "1.0",
+        "run_id": "smoke-01",
+        "reviewer_id": "reviewer-1",
+        "finish_reason": "stop",
+        "status": "PASS",
+        "summary": "对照补充 finding 承接独立阶段未覆盖的有效 Worker 产物",
+        "issues": [],
+        "reviewed_units": [item["unit_id"] for item in task["analysis_results"]],
+        "independent_findings": compared,
+        "test_case_checks": _test_case_checks(task),
+    })
+    _validate_review_task(
+        data_root / "runs" / "smoke-01" / "agent-tasks" / "review.json"
+    )
+    assert run_module_analysis(str(contract))["phase"] == "COMPLETE"
 
 
 def _comparison_cannot_invent_coverage_closure() -> None:
@@ -845,10 +1538,8 @@ def _comparison_cannot_invent_coverage_closure() -> None:
         "independent_findings": _compared_findings(task, findings),
         "test_case_checks": _test_case_checks(task),
     })
-    rejected = run_module_analysis(str(contract))
-    assert rejected["phase"] == "WAITING_COMPARISON_REVIEW"
-    progress = read_json(data_root / "runs" / "smoke-01" / "progress.json")
-    assert any("不得要求伪造 Coverage 闭环" in item["reason"] for item in progress["errors"])
+    review_task_path = data_root / "runs" / "smoke-01" / "agent-tasks" / "review.json"
+    assert "不得要求伪造 Coverage 闭环" in _reject_review_task(review_task_path)
 
 
 def _comparison_cannot_replace_oracle_with_buggy_behavior() -> None:
@@ -876,13 +1567,8 @@ def _comparison_cannot_replace_oracle_with_buggy_behavior() -> None:
         "independent_findings": _compared_findings(task, findings),
         "test_case_checks": _test_case_checks(task),
     })
-    rejected = run_module_analysis(str(contract))
-    assert rejected["phase"] == "WAITING_COMPARISON_REVIEW"
-    progress = read_json(data_root / "runs" / "smoke-01" / "progress.json")
-    assert any(
-        "不得把当前错误实现写成测试通过标准" in item["reason"]
-        for item in progress["errors"]
-    )
+    review_task_path = data_root / "runs" / "smoke-01" / "agent-tasks" / "review.json"
+    assert "不得把当前错误实现写成测试通过标准" in _reject_review_task(review_task_path)
 
     payload = read_json(Path(task["result_path"]))
     payload["issues"] = [{
@@ -895,12 +1581,31 @@ def _comparison_cannot_replace_oracle_with_buggy_behavior() -> None:
         "required_change": "按正确契约修正 expected_result",
     }]
     write_json(Path(task["result_path"]), payload)
-    rejected = run_module_analysis(str(contract))
-    assert rejected["phase"] == "WAITING_COMPARISON_REVIEW"
-    progress = read_json(data_root / "runs" / "smoke-01" / "progress.json")
-    assert any(
-        "不得要求 expected_result 与 failure_observation 相同或不矛盾" in item["reason"]
-        for item in progress["errors"]
+    assert (
+        "不得要求 expected_result 与 failure_observation 相同或不矛盾"
+        in _reject_review_task(review_task_path)
+    )
+    payload["issues"] = [{
+        "issue_id": "ISSUE-U00-ASAN-ORACLE",
+        "unit_id": "U00",
+        "reason": "错误地把缺陷信号当作故障注入步骤的通过标准",
+        "required_change": "将 expected_result 改为：ASan 报告 double-free 或进程崩溃",
+    }]
+    write_json(Path(task["result_path"]), payload)
+    assert "不得把当前错误实现写成测试通过标准" in _reject_review_task(
+        review_task_path
+    )
+    payload["issues"] = [{
+        "issue_id": "ISSUE-U00-ACTUAL-BUGGY-ORACLE",
+        "unit_id": "U00",
+        "reason": "错误地把当前缺陷结果要求成通过标准",
+        "required_change": (
+            "Rewrite TC-U00-01 expected_result to describe the actual buggy behavior"
+        ),
+    }]
+    write_json(Path(task["result_path"]), payload)
+    assert "不得把当前错误实现写成测试通过标准" in _reject_review_task(
+        review_task_path
     )
 
 
@@ -930,10 +1635,18 @@ def _comparison_does_not_rework_worker_for_reviewer_mistake() -> None:
             "required_change": "修正 SC-DEMO-01 的 finding，改成与冻结源码一致",
         }],
     })
-    rejected = run_module_analysis(str(contract))
-    assert rejected["phase"] == "WAITING_COMPARISON_REVIEW"
-    progress = read_json(data_root / "runs" / "smoke-01" / "progress.json")
-    assert any("不得派发 worker 返工" in item["reason"] for item in progress["errors"])
+    rejected = subprocess.run(
+        [
+            sys.executable, "-m", "pangea_agent.cli.main",
+            "check-review-artifact", "--task",
+            str(data_root / "runs" / "smoke-01" / "agent-tasks" / "review.json"),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert rejected.returncode != 0
+    assert "不得派发 worker 返工" in rejected.stderr
 
     write_json(Path(task["result_path"]), {
         **base,
@@ -941,6 +1654,9 @@ def _comparison_does_not_rework_worker_for_reviewer_mistake() -> None:
         "summary": "独立 finding 已被冻结源码推翻，worker 结论正确",
         "issues": [],
     })
+    _validate_review_task(
+        data_root / "runs" / "smoke-01" / "agent-tasks" / "review.json"
+    )
     assert run_module_analysis(str(contract))["phase"] == "COMPLETE"
 
 
@@ -972,24 +1688,13 @@ def _comparison_cannot_drop_independent_findings() -> None:
         "independent_findings": [],
         "test_case_checks": _test_case_checks(task),
     })
-    state = run_module_analysis(str(contract))
-    assert state["phase"] == "WAITING_COMPARISON_REVIEW"
-    progress = read_json(data_root / "runs" / "smoke-01" / "progress.json")
-    assert any("必须逐项保留独立复核 findings" in item["reason"] for item in progress["errors"])
+    review_task_path = data_root / "runs" / "smoke-01" / "agent-tasks" / "review.json"
+    assert "必须逐项保留独立复核 findings" in _reject_review_task(review_task_path)
 
 
 def _rework_same_reviewer() -> None:
     _, data_root, contract = _lua_workspace()
     state = run_module_analysis(str(contract))
-    subprocess.run(
-        [
-            sys.executable, "-m", "pangea_agent.cli.main", "record-agent-session",
-            "--run-id", "smoke-01", "--data-root", str(data_root),
-            "--role", "analysis", "--unit-id", "U00", "--task-id", _ANALYSIS_SESSION_ID,
-        ],
-        check=True,
-        capture_output=True,
-    )
     _write_all_analysis(state)
     run_module_analysis(str(contract))
     _review(data_root, "smoke-01", status="REWORK", reviewer="reviewer-1")
@@ -1049,30 +1754,28 @@ def _rework_same_reviewer() -> None:
     _validate_worker_task(
         data_root / "runs" / "smoke-01" / "agent-tasks" / "rework" / "U00.json"
     )
+    prior_review_path = (
+        data_root / "runs" / "smoke-01" / "agent-results" / "review.json"
+    )
+    prior_review = read_json(prior_review_path)
+    prior_review["independent_findings"][0]["linked_worker_risk_ids"] = ["REMOVED-RISK"]
+    prior_review["independent_findings"][0]["linked_worker_test_case_ids"] = ["REMOVED-TEST"]
+    write_json(prior_review_path, prior_review)
     state = run_module_analysis(str(contract))
     assert state["phase"] == "WAITING_REWORK_VERIFICATION"
     review_task = read_json(data_root / "runs" / "smoke-01" / "agent-tasks" / "rework-review.json")
-    assert review_task["same_reviewer_id"] == "reviewer-1"
+    assert review_task["same_reviewer_id"] == _REVIEW_SESSION_ID
     assert review_task["independent_result_path"].endswith("review-independent.json")
     graph_prepared_review = read_json(Path(review_task["result_path"]))
-    prior_review = read_json(data_root / "runs" / "smoke-01" / "agent-results" / "review.json")
-    assert [
-        (
-            item["unit_id"], item["check_id"], item["worker_disposition"],
-            item["linked_worker_risk_ids"], item["linked_worker_test_case_ids"],
-        )
+    assert all(
+        "REMOVED-RISK" not in item["linked_worker_risk_ids"]
+        and "REMOVED-TEST" not in item["linked_worker_test_case_ids"]
         for item in graph_prepared_review["independent_findings"]
-    ] == [
-        (
-            item["unit_id"], item["check_id"], item["worker_disposition"],
-            item["linked_worker_risk_ids"], item["linked_worker_test_case_ids"],
-        )
-        for item in prior_review["independent_findings"]
-    ]
+    )
     write_json(Path(review_task["result_path"]), {
         "schema_version": "1.0",
         "run_id": "smoke-01",
-        "reviewer_id": "reviewer-1",
+        "reviewer_id": _REVIEW_SESSION_ID,
         "finish_reason": "stop",
         "status": "PASS",
         "summary": "返工验证通过",
@@ -1080,15 +1783,23 @@ def _rework_same_reviewer() -> None:
         "reviewed_units": [item["unit_id"] for item in review_task["analysis_results"]],
         "independent_findings": [],
     })
-    rejected = run_module_analysis(str(contract))
-    assert rejected["phase"] == "WAITING_REWORK_VERIFICATION"
-    progress = read_json(data_root / "runs" / "smoke-01" / "progress.json")
-    assert any("逐项保留独立复核 findings" in item["reason"] for item in progress["errors"])
+    rejected = subprocess.run(
+        [
+            sys.executable, "-m", "pangea_agent.cli.main",
+            "check-review-artifact", "--task",
+            str(data_root / "runs" / "smoke-01" / "agent-tasks" / "rework-review.json"),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert rejected.returncode != 0
+    assert "逐项保留独立复核 findings" in rejected.stderr
     independent = read_json(Path(review_task["independent_result_path"]))
     write_json(Path(review_task["result_path"]), {
         "schema_version": "1.0",
         "run_id": "smoke-01",
-        "reviewer_id": "reviewer-1",
+        "reviewer_id": _REVIEW_SESSION_ID,
         "finish_reason": "stop",
         "status": "PASS",
         "summary": "返工验证通过",
@@ -1099,6 +1810,9 @@ def _rework_same_reviewer() -> None:
         ),
         "test_case_checks": _test_case_checks(review_task),
     })
+    _validate_review_task(
+        data_root / "runs" / "smoke-01" / "agent-tasks" / "rework-review.json"
+    )
     assert run_module_analysis(str(contract))["phase"] == "COMPLETE"
 
 
@@ -1134,19 +1848,63 @@ def _rework_preserves_allowed_material_paths() -> None:
     _validate_worker_task(rework_task_path)
 
 
+def _invalid_rework_finishes_unresolved_without_reviewer_loop() -> None:
+    _, data_root, contract = _workspace()
+    state = run_module_analysis(str(contract))
+    _write_all_analysis(state)
+    assert run_module_analysis(str(contract))["phase"] == "WAITING_INDEPENDENT_REVIEW"
+    _review(data_root, "smoke-01", status="REWORK")
+    state = run_module_analysis(str(contract))
+    assert state["phase"] == "WAITING_REWORK"
+    run_dir = data_root / "runs" / "smoke-01"
+    rework_task_path = run_dir / "agent-tasks" / "rework" / "U00.json"
+    rework_task = read_json(rework_task_path)
+    write_json(Path(rework_task["result_path"]), _task_result(rework_task))
+    _validate_worker_task(rework_task_path)
+    state = run_module_analysis(str(contract))
+    assert state["phase"] == "WAITING_REWORK_VERIFICATION"
+    review_task_path = run_dir / "agent-tasks" / "rework-review.json"
+    review_task = read_json(review_task_path)
+    independent = read_json(Path(review_task["independent_result_path"]))
+    write_json(Path(review_task["result_path"]), {
+        "schema_version": "1.0",
+        "run_id": "smoke-01",
+        "reviewer_id": _REVIEW_SESSION_ID,
+        "finish_reason": "stop",
+        "status": "PASS",
+        "summary": "返工验证通过",
+        "issues": [],
+        "reviewed_units": [item["unit_id"] for item in review_task["analysis_results"]],
+        "independent_findings": _compared_findings(
+            review_task, independent["findings"]
+        ),
+        "test_case_checks": _test_case_checks(review_task),
+    })
+    _validate_review_task(review_task_path)
+    invalid_rework = read_json(Path(rework_task["result_path"]))
+    invalid_rework["summary"] = ""
+    write_json(Path(rework_task["result_path"]), invalid_rework)
+    state = run_module_analysis(str(contract))
+    if state["phase"] == "READY_TO_FINALIZE":
+        state = run_module_analysis(str(contract))
+    assert state["phase"] == "INCOMPLETE"
+    assert state["quality_report"]["status"] == "UNRESOLVED"
+    progress = read_json(run_dir / "progress.json")
+    assert any(error["kind"] == "rework_result_rejected" for error in progress["errors"])
+
+
 def _truncated_correction() -> None:
     _, data_root, contract = _workspace()
     state = run_module_analysis(str(contract))
     state = _advance_to_test_generation(state)
     task = read_json(Path(state["agent_task_paths"][0]))
+    task_path = Path(state["agent_task_paths"][0])
     write_json(Path(task["result_path"]), _task_result(task, finish_reason="truncated"))
-    assert run_module_analysis(str(contract))["phase"] == "WAITING_TEST_GENERATION"
-    progress_path = data_root / "runs" / "smoke-01" / "progress.json"
-    assert read_json(progress_path)["errors"]
+    assert "finish_reason=truncated" in _reject_worker_task(task_path)
+    assert read_json(data_root / "runs" / "smoke-01" / "progress.json")["phase"] == "WAITING_TEST_GENERATION"
     write_json(Path(task["result_path"]), _task_result(task))
+    _validate_worker_task(task_path)
     assert run_module_analysis(str(contract))["phase"] == "WAITING_INDEPENDENT_REVIEW"
-    progress = read_json(progress_path)
-    assert not progress["errors"] and progress["error_history"]
 
 
 def _reviewer_unavailable_has_explicit_unresolved_path() -> None:
@@ -1161,6 +1919,9 @@ def _reviewer_unavailable_has_explicit_unresolved_path() -> None:
         data_root / "runs" / "smoke-01" / "agent-tasks" / "rework" / "U00.json"
     )
     write_json(Path(rework_task["result_path"]), _task_result(rework_task))
+    _validate_worker_task(
+        data_root / "runs" / "smoke-01" / "agent-tasks" / "rework" / "U00.json"
+    )
     state = run_module_analysis(str(contract))
     assert state["phase"] == "WAITING_REWORK_VERIFICATION"
 
@@ -1179,7 +1940,8 @@ def _reviewer_unavailable_has_explicit_unresolved_path() -> None:
         [
             sys.executable, "-m", "pangea_agent.cli.main", "mark-reviewer-unavailable",
             "--run-id", "smoke-01", "--data-root", str(data_root),
-            "--reviewer-id", "reviewer-1", "--reason", "saved DSH session cannot be resumed",
+            "--reviewer-id", _REVIEW_SESSION_ID,
+            "--reason", "saved DSH session cannot be resumed",
         ],
         check=True,
         capture_output=True,
@@ -1200,13 +1962,12 @@ def _unmatched_evidence_is_pending() -> None:
     forged["evidence"][0]["chunk_id"] = "missing-chunk"
     forged["business_flows"][0]["evidence"] = forged["evidence"]
     write_json(Path(task["result_path"]), forged)
-    assert run_module_analysis(str(contract))["phase"] == "WAITING_TEST_GENERATION"
+    rejection = _reject_worker_task(Path(state["agent_task_paths"][0]))
     rejected = read_json(Path(task["result_path"]))
     assert rejected["evidence"][0]["chunk_id"] == "missing-chunk"
     assert "status" not in rejected["evidence"][0]
     assert rejected["business_flows"][0]["evidence"][0]["chunk_id"] == "missing-chunk"
-    errors = read_json(data_root / "runs" / "smoke-01" / "progress.json")["errors"]
-    assert any("证据未绑定当前 Run 的真实索引片段" in item["reason"] for item in errors)
+    assert "证据未绑定当前 Run 的真实索引片段" in rejection
 
 
 def _pass_rejects_unconfirmed_risk_evidence() -> None:
@@ -1251,12 +2012,11 @@ def _pass_rejects_unconfirmed_risk_evidence() -> None:
         "disposition": "risk",
     })
     write_json(Path(task["result_path"]), result)
-    assert run_module_analysis(str(contract))["phase"] == "WAITING_TEST_GENERATION"
+    rejection = _reject_worker_task(Path(state["agent_task_paths"][0]))
     rejected = read_json(Path(task["result_path"]))
     assert rejected["risks"][0]["evidence"][0]["chunk_id"] == "missing-risk-chunk"
     assert "status" not in rejected["risks"][0]["evidence"][0]
-    errors = read_json(data_root / "runs" / "smoke-01" / "progress.json")["errors"]
-    assert any("证据未绑定当前 Run 的真实索引片段" in item["reason"] for item in errors)
+    assert "证据未绑定当前 Run 的真实索引片段" in rejection
 
 
 def _comparison_requires_test_case_oracle_checks() -> None:
@@ -1268,6 +2028,7 @@ def _comparison_requires_test_case_oracle_checks() -> None:
         "U00-TC-ORACLE", requirement_ids=["REQ-ORACLE-01"]
     )]
     write_json(Path(task["result_path"]), result)
+    _validate_worker_task(Path(state["agent_task_paths"][0]))
     assert run_module_analysis(str(contract))["phase"] == "WAITING_INDEPENDENT_REVIEW"
     review_task, findings = _advance_to_review_comparison(data_root, "smoke-01")
     skeleton = review_result_skeleton(
@@ -1300,11 +2061,24 @@ def _comparison_requires_test_case_oracle_checks() -> None:
         "reviewed_units": ["U00"],
         "independent_findings": _compared_findings(review_task, findings),
     }
+    review_task_path = data_root / "runs" / "smoke-01" / "agent-tasks" / "review.json"
     write_json(Path(review_task["result_path"]), {**base, "test_case_checks": []})
-    assert run_module_analysis(str(contract))["phase"] == "WAITING_COMPARISON_REVIEW"
+    assert "逐条检查全部 TestCase" in _reject_review_task(review_task_path)
     checks = _test_case_checks(review_task, verdict="invalid")
     write_json(Path(review_task["result_path"]), {**base, "test_case_checks": checks})
-    assert run_module_analysis(str(contract))["phase"] == "WAITING_COMPARISON_REVIEW"
+    assert "PASS 不能包含 invalid" in _reject_review_task(review_task_path)
+    write_json(Path(review_task["result_path"]), {
+        **base,
+        "status": "REWORK",
+        "issues": [{
+            "issue_id": "I-ORACLE-UNASSIGNED",
+            "unit_id": "U00",
+            "reason": "有一条测试通过标准与源码不符",
+            "required_change": "修正对应测试的通过标准",
+        }],
+        "test_case_checks": checks,
+    })
+    assert "issue 明确点名" in _reject_review_task(review_task_path)
     checks[0]["verdict"] = "valid"
     missing_links = _compared_findings(review_task, findings)
     missing_links[0]["linked_worker_test_case_ids"] = []
@@ -1313,13 +2087,9 @@ def _comparison_requires_test_case_oracle_checks() -> None:
         "independent_findings": missing_links,
         "test_case_checks": checks,
     })
-    assert run_module_analysis(str(contract))["phase"] == "WAITING_COMPARISON_REVIEW"
-    progress = read_json(data_root / "runs" / "smoke-01" / "progress.json")
-    assert any(
-        "linked_worker_test_case_ids" in item["reason"]
-        for item in progress["errors"]
-    )
+    assert "linked_worker_test_case_ids" in _reject_review_task(review_task_path)
     write_json(Path(review_task["result_path"]), {**base, "test_case_checks": checks})
+    _validate_review_task(review_task_path)
     assert run_module_analysis(str(contract))["phase"] == "COMPLETE"
 
 
@@ -1353,8 +2123,16 @@ def _duplicate_ids_correction() -> None:
             "status": "pending",
             "evidence": evidence,
         }]
+        result["analysis_checkpoint"]["failure_paths"][0].update({
+            "linked_risk_ids": ["DUP-R01"],
+            "failure": "当前单元业务失败",
+            "final_states": "当前单元状态异常",
+            "disposition": "risk",
+        })
         result["test_cases"] = [_test_case("DUP-TC01", risk_ids=["DUP-R01"])]
         write_json(Path(task["result_path"]), result)
+    for task_path in state["agent_task_paths"]:
+        _validate_worker_task(Path(task_path))
     assert run_module_analysis(str(contract))["phase"] == "WAITING_INDEPENDENT_REVIEW"
     normalized = [read_json(Path(task["result_path"])) for task in tasks]
     assert {item["risks"][0]["risk_id"] for item in normalized} == {"DUP-R01", "DUP-R01-2"}
@@ -1372,6 +2150,7 @@ def _mechanical_task_change_does_not_block() -> None:
     write_json(task_path, task)
     corrected_path = Path(task_path).parents[2] / "agent-results" / "analysis" / "U00.json"
     write_json(corrected_path, _task_result(task))
+    _validate_worker_task(task_path)
     assert run_module_analysis(str(contract))["phase"] == "WAITING_INDEPENDENT_REVIEW"
     assert Path(read_json(task_path)["result_path"]).resolve() == corrected_path.resolve()
 
@@ -1399,6 +2178,7 @@ def _mechanical_review_fields_do_not_block() -> None:
         "independent_findings": _compared_findings(task, findings),
         "test_case_checks": _test_case_checks(task),
     })
+    _validate_review_task(task_path)
     state = run_module_analysis(str(contract))
     assert state["phase"] == "COMPLETE"
     normalized = read_json(run_dir / "agent-results" / "review.json")
@@ -1484,7 +2264,7 @@ def _coverage_reference_only() -> None:
     assert task["coverage_context"] == []
 
 
-def _coverage_gap_is_optional_but_linkage_is_strict() -> None:
+def _coverage_gap_requires_closure_and_linkage_is_strict() -> None:
     _, data_root, contract = _workspace()
     coverage = data_root / "coverage"
     coverage.mkdir()
@@ -1499,7 +2279,9 @@ def _coverage_gap_is_optional_but_linkage_is_strict() -> None:
     gap_id = task["coverage_context"][0]["gaps"][0]["coverage_id"]
     result = _task_result(task)
     write_json(Path(task["result_path"]), result)
-    assert run_module_analysis(str(contract))["phase"] == "WAITING_INDEPENDENT_REVIEW"
+    rejection = _reject_worker_task(Path(state["agent_task_paths"][0]))
+    assert "Coverage 缺口尚未逐项闭环" in rejection
+    assert gap_id in rejection
 
     _, data_root, contract = _workspace()
     coverage = data_root / "coverage"
@@ -1524,13 +2306,13 @@ def _coverage_gap_is_optional_but_linkage_is_strict() -> None:
         "reason": "通过当前模块业务入口补齐未执行函数路径。",
     }]
     write_json(Path(task["result_path"]), result)
-    assert run_module_analysis(str(contract))["phase"] == "WAITING_TEST_GENERATION"
-    errors = read_json(data_root / "runs" / "smoke-01" / "progress.json")["errors"]
-    assert "Coverage 双向闭环存在问题" in errors[-1]["reason"]
-    assert "U00-COV-TC1" in errors[-1]["reason"] and "U00-COV-TC2" in errors[-1]["reason"]
+    rejection = _reject_worker_task(Path(state["agent_task_paths"][0]))
+    assert "Coverage 双向闭环存在问题" in rejection
+    assert "U00-COV-TC1" in rejection and "U00-COV-TC2" in rejection
     for case in result["test_cases"]:
         case["linked_coverage_ids"] = [gap_id]
     write_json(Path(task["result_path"]), result)
+    _validate_worker_task(Path(state["agent_task_paths"][0]))
     assert run_module_analysis(str(contract))["phase"] == "WAITING_INDEPENDENT_REVIEW"
 
 
@@ -1587,8 +2369,11 @@ def _empty_coverage_rejects_claimed_gap() -> None:
         }
 
     state = run_module_analysis(str(contract))
-    source_task = read_json(Path(state["agent_task_paths"][0]))
+    _bind_analysis_actions(state)
+    source_task_path = Path(state["agent_task_paths"][0])
+    source_task = read_json(source_task_path)
     write_json(Path(source_task["result_path"]), _task_result(source_task))
+    _validate_worker_task(source_task_path)
     state = run_module_analysis(str(contract))
     assert state["phase"] == "WAITING_RISK_ANALYSIS"
 
@@ -1596,30 +2381,44 @@ def _empty_coverage_rejects_claimed_gap() -> None:
     assert risk_task["coverage_context"] == []
     risk_result = _task_result(risk_task)
     risk_result["risks"] = [unsupported_risk(risk_task, risk_result)]
+    risk_result["analysis_checkpoint"]["failure_paths"][0].update({
+        "linked_risk_ids": ["U00-R-NO-COVERAGE"],
+        "failure": "当前输入无法确认故障终态",
+        "final_states": "需要开发确认",
+        "disposition": "unresolved",
+    })
     risk_result["analysis_checkpoint"]["coverage_priorities"] = [
         "Component:init 函数覆盖率 0"
     ]
     write_json(Path(risk_task["result_path"]), risk_result)
-    assert run_module_analysis(str(contract))["phase"] == "WAITING_RISK_ANALYSIS"
-    errors = read_json(data_root / "runs" / "smoke-01" / "progress.json")["errors"]
-    assert any("coverage_context 为空" in item["reason"] for item in errors)
+    assert "coverage_context 为空" in _reject_worker_task(
+        Path(state["agent_task_paths"][0])
+    )
 
     risk_result["analysis_checkpoint"]["coverage_priorities"] = []
     risk_result["risks"][0]["upstream_semantics"]["existing_tests"] = "当前单元未提供已有测试证据"
     write_json(Path(risk_task["result_path"]), risk_result)
+    _validate_worker_task(Path(state["agent_task_paths"][0]))
     state = run_module_analysis(str(contract))
     assert state["phase"] == "WAITING_TEST_GENERATION"
 
     task = read_json(Path(state["agent_task_paths"][0]))
     result = _task_result(task)
     result["risks"] = [unsupported_risk(task, result)]
+    result["analysis_checkpoint"]["failure_paths"][0].update({
+        "linked_risk_ids": ["U00-R-NO-COVERAGE"],
+        "failure": "当前输入无法确认故障终态",
+        "final_states": "需要开发确认",
+        "disposition": "unresolved",
+    })
     write_json(Path(task["result_path"]), result)
-    assert run_module_analysis(str(contract))["phase"] == "WAITING_TEST_GENERATION"
-    errors = read_json(data_root / "runs" / "smoke-01" / "progress.json")["errors"]
-    assert any("coverage_context 为空" in item["reason"] for item in errors)
+    assert "coverage_context 为空" in _reject_worker_task(
+        Path(state["agent_task_paths"][0])
+    )
 
     result["risks"][0]["upstream_semantics"]["existing_tests"] = "当前单元未提供已有测试证据"
     write_json(Path(task["result_path"]), result)
+    _validate_worker_task(Path(state["agent_task_paths"][0]))
     assert run_module_analysis(str(contract))["phase"] == "WAITING_INDEPENDENT_REVIEW"
 
 
@@ -1635,8 +2434,11 @@ def _risk_stage_can_plan_coverage_before_test_ids_exist() -> None:
     workbook.close()
 
     state = run_module_analysis(str(contract))
-    source_task = read_json(Path(state["agent_task_paths"][0]))
+    _bind_analysis_actions(state)
+    source_task_path = Path(state["agent_task_paths"][0])
+    source_task = read_json(source_task_path)
     write_json(Path(source_task["result_path"]), _task_result(source_task))
+    _validate_worker_task(source_task_path)
     state = run_module_analysis(str(contract))
     assert state["phase"] == "WAITING_RISK_ANALYSIS"
 
@@ -1739,6 +2541,7 @@ def _material_traceability_report() -> None:
         "observation": "REQ-DEMO-01 作为当前需求采用。",
     })
     write_json(Path(task["result_path"]), result)
+    _validate_worker_task(Path(state["agent_task_paths"][0]))
     state = run_module_analysis(str(contract))
     assert state["phase"] == "WAITING_INDEPENDENT_REVIEW"
     review_task_path = data_root / "runs" / "smoke-01" / "agent-tasks" / "review-independent.json"
@@ -1843,6 +2646,7 @@ def _confirmed_historical_issues_are_frozen_as_references() -> None:
     assert historical_path in catalog_paths
     assert "historical-issues/draft-only-issue.md" not in catalog_paths
 
+    _bind_analysis_actions(state)
     source_task_path = Path(state["agent_task_paths"][0])
     source_task = read_json(source_task_path)
     write_json(Path(source_task["result_path"]), _task_result(source_task))
@@ -2011,8 +2815,10 @@ def _unchanged_result_edit_does_not_block() -> None:
     changed = dict(original)
     changed["summary"] = "初审后被修改"
     write_json(unchanged_path, changed)
-    rework_task = read_json(run_dir / "agent-tasks" / "rework" / "U00.json")
+    rework_task_path = run_dir / "agent-tasks" / "rework" / "U00.json"
+    rework_task = read_json(rework_task_path)
     write_json(Path(rework_task["result_path"]), _task_result(rework_task))
+    _validate_worker_task(rework_task_path)
     state = run_module_analysis(str(contract))
     assert state["phase"] == "WAITING_REWORK_VERIFICATION"
 
@@ -2273,12 +3079,23 @@ def _oversized_direct_callee_is_not_frozen() -> None:
         ]),
         encoding="utf-8",
     )
+    (repo / "include").mkdir()
+    (repo / "include" / "external.h").write_text(
+        "int external_helper(void);\n",
+        encoding="utf-8",
+    )
     payload = read_json(contract)
     payload["source_scope"] = ["module/entry.c"]
     write_json(contract, payload)
     state = run_module_analysis(str(contract))
     task = read_json(Path(state["agent_task_paths"][0]))
     assert "module/large_impl.c" not in task["unit"]["context_scope"]
+    assert "include/external.h" in task["unit"]["context_scope"]
+    assert any(
+        item.get("path") == "include/external.h"
+        and item.get("reason") == "oversized_callee_contract:external_helper"
+        for item in state["scope_expansion"]["context_files"]
+    )
     assert any(
         item.get("path") == "module/large_impl.c"
         and item.get("reason") == "direct_callee_context_too_large"
@@ -2518,6 +3335,36 @@ def _state_context_balances_lifecycle_and_reconfiguration() -> None:
     assert context[-1] == "module/demo.c:16: set_recv_pipe_7();"
 
 
+def _selected_header_keeps_its_direct_local_dependency() -> None:
+    _, data_root, contract = _workspace()
+    repo = data_root / "repositories" / "demo"
+    (repo / "module" / "entry.c").write_text(
+        '#include "demo_internal.h"\nint demo_start(void) { return demo_config(); }\n',
+        encoding="utf-8",
+    )
+    (repo / "module" / "demo_internal.h").write_text(
+        '#include "demo_spec.h"\n'
+        "static inline int demo_config(void) { return DEMO_QUEUE_LIMIT; }\n",
+        encoding="utf-8",
+    )
+    (repo / "module" / "demo_spec.h").write_text(
+        "enum demo_limits { DEMO_QUEUE_LIMIT = 16 };\n",
+        encoding="utf-8",
+    )
+    payload = read_json(contract)
+    payload["source_scope"] = ["module/entry.c"]
+    write_json(contract, payload)
+    state = run_module_analysis(str(contract))
+    task = read_json(Path(state["agent_task_paths"][0]))
+    assert "module/demo_internal.h" in task["unit"]["context_scope"]
+    assert "module/demo_spec.h" in task["unit"]["context_scope"]
+    assert any(
+        item.get("path") == "module/demo_spec.h"
+        and item.get("reason") == "direct_header_dependency:module/demo_internal.h"
+        for item in state["scope_expansion"]["context_files"]
+    )
+
+
 def _expected_behavior_not_risk() -> None:
     _, data_root, contract = _workspace()
     state = run_module_analysis(str(contract))
@@ -2550,13 +3397,7 @@ def _expected_behavior_not_risk() -> None:
     result["analysis_checkpoint"]["failure_paths"][0]["disposition"] = "risk"
     result["analysis_checkpoint"]["failure_paths"][0]["linked_risk_ids"] = ["R-EXPECTED"]
     write_json(Path(task["result_path"]), result)
-    state = run_module_analysis(str(contract))
-    assert state["phase"] == "WAITING_TEST_GENERATION"
-    errors = read_json(data_root / "runs" / "smoke-01" / "progress.json")["errors"]
-    assert any(
-        "预期行为" in error["reason"]
-        for error in errors
-    ), errors
+    assert "预期行为" in _reject_worker_task(Path(state["agent_task_paths"][0]))
 
 
 def _unversioned_source_is_deliverable() -> None:
@@ -2592,9 +3433,235 @@ def _known_c_macro_parse_artifacts() -> None:
         {"line": 3, "text": "void"},
         ["SPDK_LOG_REGISTER_COMPONENT(demo)", "", "static void"],
     )
+    assert _known_macro_parse_artifact(
+        {"line": 2, "text": "void"},
+        ["callback(Client *client,", "    AVAHI_GCC_UNUSED void *user_data)"],
+    )
     assert not _known_macro_parse_artifact(
         {"line": 1, "text": "unexpected"}, ["int broken = ;"]
     )
+
+
+def _rework_review_prunes_removed_links() -> None:
+    root = Path(tempfile.mkdtemp(prefix="pangea-review-links-"))
+    _TEMP_ROOTS.append(root)
+    result_path = root / "worker.json"
+    manifest_path = root / "manifest.json"
+    write_json(manifest_path, {"material_catalog": []})
+    worker_task = {
+        "run_id": "smoke-links",
+        "unit": {
+            "unit_id": "U00",
+            "repo_id": "demo",
+            "source_scope": ["module/entry.c"],
+            "context_scope": [],
+        },
+        "stage": "rework",
+        "attempt": 1,
+        "review_issues": [],
+        "semantic_check_items": [],
+        "source_manifest_path": str(manifest_path),
+    }
+    write_json(result_path, _task_result(worker_task))
+    independent = IndependentReviewResult.model_validate({
+        "run_id": "smoke-links",
+        "reviewer_id": "reviewer-1",
+        "finish_reason": "stop",
+        "summary": "独立复核完成",
+        "reviewed_units": ["U00"],
+        "findings": [{
+            "unit_id": "U00",
+            "check_id": "CHECK-1",
+            "finding": "独立检查结果",
+            "evidence": ["demo:module/entry.c:1"],
+        }],
+    })
+    prior = ReviewResult.model_validate({
+        "run_id": "smoke-links",
+        "reviewer_id": "reviewer-1",
+        "finish_reason": "stop",
+        "status": "REWORK",
+        "summary": "需要返工",
+        "issues": [{
+            "issue_id": "I-1",
+            "unit_id": "U00",
+            "reason": "删除旧风险",
+            "required_change": "删除旧风险和用例",
+        }],
+        "reviewed_units": ["U00"],
+        "independent_findings": [{
+            **independent.findings[0].model_dump(mode="json"),
+            "worker_disposition": "contradiction",
+            "linked_worker_risk_ids": ["REMOVED-RISK"],
+            "linked_worker_test_case_ids": ["REMOVED-TEST"],
+        }],
+        "test_case_checks": [],
+    })
+    task = ReviewTask.model_validate({
+        "run_id": "smoke-links",
+        "target": "link pruning",
+        "repositories": [{"repo_id": "demo", "source_root": str(root)}],
+        "inventory_path": str(root / "inventory.json"),
+        "source_manifest_path": str(root / "manifest.json"),
+        "stage": "rework_verification",
+        "result_path": str(root / "review.json"),
+        "analysis_tasks": [{"unit_id": "U00", "task_path": str(root / "task.json")}],
+        "analysis_results": [{"unit_id": "U00", "result_path": str(result_path)}],
+        "independent_result_path": str(root / "independent.json"),
+        "same_reviewer_id": "reviewer-1",
+        "prior_issues": [prior.issues[0].model_dump(mode="json")],
+        "may_spawn_workers": False,
+        "review_round": 1,
+    })
+    skeleton = review_result_skeleton(task, independent, prior)
+    finding = skeleton["independent_findings"][0]
+    assert finding["linked_worker_risk_ids"] == []
+    assert finding["linked_worker_test_case_ids"] == []
+
+
+def _review_issue_requires_actionable_change() -> None:
+    assert _finding_excludes_linked_leak(
+        "返回失败后调用 destruct，所有 qbase_addr 全部释放，未发现资源泄漏",
+        "DMA channel initialization memory leak",
+    )
+    assert not _finding_excludes_linked_leak(
+        "返回失败后仅释放 ring，qbase_addr 仍保留",
+        "DMA channel initialization memory leak",
+    )
+    issues = ReviewResult.model_validate({
+        "run_id": "smoke-actionable",
+        "reviewer_id": "reviewer-1",
+        "finish_reason": "stop",
+        "status": "UNRESOLVED",
+        "summary": "仍有问题",
+        "issues": [{
+            "issue_id": "I-VAGUE",
+            "unit_id": "U00",
+            "reason": "TC-1 step-level logical contradiction persists after rework.",
+            "required_change": "Consider updating TC-1.",
+        }, {
+            "issue_id": "I-DEFINITE",
+            "unit_id": "U00",
+            "reason": "旧步骤与已确认源码分支相反",
+            "required_change": "考虑到源码分支只返回 -1，删除 TC-2 中返回 0 的步骤",
+        }, {
+            "issue_id": "I-ACTIONABLE-SUGGESTION",
+            "unit_id": "U00",
+            "reason": "TC-3 仍引用旧返回值",
+            "required_change": "建议修改 TC-3 第 2 步 expected_result 为返回 -1",
+        }, {
+            "issue_id": "I-NO-REWORK",
+            "unit_id": "U00",
+            "reason": "该 finding 属于范围外依赖",
+            "required_change": "确认现有 Developer-confirm 结论正确，无需返工。",
+        }],
+        "reviewed_units": ["U00"],
+        "independent_findings": [],
+        "test_case_checks": [],
+    }).issues
+    assert _non_actionable_review_issue_ids(issues) == ["I-VAGUE", "I-NO-REWORK"]
+    reviewer_owned = ReviewResult.model_validate({
+        "run_id": "smoke-reviewer-owned",
+        "reviewer_id": "reviewer-1",
+        "finish_reason": "stop",
+        "status": "UNRESOLVED",
+        "summary": "Reviewer 字段未填",
+        "issues": [{
+            "issue_id": "I-REVIEWER-OWNED",
+            "unit_id": "U00",
+            "reason": "current_behavior 仍为占位符",
+            "required_change": "填写 test_case_checks 的 current_behavior 字段",
+        }],
+        "reviewed_units": ["U00"],
+        "independent_findings": [],
+        "test_case_checks": [],
+    }).issues
+    assert _reviewer_owned_field_issue_ids(reviewer_owned) == ["I-REVIEWER-OWNED"]
+
+    reviewer_correction = ReviewResult.model_validate({
+        "run_id": "smoke-reviewer-correction",
+        "reviewer_id": "reviewer-1",
+        "finish_reason": "stop",
+        "status": "UNRESOLVED",
+        "summary": "Reviewer 自身结论需纠正",
+        "issues": [{
+            "issue_id": "I-INDEPENDENT-CORRECTION",
+            "unit_id": "U00",
+            "reason": "independent finding 与冻结源码不符",
+            "required_change": "将 independent finding 的 worker_disposition 改为 contradiction",
+        }],
+        "reviewed_units": ["U00"],
+        "independent_findings": [],
+        "test_case_checks": [],
+    }).issues
+    assert _reviewer_self_correction_issue_ids(reviewer_correction) == [
+        "I-INDEPENDENT-CORRECTION"
+    ]
+
+    reviewer_scope_excuse = ReviewResult.model_validate({
+        "run_id": "smoke-reviewer-scope-excuse",
+        "reviewer_id": "reviewer-1",
+        "finish_reason": "stop",
+        "status": "UNRESOLVED",
+        "summary": "Reviewer 尝试把自身范围错误写成 issue",
+        "issues": [{
+            "issue_id": "I-REVIEWER-SCOPE",
+            "unit_id": "U00",
+            "reason": "Reviewer self-correction: finding 的 scope 在原始 review 有问题",
+            "required_change": "无需 worker 返工，后续 reviewer 自行修正",
+        }],
+        "reviewed_units": ["U00"],
+        "independent_findings": [],
+        "test_case_checks": [],
+    }).issues
+    assert _reviewer_self_correction_issue_ids(reviewer_scope_excuse) == [
+        "I-REVIEWER-SCOPE"
+    ]
+
+    stale_restore = ReviewResult.model_validate({
+        "run_id": "smoke-stale-restore",
+        "reviewer_id": "reviewer-1",
+        "finish_reason": "stop",
+        "status": "UNRESOLVED",
+        "summary": "错误恢复已删除用例",
+        "issues": [{
+            "issue_id": "I-STALE-RESTORE",
+            "unit_id": "U00",
+            "reason": "旧 TC04 已从当前结果删除",
+            "required_change": "恢复 TC04 并标记 invalid",
+        }],
+        "reviewed_units": ["U00"],
+        "independent_findings": [],
+        "test_case_checks": [],
+    }).issues
+    assert _stale_artifact_restoration_issue_ids(
+        stale_restore,
+        {("U00", "R00")},
+        {("U00", "TC00")},
+    ) == ["I-STALE-RESTORE"]
+
+
+def _literal_boundary_comparison_cannot_be_reversed() -> None:
+    _, _, contract = _workspace()
+    state = _advance_to_test_generation(run_module_analysis(str(contract)))
+    task_path = Path(state["agent_task_paths"][0])
+    task = read_json(task_path)
+    result = _task_result(task)
+    result["summary"] = "offset=0, size=0，因此 0 >= 0 evaluates false"
+    write_json(Path(task["result_path"]), result)
+    assert "源码边界判断存在可直接求值的事实错误" in _reject_worker_task(task_path)
+    result["summary"] = "offset=0, size=0，因此 0 >= 0 evaluates true"
+    result["test_cases"] = [_test_case(
+        "TC-ASAN-ORACLE", requirement_ids=["REQ-ASAN-ORACLE"]
+    )]
+    result["test_cases"][0]["steps"][0]["expected_result"] = "ASan 报告 double-free"
+    write_json(Path(task["result_path"]), result)
+    assert "缺陷信号只能写 failure_observation" in _reject_worker_task(task_path)
+    result["test_cases"][0]["steps"][0]["expected_result"] = (
+        "ASan 不应报告 double-free，进程不崩溃且正常退出"
+    )
+    write_json(Path(task["result_path"]), result)
+    _validate_worker_task(task_path)
 
 
 def _source_checkpoint_uses_frozen_inputs() -> None:
@@ -2611,6 +3678,64 @@ def _source_checkpoint_uses_frozen_inputs() -> None:
     frozen = Path(task["repositories"][0]["source_root"]) / "module" / "entry.c"
     assert "demo_start" in frozen.read_text(encoding="utf-8")
     assert "changed_after_checkpoint" not in frozen.read_text(encoding="utf-8")
+
+
+def _source_checkpoint_rejects_known_ae4dma_misreads() -> None:
+    _, _, contract = _workspace()
+    state = run_module_analysis(str(contract))
+    task_path = Path(state["agent_task_paths"][0])
+    task = read_json(task_path)
+    frozen = Path(task["repositories"][0]["source_root"]) / "module" / "entry.c"
+    frozen.write_text(
+        """int process_events(struct cmd_queue *cmd_q) {
+    uint64_t sub_desc_cnt = cmd_q->ring_buff_count;
+    while (sub_desc_cnt) {
+        if (desc_status == AE4DMA_DMA_DESC_SUBMITTED) {
+            break;
+        }
+        assert(cmd_q->ring_buff_count > 0);
+        cmd_q->ring_buff_count--;
+        if (cmd_q->ring[tail].callback_fn) {
+            cmd_q->ring[tail].callback_fn(cmd_q->ring[tail].callback_arg, desc_err_code);
+        }
+        sub_desc_cnt--;
+    }
+}
+void ae4dma_channel_destruct(struct chan *ae4dma) {
+    ae4dma_unmap_pci_bar(ae4dma);
+    spdk_free(ae4dma->cmd_q[0].qbase_addr);
+    free(ae4dma->cmd_q[0].ring);
+}
+void *ae4dma_attach(struct chan *ae4dma) {
+    if (ae4dma_channel_start(queues, ae4dma) != 0) {
+        ae4dma_channel_destruct(queues, ae4dma);
+        free(ae4dma);
+        return NULL;
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    result = _task_result(task)
+    failure_path = result["analysis_checkpoint"]["failure_paths"][0]
+    false_candidates = (
+        "ring calloc 分配失败后 qbase_addr 未释放并发生资源泄漏",
+        "spdk_dma_zmalloc 分配失败后 PCI BAR 映射未释放并发生泄漏",
+        "callback_fn 为 NULL 时仍被解引用，触发空指针崩溃",
+        "遇到 AE4DMA_DMA_DESC_SUBMITTED 后 ring_buff_count 与 sub_desc_cnt 计数不一致，队列永久 stuck",
+    )
+    for claim in false_candidates:
+        failure_path.update({
+            "trigger": claim,
+            "side_effects": "候选声称出现异常状态",
+            "failure": claim,
+            "caller_handling": "候选声称调用方无法恢复",
+            "final_states": "候选声称资源或队列保持异常",
+        })
+        write_json(Path(task["result_path"]), result)
+        rejection = _reject_worker_task(task_path)
+        assert "不得把源码检查之前尚未发生" in rejection
+        assert failure_path["path_id"] in rejection
 
 
 def _index_checkpoint_resumes_without_live_source() -> None:
@@ -2670,9 +3795,14 @@ def _agent_start_checkpoint() -> None:
     )
     progress_path = data_root / "runs" / "smoke-01" / "progress.json"
     assert read_json(progress_path)["agent_sessions"]["analysis:U00"]["status"] == "dispatched"
-    state = _advance_to_test_generation(state)
+    state = resume_module_analysis(
+        "smoke-01",
+        str(data_root),
+        settled_task_id=_ANALYSIS_SESSION_ID,
+    )
     assert state["agent_actions"][0]["action"] == "continue_agent"
     assert state["agent_actions"][0]["task_id"] == _ANALYSIS_SESSION_ID
+    state = _advance_to_test_generation(state)
     active_task = read_json(Path(state["agent_task_paths"][0]))
     active_result = read_json(Path(active_task["result_path"]))
     assert active_result["worker_id"] == _ANALYSIS_SESSION_ID
@@ -2945,7 +4075,11 @@ def _unvalidated_worker_returns_graph_continue_action() -> None:
         capture_output=True,
     )
 
-    resumed = run_module_analysis(str(contract))
+    resumed = resume_module_analysis(
+        "smoke-01",
+        str(data_root),
+        settled_task_id=_ANALYSIS_SESSION_ID,
+    )
     assert resumed["phase"] == "WAITING_SOURCE_CHECKPOINT"
     assert resumed["agent_actions"] == [{
         "action": "continue_agent",
@@ -3044,12 +4178,15 @@ def _graph_v2_stage_actions_reach_complete() -> None:
         assert result["completed_stage"] == completed_stage
         write_json(Path(task["result_path"]), result)
         if completed_stage == "source_checkpoint":
-            before = progress_path.read_bytes()
-            waiting = run_module_analysis(str(contract))
+            waiting = resume_module_analysis(
+                "smoke-01",
+                str(data_root),
+                settled_task_id=_ANALYSIS_SESSION_ID,
+            )
             assert waiting["phase"] == "WAITING_SOURCE_CHECKPOINT"
             assert waiting["agent_actions"][0]["action"] == "continue_agent"
             assert waiting["agent_actions"][0]["task_id"] == _ANALYSIS_SESSION_ID
-            assert progress_path.read_bytes() == before
+            assert read_json(progress_path)["agent_sessions"]["analysis:U00"]["status"] == "pending"
         _validate_worker_task(task_path)
         state = run_module_analysis(str(contract))
         assert state["phase"] == next_phase
@@ -3139,21 +4276,30 @@ def _graph_v2_stage_actions_reach_complete() -> None:
 
 
 def _graph_v2_two_unit_stage_barrier() -> None:
-    _, _, contract = _workspace(repositories=("repo-a", "repo-b"))
+    _, data_root, contract = _workspace(repositories=("repo-a", "repo-b"))
     state = run_module_analysis(str(contract))
     assert state["phase"] == "WAITING_SOURCE_CHECKPOINT"
     task_paths = [Path(path) for path in state["agent_task_paths"]]
     assert len(task_paths) == 2
+    _bind_analysis_actions(state)
 
     first = read_json(task_paths[0])
     write_json(Path(first["result_path"]), _task_result(first))
-    state = run_module_analysis(str(contract))
+    _validate_worker_task(task_paths[0])
+    progress = read_json(data_root / "runs" / "smoke-01" / "progress.json")
+    second_task_id = progress["agent_sessions"]["analysis:U01"]["task_id"]
+    state = resume_module_analysis(
+        "smoke-01",
+        str(data_root),
+        settled_task_id=second_task_id,
+    )
     assert state["phase"] == "WAITING_SOURCE_CHECKPOINT"
     assert [action["unit_id"] for action in state["agent_actions"]] == ["U01"]
     assert all(read_json(path)["stage"] == "source_checkpoint" for path in task_paths)
 
     second = read_json(task_paths[1])
     write_json(Path(second["result_path"]), _task_result(second))
+    _validate_worker_task(task_paths[1])
     state = run_module_analysis(str(contract))
     assert state["phase"] == "WAITING_RISK_ANALYSIS"
     risk_task_paths = [Path(path) for path in state["agent_task_paths"]]
@@ -3216,9 +4362,11 @@ def _graph_v2_limits_each_action_batch_to_eight() -> None:
 def _graph_v2_cli_rejects_stale_stage_task() -> None:
     _, data_root, contract = _workspace()
     state = run_module_analysis(str(contract))
+    _bind_analysis_actions(state)
     task_path = Path(state["agent_task_paths"][0])
     stale_source_task = read_json(task_path)
     write_json(Path(stale_source_task["result_path"]), _task_result(stale_source_task))
+    _validate_worker_task(task_path)
     state = run_module_analysis(str(contract))
     assert state["phase"] == "WAITING_RISK_ANALYSIS"
     risk_task_path = Path(state["agent_task_paths"][0])
@@ -3290,16 +4438,16 @@ def _graph_v2_rejects_missing_or_future_completed_stage() -> None:
     _, data_root, contract = _workspace()
     state = run_module_analysis(str(contract))
     assert state["phase"] == "WAITING_SOURCE_CHECKPOINT"
-    task = read_json(Path(state["agent_task_paths"][0]))
+    _bind_analysis_actions(state)
+    task_path = Path(state["agent_task_paths"][0])
+    task = read_json(task_path)
     result_path = Path(task["result_path"])
     progress_path = data_root / "runs" / "smoke-01" / "progress.json"
 
     missing = _task_result(task)
     missing.pop("completed_stage")
     write_json(result_path, missing)
-    state = run_module_analysis(str(contract))
-    assert state["phase"] == "WAITING_SOURCE_CHECKPOINT"
-    assert read_json(progress_path)["errors"]
+    assert "completed_stage" in _reject_worker_task(task_path)
 
     stage_spill = _task_result(task)
     evidence = {
@@ -3316,20 +4464,15 @@ def _graph_v2_rejects_missing_or_future_completed_stage() -> None:
         "evidence": [evidence],
     }]
     write_json(result_path, stage_spill)
-    state = run_module_analysis(str(contract))
-    assert state["phase"] == "WAITING_SOURCE_CHECKPOINT"
-    reasons = [item["reason"] for item in read_json(progress_path)["errors"]]
-    assert any("源码 checkpoint 只能提交源码理解和 failure paths" in reason for reason in reasons)
+    assert "源码 checkpoint 只能提交源码理解和 failure paths" in _reject_worker_task(task_path)
 
     future = _task_result(task)
     future["completed_stage"] = "risk_analysis"
     write_json(result_path, future)
-    state = run_module_analysis(str(contract))
-    assert state["phase"] == "WAITING_SOURCE_CHECKPOINT"
-    reasons = [item["reason"] for item in read_json(progress_path)["errors"]]
-    assert any("当前 Graph 等待 source_checkpoint" in reason for reason in reasons)
+    assert "当前 Graph 等待 source_checkpoint" in _reject_worker_task(task_path)
 
     write_json(result_path, _task_result(task))
+    _validate_worker_task(task_path)
     state = run_module_analysis(str(contract))
     assert state["phase"] == "WAITING_RISK_ANALYSIS"
 
@@ -3923,8 +5066,11 @@ def _lua_context_path_coverage_reaches_worker() -> None:
 def _source_prefix_evidence_is_normalized() -> None:
     _, data_root, contract = _workspace()
     state = run_module_analysis(str(contract))
-    source_task = read_json(Path(state["agent_task_paths"][0]))
+    _bind_analysis_actions(state)
+    source_task_path = Path(state["agent_task_paths"][0])
+    source_task = read_json(source_task_path)
     write_json(Path(source_task["result_path"]), _task_result(source_task))
+    _validate_worker_task(source_task_path)
     state = run_module_analysis(str(contract))
     task_path = Path(state["agent_task_paths"][0])
     task = read_json(task_path)
@@ -3995,6 +5141,7 @@ return Component
         "reason": "从当前源码入口补齐未执行函数。",
     }]
     write_json(Path(task["result_path"]), result)
+    _validate_worker_task(Path(state["agent_task_paths"][0]))
     state = run_module_analysis(str(contract))
     assert state["phase"] == "WAITING_INDEPENDENT_REVIEW"
     assert len(state["coverage_report"]["matched"]) == 1
@@ -4186,12 +5333,33 @@ def _graph_control_contract_reaches_all_clients() -> None:
     assert "After the command succeeds, end the DSH root turn immediately" in dsh_skill
     assert "A `subagent-report` is informational only" in dsh_skill
     assert "A `subagent-settled` notice for the current action is only a wake-up signal" in dsh_skill
-    assert "exactly once without inferring PASS" in dsh_skill
+    assert "--settled-task-id <the subagent_id bound to this action>" in dsh_skill
+    assert "without inferring PASS" in dsh_skill
     assert "never compare actions to decide whether to stop" in dsh_skill
     assert "the same action, stop truthfully" not in dsh_skill
     dsh_adapter = (root / ".agents/pangea/dsh.md").read_text()
     assert "统一插件 `dsh-pangea` 内置的唤醒策略" in dsh_adapter
     assert "成功返回的 action 一律按其内容执行" in dsh_adapter
+    assert "--settled-task-id <本次 action 绑定的 subagent_id>" in dsh_adapter
+    dsh_analysis_rules = (root / ".opencode/agents/analysis-worker.md").read_text()
+    assert "禁止把 `0 >= 0`" in dsh_analysis_rules
+    assert "返回 `void` 的 API 不能虚构失败返回" in dsh_analysis_rules
+    assert "callee 直接 `return` 不等于 caller 跳过清理" in dsh_analysis_rules
+    assert "返回值只为兼容且固定为 0" in dsh_analysis_rules
+    assert "`for (++ptr; ptr < end; ptr++)` 又清零全部后续元素" in dsh_analysis_rules
+    assert "正确产品在同一次故障注入下的通过标准" in dsh_analysis_rules
+    assert "失败时最后一条赋值不可达" in dsh_analysis_rules
+    assert "不得仅凭“应该允许”建立兼容风险" in dsh_analysis_rules
+    dsh_review_rules = (root / ".opencode/agents/review-worker.md").read_text()
+    assert "`0 >= 0` 必须判 true" in dsh_review_rules
+    assert "返回 `void` 的 API 不存在可检查的失败返回" in dsh_review_rules
+    assert "callee 直接 `return` 不能作为 caller 跳过清理" in dsh_review_rules
+    assert "`/proc/iomem` 只表示物理资源登记" in dsh_review_rules
+    assert "返回值仅兼容且固定为 0" in dsh_review_rules
+    assert "`++ptr` 正是移动到第一个后续元素" in dsh_review_rules
+    assert "必须使用完全相同的 trigger" in dsh_review_rules
+    assert "NULL 分支不会执行最后赋值" in dsh_review_rules
+    assert "不得要求修改被测源码来解决分析报告" in dsh_review_rules
     for relative_path in (
         ".opencode/agents/analysis-worker.md",
         ".claude/agents/analysis-worker.md",
@@ -4204,6 +5372,7 @@ def _graph_control_contract_reaches_all_clients() -> None:
         assert "禁止用 Bash、Python、正则或临时脚本批量重写/修复 JSON" in rules
         assert "触发风险的调用步骤必须同时写完整返回值和完整调用后状态" in rules
         assert "普通“失败后修复重试”只执行" in rules
+        assert "两个局部变量在所有能到达使用点的路径上都由同一次赋值保持相等" in rules
         assert "Graph 要求重新提交当前 task" in rules
     for relative_path in (
         ".opencode/agents/review-worker.md",
@@ -4219,6 +5388,7 @@ def _graph_control_contract_reaches_all_clients() -> None:
         assert "后续“检查状态”中的任何字段与触发调用真实终态" in rules
         assert "当前实现必须至少违反" in rules
         assert "相同调用连续出现几次就累计几次注册/计数" in rules
+        assert "两个局部变量若在所有到达使用点的路径上由同一次赋值保持相等" in rules
         assert "Graph 要求重新提交当前 task" in rules
     lua_rules = (root / "src/pangea_agent/rubrics/builtin/lua_analysis.md").read_text()
     assert "该函数体同步调用的全部下层函数" in lua_rules
@@ -4231,7 +5401,9 @@ def _graph_control_contract_reaches_all_clients() -> None:
 
 SCENARIOS: tuple[tuple[str, Scenario], ...] = (
     ("PASS 到双报告", _pass_report),
+    ("独立复核后替换失效 Worker 且不重复审计", _late_worker_rejection_reuses_independent_review),
     ("reviewer 发现遗漏时不能 PASS", _review_missing_finding_cannot_pass),
+    ("阻塞 finding 必须进入返工 issue", _review_blocking_finding_must_reach_rework_issue),
     ("对照复核必须逐项绑定 worker 风险与用例", _comparison_must_account_for_every_worker_artifact),
     ("对照复核必须逐条记录 TestCase 通过标准", _comparison_requires_test_case_oracle_checks),
     ("空 Coverage 输入时 review 不得伪造闭环", _comparison_cannot_invent_coverage_closure),
@@ -4240,6 +5412,7 @@ SCENARIOS: tuple[tuple[str, Scenario], ...] = (
     ("对照复核不能丢弃独立 finding", _comparison_cannot_drop_independent_findings),
     ("REWORK 同 reviewer 通过", _rework_same_reviewer),
     ("返工任务保留冻结资料路径", _rework_preserves_allowed_material_paths),
+    ("无效返工直接终止而不循环 reviewer", _invalid_rework_finishes_unresolved_without_reviewer_loop),
     ("原 reviewer 无法恢复时显式 UNRESOLVED", _reviewer_unavailable_has_explicit_unresolved_path),
     ("截断结果覆盖修正", _truncated_correction),
     ("黑盒步骤必须直接绑定预期", _unpaired_test_step_rejected),
@@ -4258,7 +5431,7 @@ SCENARIOS: tuple[tuple[str, Scenario], ...] = (
     ("终态报告恢复", _report_recovery),
     ("文档缺口强制不完整", _document_gap),
     ("有 Coverage 记录但无缺口时不强制补测", _coverage_reference_only),
-    ("Coverage 缺口可选补测但已选择关联必须闭环", _coverage_gap_is_optional_but_linkage_is_strict),
+    ("Coverage 缺口必须逐项闭环且用例关联严格", _coverage_gap_requires_closure_and_linkage_is_strict),
     ("Coverage 报告只展示当前范围函数级零覆盖", _coverage_report_only_shows_current_zero_functions),
     ("空 Coverage 输入拒绝伪造缺口结论", _empty_coverage_rejects_claimed_gap),
     ("风险阶段可先规划 Coverage 且用例阶段必须闭环", _risk_stage_can_plan_coverage_before_test_ids_exist),
@@ -4281,9 +5454,11 @@ SCENARIOS: tuple[tuple[str, Scenario], ...] = (
     ("显式 scope 外实现只作为上下文", _explicit_scope_keeps_external_implementation_as_context),
     ("范围只扩到直接调用与相关上下文", _bounded_scope_expansion),
     ("状态上下文均衡保留生命周期与重配置", _state_context_balances_lifecycle_and_reconfiguration),
+    ("已选头文件保留直接本地依赖", _selected_header_keeps_its_direct_local_dependency),
     ("预期行为不能列为风险", _expected_behavior_not_risk),
     ("普通源码目录不因缺少 Git 版本阻塞交付", _unversioned_source_is_deliverable),
     ("SOURCE_READY 恢复只使用冻结输入", _source_checkpoint_uses_frozen_inputs),
+    ("源码 checkpoint 提前拒绝已知 AE4DMA 误读", _source_checkpoint_rejects_known_ae4dma_misreads),
     ("INDEX_READY 恢复不再读取活动源码", _index_checkpoint_resumes_without_live_source),
     ("Agent 启动状态写入 Run checkpoint", _agent_start_checkpoint),
     ("Agent 会话拒绝伪造 task_id", _record_agent_session_rejects_fake_task_id),
@@ -4299,6 +5474,9 @@ SCENARIOS: tuple[tuple[str, Scenario], ...] = (
     ("Graph V2 拒绝缺失或越级 completed_stage", _graph_v2_rejects_missing_or_future_completed_stage),
     ("CLI 回显自定义 data_root", _cli_prints_custom_data_root),
     ("已知 C 宏解析误报不冒充真实缺口", _known_c_macro_parse_artifacts),
+    ("返工复核骨架移除已删除产物关联", _rework_review_prunes_removed_links),
+    ("复核问题必须给出可验证的确定修改", _review_issue_requires_actionable_change),
+    ("字面边界条件不得写反", _literal_boundary_comparison_cannot_be_reversed),
     ("旧 WorkerTask 使用 C/C++ 默认规则", _legacy_task_uses_c_cpp_defaults),
     ("Lua openUBMC task 冻结语言与规则", _lua_openubmc_task_metadata),
     ("semantic check 缺失路径一次性报全", _semantic_check_missing_paths_reported_together),

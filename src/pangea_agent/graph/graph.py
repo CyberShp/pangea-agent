@@ -96,7 +96,11 @@ builder.add_conditional_edges(
 builder.add_conditional_edges(
     "accept_test_generation",
     route_after_stage,
-    {"prepare_independent_review": "prepare_independent_review", "end": END},
+    {
+        "prepare_independent_review": "prepare_independent_review",
+        "prepare_comparison_review": "prepare_comparison_review",
+        "end": END,
+    },
 )
 builder.add_conditional_edges(
     "accept_independent_review",

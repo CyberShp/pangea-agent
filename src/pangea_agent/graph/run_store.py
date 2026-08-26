@@ -251,6 +251,18 @@ def review_result_skeleton(
 ) -> dict:
     reviewer_id = ""
     independent_findings: list[dict] = []
+    worker_results = {
+        result_ref.unit_id: load_worker_result(Path(result_ref.result_path))
+        for result_ref in task.analysis_results
+    }
+    worker_risk_ids = {
+        unit_id: {risk.risk_id for risk in result.risks}
+        for unit_id, result in worker_results.items()
+    }
+    worker_test_case_ids = {
+        unit_id: {case.test_case_id for case in result.test_cases}
+        for unit_id, result in worker_results.items()
+    }
     if task.stage in {"comparison_review", "rework_verification"} and independent_result is not None:
         reviewer_id = independent_result.reviewer_id
         independent_findings = [
@@ -272,12 +284,18 @@ def review_result_skeleton(
                     continue
                 finding.update({
                     "worker_disposition": prior.worker_disposition,
-                    "linked_worker_risk_ids": list(prior.linked_worker_risk_ids),
-                    "linked_worker_test_case_ids": list(prior.linked_worker_test_case_ids),
+                    "linked_worker_risk_ids": [
+                        risk_id for risk_id in prior.linked_worker_risk_ids
+                        if risk_id in worker_risk_ids.get(finding["unit_id"], set())
+                    ],
+                    "linked_worker_test_case_ids": [
+                        case_id for case_id in prior.linked_worker_test_case_ids
+                        if case_id in worker_test_case_ids.get(finding["unit_id"], set())
+                    ],
                 })
     test_case_checks: list[dict] = []
     for result_ref in task.analysis_results:
-        worker_result = load_worker_result(Path(result_ref.result_path))
+        worker_result = worker_results[result_ref.unit_id]
         test_case_checks.extend(
             {
                 "unit_id": result_ref.unit_id,

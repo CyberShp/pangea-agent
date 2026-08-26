@@ -196,6 +196,7 @@ class WorkerTask(StrictModel):
     replacement_allowed: bool = False
     prior_result_path: str | None = None
     review_issues: list[ReviewIssue] = Field(default_factory=list)
+    validation_feedback: list[str] = Field(default_factory=list)
 
     @field_validator(
         "index_path",

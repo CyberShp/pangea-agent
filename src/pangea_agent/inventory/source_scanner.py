@@ -211,4 +211,6 @@ def _known_macro_parse_artifact(item: dict, lines: list[str]) -> bool:
         for line in lines[max(0, line_number - 4):line_number]
     ):
         return True
+    if token == "void" and "AVAHI_GCC_UNUSED void" in current:
+        return True
     return False

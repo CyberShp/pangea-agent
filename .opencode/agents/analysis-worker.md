@@ -66,8 +66,20 @@ Graph 在 `source_checkpoint` task 中把 `inventory_path`、`source_manifest_pa
 - 上述 `schemas/` 与 `src/pangea_agent/rubrics/` 都位于当前 pangea-agent 工作区根目录，不在 task 的 `data_root`、Run 或验收 case 中。直接读取这里列出的固定路径，不使用 glob/find 搜索 schema 或 rubric。
 
 再读取 task 指定的 `result_path`。PANGEA 已经生成固定结果骨架；只填写分析内容，不从零重建 WorkerResult，不修改 task。禁止使用 Write 整体覆盖该文件，也禁止用 Bash、Python、正则或临时脚本批量重写/修复 JSON；只能在已读取的合法骨架上用 Edit 按字段替换完整 JSON value。每次编辑保持文件可被 JSON 解析，不能先写无效 JSON 再依赖后续修复。
+每次被派发或续接都必须重新读取当前 task/result，并在本回合重新执行 `validate-worker-result --task "<worker task JSON>"`。同一 task 上一回合已写过 summary 或报告完成，不代表本回合已通过；本次校验被拒绝时修正同一产物再提交，不得直接回复“之前已完成”。
+
+若 task 的 `validation_feedback` 非空，这是 Graph 对当前累计产物重新校验后的确定拒绝原因。先逐条修正其中点名的 risk/test/failure path，再在当前回合重新执行 `validate-worker-result`；不得用上一回合的 PASS 代替，也不得把 feedback 原文写进正式报告。
 
 若 `task_type` 是 `rework`，先重新读取 task 的全部 `checkpoint_rubric_paths`，再读取 `prior_result_path` 和 `review_issues`，只修复列出的复核问题；通用 rubric 只读取 issue 实际涉及阶段对应的固定规则，不重跑 analysis 三阶段。
+返工开始时先把每项 issue 压成一行验收表：`issue_id | 必须删除或改写的旧结论 | 修复后唯一可执行场景 | 受影响的 risk/test/material ID`。按表逐行处理，当前行没有同时满足以下条件前不得进入下一项，也不得写入 `addressed_review_issue_ids`：
+
+1. issue 点名删除的步骤、风险、用例或资料结论已经从当前 rework result 的所有引用处消失；
+2. 保留或新写的 TestCase 从第一个动作开始能真实到达关联 RiskCard 的分配、提交或状态变化点，失败返回前尚未创建的对象不得用于后续泄漏、完成或恢复观测；
+3. issue 给出“删除无效用例”或“降为 Developer-confirm”这类可选修法时，只选择冻结证据能支持且可执行的一种，不得保留原不可执行场景再补一个推测性观测；
+4. `material_decisions` 的 current/context 结论与风险、用例中的资料引用一致，不能一处降为 context、另一处继续当现行契约使用。
+5. 同一 TestCase 只使用一种构建类型和运行模式；Debug 的断言崩溃与 Release 的返回值必须拆成两条用例。被调 API 返回值的正负号按冻结源码或现行契约逐字保留，未看到取负操作时不得自行改成负数；
+6. `expected_result` 不得包含 ASan/Valgrind 报告、double-free、use-after-free、崩溃、core dump 或断言失败；这些都是当前缺陷观测，只能写进同一步的 `failure_observation`。
+
 issue 涉及 `material_decisions`、需求/设计行为、`linked_requirement_ids` 或 `linked_material_ids` 时，先对受影响资料执行 `read-material --task "<worker task JSON>" --path "<manifest path>"` 并读取正文；未读正文不得修改资料结论或把 issue 标为已处理。
 review issue 是待核对的修复请求，不是源码或资料证据。每项 issue 都先重读 task 冻结的相关源码；涉及现行资料时再按上句重读资料正文，并把 `executed/not executed`、`true/false/nil`、绝对次数与本次增量逐项对齐。若 `reason` 或 `required_change` 与冻结证据相反，不得为了迎合 reviewer 反转执行方向、布尔值或次数；当前 rework result 保留或恢复证据支持的结论，在 summary 说明按冻结证据纠正了 issue 方向，仍可把该 issue ID 记为已处理，交由原 reviewer 重新验证。
 以 prior result 作为内容基础，在一次调用内按 task 顺序处理全部 issue。每项沿同一结论链同步修改：
@@ -77,6 +89,7 @@ trigger/system_result/external_observation/exclusion_condition 和该 risk 自�
 case 的前置、步骤、预期、观测和清理。issue 只要求新增用例时，不得顺带重写无关风险。不要只改
 风险卡或测试用例而保留 checkpoint 或 risk.evidence 中已经被 reviewer 否定的旧机制；failure path
 是下游风险和用例的根因记录，各处必须描述同一触发链和唯一终态。
+若 issue 要求把某条行为改为 `excluded/expected_behavior` 或删除 RiskCard，必须同时删除仅由该风险支撑的 TestCase 及其所有关联；返工后搜索被删除的 risk/test ID 和旧终态短语，确认它们不再出现在 risks、test_cases、flow、evidence 或 summary 中。删除已完成就是修复，不得为了“保留审计痕迹”把旧用例改名、恢复或留作占位。
 review issue 中给出的数值只是待核对的修复方向，不是新的源码事实。issue 涉及 callback、容器大小、
 计数器、布尔状态或执行次数时，必须按冻结源码重新建立“注册项/执行项/写入字段/执行次数”账本；
 只把实际执行且函数体写入该字段的项计入字段值。若 reviewer 给出的数字与账本不一致，使用账本推导
@@ -89,9 +102,23 @@ issue 指向某个错误位置、失败调用或异常短语时，以该源码�
 
 若 `task_type=analysis`，只按 `task.stage` 执行以下对应的一个完整回合，不得按文件、failure path、风险、测试或需求继续拆分：
 
+每个阶段提交前都重算一次源码中的边界判断和调用契约：对 `>=`、`<=`、`==` 等条件代入当前 trigger 的具体值并写出真假，禁止把 `0 >= 0` 之类可直接求值的表达式写反；声称“调用失败/返回错误”前必须读取函数声明，返回 `void` 的 API 不能虚构失败返回或不可检查的失败分支。
+把当前实现归入 RiskCard 前先做一次二选一：若源码、现行资料或公开接口把该行为定义为 unsupported stub、fail-fast、no-op 或固定错误返回，它是预期行为，不得仅因附近函数采用另一种错误处理方式就列为风险；若有证据证明它违反正确产品行为，RiskCard 的当前 `system_result` 必须出现在关联 TestCase 的 `failure_observation`，绝不能出现在 `expected_result`。一条风险用例若“当前源码行为满足 expected_result”，必须删除该风险关联或修正 oracle 后再提交，不能解释成“正确与错误两个视角都成立”。
+若两个局部变量在所有能到达使用点的路径上都由同一次赋值保持相等，通过其中任一个访问同一对象只是写法差异，不构成行为风险；只有找到两者实际分离且到达错误读写的路径，才可生成 RiskCard/TestCase。不得把“当前功能正确但写法不理想”改名保留为 Developer-confirm 风险。
+故障注入使内存分配、设备访问或下层调用真实失败时，公开入口返回明确错误、完成请求且释放已创建资源，默认是正常失败处理，不得仅因业务动作没有成功就列为风险。只有冻结的需求/接口明确要求另一错误码，或错误返回后还存在错误成功、数据损坏、请求未完成、资源泄漏、状态不可恢复等第二个可观测后果，才建立 RiskCard；风险卡必须写这个额外后果，而不是把“返回错误”本身冒充缺陷。相同故障条件下正确实现本来也应返回同一错误时，不生成风险用例；若仅需验证错误处理，必须有真实的需求、资料或 Coverage 关联，不能伪造风险关联。
+checkpoint 的 `caller_handling` 或 `final_states` 一旦按真实调用方修正，下游必须以该终态为唯一事实：同步重算相关 failure path 的 disposition、RiskCard 的 `system_result/external_observation` 和 TestCase 的 `failure_observation`。禁止 checkpoint 已写“返回 Invalid Field/请求完成”，风险卡却继续写“成功交付空结果/请求挂起”，也禁止为保留既有风险而选用调用方分支之前的中间状态。
+调用表达式没有检查返回值，不等于该 API 存在可恢复的失败返回。只有冻结源码、声明注释或现行接口契约明确给出非致命失败值，才能构造“调用返回失败但 caller 继续”的路径；若 task 没冻结其实现/声明，也没有 `failure_signal_context` 或 semantic check 指向该失败，不得猜“队列满、内部失败、回调不执行”，也不得改名为 Developer-confirm。返回 `void` 的 API 更不能虚构内部失败分支。公开注释说明“错误内部 fatal、返回值只为兼容且固定为 0”时，忽略返回值是预期行为，必须排除该风险；故障注入不得创造真实 API 不可能返回的状态。
+复核拷贝/清零循环时逐项记录指针位置：break 时的当前元素、当前元素剩余区间、执行 `++ptr` 后指向的第一个后续元素、后续循环覆盖到的末尾。当前元素剩余已清零，随后 `for (++ptr; ptr < end; ptr++)` 又清零全部后续元素时，尾部没有缺口；不得把前置自增解释成跳过第一个后续元素，也不得把请求缓冲区未经证明写成 calloc 初始化。
+失败分支的可达语句必须按花括号和跳转逐行执行。`tmp = realloc(original, n); if (tmp == NULL) { break/return/goto; } original = tmp;` 中，失败时最后一条赋值不可达，`original` 仍指向旧分配；不得声称它被 NULL 覆盖或因此泄漏。执行 `free(ctx); goto error;` 后只会从 `error:` 标签继续，标签之前及原顺序中的异步发送、生成、过滤函数均不可达；不得把已释放对象带入这些未执行调用构造 use-after-free、越权或过滤失效。每条 risk 的 `system_result` 只能来自 trigger 实际到达的语句。
+并发风险必须先证明内存对象或状态实际跨调用共享。函数每次调用内部通过 `calloc`/`malloc` 创建并只经该调用返回的局部缓冲区，不会因为另一调用重分配同名局部变量而使本调用指针悬空；同名变量不是共享对象证据。
+BSD queue 宏不提供容器成员校验；`TAILQ_REMOVE(head, elm, field)` 会直接使用 `elm` 的链指针更新前后项。`elm` 从未加入该队列、已被移除或是伪造结构时，不得声称 `TAILQ_REMOVE` 静默 no-op/成功且无副作用；这是调用方输入无效，除非公开契约明确要求被调方容忍，不得据此构造产品风险。
+失败点位于下层函数时，必须继续读取直接 caller 对返回值的分支，直到公开入口的返回、断言或进程终止，不能停在 destruct/free/unmap 的调用名上。callee 直接 `return` 不等于 caller 跳过清理；caller 调用清理也不等于清理完成。按真实执行顺序找首个会终止本路径的 NULL/悬空指针解引用、未映射 MMIO 访问、assert、double-free 或返回；首个终态已经使进程退出时，后续 free/unmap/detach 均写“未到达”，不得选择更靠后的缺陷冒充外部观测。unmap 后若指针未清空，后续经该指针读写不能写成“析构正确完成”。若 caller 在非零返回后确实完成统一清理，才可以排除资源泄漏。继续核对上层是否把非零返回交给 assert、改写或传播，TestCase 必须写公开入口的真实最终返回/终止方式。进程地址映射只能用 `/proc/<pid>/maps`/`smaps` 等进程视图观测，`/proc/iomem` 的物理资源登记不能证明用户态 BAR 映射仍存在。
+
 `test_generation` 写风险用例时只采用 linked RiskCard 的最短触发序列。普通“失败后修复重试”只执行
 一次失败；相同失败多写一次就必须重新累计注册数。每个 `failure_observation` 逐字段复制当前序列的
 真实终态，成功重试已经设置 `initialized=true` 后，没有后续赋值不得写回 false。
+故障注入步骤的 `expected_result` 必须是正确产品在同一次故障注入下的通过标准，不得换成“未注入故障时成功”的基线结果。基线调用可以作为单独的准备/对照步骤；真正触发 realloc、分配或发送失败的步骤，expected 必须写正确的错误完成、原子失败、完整回滚或其他有证据的正确处理，而 `failure_observation` 写当前实现的部分成功、泄漏或错误状态。若同一触发下没有证据区分正确标准与当前行为，就不能生成 RiskCard/TestCase。
+`failure_observation` 必须是同一 trigger 在冻结源码中实际到达的当前终态。若当前分支返回 INVALID_FIELD，就不能写 host 收到 SUCCESS/partial entries；若 strdup 失败分支在 async dispatch 前 `goto error` 并完成请求，就不能写后续 generator 使用 NULL。没有需求或规格证据规定 offset 等边界的另一正确结果时，不得仅凭“应该允许”建立兼容风险。
 
 Lua/openUBMC task 在 `test_generation` 提交前先执行两项退出检查：发现类表或模块表共享 signal 时，
 每条 TestCase 的清理必须使用新 Lua VM/进程，或完整重载仍持有旧类表、signal、callback、闭包的模块链
@@ -292,7 +319,7 @@ review issue 改写成 B=2/2，也不能把 A.C2 的 trip 失败延续为 normal
 - `risk_analysis`、`test_generation` 和 `rework` 的 `evidence[]` 必须非空，每项至少包含 `chunk_id`、`observation`；可选 `location`、`status`、`pending_reason`。不得使用 `content`、`type`、`tags`、`description`、`file`、`line`、`code` 代替。
 - `risk_analysis`、`test_generation` 和 `rework` 的 `business_flows[]` 必须非空，每项包含非空 `title`、非空 `description`、至少 1 条字符串 `steps`、至少 1 条合法 `evidence`；可选 `mermaid`。`steps` 中每一项都必须是字符串，不得放对象。
 - `visual_findings[]`：只允许 `attachment_path`、`observation`，以及可选的 `status`、`pending_reason`。如果 manifest 没有真实图片附件，保持空数组；不得把架构图、状态机或资源关系的文字描述伪造成 visual finding，也不得写 `type`、`title`、`description`、`structure`、`states`、`transitions`、`ownership`、`key_invariants` 等额外字段。
-- `risks[]`：必须使用 `risk_id`、`title`、`affected_paths`、`dfx`、`severity`、`confidence`、`trigger`、`system_result`、`external_observation`、`exclusion_condition`、`upstream_semantics`、`translation_status`、`status`、`evidence`。`affected_paths` 只列真实发生该风险的实现路径，不因共享 helper 或相似标题加入安全实现；`dfx` 必须是数组；`severity` 只能是 `Low/Medium/High/Critical`；`confidence` 只能是 `low/medium/high`；首次分析的 `status` 为 `pending`。不得使用 `dfx_dimension`、`category`、`reproducibility`、`reproduction_conditions`、`exclusion_conditions` 等旧字段。
+- `risks[]`：必须使用 `risk_id`、`title`、`affected_paths`、`dfx`、`severity`、`confidence`、`trigger`、`system_result`、`external_observation`、`exclusion_condition`、`upstream_semantics`、`translation_status`、`status`、`evidence`。`affected_paths` 只列真实发生该风险的实现路径，不因共享 helper 或相似标题加入安全实现；每条风险至少有一个 `affected_paths` 位于当前 `unit.source_scope`，`unit.context_scope` 只能提供上下游语义证据，不能单独成为本单元的风险对象；`dfx` 必须是数组；`severity` 只能是 `Low/Medium/High/Critical`；`confidence` 只能是 `low/medium/high`；首次分析的 `status` 为 `pending`。不得使用 `dfx_dimension`、`category`、`reproducibility`、`reproduction_conditions`、`exclusion_conditions` 等旧字段。
 - `test_cases[]`：必须保留 `linked_risk_ids`、`linked_requirement_ids`、`linked_material_ids`、`linked_coverage_ids` 四个数组，至少一个非空。Risk、真实需求 ID、`MAT:<path>`、`COV:...` 各自只写入对应数组，不得跨类型伪造关联。
 - `analysis_checkpoint.coverage_decisions[]`：task 中每个 `coverage_context[].gaps[]` 必须有且只有一条同 `coverage_id` 的闭环结论；闭合到用例时 `linked_test_case_ids` 与用例的 `linked_coverage_ids` 必须双向一致。
 - `upstream_semantics` 必须完整包含 `reachability`、`caller_constraints`、`documented_behavior`、`existing_tests`、`conclusion`；`conclusion` 只能是 `risk_remains/expected_behavior/unresolved`。

@@ -117,6 +117,29 @@ def _review_actions(
     )]
 
 
+def _write_analysis_validation_feedback(
+    state: PangeaState,
+    progress: RunProgress,
+    unit_ids: list[str],
+) -> None:
+    for unit_id in unit_ids:
+        task_path = analysis_task_path(state, unit_id, "test_generation")
+        task = load_worker_task(task_path)
+        result_path = str(normalize_worker_result_path(task_path, task))
+        feedback = [
+            str(error.get("reason", ""))
+            for error in progress.errors
+            if error.get("kind") == "analysis_result_rejected"
+            and error.get("artifact") == result_path
+            and str(error.get("reason", "")).strip()
+        ]
+        payload = task.model_dump(mode="json")
+        payload["validation_feedback"] = feedback
+        write_json(task_path, WorkerTask.model_validate(payload).model_dump(mode="json"))
+        if feedback:
+            progress.agent_sessions[f"analysis:{unit_id}"].task_id = None
+
+
 def _rework_actions(
     state: PangeaState,
     progress: RunProgress,
@@ -271,6 +294,8 @@ def accept_test_generation(state: PangeaState) -> PangeaState:
         if not _session_completed(progress, f"analysis:{unit_id}")
     ]
     if unsubmitted:
+        _write_analysis_validation_feedback(state, progress, unsubmitted)
+        save_progress(state, progress)
         return _waiting(
             state,
             progress,
@@ -288,6 +313,35 @@ def accept_test_generation(state: PangeaState) -> PangeaState:
             progress,
             _analysis_actions(state, progress, "test_generation", pending),
         )
+    independent_task_path = review_task_path(state, "independent")
+    independent_result_path = review_result_path(state, "independent")
+    if (
+        independent_task_path.is_file()
+        and independent_result_path.is_file()
+        and _session_completed(progress, "review")
+    ):
+        try:
+            independent_task = load_review_task(independent_task_path)
+            independent_result = load_independent_review_result(
+                independent_result_path,
+                independent_task,
+            )
+            validate_independent_review_result(
+                independent_task,
+                independent_result,
+                _expected_independent_checks(state, independent_task),
+            )
+        except Exception:
+            pass
+        else:
+            progress.phase = "WAITING_INDEPENDENT_REVIEW"
+            save_progress(state, progress)
+            return {
+                **state,
+                "phase": progress.phase,
+                "reviewer_id": independent_result.reviewer_id,
+                "next_node": "prepare_comparison_review",
+            }
     return {**state, "phase": progress.phase, "next_node": "prepare_independent_review"}
 
 
@@ -369,7 +423,18 @@ def prepare_comparison_review(state: PangeaState) -> PangeaState:
     )
     results = _load_analysis_results(state, progress)
     if results is None:
-        raise ArtifactRejected("生成 comparison_review task 前分析结果不完整")
+        progress.phase = "WAITING_TEST_GENERATION"
+        pending = [
+            unit_id for unit_id in progress.analysis_units
+            if unit_id not in progress.completed_analysis_units
+        ]
+        _write_analysis_validation_feedback(state, progress, pending)
+        save_progress(state, progress)
+        return _waiting(
+            state,
+            progress,
+            _analysis_actions(state, progress, "test_generation", pending),
+        )
     _prepare_review_comparison(
         state,
         progress,
@@ -537,10 +602,27 @@ def accept_rework_verification(state: PangeaState) -> PangeaState:
             progress,
             _review_actions(state, progress, "rework_verification", task_path),
         )
+    task = load_review_task(task_path)
     try:
-        task = load_review_task(task_path)
-        result_path = normalize_review_result_path(task_path, task)
         _validate_review_inputs(state, task)
+    except Exception as exc:
+        artifact = (
+            Path(task.analysis_results[0].result_path)
+            if task.analysis_results
+            else result_path
+        )
+        _record_error(progress, "rework_result_rejected", artifact, exc)
+        original_results = _load_analysis_results(state, progress) or []
+        ready = _ready_to_finalize(
+            state,
+            progress,
+            original_results,
+            "UNRESOLVED",
+            [{"reason": str(exc), "artifact": str(artifact)}],
+        )
+        return {**ready, "next_node": "finalize_report"}
+    try:
+        result_path = normalize_review_result_path(task_path, task)
         result = load_review_result(result_path, task)
         independent_result = _load_bound_independent_review(state, task)
         validate_review_result(

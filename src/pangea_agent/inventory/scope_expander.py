@@ -147,6 +147,7 @@ def expand_analysis_scope(repositories: list[dict], requested_scopes: list[str],
             )
             selected_direct_callees: dict[str, set[str]] = {}
             selected_callee_lines = 0
+            oversized_callee_symbols: set[str] = set()
             for relative, symbols in sorted(
                 direct_callees.items(),
                 key=lambda item: (
@@ -160,6 +161,7 @@ def expand_analysis_scope(repositories: list[dict], requested_scopes: list[str],
                     line_count > MAX_DIRECT_CALLEE_LINES_PER_FILE
                     or selected_callee_lines + line_count > MAX_DIRECT_CALLEE_LINES_PER_GROUP
                 ):
+                    oversized_callee_symbols.update(symbols)
                     unresolved_dependencies.append({
                         "repo_id": repo_id,
                         "path": relative,
@@ -177,6 +179,26 @@ def expand_analysis_scope(repositories: list[dict], requested_scopes: list[str],
                     "path": relative,
                     "reason": f"direct_callee:{','.join(sorted(symbols)[:5])}",
                 })
+            declaration_headers = _declaration_headers_for_symbols(
+                oversized_callee_symbols,
+                c_cpp_code_paths,
+            )
+            for relative, symbols in sorted(declaration_headers.items()):
+                context_files.append({
+                    "repo_id": repo_id,
+                    "path": relative,
+                    "reason": f"oversized_callee_contract:{','.join(sorted(symbols)[:5])}",
+                })
+            header_dependencies = _included_local_headers(
+                set(inline_headers) | set(declaration_headers),
+                c_cpp_code_paths,
+            )
+            for relative, parents in sorted(header_dependencies.items()):
+                context_files.append({
+                    "repo_id": repo_id,
+                    "path": relative,
+                    "reason": f"direct_header_dependency:{','.join(sorted(parents)[:3])}",
+                })
             repo_groups.append({
                 "repo_id": repo_id,
                 "requested_scope": list(scopes),
@@ -187,6 +209,8 @@ def expand_analysis_scope(repositories: list[dict], requested_scopes: list[str],
                     | set(pointer_implementations)
                     | set(inline_headers)
                     | set(direct_callees)
+                    | set(declaration_headers)
+                    | set(header_dependencies)
                 ),
             })
 
@@ -302,7 +326,7 @@ def expand_analysis_scope(repositories: list[dict], requested_scopes: list[str],
         "added_files": _unique_records(added_files),
         "unresolved_dependencies": unresolved_dependencies,
         "resolved_dependencies": resolved_dependencies,
-        "boundary": "source_scope = code files inside the requested scope; context_scope = companion/declared implementations outside the request + one-hop unique C/C++ direct callees + inline/function-pointer dependencies + bounded direct callers + direct Lua require dependencies/requirers + one framework-implementation require hop + target-related config/docs/tests",
+        "boundary": "source_scope = code files inside the requested scope; context_scope = companion/declared implementations outside the request + one-hop unique C/C++ direct callees + inline/function-pointer dependencies and their direct local headers + bounded direct callers + direct Lua require dependencies/requirers + one framework-implementation require hop + target-related config/docs/tests",
     }
 
 
@@ -552,6 +576,56 @@ def _called_inline_headers(paths, code_paths: dict[Path, str]) -> dict[str, set[
             if used:
                 dependencies.setdefault(header_relative, set()).update(used)
     return dependencies
+
+
+def _included_local_headers(
+    header_relatives: set[str],
+    code_paths: dict[Path, str],
+) -> dict[str, set[str]]:
+    """Keep one direct local-include hop needed to interpret a selected header."""
+
+    by_relative = {relative: path for path, relative in code_paths.items()}
+    dependencies: dict[str, set[str]] = {}
+    for source_relative in sorted(header_relatives):
+        source_path = by_relative.get(source_relative)
+        if source_path is None or source_path.suffix.lower() not in HEADER_SUFFIXES:
+            continue
+        text = source_path.read_text(encoding="utf-8", errors="replace")
+        for include in _INCLUDE_RE.findall(text):
+            candidates = {
+                include,
+                f"include/{include}",
+                str(PurePosixPath(source_relative).parent / include),
+            }
+            matches = sorted(candidate for candidate in candidates if candidate in by_relative)
+            if len(matches) != 1:
+                continue
+            target = matches[0]
+            if target not in header_relatives:
+                dependencies.setdefault(target, set()).add(source_relative)
+    return dependencies
+
+
+def _declaration_headers_for_symbols(
+    symbols: set[str],
+    code_paths: dict[Path, str],
+) -> dict[str, set[str]]:
+    if not symbols:
+        return {}
+    declarations: dict[str, set[str]] = {}
+    for path, relative in code_paths.items():
+        if path.suffix.lower() not in HEADER_SUFFIXES:
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for symbol in set(_DECL_RE.findall(text)) & symbols:
+            declarations.setdefault(symbol, set()).add(relative)
+    selected: dict[str, set[str]] = {}
+    for symbol, paths in declarations.items():
+        if len(paths) != 1:
+            continue
+        relative = next(iter(paths))
+        selected.setdefault(relative, set()).add(symbol)
+    return selected
 
 
 def _called_symbols(text: str) -> set[str]:

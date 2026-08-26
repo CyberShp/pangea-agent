@@ -7,6 +7,7 @@ from pathlib import Path
 
 from pangea_agent.agent_io import agent_path
 from pangea_agent.graph.graph import graph
+from pangea_agent.graph.run_store import edit_progress
 from pangea_agent.inventory.scope_expander import preflight_source_scopes
 from pangea_agent.repositories.resolver import resolve_repositories_from_contract
 
@@ -88,7 +89,37 @@ def start_module_analysis(contract_path: str) -> dict:
     return _invoke_contract(contract)
 
 
-def resume_module_analysis(run_id: str, data_root: str = "pangea-data") -> dict:
+def _record_settled_turn(run_id: str, data_root: str, task_id: str) -> None:
+    state = {"run_id": run_id, "data_root": data_root}
+    with edit_progress(state) as progress:
+        current_stage = {
+            "WAITING_SOURCE_CHECKPOINT": "source_checkpoint",
+            "WAITING_RISK_ANALYSIS": "risk_analysis",
+            "WAITING_TEST_GENERATION": "test_generation",
+            "WAITING_INDEPENDENT_REVIEW": "independent_review",
+            "WAITING_COMPARISON_REVIEW": "comparison_review",
+            "WAITING_REWORK": "rework",
+            "WAITING_REWORK_VERIFICATION": "rework_verification",
+        }.get(progress.phase)
+        matches = [
+            session
+            for session in progress.agent_sessions.values()
+            if session.task_id == task_id and session.stage == current_stage
+        ]
+        if len(matches) != 1:
+            raise ValueError(
+                "settled task-id 不是当前 Graph 阶段唯一绑定的 Agent 会话："
+                f"task_id={task_id} phase={progress.phase}"
+            )
+        if matches[0].status == "dispatched":
+            matches[0].status = "pending"
+
+
+def resume_module_analysis(
+    run_id: str,
+    data_root: str = "pangea-data",
+    settled_task_id: str | None = None,
+) -> dict:
     run_dir = Path(data_root) / "runs" / run_id
     progress_path = run_dir / "progress.json"
     if not progress_path.is_file():
@@ -123,4 +154,6 @@ def resume_module_analysis(run_id: str, data_root: str = "pangea-data") -> dict:
             "该 Run 可能是在旧版本初始化阶段中断；请新建一次 module-analysis "
             "以建立可恢复状态。"
         )
+    if settled_task_id:
+        _record_settled_turn(run_id, data_root, settled_task_id)
     return run_module_analysis(str(contract_path))

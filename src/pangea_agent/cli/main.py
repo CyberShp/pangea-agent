@@ -191,6 +191,7 @@ def main() -> None:
     resume = sub.add_parser("resume-run")
     resume.add_argument("--run-id", required=True)
     resume.add_argument("--data-root", default="pangea-data")
+    resume.add_argument("--settled-task-id")
     prepare = sub.add_parser("prepare-worker-result")
     prepare.add_argument("--task", required=True)
     prepare_review = sub.add_parser("prepare-review-result")
@@ -223,7 +224,11 @@ def main() -> None:
     elif args.command == "module-analysis":
         _print_run_result(start_module_analysis(args.contract))
     elif args.command == "resume-run":
-        _print_run_result(resume_module_analysis(args.run_id, args.data_root))
+        _print_run_result(resume_module_analysis(
+            args.run_id,
+            args.data_root,
+            settled_task_id=args.settled_task_id,
+        ))
     elif args.command == "prepare-worker-result":
         task_path = Path(args.task)
         task = load_worker_task(task_path)

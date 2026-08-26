@@ -8,6 +8,18 @@ description: Start and advance this repository's PANGEA test-analysis graph in D
 Use this Skill only as the DSH entry into the repository's existing PANGEA graph. Do not
 reimplement the graph, schemas, rubrics, worker roles, or report generation here.
 
+## DSH Companion canonical lifecycle
+
+When `pangea_run_create` and `pangea_action_dispatch` are available, they are the only root-Agent
+entry points. Start with `pangea_run_create`; dispatch every returned `action_id` with
+`pangea_action_dispatch`; after the matching child settles, call `pangea_action_validate` and then
+`pangea_action_settle` for that same action. An `invalid` validation result is automatically routed
+back to the same child, so wait for it to settle and validate again. Do not read or write the
+pending contract, call the lifecycle CLI directly, or use raw subagent/send_message calls. This
+section overrides the manual compatibility procedure retained below for clients without the DSH
+Companion. If the tools are unavailable in DSH, stop and report the missing plugin instead of
+mixing both procedures.
+
 If the current prompt is a graph-generated path under `agent-tasks/analysis/`,
 `agent-tasks/rework/`, or a review task path, this is a delegated Agent call. Read
 `.agents/pangea/dsh.md`, then the matching `.opencode/agents/analysis-worker.md` or
@@ -17,8 +29,9 @@ If the current prompt is a graph-generated path under `agent-tasks/analysis/`,
 dispatch or monitor another Agent. The selected worker role only writes and validates the
 artifact for this task, then returns control to the DSH root Agent.
 
-Otherwise this is a root-Agent request. Read `.agents/pangea/dsh.md` and
-`.opencode/agents/pangea-agent.md` completely before acting.
+Otherwise this is a root-Agent request. Read `.agents/pangea/dsh.md` completely before acting.
+Do not read `.opencode/agents/pangea-agent.md`; that file defines the separate OpenCode root
+runtime, while DSH root lifecycle is defined only by this Skill and the DSH adapter.
 
 The DSH `bash` tool uses the host shell. On a POSIX host, use POSIX commands and never send
 PowerShell cmdlets to `bash`; the repository's Windows compatibility rules do not change the
@@ -54,9 +67,8 @@ When the user requests a new analysis and does not explicitly name a historical 
    `acceptance-demo` and directory `module`, write `"module"`, never
    `"acceptance-demo/module"` or a backslash path. If the request already supplies them, do not
    explore further.
-3. Choose one UUID for this root session and write the unique temporary path
-   `pangea-data/.pangea/pending-task-contract-<uuid>.json` from the current request. Do not read,
-   delete, or reuse another session's pending contract. For one
+3. Without reading old content, delete the fixed temporary path
+   `pangea-data/.pangea/pending-task-contract.json`, then recreate it from the current request. For one
    repository, include `repository: "<repo_id>"` and omit `repositories`; for multiple
    repositories, include a non-empty `repositories` list and omit `repository`. Also include
    only `data_root`, `mode=module_analysis`, `target`, `source_scope`, and optional `focus`.
@@ -64,16 +76,16 @@ When the user requests a new analysis and does not explicitly name a historical 
    one-item array, and an omitted focus becomes `[target]`.
    `source_scope` is always a JSON array, even for one path. Never include a `run_id` or reuse
    old contract content.
-   This unique temporary path is repository-level: it never moves under `data_root`. Even
+   This temporary path is repository-level: it never moves under `data_root`. Even
    when `data_root=pangea-data/acceptance/example`, do not create or use
-   `<data_root>/.pangea/pending-task-contract-<uuid>.json`, and do not create/check `data_root` before
+   `<data_root>/.pangea/pending-task-contract.json`, and do not create/check `data_root` before
    writing the pending contract.
 4. With the interpreter selected above, run the matching command: POSIX
    `/usr/bin/env -C "<workspace_root>" "<workspace_root>/.venv/bin/python" -m
    pangea_agent.cli.main module-analysis --contract
-   "<workspace_root>/pangea-data/.pangea/pending-task-contract-<uuid>.json"`. Windows PowerShell
+   "<workspace_root>/pangea-data/.pangea/pending-task-contract.json"`. Windows PowerShell
    `& '.\.venv\Scripts\python.exe' -m pangea_agent.cli.main module-analysis --contract
-   'pangea-data/.pangea/pending-task-contract-<uuid>.json'`.
+   'pangea-data/.pangea/pending-task-contract.json'`.
 5. The CLI deletes that exact pending contract before entering the Graph. Do not issue a separate
    delete command after `module-analysis`. Keep the returned `run_id` as the only current Run for
    this DSH root session.
@@ -118,7 +130,8 @@ or from the action JSON.
   A `subagent-report` is informational only. Never parse it as control state, inspect semantic
   artifacts because of it, send corrective semantic instructions, or call `resume-run` from it.
   A `subagent-settled` notice for the current action is only a wake-up signal: call the action's
-  `after_completion=resume_run` exactly once without inferring PASS. Graph revalidates the bound
+  `after_completion=resume_run` exactly once with `--settled-task-id` set to that action's bound
+  subagent ID, without inferring PASS. Graph revalidates the bound
   session and artifact and is the only authority that may advance. If the command is rejected, stop
   truthfully; do not read artifacts or coach the subagent. If it succeeds, every returned action is
   authoritative even when its role, stage, task path, or task ID matches the previous action. Dispatch
@@ -150,7 +163,8 @@ or from the action JSON.
 - Each delegated Agent validates the artifact for its current task before ending its turn. A worker
   `validate-worker-result PASS` or reviewer `check-review-artifact PASS` records completion only for
   that current bound task. When the matching delegated Agent reports that its turn completed, follow
-  `after_completion=resume_run` by running `resume-run --run-id <run_id> --data-root <data_root>`.
+  `after_completion=resume_run` by running `resume-run --run-id <run_id> --data-root <data_root>
+  --settled-task-id <the subagent_id bound to this action>`.
   Do not call `record-agent-session` again and do not read or interpret its reply or result artifact.
   If validation did not complete the current session, Graph may reject the resume or return an action
   for the current task. A rejection is reported truthfully; a returned action is followed exactly,
