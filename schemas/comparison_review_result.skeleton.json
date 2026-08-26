@@ -1,0 +1,40 @@
+{
+  "schema_version": "1.0",
+  "summary": "<非空对照复核摘要>",
+  "independent_finding_decisions": [
+    {
+      "finding_key": "<必须对应盲审已有 finding_key>",
+      "disposition": "<confirmed|dismissed|unresolved>",
+      "conclusion": "<逐条裁决结论>",
+      "evidence": [
+        {
+          "repo_id": "<repo_id>",
+          "path": "<从该 finding affected_unit_ids 对应 unit 的 source_scope/context_scope 原样选择>",
+          "line_start": 1,
+          "line_end": 1,
+          "observation": "<裁决所依据的源码事实>"
+        }
+      ]
+    }
+  ],
+  "findings": [
+    {
+      "finding_key": "<不得与盲审 finding_key 重复>",
+      "category": "<missed_flow|document_delta|coverage_gap|defect_mechanism|risk|test_oracle|incorrect_conclusion>",
+      "affected_unit_ids": ["<unit_id>"],
+      "linked_input_ids": [],
+      "summary": "<新增发现摘要>",
+      "required_check": "<需要补充或纠正的具体检查>",
+      "evidence": [
+        {
+          "repo_id": "<repo_id>",
+          "path": "<从 affected unit 的 source_scope/context_scope 原样选择的相对路径>",
+          "line_start": 1,
+          "line_end": 1,
+          "observation": "<该源码区间直接支持的事实>"
+        }
+      ]
+    }
+  ],
+  "unresolved": []
+}
