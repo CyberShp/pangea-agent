@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class StrictModel(BaseModel):
@@ -21,6 +21,11 @@ class SourceEvidence(StrictModel):
     line_start: int = Field(gt=0)
     line_end: int | None = Field(default=None, gt=0)
     observation: str = Field(min_length=1)
+
+    @field_validator("path", mode="before")
+    @classmethod
+    def normalize_path(cls, value: str) -> str:
+        return value.replace("\\", "/").strip("/")
 
     @model_validator(mode="after")
     def ordered_lines(self) -> "SourceEvidence":
@@ -78,8 +83,14 @@ class FlowStep(StrictModel):
 
 
 class FlowEdge(StrictModel):
-    source_step_key: str = Field(min_length=1)
-    target_step_key: str = Field(min_length=1)
+    source_step_key: str = Field(
+        min_length=1,
+        description="必须引用同一 CodeFlow.steps 中已定义的 step_key",
+    )
+    target_step_key: str = Field(
+        min_length=1,
+        description="必须引用同一 CodeFlow.steps 中已定义的 step_key",
+    )
     condition: str | None = Field(default=None, min_length=1)
 
 
@@ -90,6 +101,24 @@ class CodeFlow(StrictModel):
     summary: str = Field(min_length=1)
     steps: list[FlowStep] = Field(min_length=1)
     edges: list[FlowEdge] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_step_references(self) -> "CodeFlow":
+        step_keys = [step.step_key for step in self.steps]
+        if len(step_keys) != len(set(step_keys)):
+            raise ValueError(f"流程 {self.flow_key} 的 step_key 不能重复")
+        known = set(step_keys)
+        for edge in self.edges:
+            missing = {
+                key
+                for key in (edge.source_step_key, edge.target_step_key)
+                if key not in known
+            }
+            if missing:
+                raise ValueError(
+                    f"流程 {self.flow_key} 的 edge 引用了未知 step_key：{sorted(missing)}"
+                )
+        return self
 
 
 class InputDecision(StrictModel):
