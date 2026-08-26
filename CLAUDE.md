@@ -8,11 +8,11 @@
 - 没有当前会话明确 `run_id` 时，不扫描历史 Run 猜测恢复对象。
 - 同时派发最多 8 个 action；8 是并发上限，不是整个 Run 的单元总数。
 - 每次派发后通过 action adapter 保存真实子任务 ID；子 Agent 返回后先校验，通过后再接收并取得下一条 action。
-- 校验失败时恢复同一子任务修正同一 `result_path`，主会话不代写。
+- 校验失败时恢复**同一个 action 的同一子任务**，把完整校验错误交回原角色修正同一 `result_path` 后再次校验；主会话不代写，也不改派其他角色做格式修复。review 校验失败仍由原 `review-worker` 修正，不能调用 `closure-worker` 修 review JSON。
 - 只按 CLI JSON 中的 action 继续，不根据 Agent 回复文字推断阶段。
 
 角色映射：`planning`、`analysis`、`review`、`closure`、`asset_extraction`。
 
-Python 只负责确定性解析、状态、契约和报告。首轮 analysis 已包含流程、调用链、资料/代码差异、Coverage、缺陷机理、风险和用例。review 由同一个 Reviewer 完成两个 checkpoint：先在看不到首轮结果时独立检查，再对照首轮结果与源码排除错误结论并找出遗漏。这是对同一批分析的先盲审、后对照，不是审计上一次审计。有实质问题时只补齐受影响单元，之后聚合。
+Python 只负责确定性解析、状态、契约和报告。首轮 analysis 已包含流程、调用链、资料/代码差异、Coverage、缺陷机理、风险和用例。review 由同一个 Reviewer 完成两个 checkpoint：先在看不到首轮结果时独立检查，再对照首轮结果与源码排除错误结论并找出遗漏。这是对同一批分析的先盲审、后对照，不是审计上一次审计。有实质问题时只补齐受影响单元，之后聚合。`closure-worker` 只处理 comparison review 已通过校验后由 Graph 正式生成的 closure action，不能作为 analysis/review 校验失败的通用修复器。
 
 命令按 Windows PowerShell 可执行方式组织，一次执行一个命令。不得修改 `pangea-data/repositories/` 下用户源码的 Git 状态。
