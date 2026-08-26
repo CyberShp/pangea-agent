@@ -1,0 +1,24 @@
+{
+  "schema_version": "1.0",
+  "summary": "<非空复核摘要>",
+  "findings": [
+    {
+      "finding_key": "<唯一 finding_key>",
+      "category": "<missed_flow|document_delta|coverage_gap|defect_mechanism|risk|test_oracle|incorrect_conclusion>",
+      "affected_unit_ids": ["<unit_id>"],
+      "linked_input_ids": [],
+      "summary": "<发现摘要>",
+      "required_check": "<需要首轮结果补充或核对的具体检查>",
+      "evidence": [
+        {
+          "repo_id": "<repo_id>",
+          "path": "<从 unit-plan 的 source_scope/context_scope 原样选择的相对路径>",
+          "line_start": 1,
+          "line_end": 1,
+          "observation": "<该源码区间直接支持的事实>"
+        }
+      ]
+    }
+  ],
+  "unresolved": []
+}
