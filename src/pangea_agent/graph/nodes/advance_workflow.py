@@ -52,6 +52,71 @@ GENERAL_RUBRICS = [
 ]
 
 
+def _normalized_scope_path(path: str) -> str:
+    return path.replace("\\", "/").strip("/")
+
+
+def _unit_scopes(progress) -> dict[str, tuple[str, set[str]]]:
+    return {
+        unit.unit_id: (
+            unit.repo_id,
+            {
+                _normalized_scope_path(path)
+                for path in [*unit.source_scope, *unit.context_scope]
+            },
+        )
+        for unit in progress.analysis_units
+    }
+
+
+def _canonical_evidence_path(path: str, candidates: set[str]) -> str | None:
+    normalized = _normalized_scope_path(path)
+    if normalized in candidates:
+        return normalized
+
+    suffix_matches = {
+        candidate
+        for candidate in candidates
+        if candidate.endswith(f"/{normalized}") or normalized.endswith(f"/{candidate}")
+    }
+    if len(suffix_matches) == 1:
+        return next(iter(suffix_matches))
+
+    basename = normalized.rsplit("/", 1)[-1]
+    basename_matches = {
+        candidate for candidate in candidates
+        if candidate.rsplit("/", 1)[-1] == basename
+    }
+    if len(basename_matches) == 1:
+        return next(iter(basename_matches))
+    return None
+
+
+def _validate_evidence_for_units(
+    progress,
+    evidence_items,
+    unit_ids: list[str],
+    label: str,
+) -> None:
+    scopes = _unit_scopes(progress)
+    allowed_by_repo: dict[str, set[str]] = defaultdict(set)
+    for unit_id in unit_ids:
+        repo_id, paths = scopes[unit_id]
+        allowed_by_repo[repo_id].update(paths)
+
+    for evidence in evidence_items:
+        candidates = allowed_by_repo.get(evidence.repo_id, set())
+        canonical = _canonical_evidence_path(evidence.path, candidates)
+        if canonical is None:
+            raise ValueError(
+                f"{label}证据不属于 affected_unit_ids 的冻结源码："
+                f"{evidence.repo_id}:{evidence.path}:{evidence.line_start}；"
+                f"affected_unit_ids={sorted(unit_ids)}；"
+                f"allowed_paths={sorted(candidates)}"
+            )
+        evidence.path = canonical
+
+
 def _specialized_rubrics(unit, compact: dict) -> list[str]:
     owned_paths = set(unit.source_scope) | set(unit.context_scope)
     files = [
@@ -250,20 +315,16 @@ def _validate_review(progress, result) -> None:
     finding_keys = [finding.finding_key for finding in result.findings]
     if len(finding_keys) != len(set(finding_keys)):
         raise ValueError("复核 finding_key 不能重复")
-    allowed = {
-        unit.repo_id: set(unit.source_scope) | set(unit.context_scope)
-        for unit in progress.analysis_units
-    }
     for finding in result.findings:
         unknown = set(finding.affected_unit_ids) - known_units
         if unknown:
             raise ValueError(f"复核引用了未知单元：{sorted(unknown)}")
-        for evidence in finding.evidence:
-            if evidence.path not in allowed.get(evidence.repo_id, set()):
-                raise ValueError(
-                    "复核证据不属于冻结源码："
-                    f"{evidence.repo_id}:{evidence.path}:{evidence.line_start}"
-                )
+        _validate_evidence_for_units(
+            progress,
+            finding.evidence,
+            finding.affected_unit_ids,
+            f"复核 finding {finding.finding_key}",
+        )
 
 
 def _validate_comparison_review(
@@ -275,6 +336,9 @@ def _validate_comparison_review(
 ) -> None:
     _validate_review(progress, comparison)
     independent_keys = {finding.finding_key for finding in independent.findings}
+    independent_by_key = {
+        finding.finding_key: finding for finding in independent.findings
+    }
     decision_keys = [
         decision.finding_key
         for decision in comparison.independent_finding_decisions
@@ -288,17 +352,13 @@ def _validate_comparison_review(
             "对照复核没有逐条裁决盲审 finding："
             f"missing={sorted(missing)} extra={sorted(extra)}"
         )
-    allowed = {
-        unit.repo_id: set(unit.source_scope) | set(unit.context_scope)
-        for unit in progress.analysis_units
-    }
     for decision in comparison.independent_finding_decisions:
-        for evidence in decision.evidence:
-            if evidence.path not in allowed.get(evidence.repo_id, set()):
-                raise ValueError(
-                    "盲审裁决证据不属于冻结源码："
-                    f"{evidence.repo_id}:{evidence.path}:{evidence.line_start}"
-                )
+        _validate_evidence_for_units(
+            progress,
+            decision.evidence,
+            independent_by_key[decision.finding_key].affected_unit_ids,
+            f"盲审裁决 {decision.finding_key}",
+        )
     comparison_keys = {finding.finding_key for finding in comparison.findings}
     duplicates = independent_keys & comparison_keys
     if duplicates:
@@ -347,7 +407,9 @@ def _validate_comparison_review(
                 evidence
                 for evidence in finding.evidence
                 if evidence.repo_id == unit.repo_id
-                and evidence.path in set(unit.source_scope)
+                and evidence.path in {
+                    _normalized_scope_path(path) for path in unit.source_scope
+                }
             ]
             if not source_evidence:
                 continue
@@ -416,9 +478,6 @@ def _validate_comparison_review(
                     "若已有 oracle 与源码相反，应使用 incorrect_conclusion"
                 )
 
-    independent_by_key = {
-        finding.finding_key: finding for finding in independent.findings
-    }
     for decision in comparison.independent_finding_decisions:
         if decision.disposition != "dismissed":
             check_basis(independent_by_key[decision.finding_key])
