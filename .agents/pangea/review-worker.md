@@ -2,6 +2,12 @@
 
 每个 task 只执行其 `task_type` 指定的一个检查点，不派发子 Agent。
 
+开始分析前必须先读取 task、`result_schema_path` 指向的结果 schema，以及同目录下将 `.schema.json` 替换为 `.skeleton.json` 的输出骨架。骨架只用于字段形状参考，最终必须输出完整真实结果，不得保留占位符。不要凭旧版本记忆自行发明字段。
+
+Review finding 的 `category` 只能是：`missed_flow`、`document_delta`、`coverage_gap`、`defect_mechanism`、`risk`、`test_oracle`、`incorrect_conclusion`。`resource_leak`、`race_condition`、越界、崩溃等是风险机理，不是 category；这类 finding 使用 `risk`，具体机理写入 `summary` / `required_check`。不得输出 schema 禁止的 `unit_id`、`severity`、`title`、`description` 等额外字段；必须填写 `affected_unit_ids`、`summary`、`required_check`。
+
+每条 `evidence` 必须是 `SourceEvidence` 对象数组，包含 `repo_id`、`path`、`line_start`、可选 `line_end` 和 `observation`，不能写成 `"file.c:123"` 字符串。`path` 必须从该 finding 的 `affected_unit_ids` 对应 unit 的 `source_scope` / `context_scope` 中原样选择相对路径，不得根据模块语义自行补目录层级。
+
 如果工作区规则要求读取 Private House Code Skill，只读取工作区根目录的 `.agents/skills/private-house-code/SKILL.md`；Skill 路径不属于 `rubric_paths`，不得相对 rubric 目录拼接或猜测。
 
 `independent_review` 是盲审。task 不提供首轮 analysis result，不得自行寻找这些结果。只基于 unit plan、冻结源码、inventory、结构化输入、task 指定 rubrics 和结果 schema，独立寻找关键流程、资料/代码差异、Coverage 闭环、缺陷机理、风险或测试 oracle 的实质遗漏。
@@ -16,6 +22,8 @@
 
 `missed_flow` 只表示首轮确实没有覆盖的执行路径；若 finding 的源码区间已出现在同一首轮 flow 中必须驳回。`test_oracle` 只表示对应 flow 没有关联用例；若已有用例通过 `covered_flow_keys` 覆盖该 flow，而问题是预期结果与源码相反，使用 `incorrect_conclusion` 并指出具体错误预期。函数返回 0 且同一路径已把成功状态写入对象时，不能再声称“返回 0 无法表示成功”。函数名或字段名暗示的策略不能代替需求、设计或公开契约。
 
-措辞、编号、路径格式和机械字段不构成 finding。每个 finding 和每条盲审裁决都必须有冻结源码证据；finding 还必须指定受影响单元和必要检查。把符合 `result_schema_path` 的 JSON 写到 task 的 `result_path`，不得修改其他结果。
+措辞、编号、路径格式和机械字段不构成 finding。每个 finding 和每条盲审裁决都必须有冻结源码证据；finding 还必须指定受影响单元和必要检查。
+
+写入前逐项自检：字段必须符合 schema、category 必须来自固定枚举、`affected_unit_ids` 必须来自 unit plan、evidence 必须是对象数组且 path 来自对应 affected unit、盲审裁决不得漏 `finding_key`。将完整 JSON 写到 task 的 `result_path`，不得修改其他结果。若校验器返回错误，只修正同一 `result_path` 后重新提交；不得调用 closure-worker 修 review JSON。
 
 结果提交后，最终回复只用一行说明完成，不复述 JSON 或复核内容。
