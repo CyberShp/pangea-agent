@@ -81,12 +81,14 @@ def _normalize_result_actions(data_root: str, run_id: str, result: dict) -> dict
     progress = load_progress(_state(data_root, run_id))
     if progress is None:
         raise ValueError(f"Run 不存在：{run_id}")
+    normalized = []
+    for item in result["agent_actions"]:
+        action_id = item.get("action_id")
+        if not action_id or action_id not in progress.actions:
+            raise ValueError(f"Workflow 返回了未持久化的 action：{action_id}")
+        normalized.append(_external_action(progress, run_id, progress.actions[action_id]))
     payload = dict(result)
-    payload["agent_actions"] = [
-        _external_action(progress, run_id, progress.actions[item["action_id"]])
-        for item in result["agent_actions"]
-        if item.get("action_id") in progress.actions
-    ]
+    payload["agent_actions"] = normalized
     return payload
 
 
@@ -175,7 +177,7 @@ def bind_action(data_root: str, run_id: str, action_id: str, task_id: str) -> di
             "定向补齐禁止新建或替换 worker："
             f"expected_task_id={origin.task_id} actual_task_id={task_id}"
         )
-    if action.task_id == task_id and action.status in {"dispatched", "accepted"}:
+    if action.task_id == task_id and action.status in {"dispatched", "settled", "accepted"}:
         return _external_action(progress, run_id, action)
     if progress.lifecycle_status != "running":
         raise ValueError("Run 当前不接受新的 Agent 绑定")
@@ -268,6 +270,9 @@ def settle_action(data_root: str, run_id: str, action_id: str) -> dict:
     action = progress.actions[action_id]
     if action.status == "accepted":
         return next_actions(data_root, run_id)
+    if action.status == "settled":
+        result = resume_module_analysis(run_id, data_root)
+        return _normalize_result_actions(data_root, run_id, result)
     if progress.lifecycle_status != "running":
         raise ValueError("Run 当前不接受 Agent 结果")
     if action.status != "dispatched" or not action.task_id:
