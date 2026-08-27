@@ -133,6 +133,15 @@ def accept_plan(
         unknown_sources = [key for key in source_keys if key not in files]
         if unknown_sources:
             raise ValueError(f"规划引用了未知源码：{unknown_sources}")
+        out_of_scope_sources = [key for key in source_keys if key not in requested]
+        if out_of_scope_sources:
+            raise ValueError(
+                "规划把请求范围外文件提升为源码所有权："
+                + ", ".join(
+                    f"{repo_id}:{path}"
+                    for repo_id, path in sorted(out_of_scope_sources)
+                )
+            )
         for key in source_keys:
             if key in owners:
                 raise ValueError(

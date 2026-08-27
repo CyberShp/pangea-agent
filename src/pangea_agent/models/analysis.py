@@ -368,6 +368,8 @@ class AgentAction(StrictModel):
 class ActionState(AgentAction):
     status: Literal["pending", "dispatched", "settled", "accepted", "failed"] = "pending"
     error: str | None = None
+    validation_failures: int = Field(default=0, ge=0)
+    repeated_validation_failures: int = Field(default=0, ge=0)
 
 
 class WorkflowProgress(StrictModel):

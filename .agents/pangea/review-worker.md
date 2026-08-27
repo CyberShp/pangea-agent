@@ -8,6 +8,8 @@ Review finding 的 `category` 只能是：`missed_flow`、`document_delta`、`co
 
 每条 `evidence` 必须是 `SourceEvidence` 对象数组，包含 `repo_id`、`path`、`line_start`、可选 `line_end` 和 `observation`，不能写成 `"file.c:123"` 字符串。`path` 必须从该 finding 的 `affected_unit_ids` 对应 unit 的 `source_scope` / `context_scope` 中原样选择相对路径，不得根据模块语义自行补目录层级。
 
+校验返修时保留已有语义结论并重新写出完整 JSON 对象，不用行号切片、字符串拼接或临时脚本拼装。
+
 如果工作区规则要求读取 Private House Code Skill，只读取工作区根目录的 `.agents/skills/private-house-code/SKILL.md`；Skill 路径不属于 `rubric_paths`，不得相对 rubric 目录拼接或猜测。
 
 `independent_review` 是盲审。task 不提供首轮 analysis result，不得自行寻找这些结果。只基于 unit plan、冻结源码、inventory、结构化输入、task 指定 rubrics 和结果 schema，独立寻找关键流程、资料/代码差异、Coverage 闭环、缺陷机理、风险或测试 oracle 的实质遗漏。

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from pydantic import ValidationError
+
 from pangea_agent.agent_io import read_json, write_json
 from pangea_agent.assets import (
     complete_asset_extraction,
@@ -35,6 +37,10 @@ from pangea_agent.models.analysis import (
 from pangea_agent.models.asset import AssetExtractionResult
 
 
+MAX_VALIDATION_FAILURES = 6
+MAX_REPEATED_VALIDATION_FAILURES = 3
+
+
 def _state(data_root: str, run_id: str) -> dict:
     return {"data_root": data_root, "run_id": run_id}
 
@@ -55,18 +61,54 @@ def _invalid_result(
     action: ActionState,
     exc: Exception,
 ) -> dict:
-    action.error = str(exc)
-    save_progress(state, progress)
-    return {
-        "action_id": action.action_id,
-        "status": "invalid",
-        "recoverable": True,
-        "error": {
-            "code": exc.__class__.__name__,
-            "message": str(exc),
-        },
-        "repair_action": _repair_action(action),
+    message = str(exc)
+    action.validation_failures += 1
+    if action.error == message:
+        action.repeated_validation_failures += 1
+    else:
+        action.repeated_validation_failures = 1
+    action.error = message
+    error = {
+        "code": exc.__class__.__name__,
+        "message": message,
     }
+    if isinstance(exc, ValidationError):
+        error["details"] = [
+            {
+                "path": ".".join(str(part) for part in item["loc"]),
+                "type": item["type"],
+                "message": item["msg"],
+            }
+            for item in exc.errors(include_url=False)
+        ]
+    exhausted = (
+        action.validation_failures >= MAX_VALIDATION_FAILURES
+        or action.repeated_validation_failures >= MAX_REPEATED_VALIDATION_FAILURES
+    )
+    if exhausted:
+        action.status = "failed"
+        progress.lifecycle_status = "failed"
+        progress.errors.append({
+            "action_id": action.action_id,
+            "code": "validation_repair_exhausted",
+            "message": message,
+            "validation_failures": action.validation_failures,
+            "repeated_validation_failures": action.repeated_validation_failures,
+        })
+    save_progress(state, progress)
+    payload = {
+        "action_id": action.action_id,
+        "status": "failed" if exhausted else "invalid",
+        "recoverable": not exhausted,
+        "error": error,
+        "validation_failures": action.validation_failures,
+        "max_validation_failures": MAX_VALIDATION_FAILURES,
+        "repeated_validation_failures": action.repeated_validation_failures,
+        "max_repeated_validation_failures": MAX_REPEATED_VALIDATION_FAILURES,
+    }
+    if not exhausted:
+        payload["repair_action"] = _repair_action(action)
+    return payload
 
 
 def bind_asset_action(
@@ -267,6 +309,8 @@ def validate_action(data_root: str, run_id: str, action_id: str) -> dict:
 
     if action.error is not None:
         action.error = None
+        action.validation_failures = 0
+        action.repeated_validation_failures = 0
         save_progress(state, progress)
     payload = {"action_id": action_id, "status": "valid"}
     if warnings:
@@ -291,13 +335,21 @@ def settle_action(data_root: str, run_id: str, action_id: str) -> dict:
 
     validation = validate_action(data_root, run_id, action_id)
     if validation["status"] != "valid":
-        return {
+        current = load_progress(state)
+        if current is None:
+            raise ValueError(f"Run 不存在：{run_id}")
+        payload = {
             "run_id": run_id,
-            "lifecycle_status": progress.lifecycle_status,
-            "stage": progress.stage,
+            "lifecycle_status": current.lifecycle_status,
+            "stage": current.stage,
             "validation": validation,
-            "agent_actions": [validation["repair_action"]],
         }
+        payload["agent_actions"] = (
+            [validation["repair_action"]]
+            if validation.get("repair_action")
+            else []
+        )
+        return payload
 
     progress = load_progress(state)
     if progress is None:

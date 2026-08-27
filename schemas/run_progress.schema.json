@@ -85,6 +85,18 @@
           ],
           "default": null,
           "title": "Error"
+        },
+        "validation_failures": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Validation Failures",
+          "type": "integer"
+        },
+        "repeated_validation_failures": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Repeated Validation Failures",
+          "type": "integer"
         }
       },
       "required": [
