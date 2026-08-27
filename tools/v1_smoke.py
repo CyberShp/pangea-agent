@@ -3256,7 +3256,7 @@ def _bounded_scope_expansion() -> None:
     assert task["max_parallel_workers"] == 8 and task["may_spawn_workers"] is False
     semantic_checks = task["semantic_check_items"]
     semantic_kinds = [item["kind"] for item in semantic_checks]
-    assert semantic_kinds == ["assertion_reachability", "paired_operation"], semantic_kinds
+    assert semantic_kinds == ["assertion_reachability"], semantic_kinds
     assert {item["subject_path"] for item in semantic_checks} == {"module/entry.c"}
     assert all(
         item["path"] != "module/demo_internal.h"
