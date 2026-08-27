@@ -5405,7 +5405,7 @@ def _graph_control_contract_reaches_all_clients() -> None:
 
 
 def _companion_adapter_advances_current_graph() -> None:
-    _, data_root, contract = _workspace()
+    _, data_root, contract = _workspace(repositories=("repo-a", "repo-b"))
     created_process = subprocess.run(
         [
             sys.executable, "-m", "pangea_agent.cli.main", "runs", "create",
@@ -5418,27 +5418,33 @@ def _companion_adapter_advances_current_graph() -> None:
     envelope = json.loads(created_process.stdout.strip().splitlines()[-1])
     assert envelope["api_version"] == "1.0" and envelope["ok"] is True
     created = envelope["result"]
-    action = created["agent_actions"][0]
-    assert action["action_id"].endswith("|analysis:U00|source_checkpoint")
-    bound = bind_action(
-        str(data_root), created["run_id"], action["action_id"], _ANALYSIS_SESSION_ID
-    )
-    assert bound["status"] == "dispatched"
-    invalid = validate_action(str(data_root), created["run_id"], action["action_id"])
-    assert invalid["status"] == "invalid"
-    task_path = Path(action["task_path"])
-    task = read_json(task_path)
-    write_json(Path(task["result_path"]), _task_result(task))
-    _validate_worker_task(task_path)
-    assert validate_action(
-        str(data_root), created["run_id"], action["action_id"]
-    )["status"] == "valid"
-    advanced = settle_action(str(data_root), created["run_id"], action["action_id"])
+    actions = created["agent_actions"]
+    assert len(actions) == 2
+    assert actions[0]["action_id"].endswith("|analysis:U00|source_checkpoint")
+    for index, action in enumerate(actions, start=1):
+        session_id = f"00000000-0000-4000-8000-{index:012d}"
+        bound = bind_action(
+            str(data_root), created["run_id"], action["action_id"], session_id
+        )
+        assert bound["status"] == "dispatched"
+        invalid = validate_action(str(data_root), created["run_id"], action["action_id"])
+        assert invalid["status"] == "invalid"
+        task_path = Path(action["task_path"])
+        task = read_json(task_path)
+        write_json(Path(task["result_path"]), _task_result(task))
+        _validate_worker_task(task_path)
+        assert validate_action(
+            str(data_root), created["run_id"], action["action_id"]
+        )["status"] == "valid"
+    advanced = settle_action(str(data_root), created["run_id"], actions[0]["action_id"])
     assert advanced["phase"] == "WAITING_RISK_ANALYSIS"
     assert advanced["agent_actions"][0]["action"] == "continue_agent"
     assert advanced["agent_actions"][0]["action_id"].endswith(
         "|analysis:U00|risk_analysis"
     )
+    idempotent = settle_action(str(data_root), created["run_id"], actions[1]["action_id"])
+    assert idempotent["phase"] == "WAITING_RISK_ANALYSIS"
+    assert {action["unit_id"] for action in idempotent["agent_actions"]} == {"U00", "U01"}
 
 
 SCENARIOS: tuple[tuple[str, Scenario], ...] = (
