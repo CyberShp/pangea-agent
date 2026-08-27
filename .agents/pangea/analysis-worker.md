@@ -1,8 +1,18 @@
 # Analysis worker
 
-只分析 task 指定的一个 C/C++ 单元，不扩大冻结范围，不派发子 Agent。
+只处理 task 指定的一个 C/C++ 单元，不扩大冻结范围，不派发子 Agent。当前会话可能先执行 `analysis`，后续在 comparison review 要求补齐时由 Graph 以 `continue_agent` 续接同一个 originating worker；不得因为 task 类型变化而创建替代 worker。
 
-开始分析前先读取 task、冻结源码、inventory、selected inputs、task 指定 rubrics，以及 `result_schema_path` 指向的结果 schema。不要凭旧版本记忆自行发明字段。首轮一次完成主干/分支/异常/传播/恢复流程、关键入口及调用关系、状态和资源副作用、资料/代码差异、相关 Coverage 缺口、历史缺陷机理、六维风险和测试用例。
+## task_type=analysis
+
+开始分析前读取 task、冻结源码、inventory、selected inputs、task 指定 rubrics，以及 `result_schema_path` 指向的结果 schema。不要凭旧版本记忆自行发明字段。首轮一次完成主干/分支/异常/传播/恢复流程、关键入口及调用关系、状态和资源副作用、资料/代码差异、相关 Coverage 缺口、历史缺陷机理、六维风险和测试用例。
+
+## task_type=closure
+
+这是对本会话首轮结果的正式定向补齐，不是新的独立分析。读取 closure task、`original_task_path`、`original_result_path`、原 task 指向的 selected inputs / 冻结源码、`review_findings` 和 `result_schema_path`。以原结果为内容基础，保留未被 finding 推翻的正确内容，只处理当前 findings，并把完整 `UnitSemanticResult` 写入 closure task 的 `result_path`。
+
+每个 finding 恰好写一个 `review_finding_decisions`：真实纳入为 `incorporated`；源码反证充分为 `dismissed`；当前冻结输入不能解决为 `unresolved`。不得借 closure 扩大分析范围，不得修改无关内容，不得修 review JSON。
+
+## 共同约束
 
 冻结风险前先做 C/C++ 语义校验：`a || b` 在 a 为真时不读 b，`a && b` 在 a 为假时不读 b；`!x` 只在 x 为 0 时为真，负数也是非零真值；入口先以 `<= 0` 返回、之后才执行一次减 1 时，该减法只能把正数降到 0，不能用“已耗尽后继续递减为负数”构造风险或用例预期。缺少锁、重置、范围校验、恢复动作、初始化入口或返回状态本身不是缺陷；必须有契约依据或能从当前源码证明的外部错误结果。重复参数检查、void 返回和调用方传入悬空指针同样不能在没有契约时构造风险。不得假设源码中没有发生的“部分初始化”或隐藏副作用。
 
@@ -20,8 +30,8 @@
 
 每个 `flow.steps[]` 都必须至少有一条直接源码 `evidence`。没有独立源码行的概念说明、外部观测或推导状态放在 flow `summary`、edge `condition`、风险或用例中，不得创建空 `evidence` 的 step。每条 `flow.edges[]` 的 `source_step_key` 和 `target_step_key` 必须引用同一个 flow 的 `steps[].step_key` 中已经定义的键；不得在 edge 中首次创造 step_key，也不得跨 flow 引用。
 
-所有 `SourceEvidence.path` 必须从当前 task `unit.source_scope` / `unit.context_scope` 中原样选择相对路径，不得根据函数、协议或模块语义自行补目录层级。源码证据直接使用 `repo_id`、相对路径和行号。
+所有 `SourceEvidence.path` 必须从当前 analysis task，或 closure task 的 `original_task_path` 所指 task 的 `unit.source_scope` / `unit.context_scope` 中原样选择相对路径，不得根据函数、协议或模块语义自行补目录层级。源码证据直接使用 `repo_id`、相对路径和行号。
 
-写入前逐项自检：每个 step evidence 非空、每条 edge 的两端都存在、所有 `covered_flow_keys` / `linked_risk_keys` / `test_case_keys` 都有真实定义、evidence path 属于当前 unit。将符合 `result_schema_path` 的完整语义 JSON 写到 task 的 `result_path`。不填写 unit ID、Agent ID、路径或运行状态。若校验器返回错误，只修正同一 `result_path` 后重新提交，不另建 fix 脚本或替代结果文件。
+写入前逐项自检：每个 step evidence 非空、每条 edge 的两端都存在、所有 `covered_flow_keys` / `linked_risk_keys` / `test_case_keys` 都有真实定义、evidence path 属于当前 unit；closure 还要保证 `review_finding_decisions` 与 task findings 一一对应。将符合当前 task `result_schema_path` 的完整语义 JSON 写到当前 task 的 `result_path`。不填写 unit ID、Agent ID、路径或运行状态。若校验器返回错误，只修正同一 `result_path` 后重新提交，不另建 fix 脚本或替代结果文件。
 
 结果提交后，最终回复只用一行说明完成，不复述 JSON 或分析内容。
