@@ -91,6 +91,8 @@ def _invalid_result(
         error["detail_count"] = len(all_errors)
         error["details_truncated"] = len(all_errors) > len(validation_details)
     save_progress(state, progress)
+    repair_action = _repair_action(action)
+    repair_action["validation_error"] = error
     payload = {
         "action_id": action.action_id,
         "status": "invalid",
@@ -103,7 +105,7 @@ def _invalid_result(
             >= REPEATED_REPAIR_ATTENTION_AFTER
             or action.validation_failures >= TOTAL_REPAIR_ATTENTION_AFTER
         ),
-        "repair_action": _repair_action(action),
+        "repair_action": repair_action,
     }
     return payload
 
