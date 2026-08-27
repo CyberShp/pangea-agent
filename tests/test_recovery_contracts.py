@@ -207,13 +207,46 @@ class RecoveryContractTests(unittest.TestCase):
             resume.assert_called_once_with(state["run_id"], root)
             self.assertEqual(result["stage"], "analyzing")
 
-    def test_missing_canonical_analysis_result_is_rejected_by_adapter(self) -> None:
+    def test_missing_canonical_analysis_result_returns_repair_action(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             state = self._state(root)
             action_id, _ = self._write_analysis_task(state)
 
-            with self.assertRaises(FileNotFoundError):
-                validate_action(root, state["run_id"], action_id)
+            validation = validate_action(root, state["run_id"], action_id)
+
+            self.assertEqual(validation["status"], "invalid")
+            self.assertTrue(validation["recoverable"])
+            self.assertEqual(validation["repair_action"]["action"], "continue_agent")
+            self.assertEqual(
+                validation["repair_action"]["task_id"], "analysis-agent-1"
+            )
+            self.assertEqual(validation["repair_action"]["action_id"], action_id)
+            stored = load_progress(state)
+            assert stored is not None
+            self.assertEqual(stored.lifecycle_status, "running")
+            self.assertEqual(stored.actions[action_id].status, "dispatched")
+            self.assertIsNotNone(stored.actions[action_id].error)
+
+    def test_settle_does_not_advance_when_validation_is_invalid(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            state = self._state(root)
+            action_id, _ = self._write_analysis_task(state)
+
+            with patch(
+                "pangea_agent.cli.adapter_api.resume_module_analysis"
+            ) as resume:
+                result = settle_action(root, state["run_id"], action_id)
+
+            resume.assert_not_called()
+            self.assertEqual(result["validation"]["status"], "invalid")
+            self.assertEqual(result["agent_actions"][0]["action"], "continue_agent")
+            self.assertEqual(
+                result["agent_actions"][0]["task_id"], "analysis-agent-1"
+            )
+            stored = load_progress(state)
+            assert stored is not None
+            self.assertEqual(stored.lifecycle_status, "running")
+            self.assertEqual(stored.actions[action_id].status, "dispatched")
 
     def test_missing_analysis_result_cannot_silently_skip_review(self) -> None:
         with tempfile.TemporaryDirectory() as root:
