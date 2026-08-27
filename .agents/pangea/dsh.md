@@ -22,7 +22,13 @@
 
 主 Agent 不自行调用通用 `subagent`，不读取 task，也不重写子 Agent 提示。最多同时派发 8 个 action；8 是并发数量，不限制 Run 的总单元数。子 Agent 不得继续派发。
 
-`pangea_action_dispatch` 会自动把 action 与 DSH 真实任务 ID 绑定，不再单独调用 `pangea_action_bind`。子 Agent 回合结束后调用 `pangea_action_validate`；失败时工具必须把完整错误送回**同一个 action 对应的同一任务**，由原角色修正同一 `result_path` 后再次 validate，主 Agent 不读取或代改结果，也不得改派其他角色做格式修复。尤其 review 校验失败仍回到原 `review-worker`，不能调用其他 worker 修 review JSON。通过后调用 `pangea_action_settle`，再按返回的下一批 action 继续。不得用轨迹文本或 Agent 自述替代 action 状态。
+`pangea_action_dispatch` 会自动把 action 与 DSH 真实任务 ID 绑定，不再单独调用 `pangea_action_bind`。子 Agent 回合结束后调用 `pangea_action_validate`：
+
+- `status=valid`：调用 `pangea_action_settle`。
+- `status=invalid`：这是正常、可恢复的 worker 结果校验失败，不是 Run 失败。必须立即按返回的 `repair_action` 恢复其中指定的同一 `task_id`，把 `error.message` 原样交回该任务，只修同一 `result_path`，结束后再次 validate。不得询问用户是否开新 Run，不得因为普通 validation failure 建议修改 PANGEA 流程代码，不得换 worker。
+- 如果 settle 防御性地返回 `validation.status=invalid`，同样执行其 `repair_action`，不把它解释为死路。
+
+只有 Run/action/task 丢失、冻结输入损坏、originating `task_id` 不可恢复、Workflow 返回未持久化 action 等明确 invariant 错误才停止并报告。JSON/schema/引用/evidence/coverage/finding 等结果校验错误一律由当前 worker 原地修复。
 
 Review 固定分为同一 Reviewer 的两个 checkpoint：`independent_review` 是不提供首轮结果的独立检查；之后的 `comparison_review` 才提供首轮结果做对照，用于排除错误结论并补遗漏。第二个 action 会以 `continue_agent` 继续原 Reviewer，`pangea_action_dispatch` 会自动续接，不新建 Reviewer，主 Agent也不手工改派。
 
