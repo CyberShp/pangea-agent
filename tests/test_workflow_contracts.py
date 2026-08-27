@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 
 from pangea_agent.agent_io import read_json, write_json
 from pangea_agent.cli.adapter_api import bind_action, settle_action, validate_action
+from pangea_agent.cli.run_module_analysis import _default_run_id
 from pangea_agent.graph.nodes.advance_workflow import (
     _accept_comparison_review,
     _validate_comparison_review,
@@ -30,6 +32,26 @@ from pangea_agent.models.analysis import (
 
 
 REPO_ID = "PANGEA-Mainline"
+
+
+class RunIdAllocationTests(unittest.TestCase):
+    def test_default_run_id_allocation_is_atomic(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            contract = {
+                "target": "DHCHAP NVMe-oF fabric",
+                "data_root": root,
+            }
+            with ThreadPoolExecutor(max_workers=5) as executor:
+                run_ids = list(executor.map(
+                    lambda _: _default_run_id(contract),
+                    range(5),
+                ))
+
+            self.assertEqual(len(set(run_ids)), 5)
+            self.assertTrue(all(
+                (Path(root) / "runs" / run_id).is_dir()
+                for run_id in run_ids
+            ))
 
 
 def _unit(unit_id: str, source_scope: list[str], context_scope: list[str] | None = None) -> AnalysisUnit:

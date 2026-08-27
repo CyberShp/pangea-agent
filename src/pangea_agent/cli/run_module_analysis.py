@@ -14,11 +14,17 @@ def _default_run_id(contract: dict) -> str:
     target = ((target or "analysis")[:24].rstrip("-_") or "analysis")
     stamp = date.today().strftime("%y%m%d")
     runs_root = Path(contract.get("data_root", "pangea-data")) / "runs"
+    runs_root.mkdir(parents=True, exist_ok=True)
     prefix = f"{target}-{stamp}"
     sequence = 1
-    while (runs_root / f"{prefix}-{sequence:02d}").exists():
-        sequence += 1
-    return f"{prefix}-{sequence:02d}"
+    while True:
+        run_id = f"{prefix}-{sequence:02d}"
+        try:
+            (runs_root / run_id).mkdir()
+        except FileExistsError:
+            sequence += 1
+            continue
+        return run_id
 
 
 def run_module_analysis(contract_path: str) -> dict:
