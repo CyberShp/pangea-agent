@@ -125,9 +125,21 @@ def bind_action(
 
 
 def validate_action(data_root: str, run_id: str, current_action_id: str) -> dict:
-    state, progress, session_key, session = _bound_action(
-        data_root, run_id, current_action_id
-    )
+    try:
+        state, progress, session_key, session = _bound_action(
+            data_root, run_id, current_action_id
+        )
+    except ValueError:
+        _, _, _, already_advanced = _settlement_action(
+            data_root, run_id, current_action_id
+        )
+        if not already_advanced:
+            raise
+        return {
+            "action_id": current_action_id,
+            "status": "valid",
+            "already_advanced": True,
+        }
     task_path = _task_path(state, session_key, session)
     task = read_json(task_path)
     if session.status == "completed":

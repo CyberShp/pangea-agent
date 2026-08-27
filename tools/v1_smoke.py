@@ -5442,6 +5442,11 @@ def _companion_adapter_advances_current_graph() -> None:
     assert advanced["agent_actions"][0]["action_id"].endswith(
         "|analysis:U00|risk_analysis"
     )
+    stale_validation = validate_action(
+        str(data_root), created["run_id"], actions[1]["action_id"]
+    )
+    assert stale_validation["status"] == "valid"
+    assert stale_validation["already_advanced"] is True
     idempotent = settle_action(str(data_root), created["run_id"], actions[1]["action_id"])
     assert idempotent["phase"] == "WAITING_RISK_ANALYSIS"
     assert {action["unit_id"] for action in idempotent["agent_actions"]} == {"U00", "U01"}
