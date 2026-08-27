@@ -17,7 +17,10 @@ from pangea_agent.graph.nodes.advance_workflow import (
     _validate_review,
 )
 from pangea_agent.graph.planning import accept_plan
-from pangea_agent.graph.result_contract import validate_unit_result
+from pangea_agent.graph.result_contract import (
+    assert_unit_references,
+    validate_unit_result,
+)
 from pangea_agent.graph.workflow_store import (
     load_progress,
     pending_actions,
@@ -278,6 +281,7 @@ def _validate_action(data_root: str, run_id: str, action_id: str) -> dict:
         selected_inputs = read_json(Path(task.selected_inputs_path))
         try:
             result = UnitSemanticResult.model_validate(read_json(Path(task.result_path)))
+            assert_unit_references(result)
             warnings = validate_unit_result(task, result, selected_inputs)
         except (FileNotFoundError, ValueError) as exc:
             return _invalid_result(state, progress, action, exc)
@@ -311,6 +315,7 @@ def _validate_action(data_root: str, run_id: str, action_id: str) -> dict:
         selected_inputs = read_json(Path(original.selected_inputs_path))
         try:
             result = UnitSemanticResult.model_validate(read_json(Path(task.result_path)))
+            assert_unit_references(result)
             warnings = validate_unit_result(original, result, selected_inputs)
             expected = {finding.finding_key for finding in task.review_findings}
             actual = [item.finding_key for item in result.review_finding_decisions]

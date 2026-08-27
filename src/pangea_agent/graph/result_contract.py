@@ -70,6 +70,13 @@ def validate_unit_result(
     return warnings
 
 
+def assert_unit_references(result: UnitSemanticResult) -> None:
+    """Reject only broken internal identifiers, never semantic conclusions."""
+    errors = _reference_warnings(result)
+    if errors:
+        raise ValueError("结果内部编号引用不完整：" + " | ".join(errors[:24]))
+
+
 def _check_decisions(name: str, expected: set[str], actual: list[str]) -> list[str]:
     warnings = []
     if len(actual) != len(set(actual)):
