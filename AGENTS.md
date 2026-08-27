@@ -68,9 +68,11 @@
 - 共享范围只包括 graph、schema、rubric 和 CLI 契约；客户端专有的命令、会话轨迹和 Agent 调用方式不得写入共享方法论。
 - Python 不调用模型 API，也不做语义拆分。一个 Planning Agent 按功能模块或文件族规划单元。
 - 首轮 analysis 最多同时派发 8 个互不重叠单元，总单元数不受 8 限制；worker 不得再派发子 Agent。
-- analysis 结果齐备后只启动 1 个盲审 Agent。盲审 task 不包含 analysis result。
-- 盲审发现实质遗漏时，只为受影响单元生成一次定向补齐任务；补齐后直接聚合，不再启动比较复核或补齐验证 Agent。
+- analysis 结果齐备后只启动 1 个独立盲审 Agent；盲审 task 不包含 analysis result。随后由同一个 reviewer 续接 comparison review，对照首轮结果裁决盲审发现并补充遗漏，不新建第二个 reviewer。
+- comparison review 保留的实质 finding 只对受影响单元生成一次 targeted closure；closure 必须续接该单元首轮 analysis worker，在原结果基础上定向补齐，补齐后直接聚合，不再启动新的复核 Agent。
 - 主 Agent 只执行 CLI 返回的 action，并通过 adapter 完成 `bind`、`validate`、`settle`。不得自行填写或修正语义结果。
+- `adapter validate` 返回 `status=invalid` 时属于正常的可恢复 worker 结果，不是 Run fatal error。主 Agent必须按返回的 `repair_action` 续接同一个 `task_id`，把校验错误交回原 worker 修同一 `result_path` 后重试；普通 schema、引用、evidence、Coverage、finding 校验失败不得要求用户新建 Run或修改流程代码。
+- 只有 Run/action/task 或冻结输入损坏、约定的 `task_id` 无法恢复、Workflow 返回未持久化 action 等内部 invariant 破坏才停止 Run并报告流程错误。
 
 ## Private House Code Policy
 
