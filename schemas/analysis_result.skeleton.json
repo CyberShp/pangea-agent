@@ -1,0 +1,42 @@
+{
+  "schema_version": "1.0",
+  "summary": "<非空分析摘要>",
+  "flows": [
+    {
+      "flow_key": "<唯一 flow_key>",
+      "title": "<流程标题>",
+      "entry": "<流程入口>",
+      "summary": "<流程摘要>",
+      "steps": [
+        {
+          "step_key": "<唯一 step_key>",
+          "label": "<步骤说明>",
+          "kind": "entry",
+          "evidence": [
+            {
+              "repo_id": "<repo_id>",
+              "path": "<从 unit.source_scope/context_scope 原样选择>",
+              "line_start": 1,
+              "line_end": 1,
+              "observation": "<源码直接支持的事实>"
+            }
+          ]
+        }
+      ],
+      "edges": [
+        {
+          "source_step_key": "<已定义 step_key>",
+          "target_step_key": "<已定义 step_key>",
+          "condition": "<可选条件>"
+        }
+      ]
+    }
+  ],
+  "input_decisions": [],
+  "coverage_decisions": [],
+  "mechanism_decisions": [],
+  "risks": [],
+  "test_cases": [],
+  "review_finding_decisions": [],
+  "unresolved": []
+}

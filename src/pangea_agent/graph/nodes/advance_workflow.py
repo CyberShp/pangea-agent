@@ -16,6 +16,7 @@ from pangea_agent.graph.workflow_store import (
     comparison_review_result_path,
     comparison_review_task_path,
     current_stage_actions,
+    initialize_result,
     load_progress,
     pending_actions,
     planning_result_path,
@@ -251,10 +252,17 @@ def _prepare_analysis(state: PangeaState, progress) -> PangeaState:
             selected_inputs_path=str(selected_path),
             coverage_context=unit_inputs["coverage_gaps"],
             result_schema_path=str(project_path("schemas", "analysis_result.schema.json")),
+            result_skeleton_path=str(
+                project_path("schemas", "analysis_result.skeleton.json")
+            ),
             result_path=str(analysis_result_path(state, unit.unit_id)),
             rubric_paths=[*GENERAL_RUBRICS, *_specialized_rubrics(unit, compact)],
         )
         write_json(task_path, analysis_task.model_dump(mode="json"))
+        initialize_result(
+            Path(analysis_task.result_path),
+            read_json(Path(analysis_task.result_skeleton_path)),
+        )
         add_action(progress, ActionState(
             action_id=f"{state['run_id']}:analysis:{unit.unit_id}",
             action="dispatch_agent",
@@ -294,10 +302,17 @@ def _accept_analysis(state: PangeaState, progress) -> PangeaState:
         selected_inputs_path=str(run_dir / "inputs" / "selected-inputs.json"),
         rubric_paths=GENERAL_RUBRICS,
         result_schema_path=str(project_path("schemas", "independent_review_result.schema.json")),
+        result_skeleton_path=str(
+            project_path("schemas", "independent_review_result.skeleton.json")
+        ),
         result_path=str(review_result_path(state)),
     )
     task_path = review_task_path(state)
     write_json(task_path, task.model_dump(mode="json"))
+    initialize_result(
+        Path(task.result_path),
+        read_json(Path(task.result_skeleton_path)),
+    )
     progress.stage = "reviewing"
     add_action(progress, ActionState(
         action_id=f"{state['run_id']}:review",
@@ -332,7 +347,6 @@ def _validate_comparison_review(
     independent: IndependentReviewResult,
     comparison: ComparisonReviewResult,
     selected_inputs: dict,
-    analysis_results: dict[str, UnitSemanticResult],
 ) -> None:
     _validate_review(progress, comparison)
     independent_keys = {finding.finding_key for finding in independent.findings}
@@ -370,119 +384,19 @@ def _validate_comparison_review(
         item["coverage_id"] for item in selected_inputs.get("coverage_gaps", [])
     }
     known_input_ids = set(asset_items) | set(mechanisms) | coverage_ids
-    input_types = {
-        item_id: item.get("item_type") for item_id, item in asset_items.items()
-    }
-    input_types.update({item_id: "historical_defect" for item_id in mechanisms})
-    input_types.update({item_id: "coverage" for item_id in coverage_ids})
 
-    def check_basis(finding) -> None:
+    def check_input_references(finding) -> None:
         unknown = set(finding.linked_input_ids) - known_input_ids
         if unknown:
             raise ValueError(
                 f"复核 finding {finding.finding_key} 引用了未知输入：{sorted(unknown)}"
             )
-        linked_types = {
-            input_types[item_id]
-            for item_id in finding.linked_input_ids
-            if item_id in input_types
-        }
-        required_types = {
-            "document_delta": {"requirement", "design", "reference"},
-            "coverage_gap": {"coverage"},
-            "defect_mechanism": {"historical_defect"},
-        }.get(finding.category)
-        if required_types and not (required_types & linked_types):
-            raise ValueError(
-                f"复核 finding {finding.finding_key} category={finding.category} "
-                "缺少对应的结构化输入编号"
-            )
-
-        covered_flows: dict[str, set[str]] = {}
-        evidence_flow_matches: list[set[tuple[str, str]]] = []
-        for unit in progress.analysis_units:
-            if unit.unit_id not in finding.affected_unit_ids:
-                continue
-            source_evidence = [
-                evidence
-                for evidence in finding.evidence
-                if evidence.repo_id == unit.repo_id
-                and evidence.path in {
-                    _normalized_scope_path(path) for path in unit.source_scope
-                }
-            ]
-            if not source_evidence:
-                continue
-            result = analysis_results[unit.unit_id]
-            for evidence in source_evidence:
-                matches: set[tuple[str, str]] = set()
-                for flow in result.flows:
-                    if any(
-                        current.repo_id == evidence.repo_id
-                        and current.path == evidence.path
-                        and current.line_start <= (evidence.line_end or evidence.line_start)
-                        and evidence.line_start <= (current.line_end or current.line_start)
-                        for step in flow.steps
-                        for current in step.evidence
-                    ):
-                        matches.add((unit.unit_id, flow.flow_key))
-                evidence_flow_matches.append(matches)
-            for flow in result.flows:
-                flow_evidence = [
-                    evidence
-                    for step in flow.steps
-                    for evidence in step.evidence
-                ]
-                if all(
-                    any(
-                        current.repo_id == evidence.repo_id
-                        and current.path == evidence.path
-                        and current.line_start <= (evidence.line_end or evidence.line_start)
-                        and evidence.line_start <= (current.line_end or current.line_start)
-                        for current in flow_evidence
-                    )
-                    for evidence in source_evidence
-                ):
-                    covered_flows.setdefault(unit.unit_id, set()).add(flow.flow_key)
-
-        if finding.category == "missed_flow" and covered_flows:
-            raise ValueError(
-                f"复核 finding {finding.finding_key} 标记为 missed_flow，"
-                f"但首轮已覆盖对应流程：{covered_flows}"
-            )
-        if (
-            finding.category == "test_oracle"
-            and evidence_flow_matches
-            and all(evidence_flow_matches)
-        ):
-            case_by_flow = {
-                (unit_id, flow_key): case.case_key
-                for unit_id, result in analysis_results.items()
-                for case in result.test_cases
-                for flow_key in case.covered_flow_keys
-            }
-            every_evidence_has_case = all(
-                any(pair in case_by_flow for pair in matches)
-                for matches in evidence_flow_matches
-            )
-            covered_cases = {
-                f"{unit_id}:{case_by_flow[(unit_id, flow_key)]}"
-                for matches in evidence_flow_matches
-                for unit_id, flow_key in matches
-                if (unit_id, flow_key) in case_by_flow
-            }
-            if every_evidence_has_case and covered_cases:
-                raise ValueError(
-                    f"复核 finding {finding.finding_key} 标记为 test_oracle，"
-                    f"但首轮已有流程关联用例：{sorted(covered_cases)}；"
-                    "若已有 oracle 与源码相反，应使用 incorrect_conclusion"
-                )
 
     for decision in comparison.independent_finding_decisions:
         if decision.disposition != "dismissed":
-            check_basis(independent_by_key[decision.finding_key])
+            check_input_references(independent_by_key[decision.finding_key])
     for finding in comparison.findings:
-        check_basis(finding)
+        check_input_references(finding)
 
 
 def _accept_independent_review(state: PangeaState, progress, action) -> PangeaState:
@@ -512,10 +426,17 @@ def _accept_independent_review(state: PangeaState, progress, action) -> PangeaSt
         selected_inputs_path=task.selected_inputs_path,
         rubric_paths=task.rubric_paths,
         result_schema_path=str(project_path("schemas", "comparison_review_result.schema.json")),
+        result_skeleton_path=str(
+            project_path("schemas", "comparison_review_result.skeleton.json")
+        ),
         result_path=str(comparison_review_result_path(state)),
     )
     task_path = comparison_review_task_path(state)
     write_json(task_path, comparison_task.model_dump(mode="json"))
+    initialize_result(
+        Path(comparison_task.result_path),
+        read_json(Path(comparison_task.result_skeleton_path)),
+    )
     add_action(progress, ActionState(
         action_id=f"{state['run_id']}:comparison-review",
         action="continue_agent",
@@ -545,10 +466,6 @@ def _accept_comparison_review(state: PangeaState, progress, action) -> PangeaSta
             independent,
             comparison,
             read_json(Path(comparison_task.selected_inputs_path)),
-            {
-                unit_id: UnitSemanticResult.model_validate(read_json(Path(path)))
-                for unit_id, path in comparison_task.analysis_result_paths.items()
-            },
         )
         write_json(Path(comparison_task.result_path), comparison.model_dump(mode="json"))
     except Exception as exc:
@@ -583,6 +500,14 @@ def _accept_comparison_review(state: PangeaState, progress, action) -> PangeaSta
         findings = findings_by_unit.get(unit.unit_id)
         if not findings:
             continue
+        origin_action = progress.actions[
+            f"{state['run_id']}:analysis:{unit.unit_id}"
+        ]
+        if origin_action.status != "accepted" or not origin_action.task_id:
+            raise ValueError(
+                "定向补齐缺少可恢复的首轮 analysis worker："
+                f"{origin_action.action_id}"
+            )
         original_task_path = analysis_task_path(state, unit.unit_id)
         original_task = AnalysisTask.model_validate(read_json(original_task_path))
         task_path = closure_task_path(state, unit.unit_id)
@@ -599,12 +524,17 @@ def _accept_comparison_review(state: PangeaState, progress, action) -> PangeaSta
             rubric_paths=original_task.rubric_paths,
         )
         write_json(task_path, closure_task.model_dump(mode="json"))
+        initialize_result(
+            Path(closure_task.result_path),
+            read_json(Path(closure_task.original_result_path)),
+        )
         add_action(progress, ActionState(
             action_id=f"{state['run_id']}:closure:{unit.unit_id}",
-            action="dispatch_agent",
+            action="continue_agent",
             role="closure",
             stage="targeted_closure",
             task_path=str(task_path),
+            task_id=origin_action.task_id,
         ))
     save_progress(state, progress)
     return _waiting(state, progress)

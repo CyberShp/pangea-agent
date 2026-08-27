@@ -243,6 +243,10 @@ class AnalysisTask(StrictModel):
     selected_inputs_path: str = Field(min_length=1)
     coverage_context: list[dict] = Field(default_factory=list)
     result_schema_path: str = Field(default="schemas/analysis_result.schema.json", min_length=1)
+    result_skeleton_path: str = Field(
+        default="schemas/analysis_result.skeleton.json",
+        min_length=1,
+    )
     result_path: str = Field(min_length=1)
     rubric_paths: list[str] = Field(min_length=1)
 

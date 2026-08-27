@@ -32,6 +32,12 @@ def save_progress(state: dict, progress: WorkflowProgress) -> None:
     write_json(progress_path(state), progress.model_dump(mode="json"))
 
 
+def initialize_result(path: Path, payload: dict) -> None:
+    """Create a workflow-owned result file without replacing Agent work."""
+    if not path.exists():
+        write_json(path, payload)
+
+
 def planning_task_path(state: dict) -> Path:
     return run_directory(state) / "agent-tasks" / "planning.json"
 

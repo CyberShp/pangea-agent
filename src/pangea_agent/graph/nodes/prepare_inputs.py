@@ -92,6 +92,23 @@ def _compact_inventory(inventory: dict, expansion: dict) -> dict:
     }
 
 
+def _coverage_for_owned_sources(records: list[dict], expansion: dict) -> list[dict]:
+    owned = {
+        (group["repo_id"], path)
+        for group in expansion.get("groups", [])
+        for path in group.get("code_paths", [])
+    }
+    return [
+        record
+        for record in records
+        if len(record.get("matches", [])) == 1
+        and (
+            record["matches"][0].get("repo_id"),
+            record["matches"][0].get("path"),
+        ) in owned
+    ]
+
+
 def _freeze_test_case_examples(state: PangeaState, examples: list[str]) -> list[str]:
     if not examples:
         return []
@@ -134,7 +151,10 @@ def prepare_inputs(state: PangeaState) -> PangeaState:
     inventory = build_lightweight_inventory(frozen_repositories, inventory_scope)
     assets = analysis_asset_inputs(state["data_root"], contract.get("asset_ids"))
     coverage_match = match_coverage_records(assets["coverage_records"], inventory)
-    zero_coverage = relevant_zero_coverage(coverage_match)
+    zero_coverage = _coverage_for_owned_sources(
+        relevant_zero_coverage(coverage_match),
+        expansion,
+    )
     frozen_examples = _freeze_test_case_examples(
         state,
         list(contract.get("test_case_examples", [])),

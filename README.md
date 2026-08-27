@@ -42,27 +42,29 @@ pangea-data/
 → Planning Agent 按功能模块/文件族规划单元
 → 最多 8 个 analysis Agent 并行完成首轮分析
 → 1 个看不到首轮结果的独立复核 Agent
-→ 必要时只补齐受影响单元
+→ 同一 Reviewer 对照首轮结果裁决 finding
+→ 原 analysis worker 必要时只补齐受影响单元
 → 聚合 report.md 和 report.html
 ```
 
-“最多 8 个”是并发上限，不是整个 Run 的单元总数。首轮 analysis 已经负责代码/设计理解、主干与异常流程、调用链、资料/代码差异、Coverage 缺口、缺陷机理、风险和用例；独立复核用于寻找遗漏，不再做逐字段比较审计。
+“最多 8 个”是并发上限，不是整个 Run 的单元总数。首轮 analysis 已经负责代码/设计理解、主干与异常流程、调用链、资料/代码差异、Coverage 提示、缺陷机理、风险和用例；独立复核寻找遗漏，comparison review 由同一 Reviewer 对照首轮结果裁决发现，不拆成逐字段审计任务。
 
 主 Agent 只处理 CLI 返回的 action：
 
-1. 派发 action 指定的 Agent 和 task 文件；
+1. `dispatch_agent` 创建 action 指定的 Agent，`continue_agent` 恢复 action 自带的同一任务；
 2. 用 `adapter bind` 记录真实客户端任务 ID；
 3. Agent 写入 task 指定的 `result_path`；
 4. 用 `adapter validate` 校验当前结果；
-5. 校验通过后用 `adapter settle` 推进 graph。
+5. `status=invalid` 时按 `repair_action` 由同一 Agent 修正同一结果；
+6. 校验通过后用 `adapter settle` 推进 graph。
 
-结果文件只包含语义内容。`run_id`、`unit_id`、Agent 任务 ID、路径和状态由 Python 保存，Agent 不重复回填这些机械字段。Python 不生成空结果骨架。
+结果文件只包含语义内容。Workflow 创建唯一 `result_path` 和对应骨架；Agent 在该文件中写入完整结果。`run_id`、`unit_id`、Agent 任务 ID、路径和状态由 Python 保存，Agent 不重复回填这些机械字段。
 
 ## 输入与用例设计
 
 - 历史缺陷资料先提取“事实 + 可迁移缺陷机理”，必须人工审核后才可用于 Run。
 - 需求、设计和参考资料先结构化，分析时只把相关条目送入单元。
-- Coverage 只处理与当前源码唯一匹配且 `count=0` 的函数。每项都尝试转成用例；无法触达时如实记录原因。
+- Coverage 只把当前 `source_scope` 中唯一匹配且 `count=0` 的函数作为补测提示。选择处理时保留真实 ID 和关联；不由 Python 强制生成测试用例。
 - 与当前范围无关的 Coverage 不进入分析结果和报告。
 - 用例设计顺序是：Coverage 与代码流程为基础，需求/设计约束次之，历史缺陷机理和六维 DFX 风险补充。
 - 黑盒优先；纯黑盒不可行时允许灰盒，但必须保留业务入口、外部观测和清理/恢复。

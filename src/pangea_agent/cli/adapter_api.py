@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pangea_agent.agent_io import read_json
+from pangea_agent.agent_io import read_json, write_json
 from pangea_agent.assets import (
     complete_asset_extraction,
     load_asset,
@@ -23,6 +23,7 @@ from pangea_agent.graph.workflow_store import (
     save_progress,
 )
 from pangea_agent.models.analysis import (
+    ActionState,
     AnalysisTask,
     ClosureTask,
     ComparisonReviewResult,
@@ -36,6 +37,36 @@ from pangea_agent.models.asset import AssetExtractionResult
 
 def _state(data_root: str, run_id: str) -> dict:
     return {"data_root": data_root, "run_id": run_id}
+
+
+def _repair_action(action: ActionState) -> dict:
+    if not action.task_id:
+        raise ValueError(
+            f"Action 校验失败但没有可恢复的 Agent 会话：{action.action_id}"
+        )
+    payload = action.model_dump(mode="json")
+    payload["action"] = "continue_agent"
+    return payload
+
+
+def _invalid_result(
+    state: dict,
+    progress,
+    action: ActionState,
+    exc: Exception,
+) -> dict:
+    action.error = str(exc)
+    save_progress(state, progress)
+    return {
+        "action_id": action.action_id,
+        "status": "invalid",
+        "recoverable": True,
+        "error": {
+            "code": exc.__class__.__name__,
+            "message": str(exc),
+        },
+        "repair_action": _repair_action(action),
+    }
 
 
 def bind_asset_action(
@@ -116,14 +147,27 @@ def bind_action(data_root: str, run_id: str, action_id: str, task_id: str) -> di
     progress = load_progress(state)
     if progress is None or action_id not in progress.actions:
         raise ValueError(f"Action 不存在：{action_id}")
+    action = progress.actions[action_id]
+    if action.task_id == task_id and action.status in {
+        "dispatched",
+        "settled",
+        "accepted",
+    }:
+        return action.model_dump(mode="json")
     if progress.lifecycle_status != "running":
         raise ValueError("Run 当前不接受新的 Agent 绑定")
-    action = progress.actions[action_id]
-    if action.status == "dispatched" and action.task_id == task_id:
-        return action.model_dump(mode="json")
     if action.status != "pending":
         raise ValueError(f"Action 当前不能绑定：status={action.status}")
-    action.task_id = task_id
+    if action.action == "continue_agent":
+        if not action.task_id:
+            raise ValueError(f"continue_agent 缺少 originating task_id：{action_id}")
+        if action.task_id != task_id:
+            raise ValueError(
+                "continue_agent 禁止替换 Agent 会话："
+                f"expected_task_id={action.task_id} actual_task_id={task_id}"
+            )
+    else:
+        action.task_id = task_id
     action.status = "dispatched"
     save_progress(state, progress)
     return action.model_dump(mode="json")
@@ -146,54 +190,88 @@ def validate_action(data_root: str, run_id: str, action_id: str) -> dict:
     if progress is None or action_id not in progress.actions:
         raise ValueError(f"Action 不存在：{action_id}")
     action = progress.actions[action_id]
+    if action.status == "accepted":
+        return {"action_id": action_id, "status": "valid", "already_accepted": True}
+    if action.status not in {"dispatched", "settled"} or not action.task_id:
+        raise ValueError(
+            "Action 尚未绑定可恢复的 Agent 会话，不能校验结果："
+            f"status={action.status}"
+        )
     task_path = Path(action.task_path)
+    if not task_path.is_file():
+        raise ValueError(f"Action task 不存在：{task_path}")
+
+    warnings: list[str] = []
     if action.role == "planning":
         task = PlanningTask.model_validate(read_json(task_path))
-        result = PlanningResult.model_validate(read_json(Path(task.result_path)))
-        _validate_planning(state, task, result)
+        try:
+            result = PlanningResult.model_validate(read_json(Path(task.result_path)))
+            _validate_planning(state, task, result)
+            write_json(Path(task.result_path), result.model_dump(mode="json"))
+        except (FileNotFoundError, ValueError) as exc:
+            return _invalid_result(state, progress, action, exc)
     elif action.role == "analysis":
         task = AnalysisTask.model_validate(read_json(task_path))
-        result = UnitSemanticResult.model_validate(read_json(Path(task.result_path)))
-        validate_unit_result(task, result, read_json(Path(task.selected_inputs_path)))
+        selected_inputs = read_json(Path(task.selected_inputs_path))
+        try:
+            result = UnitSemanticResult.model_validate(read_json(Path(task.result_path)))
+            warnings = validate_unit_result(task, result, selected_inputs)
+            write_json(Path(task.result_path), result.model_dump(mode="json"))
+        except (FileNotFoundError, ValueError) as exc:
+            return _invalid_result(state, progress, action, exc)
     elif action.role == "review":
         task = read_json(task_path)
-        if task["task_type"] == "comparison_review":
-            result = ComparisonReviewResult.model_validate(
-                read_json(Path(task["result_path"]))
-            )
-            independent = IndependentReviewResult.model_validate(
-                read_json(Path(task["independent_review_result_path"]))
-            )
-            _validate_comparison_review(
-                progress,
-                independent,
-                result,
-                read_json(Path(task["selected_inputs_path"])),
-                {
-                    unit_id: UnitSemanticResult.model_validate(read_json(Path(path)))
-                    for unit_id, path in task["analysis_result_paths"].items()
-                },
-            )
-        else:
-            result = IndependentReviewResult.model_validate(
-                read_json(Path(task["result_path"]))
-            )
-            _validate_review(progress, result)
+        selected_inputs = read_json(Path(task["selected_inputs_path"]))
+        try:
+            if task["task_type"] == "comparison_review":
+                result = ComparisonReviewResult.model_validate(
+                    read_json(Path(task["result_path"]))
+                )
+                independent = IndependentReviewResult.model_validate(
+                    read_json(Path(task["independent_review_result_path"]))
+                )
+                _validate_comparison_review(
+                    progress,
+                    independent,
+                    result,
+                    selected_inputs,
+                )
+            else:
+                result = IndependentReviewResult.model_validate(
+                    read_json(Path(task["result_path"]))
+                )
+                _validate_review(progress, result)
+            write_json(Path(task["result_path"]), result.model_dump(mode="json"))
+        except (FileNotFoundError, ValueError) as exc:
+            return _invalid_result(state, progress, action, exc)
     elif action.role == "closure":
         task = ClosureTask.model_validate(read_json(task_path))
         original = AnalysisTask.model_validate(read_json(Path(task.original_task_path)))
-        result = UnitSemanticResult.model_validate(read_json(Path(task.result_path)))
-        validate_unit_result(original, result, read_json(Path(original.selected_inputs_path)))
-        expected = {finding.finding_key for finding in task.review_findings}
-        actual = [item.finding_key for item in result.review_finding_decisions]
-        if len(actual) != len(set(actual)) or set(actual) != expected:
-            raise ValueError(
-                "定向补齐没有逐项处理复核发现："
-                f"missing={sorted(expected - set(actual))} extra={sorted(set(actual) - expected)}"
-            )
+        selected_inputs = read_json(Path(original.selected_inputs_path))
+        try:
+            result = UnitSemanticResult.model_validate(read_json(Path(task.result_path)))
+            warnings = validate_unit_result(original, result, selected_inputs)
+            expected = {finding.finding_key for finding in task.review_findings}
+            actual = [item.finding_key for item in result.review_finding_decisions]
+            if len(actual) != len(set(actual)) or set(actual) != expected:
+                raise ValueError(
+                    "定向补齐没有逐项处理复核发现："
+                    f"missing={sorted(expected - set(actual))} "
+                    f"extra={sorted(set(actual) - expected)}"
+                )
+            write_json(Path(task.result_path), result.model_dump(mode="json"))
+        except (FileNotFoundError, ValueError) as exc:
+            return _invalid_result(state, progress, action, exc)
     else:
         raise ValueError(f"Run adapter 不处理 role={action.role}")
-    return {"action_id": action_id, "status": "valid"}
+
+    if action.error is not None:
+        action.error = None
+        save_progress(state, progress)
+    payload = {"action_id": action_id, "status": "valid"}
+    if warnings:
+        payload["warnings"] = warnings
+    return payload
 
 
 def settle_action(data_root: str, run_id: str, action_id: str) -> dict:
@@ -204,11 +282,26 @@ def settle_action(data_root: str, run_id: str, action_id: str) -> dict:
     action = progress.actions[action_id]
     if action.status == "accepted":
         return next_actions(data_root, run_id)
+    if action.status == "settled":
+        return resume_module_analysis(run_id, data_root)
     if progress.lifecycle_status != "running":
         raise ValueError("Run 当前不接受 Agent 结果")
     if action.status != "dispatched" or not action.task_id:
         raise ValueError("Action 必须先绑定真实 Agent 会话")
-    validate_action(data_root, run_id, action_id)
-    action.status = "settled"
+
+    validation = validate_action(data_root, run_id, action_id)
+    if validation["status"] != "valid":
+        return {
+            "run_id": run_id,
+            "lifecycle_status": progress.lifecycle_status,
+            "stage": progress.stage,
+            "validation": validation,
+            "agent_actions": [validation["repair_action"]],
+        }
+
+    progress = load_progress(state)
+    if progress is None:
+        raise ValueError(f"Run 不存在：{run_id}")
+    progress.actions[action_id].status = "settled"
     save_progress(state, progress)
     return resume_module_analysis(run_id, data_root)

@@ -10,7 +10,7 @@ tools:
 ---
 # PANGEA 主 Agent
 
-只负责创建/推进 Run 和派发 CLI 返回的 action，不自行分析源码，不填写或修正语义结果。
+只负责创建和推进 Run，并执行 CLI 返回的 action；不分析源码，不填写或修正语义结果。
 
 ## 新 Run
 
@@ -26,17 +26,19 @@ python -m pangea_agent.cli.main runs create --contract "<pending-contract>"
 
 CLI 返回 `agent_actions` 或 `adapter next` 返回 `actions` 后：
 
-1. 按 `role` 选择本目录对应 Agent，只传 `task_path`，不转述源码结论。
+1. `dispatch_agent` 按 role 创建对应 Agent，只传 `task_path`；`continue_agent` 恢复 action 自带的 `task_id`，不得按 role 创建新 Agent。
 2. 同时派发最多 8 个 action；8 是并发上限，不是 Run 单元总数。
-3. 取得真实子任务 ID 后执行 `adapter bind --run-id ... --action-id ... --task-id ...`。
-4. 子 Agent 完成后执行 `adapter validate`。失败时恢复**同一个 action 的同一个子任务**，把校验错误交回原角色修正同一 `result_path`，再次 validate；不得由主 Agent 代改，也不得改派其他角色做格式修复。尤其 review 结果校验失败仍由原 `review-worker` 修正，不能调用 `closure-worker` 修 review JSON。
-5. 校验通过后执行 `adapter settle`，只按新的 JSON action 继续。
+3. 取得真实子任务 ID 后执行 `adapter bind --run-id ... --action-id ... --task-id ...`。`continue_agent` 必须传回 action 中原有的同一 `task_id`。
+4. 子 Agent 完成后执行 `adapter validate`。`status=valid` 才进入 settle；`status=invalid` 时执行返回的 `repair_action`，恢复同一 `task_id`，把 `error.message` 交回原会话，只修正同一 `result_path`，然后再次 validate。
+5. 校验通过后执行 `adapter settle`。如果 settle 防御性返回 `validation.status=invalid`，执行其中的 `repair_action`。
 
-Review 固定由同一个 `review-worker` 完成两个 checkpoint：先执行不提供首轮结果的 `independent_review`，再按 `continue_agent` action 续接原子任务执行 `comparison_review`。后者对照首轮结果与源码，排除错误结论并找遗漏；不新建第二个 Reviewer。`closure-worker` 只能处理 comparison review 已通过校验后由 Graph 正式生成的 `closure` action，不能作为 analysis/review 校验失败的通用修复器。
+Run/action/task 丢失、冻结输入损坏、`continue_agent` 缺少约定的 `task_id` 或 Workflow 返回未持久化 action 才属于流程错误。普通 JSON、schema、引用、evidence、Coverage 或 finding 校验错误由当前 worker 原地修复。主 Agent 不代改结果，不换 worker。
 
-角色映射：`planning` → `planning-worker`，`analysis` → `analysis-worker`，`review` → `review-worker`，`closure` → `closure-worker`，`asset_extraction` → `asset-extraction-worker`。
+Review 由同一个 `review-worker` 完成两个 checkpoint：先执行不提供首轮结果的 `independent_review`，再按 `continue_agent` 续接 `comparison_review`。Comparison review 产生 `targeted_closure` 时，action 继续对应单元首轮 `analysis-worker` 的 `task_id`；不得创建替代 worker。
 
-不要根据 Agent 回复文本判断阶段，不轮询或手工修改 `progress.json`，不创建空结果骨架，不用占位内容让流程前进。最终以 Run 的 `lifecycle_status`、`quality_status`、`report_path` 和 `html_report_path` 为准。
+角色映射只用于 `dispatch_agent`：`planning` → `planning-worker`，`analysis` → `analysis-worker`，`review` → `review-worker`，`asset_extraction` → `asset-extraction-worker`。
+
+不要根据 Agent 回复文本判断阶段，不轮询或手工修改 `progress.json`。结果骨架由 Workflow 创建，主 Agent 不得另建或替换。最终以 Run 的 `lifecycle_status`、`quality_status`、`report_path` 和 `html_report_path` 为准。
 
 ## 资产提取
 
