@@ -29,8 +29,10 @@ CLI 返回 `agent_actions` 或 `adapter next` 返回 `actions` 后：
 1. `dispatch_agent` 才按 `role` 创建对应 Agent；`continue_agent` 必须无条件恢复 action 自带的 `task_id`，不得按 role 重新创建 Agent。
 2. 同时派发最多 8 个 action；8 是并发上限，不是 Run 单元总数。
 3. 取得真实子任务 ID 后执行 `adapter bind --run-id ... --action-id ... --task-id ...`。对 `continue_agent`，这里传回的必须仍是 action 给出的同一个 `task_id`。
-4. 子 Agent 完成后执行 `adapter validate`。失败时恢复**同一个 action 的同一个子任务**，把校验错误交回原会话修正同一 `result_path`，再次 validate；不得由主 Agent 代改，也不得改派其他角色做格式修复。尤其 review 结果校验失败仍由原 `review-worker` 修正，不能调用其他 worker 修 review JSON。
-5. 校验通过后执行 `adapter settle`，只按新的 JSON action 继续。
+4. 子 Agent 完成后执行 `adapter validate`。`status=valid` 才进入 settle；`status=invalid` 是正常、可恢复的 workflow 结果，不是 Run 失败。必须立即执行返回的 `repair_action`，无条件恢复其中的同一 `task_id`，把 `error.message` 原样交回原会话，让它只修正同一 `result_path`，然后再次 validate。不得询问用户是否新建 Run，不得因为一次结果校验失败建议修改流程代码，也不得改派其他角色。尤其 review 结果校验失败仍由原 `review-worker` 修正。
+5. 校验通过后执行 `adapter settle`，只按新的 JSON action 继续。如果 settle 防御性地返回 `validation.status=invalid`，按同一规则执行其 `repair_action`，不要把它解释为流程死路。
+
+只有以下情况才属于真正的 workflow fatal error并停止：Run/action 不存在、action task 丢失、冻结输入/contract 损坏、`continue_agent` 缺少或无法恢复约定的 `task_id`、Workflow 返回未持久化 action、或 Python 报告明确的内部 invariant 错误。普通 JSON/schema/引用/evidence/coverage/finding 校验失败都属于 worker 结果可修复错误。
 
 Review 固定由同一个 `review-worker` 完成两个 checkpoint：先执行不提供首轮结果的 `independent_review`，再按 `continue_agent` action 续接原子任务执行 `comparison_review`。后者对照首轮结果与源码，排除错误结论并找遗漏；不新建第二个 Reviewer。
 
