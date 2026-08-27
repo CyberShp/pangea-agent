@@ -42,13 +42,6 @@ _DOCA_TASK_ALLOC_RE = re.compile(
     r"\bdoca_[A-Za-z0-9_]*task[A-Za-z0-9_]*alloc_init\s*\("
 )
 _DOCA_TASK_SUBMIT_RE = re.compile(r"\bdoca_task_submit\s*\(")
-_SEMANTIC_CONTEXT_REASONS = (
-    "companion_source",
-    "declared_definition:",
-    "direct_callee:",
-    "direct_inline_dependency:",
-    "function_pointer_implementation:",
-)
 
 
 def _checkpoint_rubric_paths(unit: AnalysisUnit, inventory: dict) -> list[str]:
@@ -206,14 +199,17 @@ def _path_coverage_inventory(unit: AnalysisUnit, inventory: dict) -> dict:
 def _failure_signal_context(
     unit: AnalysisUnit,
     repositories: list[dict],
-    semantic_context_scope: list[str],
 ) -> list[dict]:
     repository = next((item for item in repositories if item["repo_id"] == unit.repo_id), None)
     if repository is None:
         return []
     root = Path(repository["source_root"])
     signals: list[dict] = []
-    for relative in sorted(dict.fromkeys([*unit.source_scope, *semantic_context_scope])):
+    # Context files explain callers and callees, but they are not owned by this
+    # Analysis Unit.  Turning their assertions into mandatory semantic checks
+    # lets a worker manufacture ownership by adding any source path to the same
+    # RiskCard.  Only source_scope may seed a formal failure signal/check.
+    for relative in sorted(dict.fromkeys(unit.source_scope)):
         path = root / relative
         if path.suffix.lower() not in _CODE_SUFFIXES or not path.is_file():
             continue
@@ -262,13 +258,12 @@ def _semantic_check_items(
     unit: AnalysisUnit,
     repositories: list[dict],
     signals: list[dict],
-    semantic_context_scope: list[str],
 ) -> list[dict]:
     repository = next((item for item in repositories if item["repo_id"] == unit.repo_id), None)
     if repository is None:
         return []
     root = Path(repository["source_root"])
-    paths = sorted(dict.fromkeys([*unit.source_scope, *semantic_context_scope]))
+    paths = sorted(dict.fromkeys(unit.source_scope))
     paired_paths: list[str] = []
     for relative in paths:
         path = root / relative
@@ -422,11 +417,6 @@ def prepare_worker_tasks(state: PangeaState) -> PangeaState:
         {"repo_id": repo["repo_id"], "source_root": repo["source_root"], "git": repo.get("git", {})}
         for repo in state.get("repositories", [])
     ]
-    context_reasons = {
-        (item.get("repo_id"), item.get("path")): str(item.get("reason", ""))
-        for item in state.get("scope_expansion", {}).get("context_files", [])
-        if isinstance(item, dict)
-    }
     missing_inputs = [
         str(path) for path in (inventory_path, source_manifest_path, Path(state["index_path"]))
         if not path.is_file()
@@ -436,16 +426,7 @@ def prepare_worker_tasks(state: PangeaState) -> PangeaState:
     for raw_unit in units:
         unit = AnalysisUnit.model_validate(raw_unit)
         unit_repositories = [repo for repo in repositories if repo["repo_id"] == unit.repo_id]
-        semantic_context_scope = [
-            path
-            for path in unit.context_scope
-            if context_reasons.get((unit.repo_id, path), "").startswith(
-                _SEMANTIC_CONTEXT_REASONS
-            )
-        ]
-        failure_signal_context = _failure_signal_context(
-            unit, unit_repositories, semantic_context_scope
-        )
+        failure_signal_context = _failure_signal_context(unit, unit_repositories)
         providers = semantic_providers(unit.languages, unit.frameworks)
         unsupported_providers = providers - {"c_cpp", "lua", "openubmc"}
         if unsupported_providers:
@@ -458,7 +439,6 @@ def prepare_worker_tasks(state: PangeaState) -> PangeaState:
                 unit,
                 unit_repositories,
                 failure_signal_context,
-                semantic_context_scope,
             ))
             semantic_check_items.extend(
                 _doca_semantic_check_items(unit, unit_repositories)

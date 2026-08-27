@@ -9,7 +9,8 @@ pending contract、CLI 和原始 subagent 生命周期说明：
 
 1. 新分析直接调用 `pangea_run_create`，传入用户确认的 `repository`、`target`、
    `source_scope`、可选 `focus` / `data_root`。该工具独占 pending contract 的创建、删除和
-   Run 创建；根 Agent 不读取、创建、修改或删除 pending contract。
+   Run 创建；其中 `target` 必须逐字复制用户确认的分析对象，不添加仓库名、产品名或范围说明，
+   不翻译、不重排、不自行缩写。根 Agent 不读取、创建、修改或删除 pending contract。
 2. 对工具返回的每条 action，只调用 `pangea_action_dispatch` 并原样传入 `action_id`。
    工具负责按 action 的 role 加载仓库内角色、派发或续接原子 Agent，并绑定真实
    `subagent_id`；根 Agent不直接调用原始 subagent / send_message，也不手工绑定会话。

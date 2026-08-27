@@ -3213,8 +3213,8 @@ def _bounded_scope_expansion() -> None:
         encoding="utf-8",
     )
     (repo / "module" / "entry.c").write_text(
-        '#include "demo_internal.h"\n#include "unused_internal.h"\n'
-        "int demo_feature_start(void) { return demo_abort(); }\n"
+        '#include "demo_internal.h"\n#include "unused_internal.h"\n#include <assert.h>\n'
+        "int demo_feature_start(void) { assert(false); return demo_abort(); }\n"
         "int demo_add(void) { return spdk_sock_map_insert(); }\n"
         "void demo_drop(void) { spdk_sock_map_release(); }\n",
         encoding="utf-8",
@@ -3246,56 +3246,9 @@ def _bounded_scope_expansion() -> None:
     assert "module/demo_internal.h" in task["unit"]["context_scope"]
     assert "module/unused_internal.h" not in task["unit"]["context_scope"]
     assert "docs/demo.md" not in task["unit"]["context_scope"]
-    assert task["failure_signal_context"] == [
-        {
-            "path": "module/demo_internal.h",
-            "line": 1,
-            "signal": "static inline int demo_abort(void) { assert(false); return 0; }",
-            "analysis_focus": (
-                "先定位直接支配 assert 的失败条件，再分别重放 Debug 与 Release。受支持模式中的底层"
-                "操作若可返回失败，且公开契约或入口没有阻断，Debug 终止必须保留为风险；不能用"
-                " assert 后的清理或返回排除，Release 继续核对清理后的最终状态。条件含数值句柄时，"
-                "必须从创建函数的失败返回值确认哨兵，并把 0 作为独立边界重放。"
-            ),
-            "related_state_context": [],
-        },
-        {
-            "path": "module/demo_internal.h",
-            "line": 2,
-            "signal": "static inline void demo_remove(void) { assert(STAILQ_EMPTY(&recv_stream)); }",
-            "analysis_focus": (
-                "追踪容器元素的产生、归还和公开移除入口；实现注释或 assert 本身不是调用方契约，"
-                "只有公开契约或入口强制检查才能证明该状态不可达。"
-            ),
-            "related_state_context": [],
-        },
-        {
-            "path": "module/demo_internal.h",
-            "line": 3,
-            "signal": "static inline void demo_release(void) { assert(entry->ref > 0); }",
-            "analysis_focus": (
-                "按任务提供的每个直接实现写出实际的增加与减少调用序列，并追踪错误日志之后的函数"
-                "返回值和上层是否真正绑定对象。只有证明某次 release/decrement 前没有成功 insert/"
-                "increment 才能判定失衡；lookup 不增加引用本身不足以证明风险。一个实现的结论不能"
-                "覆盖另一个实现。"
-            ),
-            "related_state_context": [],
-        },
-        {
-            "path": "module/demo_internal.h",
-            "line": 4,
-            "signal": "static inline void demo_state(void) { assert(sock->pipe_has_data == false); }",
-            "analysis_focus": (
-                "把断言可达性与重配置后的状态残留拆成两条 failure path。先判断断言本身，再从状态置位"
-                "重放 related_state_context 中的 destroy/NULL/setter；即使断言不可达，重配置仍可能独立"
-                "造成数据丢失或残留状态。当前分支没有写入者不能证明先前状态不会残留。"
-            ),
-            "related_state_context": [
-                "module/demo_internal.h:5: static inline void demo_mark(void) { sock->pipe_has_data = true; }",
-                "module/demo_internal.h:6: static inline void demo_set_pipe(void) { destroy_pipe(); }",
-            ],
-        },
-    ]
+    assert len(task["failure_signal_context"]) == 1
+    assert task["failure_signal_context"][0]["path"] == "module/entry.c"
+    assert "assert(false)" in task["failure_signal_context"][0]["signal"]
     assert "app/rpc.c" in task["unit"]["context_scope"]
     assert "unrelated/noise.c" not in task["unit"]["source_scope"]
     assert "test/e2e/demo.sh" in task["unit"]["context_scope"]
@@ -3303,17 +3256,12 @@ def _bounded_scope_expansion() -> None:
     assert task["max_parallel_workers"] == 8 and task["may_spawn_workers"] is False
     semantic_checks = task["semantic_check_items"]
     semantic_kinds = [item["kind"] for item in semantic_checks]
-    assert semantic_kinds == [
-        "assertion_reachability",
-        "assertion_reachability",
-        "paired_operation",
-        "assertion_reachability",
-        "resource_reconfiguration",
-        "resource_reconfiguration",
-    ], semantic_kinds
-    assert [item["subject_path"] for item in semantic_checks[2:3]] == [
-        "module/entry.c",
-    ]
+    assert semantic_kinds == ["assertion_reachability", "paired_operation"], semantic_kinds
+    assert {item["subject_path"] for item in semantic_checks} == {"module/entry.c"}
+    assert all(
+        item["path"] != "module/demo_internal.h"
+        for item in task["failure_signal_context"]
+    )
     assert len({item["check_id"] for item in semantic_checks}) == len(semantic_checks)
 
 
@@ -5365,6 +5313,9 @@ def _graph_control_contract_reaches_all_clients() -> None:
     assert "必须使用完全相同的 trigger" in dsh_review_rules
     assert "NULL 分支不会执行最后赋值" in dsh_review_rules
     assert "不得要求修改被测源码来解决分析报告" in dsh_review_rules
+    assert "不存在 `check_id` 字段" in dsh_review_rules
+    assert "不得删除、重排或改写" in dsh_review_rules
+    assert "issues=<最终数组长度>" in dsh_review_rules
     for relative_path in (
         ".opencode/agents/analysis-worker.md",
         ".claude/agents/analysis-worker.md",

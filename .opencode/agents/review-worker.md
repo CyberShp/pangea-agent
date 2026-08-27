@@ -31,6 +31,20 @@ PowerShell: & '.\.venv\Scripts\python.exe' -m pangea_agent.cli.main prepare-revi
 编辑前按 task.stage 读取本阶段 schema：`independent_review` 读取 `schemas/independent_review_result.schema.json`；`comparison_review` 和 `rework_verification` 读取 `schemas/review_result.schema.json` 与 `schemas/review_issue.schema.json`。不得等首次提交失败后才补读。
 每次被派发或续接都是一个新的提交回合；即使同一 `task_path` 的 result 已经填写、上一回合已报告“完成”，也必须重新读取 task 和当前 result，再执行一次 `check-review-artifact --task "<review task JSON>"`。只有本回合实际得到 `PASS` 才能再报告完成；若被拒绝，立即在同一 result 修正拒绝原因并重试，不得仅因文件已有内容就返回“上一回合已完成”。
 
+在填写 comparison / rework verification 结果前，先把下面五项作为机械编辑边界写在工作记录中并逐项遵守；
+它们只保护 Graph 已冻结的结构，不替代对风险和 TestCase 的语义复核：
+
+1. `issues[]` 只允许 `issue_id`、`unit_id`、`reason`、`required_change`；不存在 `check_id` 字段。需要承接
+   finding 时，把完整 `check_id` 原样写进同单元 issue 的 `reason` 或 `required_change`。
+2. 骨架已有的 `independent_findings` 不得删除、重排或改写 `unit_id`、`check_id`、`finding`、`evidence`；
+   只填写 disposition 和关联数组。确需新增时只能在末尾追加 `COMPARISON-` finding。
+3. 骨架已有的 `test_case_checks[].expected_results` 与 `failure_observations` 必须逐元素原样保留；只填写
+   `current_behavior`、`verdict`、`reason`。不得重复添加同一 TestCase 的检查对象。
+4. `comparison_review` 的阻塞问题使用 `REWORK`；`rework_verification` 只能使用 `PASS` 或
+   `UNRESOLVED`。`PASS` 的 issues 必须为空，其他两个状态的 issues 必须非空。
+5. 写 summary 前先以最终 `issues` 数组重新计数。summary 不手写与数组数量可能冲突的“还有 N 项”；
+   需要表达数量时只写 `issues=<最终数组长度>`，并在提交前再次核对。
+
 - `run_id`、`stage`、`result_path`、`analysis_tasks`。
 - `may_spawn_workers` 必须为 `false`，`review_round` 必须为 `1`。
 - `stage=independent_review` 时，task 不会提供 `analysis_results`；只读取
