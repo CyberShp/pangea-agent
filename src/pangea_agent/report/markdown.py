@@ -209,8 +209,14 @@ def _quality_summary(state: Mapping[str, Any], incomplete: bool) -> str:
     inventory = state.get("inventory") or {}
     expansion = state.get("scope_expansion") or {}
     context_count = len(_items(expansion.get("context_files"))) if isinstance(expansion, Mapping) else 0
+    completed_units = state.get("completed_analysis_units")
+    completed_count = (
+        len(_items(completed_units))
+        if completed_units is not None
+        else len(_items(state.get("analysis_units")))
+    )
     counts = (
-        f"完成 {len(_items(state.get('analysis_units')))} 个分析单元，"
+        f"完成 {completed_count} 个分析单元，"
         f"覆盖 {inventory.get('file_count', 0) if isinstance(inventory, Mapping) else 0} 个 C/C++ 文件"
         f"和 {context_count} 个上游语义文件；"
         f"形成 {len(_items(state.get('business_flows') or state.get('flows')))} 条业务流程、"
@@ -224,9 +230,18 @@ def _quality_summary(state: Mapping[str, Any], incomplete: bool) -> str:
             gaps.append(f"未读图片 {len(_items(state.get('unread_images') or state.get('unparsed_images')))} 项")
         if _items(state.get("errors")):
             gaps.append(f"运行错误 {len(_items(state.get('errors')))} 项")
-        unresolved = _items((state.get("quality_report") or {}).get("unresolved"))
-        if unresolved:
-            gaps.append(f"其他未完成项 {len(unresolved)} 项")
+        quality = state.get("quality_report") or {}
+        semantic = _items(quality.get("semantic_unresolved"))
+        diagnostics = _items(quality.get("workflow_diagnostics"))
+        if semantic:
+            gaps.append(f"语义待确认 {len(semantic)} 项")
+        if diagnostics:
+            occurrences = quality.get("diagnostic_occurrence_count", len(diagnostics))
+            gaps.append(f"结构诊断 {len(diagnostics)} 项（共出现 {occurrences} 次）")
+        if not semantic and not diagnostics:
+            unresolved = _items(quality.get("unresolved"))
+            if unresolved:
+                gaps.append(f"待确认事项 {len(unresolved)} 项")
         return f"报告存在未完成范围。{counts}具体缺口：{'、'.join(gaps) or '见不完整项章节'}。"
     return f"质量门禁已通过。{counts}解析失败、未读图片和运行错误均为 0。"
 
@@ -358,8 +373,6 @@ def render_report(state: "PangeaState | Mapping[str, Any]") -> str:
         inventory = state.get("inventory") or {}
         if isinstance(manifest, Mapping):
             lines.extend(_markdown_table(("项目", "结果"), [
-                ("索引文件数", manifest.get("file_count", 0)),
-                ("证据片段数", manifest.get("chunk_count", 0)),
                 ("C/C++ 文件数", inventory.get("file_count", 0) if isinstance(inventory, Mapping) else 0),
                 ("结构化解析", "完整" if isinstance(inventory, Mapping) and inventory.get("structural_parse_complete") else "存在缺口"),
                 ("文档告警", len(_items(manifest.get("warnings")))),
@@ -562,7 +575,16 @@ def render_report(state: "PangeaState | Mapping[str, Any]") -> str:
         lines.extend(["", "### 已完成检查", ""])
         _append_list(lines, quality.get("checks"))
     if incomplete and isinstance(quality, Mapping) and quality.get("unresolved"):
-        lines.extend(["", "### 未完成项", ""])
-        _append_list(lines, quality.get("unresolved"))
+        semantic = quality.get("semantic_unresolved")
+        diagnostics = quality.get("workflow_diagnostics")
+        if semantic:
+            lines.extend(["", "### 语义待确认", ""])
+            _append_list(lines, semantic)
+        if diagnostics:
+            lines.extend(["", "### 结构诊断", ""])
+            _append_list(lines, diagnostics)
+        if not semantic and not diagnostics:
+            lines.extend(["", "### 未完成项", ""])
+            _append_list(lines, quality.get("unresolved"))
     lines.extend(["", f"**最终状态：{'INCOMPLETE' if incomplete else 'COMPLETE'}**", ""])
     return "\n".join(lines)

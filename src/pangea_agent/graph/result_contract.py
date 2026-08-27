@@ -59,11 +59,12 @@ def validate_unit_result(
             warnings.append(
                 f"测试用例 {case.case_key} 引用了未知输入：{sorted(unknown_inputs)}"
             )
-        derived_basis = _derived_basis(case, item_types)
-        if case.basis != derived_basis:
+        unsupported_basis = _unsupported_basis(case, item_types)
+        if unsupported_basis:
             warnings.append(
-                f"测试用例 {case.case_key} basis 与真实关联不一致，"
-                f"保留 Agent 原值：actual={case.basis} expected={derived_basis}"
+                f"测试用例 {case.case_key} basis 缺少真实关联，"
+                f"保留 Agent 原值：actual={case.basis} "
+                f"unsupported={unsupported_basis}"
             )
 
     return warnings
@@ -138,7 +139,7 @@ def _reference_warnings(result: UnitSemanticResult) -> list[str]:
     return warnings
 
 
-def _derived_basis(case, item_types: dict[str, str | None]) -> list[str]:
+def _unsupported_basis(case, item_types: dict[str, str | None]) -> list[str]:
     type_to_basis = {
         "coverage": "coverage",
         "requirement": "requirement",
@@ -150,13 +151,15 @@ def _derived_basis(case, item_types: dict[str, str | None]) -> list[str]:
         for item_id in case.linked_input_ids
         if item_id in item_types
     }
-    basis = [
+    supported = {
         name for item_type, name in type_to_basis.items()
         if item_type in linked_types
-    ]
+    }
+    if case.covered_flow_keys:
+        supported.add("code_flow")
     if case.linked_risk_keys:
-        basis.append("risk")
-    return basis or ["code_flow"]
+        supported.add("risk")
+    return [basis for basis in case.basis if basis not in supported]
 
 
 def _all_evidence(result: UnitSemanticResult):

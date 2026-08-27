@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from pathlib import Path
 
 from pangea_agent.agent_io import read_json, write_json
@@ -47,6 +48,31 @@ def _load_final_unit_result(state: PangeaState, unit_id: str) -> UnitSemanticRes
     return UnitSemanticResult.model_validate(read_json(path))
 
 
+def _deduplicate_degradations(items: list[dict]) -> list[dict]:
+    grouped: dict[tuple[str, str], dict] = {}
+    for item in items:
+        kind = str(item.get("kind", "agent_result_warning"))
+        message = str(item.get("message", "结果存在待确认项"))
+        key = (kind, message)
+        action_ids = item.get("action_ids") or [item.get("action_id")]
+        entry = grouped.setdefault(key, {
+            "kind": kind,
+            "message": message,
+            "action_ids": [],
+            "occurrence_count": 0,
+        })
+        for action_id in action_ids:
+            if action_id and action_id not in entry["action_ids"]:
+                entry["action_ids"].append(action_id)
+        entry["occurrence_count"] += int(item.get("occurrence_count", 1))
+    return list(grouped.values())
+
+
+def _analysis_worker_id(progress, unit_id: str) -> str:
+    action = progress.actions.get(f"{progress.run_id}:analysis:{unit_id}")
+    return action.task_id if action and action.task_id else "未绑定"
+
+
 def finalize_workflow(state: PangeaState) -> PangeaState:
     progress = load_progress(state)
     if progress is None:
@@ -76,8 +102,8 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
                 **risk.model_dump(mode="json", exclude={"risk_key", "evidence"}),
                 "risk_id": risk_id,
                 "evidence": [_evidence(item) for item in risk.evidence],
-                "translation_status": "Graybox-ready",
-                "status": "pending",
+                "translation_status": "Uncovered",
+                "status": "identified",
             })
         for number, case in enumerate(result.test_cases, 1):
             case_id = f"TC-{unit.unit_id}-{number:03d}"
@@ -107,7 +133,7 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
                 "expected_results": [step.expected_result for step in case.steps],
                 "observability": case.observability,
                 "cleanup": case.cleanup,
-                "status": "draft",
+                "status": "ready",
             })
         for flow in result.flows:
             flows.append({
@@ -184,6 +210,17 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
             if item.disposition == "unresolved"
         )
 
+    linked_cases_by_risk: dict[str, list[str]] = defaultdict(list)
+    for case in test_cases:
+        for risk_id in case["linked_risk_ids"]:
+            linked_cases_by_risk[risk_id].append(case["test_case_id"])
+    for risk in risks:
+        linked_case_ids = linked_cases_by_risk.get(risk["risk_id"], [])
+        risk["test_case_ids"] = linked_case_ids
+        risk["translation_status"] = (
+            "Test-ready" if linked_case_ids else "Uncovered"
+        )
+
     planning = read_json(run_dir / "inputs" / "unit-plan.json")
     unresolved.extend({"stage": "planning", "reason": value} for value in planning.get("unresolved", []))
     review = None
@@ -206,16 +243,20 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
             else []
         )
     }
-    unresolved.extend(
+    semantic_unresolved = list(unresolved)
+    degradations = _deduplicate_degradations(progress.degradations)
+    validation_unresolved = [
         {
             "stage": "validation",
-            "action_id": item.get("action_id"),
+            "action_ids": item.get("action_ids", []),
             "reason": item.get("message", "结果存在待确认项"),
         }
-        for item in progress.degradations
-    )
+        for item in degradations
+    ]
+    unresolved.extend(validation_unresolved)
     quality_status = "UNRESOLVED" if unresolved else "PASS"
     source_manifest = read_json(run_dir / "inputs" / "source-manifest.json")
+    inventory = read_json(run_dir / "inputs" / "inventory.json")
     coverage_gaps = read_json(run_dir / "inputs" / "coverage-gaps.json")
     final_state = {
         **state,
@@ -223,9 +264,26 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
         "module_scope": source_manifest["source_scope"],
         "scope_expansion": source_manifest["scope_expansion"],
         "source_manifest": source_manifest,
-        "inventory": read_json(run_dir / "inputs" / "inventory.json"),
+        "inventory": inventory,
+        "analysis_units": [
+            {
+                **unit.model_dump(mode="json"),
+                "status": (
+                    "COMPLETED"
+                    if unit.unit_id in progress.completed_analysis_units
+                    else "INCOMPLETE"
+                ),
+            }
+            for unit in progress.analysis_units
+        ],
+        "completed_analysis_units": list(progress.completed_analysis_units),
+        "completed_closure_units": list(progress.completed_closure_units),
         "analysis_summaries": [
-            {"unit_id": unit_id, "summary": result.summary}
+            {
+                "unit_id": unit_id,
+                "worker_id": _analysis_worker_id(progress, unit_id),
+                "summary": result.summary,
+            }
             for unit_id, result in results.items()
         ],
         "business_flows": flows,
@@ -259,8 +317,16 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
                 "独立复核已完成，可信遗漏已定向补齐",
             ],
             "unresolved": unresolved,
+            "semantic_unresolved": semantic_unresolved,
+            "workflow_diagnostics": validation_unresolved,
+            "diagnostic_occurrence_count": sum(
+                item["occurrence_count"] for item in degradations
+            ),
         },
-        "degradations": progress.degradations,
+        "degradations": degradations,
+        "degradation_occurrence_count": sum(
+            item["occurrence_count"] for item in degradations
+        ),
         "errors": progress.errors,
         "phase": "COMPLETE" if quality_status == "PASS" else "INCOMPLETE",
         "run_status": "COMPLETE" if quality_status == "PASS" else "INCOMPLETE",
@@ -269,6 +335,7 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
     progress.lifecycle_status = "complete"
     progress.stage = "complete"
     progress.quality_status = quality_status
+    progress.degradations = degradations
     progress.report_path = str(markdown_path)
     progress.html_report_path = str(html_path)
     save_progress(state, progress)

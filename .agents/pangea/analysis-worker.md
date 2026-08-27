@@ -4,11 +4,13 @@
 
 `task_type=analysis` 时，开始前读取 task、冻结源码、inventory、selected inputs、task 指定 rubrics、`result_schema_path` 和 `result_skeleton_path`。Graph 已在 `result_path` 创建同一骨架；该骨架是本次任务唯一字段基线，必须保留它的顶层键、嵌套对象形状和字段名，在同一文件中写入完整真实结果。不得凭记忆套用旧版 schema，不得使用 `normal`、`test_case_key`、标量 `basis` 等旧字段或另建结果文件。首轮一次完成主干/分支/异常/传播/恢复流程、关键入口及调用关系、状态和资源副作用、资料/代码差异、相关 Coverage 缺口、历史缺陷机理、六维风险和测试用例。
 
-`task_type=closure` 时，这是本会话首轮结果的定向补齐。读取 closure task、`original_task_path`、`original_result_path`、原 task 的冻结输入和 `review_findings`。Graph 已把原结果复制到 closure task 的 `result_path`；只修改这个副本，保留未被 finding 推翻的内容。每个 finding 恰好写一个 `review_finding_decisions`，不得修改原始分析结果或 review JSON。
+`task_type=closure` 时，这是本会话首轮结果的定向补齐。读取 closure task、`original_task_path`、`original_result_path`、原 task 的冻结输入和 `review_findings`。Graph 已把原结果复制到 closure task 的 `result_path`；只修改这个副本，保留未被 finding 推翻的内容。每个 finding 恰好写一个 `review_finding_decisions`，不得修改原始分析结果或 review JSON。`incorrect_conclusion` 指向已有风险或用例时，必须从正式结果中删除被源码反证的项目，或把错误字段改成证据支持的结论，不能只追加 decision 而保留原错误内容。
 
 冻结风险前先做 C/C++ 语义校验：`a || b` 在 a 为真时不读 b，`a && b` 在 a 为假时不读 b；`!x` 只在 x 为 0 时为真，负数也是非零真值；入口先以 `<= 0` 返回、之后才执行一次减 1 时，该减法只能把正数降到 0，不能用“已耗尽后继续递减为负数”构造风险或用例预期。缺少锁、重置、范围校验、恢复动作、初始化入口或返回状态本身不是缺陷；必须有契约依据或能从当前源码证明的外部错误结果。重复参数检查、void 返回和调用方传入悬空指针同样不能在没有契约时构造风险。不得假设源码中没有发生的“部分初始化”或隐藏副作用。
 
 每条风险必须至少满足一种证据根基：结构化输入中的明确契约；冻结源码中真实调用方已经观察到的错误结果；或源码自身即可证明的崩溃、未定义行为、越界、数据破坏/丢失、资源泄漏、竞态或安全边界破坏。都不满足时只保留为 flow 或边界用例，`risks` 不收录。
+
+风险的排除条件如果已经证明系统结果不会发生，该项不是风险，必须从 `risks` 删除。尚需外部规范、跨线程调用约束或依赖实现才能确认时，降低 `confidence` 并写入 `unresolved`，不得表述成已经证实的缺陷。`unresolved` 只记录当前证据确实无法裁决的问题；已经确认合理的设计选择、已经排除的风险和实现风格观察不得放入其中。
 
 三个决策数组只处理 selected inputs 中真实存在的编号，而且必须逐项且不重复：`input_decisions` 对应 `asset_items` 的键，`coverage_decisions` 对应 `coverage_gaps[].coverage_id`，`mechanism_decisions` 对应 `defect_mechanisms` 的键。某类输入为空时，对应决策数组必须是 `[]`。不得把代码变量、函数、分支、风险或自行命名的编号塞进这三个数组；代码语义写入 flows、risks 和 test_cases。
 
@@ -17,6 +19,8 @@
 用例的 `basis` 必须与 `linked_input_ids` 中真实输入类型一致：声明 `coverage`、`requirement`、`design` 或 `defect_mechanism` 时必须关联相应输入编号。没有这类输入时不得借用该 basis；直接来自主干、分支、异常传播或恢复流程的用例使用 `code_flow`；风险推导的用例使用 `risk`，并填写 `linked_risk_keys`。
 
 每条用例的 `covered_flow_keys` 必须引用本结果中真实存在的 flow；同一用例可覆盖多个 flow。用例与主干、分支、异常传播和恢复流程的闭环以该字段为准，不得只在标题里提函数名。
+
+每个步骤的 `expected_result` 只能写正确实现应满足的一个可判定结果，不得同时允许“正常或发生缺陷”、不得使用“如果未修复”“可能崩溃”等双向表述。验证已知缺陷时也应写修复后的正确 oracle，并把缺陷表现放入风险的 `external_observation`。只有通过公开入口、受支持命令或用户可操作接口执行的用例才标为 `blackbox`；直接调用内部函数、修改结构体字段或注入内部失败点的用例标为 `graybox`。如果场景只能靠破坏对象不变量、手工制造悬空指针或跳过正式初始化才能出现，不生成正式测试用例。
 
 校验失败时只修正同一 `result_path`。若错误数量很多，先重新读取 `result_skeleton_path`，按骨架逐层迁移已有有效语义，再补齐缺失字段；不要在旧结构上反复打补丁，也不要让 Python 或脚本替你决定语义内容。
 

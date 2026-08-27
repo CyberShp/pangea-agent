@@ -211,8 +211,6 @@ def render_html_report(state: Mapping[str, Any]) -> str:
     manifest = state.get("source_manifest") or {}
     inventory = state.get("inventory") or {}
     manifest_html = _table(("项目", "结果"), [
-        ("索引文件数", manifest.get("file_count", 0)),
-        ("证据片段数", manifest.get("chunk_count", 0)),
         ("C/C++ 文件数", inventory.get("file_count", 0) if isinstance(inventory, Mapping) else 0),
         ("结构化解析", "完整" if isinstance(inventory, Mapping) and inventory.get("structural_parse_complete") else "存在缺口"),
         ("文档告警", len(_items(manifest.get("warnings"))) if isinstance(manifest, Mapping) else 0),
@@ -371,7 +369,15 @@ def render_html_report(state: Mapping[str, Any]) -> str:
     checks_html = _list(quality.get("checks"), "未记录检查项。") if isinstance(quality, Mapping) else ""
     unresolved_html = ""
     if incomplete and isinstance(quality, Mapping):
-        unresolved_html = f'<h3>未完成项</h3>{_list(quality.get("unresolved"))}'
+        semantic = quality.get("semantic_unresolved")
+        diagnostics = quality.get("workflow_diagnostics")
+        if semantic or diagnostics:
+            unresolved_html = (
+                f'<h3>语义待确认</h3>{_list(semantic)}'
+                f'<h3>结构诊断</h3>{_list(diagnostics)}'
+            )
+        else:
+            unresolved_html = f'<h3>未完成项</h3>{_list(quality.get("unresolved"))}'
     body.append(f'<section id="quality"><a class="back" href="#top">回到顶部</a><h2>10. 质量门禁</h2><p class="summary {final_tone}">{_escape(_quality_summary(state, incomplete))}</p><h3>已完成检查</h3>{checks_html}{unresolved_html}<p><span class="badge {final_tone}">{completeness}</span></p></section>')
     return _shell(title, incomplete, navigation, "".join(body))
 
