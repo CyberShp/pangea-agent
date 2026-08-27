@@ -3,9 +3,15 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from pangea_agent.agent_io import write_json
-from pangea_agent.cli.adapter_api import bind_action, next_actions, validate_action
+from pangea_agent.cli.adapter_api import (
+    bind_action,
+    next_actions,
+    settle_action,
+    validate_action,
+)
 from pangea_agent.graph.workflow_store import load_progress, save_progress
 from pangea_agent.models.analysis import ActionState, WorkflowProgress
 
@@ -98,6 +104,44 @@ class RecoveryContractTests(unittest.TestCase):
             validated = validate_action(root, state["run_id"], action_id)
             self.assertEqual(validated["status"], "valid")
             self.assertTrue(validated["already_accepted"])
+
+    def test_settled_action_can_be_settled_again_before_batch_advances(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            state = self._state(root)
+            Path(root, "runs", state["run_id"]).mkdir(parents=True)
+            action_id = f'{state["run_id"]}:analysis:U01'
+            save_progress(
+                state,
+                WorkflowProgress(
+                    run_id=state["run_id"],
+                    stage="analyzing",
+                    actions={
+                        action_id: ActionState(
+                            action_id=action_id,
+                            action="dispatch_agent",
+                            role="analysis",
+                            stage="unit_analysis",
+                            task_path="settled.json",
+                            task_id="analysis-agent-1",
+                            status="settled",
+                        )
+                    },
+                ),
+            )
+
+            with patch(
+                "pangea_agent.cli.adapter_api.resume_module_analysis",
+                return_value={
+                    "run_id": state["run_id"],
+                    "data_root": root,
+                    "stage": "analyzing",
+                    "agent_actions": [],
+                },
+            ) as resume:
+                result = settle_action(root, state["run_id"], action_id)
+
+            resume.assert_called_once_with(state["run_id"], root)
+            self.assertEqual(result["stage"], "analyzing")
 
     def test_missing_canonical_analysis_result_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as root:
