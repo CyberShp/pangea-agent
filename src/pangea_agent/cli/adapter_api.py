@@ -23,6 +23,7 @@ from pangea_agent.graph.workflow_store import (
     save_progress,
 )
 from pangea_agent.models.analysis import (
+    ActionState,
     AnalysisTask,
     ClosureTask,
     ComparisonReviewResult,
@@ -36,6 +37,57 @@ from pangea_agent.models.asset import AssetExtractionResult
 
 def _state(data_root: str, run_id: str) -> dict:
     return {"data_root": data_root, "run_id": run_id}
+
+
+def _originating_analysis_action(progress, run_id: str, action: ActionState) -> ActionState | None:
+    if action.role != "closure" or action.stage != "targeted_closure":
+        return None
+    unit_id = action.action_id.rsplit(":", 1)[-1]
+    origin_id = f"{run_id}:analysis:{unit_id}"
+    origin = progress.actions.get(origin_id)
+    if (
+        origin is None
+        or origin.role != "analysis"
+        or origin.stage != "unit_analysis"
+        or origin.status != "accepted"
+        or not origin.task_id
+    ):
+        raise ValueError(
+            "定向补齐必须续接该单元首轮 analysis worker，"
+            f"但 originating action 不可恢复：{origin_id}"
+        )
+    return origin
+
+
+def _external_action(progress, run_id: str, action: ActionState) -> dict:
+    payload = action.model_dump(mode="json")
+    origin = _originating_analysis_action(progress, run_id, action)
+    if origin is not None:
+        payload["action"] = "continue_agent"
+        payload["task_id"] = origin.task_id
+    return payload
+
+
+def _external_pending_actions(progress, run_id: str, limit: int = 8) -> list[dict]:
+    return [
+        _external_action(progress, run_id, progress.actions[item["action_id"]])
+        for item in pending_actions(progress, limit)
+    ]
+
+
+def _normalize_result_actions(data_root: str, run_id: str, result: dict) -> dict:
+    if not result.get("agent_actions"):
+        return result
+    progress = load_progress(_state(data_root, run_id))
+    if progress is None:
+        raise ValueError(f"Run 不存在：{run_id}")
+    payload = dict(result)
+    payload["agent_actions"] = [
+        _external_action(progress, run_id, progress.actions[item["action_id"]])
+        for item in result["agent_actions"]
+        if item.get("action_id") in progress.actions
+    ]
+    return payload
 
 
 def bind_asset_action(
@@ -98,7 +150,7 @@ def next_actions(data_root: str, run_id: str, limit: int = 8) -> dict:
     if progress is None:
         raise ValueError(f"Run 不存在：{run_id}")
     actions = sorted(
-        pending_actions(progress, limit),
+        _external_pending_actions(progress, run_id, limit),
         key=lambda item: item["action_id"],
     )
     return {
@@ -116,17 +168,27 @@ def bind_action(data_root: str, run_id: str, action_id: str, task_id: str) -> di
     progress = load_progress(state)
     if progress is None or action_id not in progress.actions:
         raise ValueError(f"Action 不存在：{action_id}")
+    action = progress.actions[action_id]
+    origin = _originating_analysis_action(progress, run_id, action)
+    if origin is not None and task_id != origin.task_id:
+        raise ValueError(
+            "定向补齐禁止新建或替换 worker："
+            f"expected_task_id={origin.task_id} actual_task_id={task_id}"
+        )
+    if action.task_id == task_id and action.status in {"dispatched", "accepted"}:
+        return _external_action(progress, run_id, action)
     if progress.lifecycle_status != "running":
         raise ValueError("Run 当前不接受新的 Agent 绑定")
-    action = progress.actions[action_id]
-    if action.status == "dispatched" and action.task_id == task_id:
-        return action.model_dump(mode="json")
     if action.status != "pending":
         raise ValueError(f"Action 当前不能绑定：status={action.status}")
-    action.task_id = task_id
+    if origin is not None:
+        action.action = "continue_agent"
+        action.task_id = origin.task_id
+    else:
+        action.task_id = task_id
     action.status = "dispatched"
     save_progress(state, progress)
-    return action.model_dump(mode="json")
+    return _external_action(progress, run_id, action)
 
 
 def _validate_planning(state: dict, task: PlanningTask, result: PlanningResult) -> None:
@@ -146,6 +208,8 @@ def validate_action(data_root: str, run_id: str, action_id: str) -> dict:
     if progress is None or action_id not in progress.actions:
         raise ValueError(f"Action 不存在：{action_id}")
     action = progress.actions[action_id]
+    if action.status == "accepted":
+        return {"action_id": action_id, "status": "valid", "already_accepted": True}
     task_path = Path(action.task_path)
     if action.role == "planning":
         task = PlanningTask.model_validate(read_json(task_path))
@@ -211,4 +275,5 @@ def settle_action(data_root: str, run_id: str, action_id: str) -> dict:
     validate_action(data_root, run_id, action_id)
     action.status = "settled"
     save_progress(state, progress)
-    return resume_module_analysis(run_id, data_root)
+    result = resume_module_analysis(run_id, data_root)
+    return _normalize_result_actions(data_root, run_id, result)
