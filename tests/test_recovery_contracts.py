@@ -12,6 +12,7 @@ from pangea_agent.cli.adapter_api import (
     settle_action,
     validate_action,
 )
+from pangea_agent.graph.nodes.advance_workflow import advance_workflow
 from pangea_agent.graph.workflow_store import load_progress, save_progress
 from pangea_agent.models.analysis import ActionState, WorkflowProgress
 
@@ -19,6 +20,69 @@ from pangea_agent.models.analysis import ActionState, WorkflowProgress
 class RecoveryContractTests(unittest.TestCase):
     def _state(self, root: str, run_id: str = "RUN-RECOVERY") -> dict:
         return {"data_root": root, "run_id": run_id}
+
+    def _write_analysis_task(self, state: dict, *, status: str = "dispatched") -> tuple[str, Path]:
+        run_dir = Path(state["data_root"], "runs", state["run_id"])
+        task_path = run_dir / "agent-tasks" / "analysis" / "U01.json"
+        selected_inputs_path = run_dir / "inputs" / "units" / "U01.json"
+        missing_result_path = run_dir / "agent-results" / "analysis" / "U01.json"
+        write_json(selected_inputs_path, {
+            "asset_items": {},
+            "defect_mechanisms": {},
+            "coverage_gaps": [],
+            "test_case_examples": [],
+        })
+        write_json(task_path, {
+            "schema_version": "1.0",
+            "task_type": "analysis",
+            "run_id": state["run_id"],
+            "target": "module",
+            "unit": {
+                "unit_id": "U01",
+                "repo_id": "repo",
+                "title": "unit",
+                "source_scope": ["src/a.c"],
+                "context_scope": [],
+                "rationale": "test",
+                "asset_item_ids": [],
+                "coverage_ids": [],
+                "mechanism_ids": [],
+                "line_count": 1,
+                "function_count": 1,
+            },
+            "repository": {
+                "repo_id": "repo",
+                "source_root": ".",
+                "git": {},
+            },
+            "inventory_path": str(run_dir / "inputs" / "inventory.json"),
+            "source_manifest_path": str(run_dir / "inputs" / "source-manifest.json"),
+            "selected_inputs_path": str(selected_inputs_path),
+            "coverage_context": [],
+            "result_schema_path": "schemas/analysis_result.schema.json",
+            "result_path": str(missing_result_path),
+            "rubric_paths": ["rubric.md"],
+        })
+        action_id = f'{state["run_id"]}:analysis:U01'
+        save_progress(
+            state,
+            WorkflowProgress(
+                run_id=state["run_id"],
+                stage="analyzing",
+                actions={
+                    action_id: ActionState(
+                        action_id=action_id,
+                        action="dispatch_agent",
+                        role="analysis",
+                        stage="unit_analysis",
+                        task_path=str(task_path),
+                        task_id="analysis-agent-1",
+                        status=status,
+                    )
+                },
+            ),
+        )
+        return action_id, missing_result_path
 
     def test_closure_reuses_originating_analysis_worker(self) -> None:
         with tempfile.TemporaryDirectory() as root:
@@ -143,73 +207,33 @@ class RecoveryContractTests(unittest.TestCase):
             resume.assert_called_once_with(state["run_id"], root)
             self.assertEqual(result["stage"], "analyzing")
 
-    def test_missing_canonical_analysis_result_is_rejected(self) -> None:
+    def test_missing_canonical_analysis_result_is_rejected_by_adapter(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             state = self._state(root)
-            run_dir = Path(root, "runs", state["run_id"])
-            run_dir.mkdir(parents=True)
-            task_path = run_dir / "analysis-task.json"
-            selected_inputs_path = run_dir / "selected-inputs.json"
-            missing_result_path = run_dir / "agent-results" / "analysis" / "U01.json"
-            write_json(selected_inputs_path, {
-                "asset_items": {},
-                "defect_mechanisms": {},
-                "coverage_gaps": [],
-                "test_case_examples": [],
-            })
-            write_json(task_path, {
-                "schema_version": "1.0",
-                "task_type": "analysis",
-                "run_id": state["run_id"],
-                "target": "module",
-                "unit": {
-                    "unit_id": "U01",
-                    "repo_id": "repo",
-                    "title": "unit",
-                    "source_scope": ["src/a.c"],
-                    "context_scope": [],
-                    "rationale": "test",
-                    "asset_item_ids": [],
-                    "coverage_ids": [],
-                    "mechanism_ids": [],
-                    "line_count": 1,
-                    "function_count": 1,
-                },
-                "repository": {
-                    "repo_id": "repo",
-                    "source_root": ".",
-                    "git": {},
-                },
-                "inventory_path": str(run_dir / "inventory.json"),
-                "source_manifest_path": str(run_dir / "source-manifest.json"),
-                "selected_inputs_path": str(selected_inputs_path),
-                "coverage_context": [],
-                "result_schema_path": "schemas/analysis_result.schema.json",
-                "result_path": str(missing_result_path),
-                "rubric_paths": ["rubric.md"],
-            })
-            action_id = f'{state["run_id"]}:analysis:U01'
-            save_progress(
-                state,
-                WorkflowProgress(
-                    run_id=state["run_id"],
-                    stage="analyzing",
-                    actions={
-                        action_id: ActionState(
-                            action_id=action_id,
-                            action="dispatch_agent",
-                            role="analysis",
-                            stage="unit_analysis",
-                            task_path=str(task_path),
-                            task_id="analysis-agent-1",
-                            status="dispatched",
-                        )
-                    },
-                ),
-            )
+            action_id, _ = self._write_analysis_task(state)
 
             with self.assertRaises(FileNotFoundError):
                 validate_action(root, state["run_id"], action_id)
+
+    def test_missing_analysis_result_cannot_silently_skip_review(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            state = self._state(root)
+            action_id, missing_result = self._write_analysis_task(state, status="settled")
+            self.assertFalse(missing_result.exists())
+
+            with self.assertRaises(FileNotFoundError):
+                advance_workflow({
+                    **state,
+                    "task_contract": {"target": "module"},
+                })
+
+            failed = load_progress(state)
+            assert failed is not None
+            self.assertEqual(failed.lifecycle_status, "failed")
+            self.assertEqual(failed.actions[action_id].status, "failed")
+            self.assertFalse(
+                any(action.role == "review" for action in failed.actions.values())
+            )
 
 
 if __name__ == "__main__":
