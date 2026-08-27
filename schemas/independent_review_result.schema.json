@@ -9,6 +9,7 @@
           "type": "string"
         },
         "category": {
+          "description": "新增 finding 的类别；不得写入 independent_finding_decisions.disposition",
           "enum": [
             "missed_flow",
             "document_delta",

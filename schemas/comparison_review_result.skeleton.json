@@ -4,7 +4,7 @@
   "independent_finding_decisions": [
     {
       "finding_key": "<必须对应盲审已有 finding_key>",
-      "disposition": "<confirmed|dismissed|unresolved>",
+      "disposition": "<裁决字段，只能 confirmed|dismissed|unresolved；不要填写 finding category>",
       "conclusion": "<逐条裁决结论>",
       "evidence": [
         {
@@ -20,7 +20,7 @@
   "findings": [
     {
       "finding_key": "<不得与盲审 finding_key 重复>",
-      "category": "<missed_flow|document_delta|coverage_gap|defect_mechanism|risk|test_oracle|incorrect_conclusion>",
+      "category": "<新增 finding 类别，只能 missed_flow|document_delta|coverage_gap|defect_mechanism|risk|test_oracle|incorrect_conclusion；不要填写 disposition>",
       "affected_unit_ids": ["<unit_id>"],
       "linked_input_ids": [],
       "summary": "<新增发现摘要>",

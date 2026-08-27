@@ -16,7 +16,7 @@ def validate_unit_result(
     expected_coverage = {item["coverage_id"] for item in coverage_gaps}
     expected_mechanisms = set(mechanisms)
 
-    warnings = []
+    warnings = _reference_warnings(result)
     warnings.extend(_check_decisions(
         "input_decisions",
         expected_inputs,
@@ -36,9 +36,15 @@ def validate_unit_result(
     allowed_paths = set(task.unit.source_scope) | set(task.unit.context_scope)
     for evidence in _all_evidence(result):
         if evidence.repo_id != task.unit.repo_id or evidence.path not in allowed_paths:
-            raise ValueError(
-                "源码证据不属于当前分析单元："
+            warnings.append(
+                "源码证据待确认，不属于当前分析单元："
                 f"{evidence.repo_id}:{evidence.path}:{evidence.line_start}"
+            )
+        if evidence.line_end is not None and evidence.line_end < evidence.line_start:
+            warnings.append(
+                "源码证据行号范围待确认："
+                f"{evidence.repo_id}:{evidence.path}:"
+                f"{evidence.line_start}-{evidence.line_end}"
             )
 
     known_inputs = expected_inputs | expected_coverage | expected_mechanisms
@@ -50,30 +56,86 @@ def validate_unit_result(
     for case in result.test_cases:
         unknown_inputs = set(case.linked_input_ids) - known_inputs
         if unknown_inputs:
-            raise ValueError(
+            warnings.append(
                 f"测试用例 {case.case_key} 引用了未知输入：{sorted(unknown_inputs)}"
             )
         derived_basis = _derived_basis(case, item_types)
         if case.basis != derived_basis:
             warnings.append(
-                f"测试用例 {case.case_key} basis 已由真实关联确定："
-                f"{case.basis} -> {derived_basis}"
+                f"测试用例 {case.case_key} basis 与真实关联不一致，"
+                f"保留 Agent 原值：actual={case.basis} expected={derived_basis}"
             )
-            case.basis = derived_basis
 
     return warnings
 
 
 def _check_decisions(name: str, expected: set[str], actual: list[str]) -> list[str]:
+    warnings = []
     if len(actual) != len(set(actual)):
-        raise ValueError(f"{name} 包含重复编号")
+        warnings.append(f"{name} 包含重复编号")
     unknown = set(actual) - expected
     if unknown:
-        raise ValueError(f"{name} 引用了当前任务不存在的编号：{sorted(unknown)}")
+        warnings.append(f"{name} 引用了当前任务不存在的编号：{sorted(unknown)}")
     missing = expected - set(actual)
-    if not missing:
-        return []
-    return [f"{name} 未记录全部可选处理项：missing={sorted(missing)}"]
+    if missing:
+        warnings.append(f"{name} 未记录全部可选处理项：missing={sorted(missing)}")
+    return warnings
+
+
+def _reference_warnings(result: UnitSemanticResult) -> list[str]:
+    warnings: list[str] = []
+    keyed = {
+        "flow_key": [item.flow_key for item in result.flows],
+        "risk_key": [item.risk_key for item in result.risks],
+        "case_key": [item.case_key for item in result.test_cases],
+        "finding_key": [
+            item.finding_key for item in result.review_finding_decisions
+        ],
+    }
+    for name, values in keyed.items():
+        if len(values) != len(set(values)):
+            warnings.append(f"{name} 包含重复编号")
+
+    known_flows = set(keyed["flow_key"])
+    known_risks = set(keyed["risk_key"])
+    known_cases = set(keyed["case_key"])
+    for flow in result.flows:
+        step_keys = [step.step_key for step in flow.steps]
+        if len(step_keys) != len(set(step_keys)):
+            warnings.append(f"流程 {flow.flow_key} 的 step_key 包含重复编号")
+        known_steps = set(step_keys)
+        for edge in flow.edges:
+            missing = {
+                key
+                for key in (edge.source_step_key, edge.target_step_key)
+                if key not in known_steps
+            }
+            if missing:
+                warnings.append(
+                    f"流程 {flow.flow_key} 的 edge 引用了未知 step_key："
+                    f"{sorted(missing)}"
+                )
+    for case in result.test_cases:
+        unknown_flows = set(case.covered_flow_keys) - known_flows
+        if unknown_flows:
+            warnings.append(
+                f"测试用例 {case.case_key} 引用了未知 flow_key："
+                f"{sorted(unknown_flows)}"
+            )
+        unknown_risks = set(case.linked_risk_keys) - known_risks
+        if unknown_risks:
+            warnings.append(
+                f"测试用例 {case.case_key} 引用了未知 risk_key："
+                f"{sorted(unknown_risks)}"
+            )
+    for decision in [*result.coverage_decisions, *result.mechanism_decisions]:
+        unknown_cases = set(decision.test_case_keys) - known_cases
+        if unknown_cases:
+            warnings.append(
+                "处理决定引用了未知 case_key："
+                f"{sorted(unknown_cases)}"
+            )
+    return warnings
 
 
 def _derived_basis(case, item_types: dict[str, str | None]) -> list[str]:

@@ -14,6 +14,7 @@ from pangea_agent.assets import (
 )
 from pangea_agent.repositories.registry import list_registered_repositories
 from pangea_agent.graph.workflow_store import load_progress, save_progress
+from pangea_agent.report import reports_are_complete
 
 
 def system_capabilities(data_root: str) -> dict:
@@ -50,6 +51,9 @@ def _run_summary(run_dir: Path) -> dict:
         lifecycle_status = "failed"
     units = progress.get("analysis_units", [])
     completed = progress.get("completed_analysis_units", [])
+    report_available = (
+        lifecycle_status == "complete" and reports_are_complete(run_dir)
+    )
     return {
         "run_id": run_dir.name,
         "lifecycle_status": lifecycle_status,
@@ -59,7 +63,7 @@ def _run_summary(run_dir: Path) -> dict:
         "unit_count": len(units),
         "completed_unit_count": len(completed),
         "errors": progress.get("errors", []),
-        "report_available": (run_dir / "report.html").is_file(),
+        "report_available": report_available,
     }
 
 
@@ -91,8 +95,8 @@ def run_detail(data_root: str, run_id: str) -> dict:
     progress_path = run_dir / "progress.json"
     summary["progress"] = read_json(progress_path) if progress_path.is_file() else None
     summary["reports"] = {
-        "html": str(run_dir / "report.html") if (run_dir / "report.html").is_file() else None,
-        "markdown": str(run_dir / "report.md") if (run_dir / "report.md").is_file() else None,
+        "html": str(run_dir / "report.html") if summary["report_available"] else None,
+        "markdown": str(run_dir / "report.md") if summary["report_available"] else None,
     }
     return summary
 
@@ -102,7 +106,7 @@ def run_report(data_root: str, run_id: str, report_format: str) -> dict:
     if suffix is None:
         raise ValueError("format 必须是 html 或 markdown")
     path = Path(data_root) / "runs" / run_id / f"report{suffix}"
-    if not path.is_file():
+    if not _run_summary(path.parent)["report_available"]:
         raise ValueError(f"报告不存在：{path}")
     return {"run_id": run_id, "format": report_format, "path": str(path)}
 

@@ -3,109 +3,15 @@ from __future__ import annotations
 from pangea_agent.models.analysis import AnalysisUnit, PlanningResult, PlanningTask
 
 
-def _unique(values: list[str]) -> list[str]:
-    return list(dict.fromkeys(values))
-
-
-def _merge_direct_call_units(
-    task: PlanningTask,
-    units: list[AnalysisUnit],
-    files: dict[tuple[str, str], dict],
-    owners: dict[tuple[str, str], int],
-    requested: set[tuple[str, str]],
-) -> list[AnalysisUnit]:
-    if len(units) < 2:
-        return units
-
-    definitions: dict[tuple[str, str], list[tuple[str, str]]] = {}
-    for key in requested:
-        for function in files[key].get("functions", []):
-            definitions.setdefault((key[0], function["symbol"]), []).append(key)
-
-    edges: set[tuple[int, int]] = set()
-    for caller in requested:
-        for call in files[caller].get("calls", []):
-            targets = definitions.get((caller[0], call["symbol"]), [])
-            if len(targets) != 1 or targets[0] == caller:
-                continue
-            left, right = owners[caller], owners[targets[0]]
-            if left != right:
-                edges.add(tuple(sorted((left, right))))
-
-    parents = list(range(len(units)))
-
-    def root(index: int) -> int:
-        while parents[index] != index:
-            parents[index] = parents[parents[index]]
-            index = parents[index]
-        return index
-
-    def members(parent: int) -> list[int]:
-        return [index for index in range(len(units)) if root(index) == parent]
-
-    for left, right in sorted(edges):
-        left_root, right_root = root(left), root(right)
-        if left_root == right_root:
-            continue
-        combined = members(left_root) + members(right_root)
-        if sum(units[index].line_count for index in combined) > (
-            task.merge_direct_call_chain_max_lines
-        ):
-            continue
-        if sum(units[index].function_count for index in combined) > (
-            task.merge_direct_call_chain_max_functions
-        ):
-            continue
-        parents[right_root] = left_root
-
-    groups: dict[int, list[AnalysisUnit]] = {}
-    for index, unit in enumerate(units):
-        groups.setdefault(root(index), []).append(unit)
-    if len(groups) == len(units):
-        return units
-
-    merged: list[AnalysisUnit] = []
-    for group in groups.values():
-        source_scope = _unique([
-            path for unit in group for path in unit.source_scope
-        ])
-        source_set = set(source_scope)
-        context_scope = [
-            path
-            for path in _unique([
-                path for unit in group for path in unit.context_scope
-            ])
-            if path not in source_set
-        ]
-        merged.append(AnalysisUnit(
-            repo_id=group[0].repo_id,
-            title="、".join(unit.title for unit in group),
-            source_scope=source_scope,
-            context_scope=context_scope,
-            rationale="；".join(unit.rationale for unit in group),
-            asset_item_ids=_unique([
-                item for unit in group for item in unit.asset_item_ids
-            ]),
-            coverage_ids=_unique([
-                item for unit in group for item in unit.coverage_ids
-            ]),
-            mechanism_ids=_unique([
-                item for unit in group for item in unit.mechanism_ids
-            ]),
-            unit_id=f"U{len(merged):02d}",
-            line_count=sum(unit.line_count for unit in group),
-            function_count=sum(unit.function_count for unit in group),
-        ))
-    return merged
-
-
 def accept_plan(
     task: PlanningTask,
     result: PlanningResult,
     compact_metadata: dict,
     asset_inputs: dict,
     coverage_gaps: list[dict],
+    warnings: list[str] | None = None,
 ) -> list[AnalysisUnit]:
+    advisory = warnings if warnings is not None else []
     files = {
         (item["repo_id"], item["path"]): item
         for item in compact_metadata.get("files", [])
@@ -167,16 +73,17 @@ def accept_plan(
             )
         for coverage_id in proposed.coverage_ids:
             if coverage_id in coverage_owners:
-                raise ValueError(
+                advisory.append(
                     f"Coverage 缺口被多个单元处理：{coverage_id} "
                     f"(U{coverage_owners[coverage_id]:02d}, U{index:02d})"
                 )
-            coverage_owners[coverage_id] = index
+            else:
+                coverage_owners[coverage_id] = index
         line_count = sum(files[key].get("line_count", 0) for key in source_keys)
         function_count = sum(len(files[key].get("functions", [])) for key in source_keys)
         if line_count > task.max_unit_lines or function_count > task.max_unit_functions:
-            raise ValueError(
-                f"单元 U{index:02d} 超过工作量上限："
+            advisory.append(
+                f"单元 U{index:02d} 超过工作量建议上限："
                 f"lines={line_count}/{task.max_unit_lines}, "
                 f"functions={function_count}/{task.max_unit_functions}"
             )
@@ -194,5 +101,5 @@ def accept_plan(
         )
     missing_coverage = known_coverage - set(coverage_owners)
     if missing_coverage:
-        raise ValueError(f"规划没有分配 Coverage 缺口：{sorted(missing_coverage)}")
-    return _merge_direct_call_units(task, units, files, owners, requested)
+        advisory.append(f"规划没有分配 Coverage 缺口：{sorted(missing_coverage)}")
+    return units

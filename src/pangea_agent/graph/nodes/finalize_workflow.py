@@ -82,6 +82,11 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
         for number, case in enumerate(result.test_cases, 1):
             case_id = f"TC-{unit.unit_id}-{number:03d}"
             case_ids[(unit.unit_id, case.case_key)] = case_id
+            unresolved_risk_keys = [
+                key
+                for key in case.linked_risk_keys
+                if (unit.unit_id, key) not in risk_ids
+            ]
             test_cases.append({
                 "test_case_id": case_id,
                 "title": case.title,
@@ -92,8 +97,11 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
                 ],
                 "linked_input_ids": case.linked_input_ids,
                 "linked_risk_ids": [
-                    risk_ids[(unit.unit_id, key)] for key in case.linked_risk_keys
+                    risk_ids[(unit.unit_id, key)]
+                    for key in case.linked_risk_keys
+                    if (unit.unit_id, key) in risk_ids
                 ],
+                "unresolved_linked_risk_keys": unresolved_risk_keys,
                 "preconditions": case.preconditions,
                 "steps": [step.action for step in case.steps],
                 "expected_results": [step.expected_result for step in case.steps],
@@ -136,7 +144,14 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
                 "unit_id": unit.unit_id,
                 **item.model_dump(mode="json", exclude={"test_case_keys"}),
                 "test_case_ids": [
-                    case_ids[(unit.unit_id, key)] for key in item.test_case_keys
+                    case_ids[(unit.unit_id, key)]
+                    for key in item.test_case_keys
+                    if (unit.unit_id, key) in case_ids
+                ],
+                "unresolved_test_case_keys": [
+                    key
+                    for key in item.test_case_keys
+                    if (unit.unit_id, key) not in case_ids
                 ],
             }
             for item in result.coverage_decisions
@@ -146,7 +161,14 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
                 "unit_id": unit.unit_id,
                 **item.model_dump(mode="json", exclude={"test_case_keys", "evidence"}),
                 "test_case_ids": [
-                    case_ids[(unit.unit_id, key)] for key in item.test_case_keys
+                    case_ids[(unit.unit_id, key)]
+                    for key in item.test_case_keys
+                    if (unit.unit_id, key) in case_ids
+                ],
+                "unresolved_test_case_keys": [
+                    key
+                    for key in item.test_case_keys
+                    if (unit.unit_id, key) not in case_ids
                 ],
                 "evidence": [_evidence(evidence) for evidence in item.evidence],
             }
@@ -176,6 +198,22 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
             {"stage": "review", "reason": value}
             for value in comparison_review.unresolved
         )
+    comparison_decisions = {
+        decision.finding_key: decision.disposition
+        for decision in (
+            comparison_review.independent_finding_decisions
+            if comparison_review
+            else []
+        )
+    }
+    unresolved.extend(
+        {
+            "stage": "validation",
+            "action_id": item.get("action_id"),
+            "reason": item.get("message", "结果存在待确认项"),
+        }
+        for item in progress.degradations
+    )
     quality_status = "UNRESOLVED" if unresolved else "PASS"
     source_manifest = read_json(run_dir / "inputs" / "source-manifest.json")
     coverage_gaps = read_json(run_dir / "inputs" / "coverage-gaps.json")
@@ -203,10 +241,9 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
                 [
                     finding
                     for finding in review.findings
-                    if next(
-                        decision.disposition
-                        for decision in comparison_review.independent_finding_decisions
-                        if decision.finding_key == finding.finding_key
+                    if comparison_decisions.get(
+                        finding.finding_key,
+                        "unresolved",
                     ) != "dismissed"
                 ]
                 + comparison_review.findings
@@ -223,6 +260,7 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
             ],
             "unresolved": unresolved,
         },
+        "degradations": progress.degradations,
         "errors": progress.errors,
         "phase": "COMPLETE" if quality_status == "PASS" else "INCOMPLETE",
         "run_status": "COMPLETE" if quality_status == "PASS" else "INCOMPLETE",

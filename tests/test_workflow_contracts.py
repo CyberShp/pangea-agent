@@ -172,9 +172,8 @@ def _semantic_result(
 
 
 class CodeFlowReferenceTests(unittest.TestCase):
-    def test_edge_must_reference_defined_step(self) -> None:
-        with self.assertRaisesRegex(ValueError, "未知 step_key"):
-            CodeFlow.model_validate({
+    def test_unknown_edge_reference_is_advisory(self) -> None:
+        flow = CodeFlow.model_validate({
                 "flow_key": "F01",
                 "title": "flow",
                 "entry": "entry",
@@ -200,16 +199,25 @@ class CodeFlowReferenceTests(unittest.TestCase):
                         "target_step_key": "F01-SX",
                     }
                 ],
-            })
+        })
+        with tempfile.TemporaryDirectory() as root:
+            result = _semantic_result()
+            result.flows = [flow]
+            warnings = validate_unit_result(
+                _analysis_task(root),
+                result,
+                {"asset_items": {}, "coverage_gaps": [], "defect_mechanisms": {}},
+            )
+        self.assertTrue(any("未知 step_key" in item for item in warnings))
 
-    def test_evidence_path_normalizes_windows_separator(self) -> None:
+    def test_evidence_path_preserves_agent_value(self) -> None:
         evidence = SourceEvidence(
             repo_id=REPO_ID,
             path=r"tls\ntt_x.c",
             line_start=1,
             observation="source",
         )
-        self.assertEqual(evidence.path, "tls/ntt_x.c")
+        self.assertEqual(evidence.path, r"tls\ntt_x.c")
 
 
 class ReviewScopeTests(unittest.TestCase):
@@ -244,10 +252,10 @@ class ReviewScopeTests(unittest.TestCase):
             "unresolved": [],
         })
 
-        with self.assertRaisesRegex(ValueError, "affected_unit_ids"):
-            _validate_review(progress, result)
+        warnings = _validate_review(progress, result)
+        self.assertTrue(any("affected_unit_ids" in item for item in warnings))
 
-    def test_unique_basename_repairs_review_evidence_to_canonical_path(self) -> None:
+    def test_unique_basename_suggests_path_without_rewriting(self) -> None:
         progress = _progress(_unit("U03", ["tls/ntt_x.c"]))
         result = IndependentReviewResult.model_validate({
             "summary": "review",
@@ -257,10 +265,14 @@ class ReviewScopeTests(unittest.TestCase):
             "unresolved": [],
         })
 
-        _validate_review(progress, result)
-        self.assertEqual(result.findings[0].evidence[0].path, "tls/ntt_x.c")
+        warnings = _validate_review(progress, result)
+        self.assertEqual(
+            result.findings[0].evidence[0].path,
+            "tls/packet/ntt_x.c",
+        )
+        self.assertTrue(any("possible_match=tls/ntt_x.c" in item for item in warnings))
 
-    def test_ambiguous_basename_is_rejected_instead_of_guessed(self) -> None:
+    def test_ambiguous_basename_is_degraded_instead_of_guessed(self) -> None:
         progress = _progress(
             _unit("U03", ["tls/client/ntt_x.c", "tls/server/ntt_x.c"])
         )
@@ -272,8 +284,8 @@ class ReviewScopeTests(unittest.TestCase):
             "unresolved": [],
         })
 
-        with self.assertRaisesRegex(ValueError, "allowed_paths"):
-            _validate_review(progress, result)
+        warnings = _validate_review(progress, result)
+        self.assertTrue(any("allowed_paths" in item for item in warnings))
 
     def test_comparison_decision_uses_original_finding_affected_units(self) -> None:
         progress = _progress(
@@ -308,13 +320,13 @@ class ReviewScopeTests(unittest.TestCase):
             "unresolved": [],
         })
 
-        with self.assertRaisesRegex(ValueError, "affected_unit_ids"):
-            _validate_comparison_review(
-                progress,
-                independent,
-                comparison,
-                selected_inputs={},
-            )
+        warnings = _validate_comparison_review(
+            progress,
+            independent,
+            comparison,
+            selected_inputs={},
+        )
+        self.assertTrue(any("affected_unit_ids" in item for item in warnings))
 
     def test_python_does_not_overrule_confirmed_missed_flow(self) -> None:
         progress = _progress(_unit("U01", ["tls/u01.c"]))
@@ -365,20 +377,20 @@ class ResultTrustBoundaryTests(unittest.TestCase):
             )
         self.assertTrue(any("coverage_decisions" in item for item in warnings))
 
-    def test_unknown_input_reference_is_rejected(self) -> None:
+    def test_unknown_input_reference_is_advisory(self) -> None:
         with tempfile.TemporaryDirectory() as root:
-            with self.assertRaisesRegex(ValueError, "未知输入"):
-                validate_unit_result(
-                    _analysis_task(root),
-                    _semantic_result(linked_input_ids=["NOT-REAL"]),
-                    {
-                        "asset_items": {},
-                        "coverage_gaps": [],
-                        "defect_mechanisms": {},
-                    },
-                )
+            warnings = validate_unit_result(
+                _analysis_task(root),
+                _semantic_result(linked_input_ids=["NOT-REAL"]),
+                {
+                    "asset_items": {},
+                    "coverage_gaps": [],
+                    "defect_mechanisms": {},
+                },
+            )
+        self.assertTrue(any("未知输入" in item for item in warnings))
 
-    def test_basis_is_derived_from_real_links(self) -> None:
+    def test_basis_warning_does_not_rewrite_agent_result(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             result = _semantic_result(
                 linked_input_ids=["COV-1"],
@@ -393,7 +405,7 @@ class ResultTrustBoundaryTests(unittest.TestCase):
                     "defect_mechanisms": {},
                 },
             )
-        self.assertEqual(result.test_cases[0].basis, ["coverage"])
+        self.assertEqual(result.test_cases[0].basis, ["requirement"])
         self.assertTrue(any("basis" in item for item in warnings))
 
     def test_noncanonical_flow_field_is_rejected(self) -> None:
@@ -622,6 +634,87 @@ class ActionLifecycleTests(unittest.TestCase):
             progress = load_progress(state)
             assert progress is not None
             self.assertEqual(progress.actions[action_id].status, "dispatched")
+
+    def test_repeated_invalid_result_requests_attention_without_failing_run(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            state = {"data_root": root, "run_id": "RUN-TEST"}
+            task = _analysis_task(root)
+            task_path = (
+                Path(root) / "runs" / "RUN-TEST"
+                / "agent-tasks" / "analysis" / "U00.json"
+            )
+            write_json(task_path, task.model_dump(mode="json"))
+            write_json(Path(task.result_path), {"summary": "still incomplete"})
+            action_id = "RUN-TEST:analysis:U00"
+            save_progress(state, WorkflowProgress(
+                run_id="RUN-TEST",
+                stage="analyzing",
+                actions={
+                    action_id: ActionState(
+                        action_id=action_id,
+                        action="dispatch_agent",
+                        role="analysis",
+                        stage="unit_analysis",
+                        task_path=str(task_path),
+                        task_id="analysis-session",
+                        status="dispatched",
+                    )
+                },
+            ))
+
+            validation = None
+            for _ in range(3):
+                validation = validate_action(root, "RUN-TEST", action_id)
+            assert validation is not None
+            self.assertEqual(validation["status"], "invalid")
+            self.assertTrue(validation["attention_required"])
+            progress = load_progress(state)
+            assert progress is not None
+            self.assertEqual(progress.lifecycle_status, "running")
+            self.assertEqual(progress.actions[action_id].status, "dispatched")
+
+    def test_advisory_result_is_preserved_and_recorded_as_degraded(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            state = {"data_root": root, "run_id": "RUN-TEST"}
+            task = _analysis_task(root)
+            task_path = (
+                Path(root) / "runs" / "RUN-TEST"
+                / "agent-tasks" / "analysis" / "U00.json"
+            )
+            write_json(task_path, task.model_dump(mode="json"))
+            original = _semantic_result(
+                linked_input_ids=["NOT-REAL"],
+                basis=["requirement"],
+            ).model_dump(mode="json")
+            write_json(Path(task.result_path), original)
+            action_id = "RUN-TEST:analysis:U00"
+            save_progress(state, WorkflowProgress(
+                run_id="RUN-TEST",
+                stage="analyzing",
+                actions={
+                    action_id: ActionState(
+                        action_id=action_id,
+                        action="dispatch_agent",
+                        role="analysis",
+                        stage="unit_analysis",
+                        task_path=str(task_path),
+                        task_id="analysis-session",
+                        status="dispatched",
+                    )
+                },
+            ))
+
+            validation = validate_action(root, "RUN-TEST", action_id)
+            self.assertEqual(validation["status"], "valid")
+            self.assertTrue(validation["warnings"])
+            self.assertEqual(read_json(Path(task.result_path)), original)
+            progress = load_progress(state)
+            assert progress is not None
+            self.assertTrue(progress.degradations)
+            self.assertEqual(
+                progress.degradations[0]["action_id"],
+                action_id,
+            )
 
     def test_settled_action_resumes_idempotently(self) -> None:
         with tempfile.TemporaryDirectory() as root:

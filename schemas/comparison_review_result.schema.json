@@ -9,6 +9,7 @@
           "type": "string"
         },
         "disposition": {
+          "description": "只表示对盲审 finding 的裁决；不得填写 risk、incorrect_conclusion 等 category",
           "enum": [
             "confirmed",
             "dismissed",
@@ -49,6 +50,7 @@
           "type": "string"
         },
         "category": {
+          "description": "新增 finding 的类别；不得写入 independent_finding_decisions.disposition",
           "enum": [
             "missed_flow",
             "document_delta",

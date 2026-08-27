@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class StrictModel(BaseModel):
@@ -21,18 +21,6 @@ class SourceEvidence(StrictModel):
     line_start: int = Field(gt=0)
     line_end: int | None = Field(default=None, gt=0)
     observation: str = Field(min_length=1)
-
-    @field_validator("path", mode="before")
-    @classmethod
-    def normalize_path(cls, value: str) -> str:
-        return value.replace("\\", "/").strip("/")
-
-    @model_validator(mode="after")
-    def ordered_lines(self) -> "SourceEvidence":
-        if self.line_end is not None and self.line_end < self.line_start:
-            raise ValueError("line_end 不能小于 line_start")
-        return self
-
 
 class ProposedUnit(StrictModel):
     repo_id: str = Field(min_length=1)
@@ -101,25 +89,6 @@ class CodeFlow(StrictModel):
     summary: str = Field(min_length=1)
     steps: list[FlowStep] = Field(min_length=1)
     edges: list[FlowEdge] = Field(min_length=1)
-
-    @model_validator(mode="after")
-    def validate_step_references(self) -> "CodeFlow":
-        step_keys = [step.step_key for step in self.steps]
-        if len(step_keys) != len(set(step_keys)):
-            raise ValueError(f"流程 {self.flow_key} 的 step_key 不能重复")
-        known = set(step_keys)
-        for edge in self.edges:
-            missing = {
-                key
-                for key in (edge.source_step_key, edge.target_step_key)
-                if key not in known
-            }
-            if missing:
-                raise ValueError(
-                    f"流程 {self.flow_key} 的 edge 引用了未知 step_key：{sorted(missing)}"
-                )
-        return self
-
 
 class InputDecision(StrictModel):
     item_id: str = Field(min_length=1)
@@ -204,33 +173,6 @@ class UnitSemanticResult(StrictModel):
     review_finding_decisions: list[ReviewFindingDecision] = Field(default_factory=list)
     unresolved: list[str] = Field(default_factory=list)
 
-    @model_validator(mode="after")
-    def unique_keys(self) -> "UnitSemanticResult":
-        groups = {
-            "flow_key": [item.flow_key for item in self.flows],
-            "risk_key": [item.risk_key for item in self.risks],
-            "case_key": [item.case_key for item in self.test_cases],
-        }
-        for name, values in groups.items():
-            if len(values) != len(set(values)):
-                raise ValueError(f"{name} 不能重复")
-        known_risks = set(groups["risk_key"])
-        known_flows = set(groups["flow_key"])
-        for case in self.test_cases:
-            unknown_flows = set(case.covered_flow_keys) - known_flows
-            if unknown_flows:
-                raise ValueError(f"测试用例引用了未知 flow_key：{sorted(unknown_flows)}")
-            unknown = set(case.linked_risk_keys) - known_risks
-            if unknown:
-                raise ValueError(f"测试用例引用了未知 risk_key：{sorted(unknown)}")
-        known_cases = set(groups["case_key"])
-        for decision in [*self.coverage_decisions, *self.mechanism_decisions]:
-            unknown = set(decision.test_case_keys) - known_cases
-            if unknown:
-                raise ValueError(f"处理决定引用了未知 case_key：{sorted(unknown)}")
-        return self
-
-
 class AnalysisTask(StrictModel):
     schema_version: Literal["1.0"] = "1.0"
     task_type: Literal["analysis"] = "analysis"
@@ -261,7 +203,11 @@ class ReviewFinding(StrictModel):
         "risk",
         "test_oracle",
         "incorrect_conclusion",
-    ]
+    ] = Field(
+        description=(
+            "新增 finding 的类别；不得写入 independent_finding_decisions.disposition"
+        )
+    )
     affected_unit_ids: list[str] = Field(min_length=1)
     linked_input_ids: list[str] = Field(default_factory=list)
     summary: str = Field(min_length=1)
@@ -297,7 +243,11 @@ class IndependentReviewResult(StrictModel):
 
 class IndependentFindingDecision(StrictModel):
     finding_key: str = Field(min_length=1)
-    disposition: Literal["confirmed", "dismissed", "unresolved"]
+    disposition: Literal["confirmed", "dismissed", "unresolved"] = Field(
+        description=(
+            "只表示对盲审 finding 的裁决；不得填写 risk、incorrect_conclusion 等 category"
+        )
+    )
     conclusion: str = Field(min_length=1)
     evidence: list[SourceEvidence] = Field(min_length=1)
 
@@ -390,6 +340,7 @@ class WorkflowProgress(StrictModel):
     completed_analysis_units: list[str] = Field(default_factory=list)
     completed_closure_units: list[str] = Field(default_factory=list)
     actions: dict[str, ActionState] = Field(default_factory=dict)
+    degradations: list[dict] = Field(default_factory=list)
     errors: list[dict] = Field(default_factory=list)
     report_path: str | None = None
     html_report_path: str | None = None

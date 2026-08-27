@@ -24,7 +24,7 @@
 
 所有 `SourceEvidence.path` 必须从 analysis task，或 closure task 的 `original_task_path` 所指 task 的 `unit.source_scope` / `unit.context_scope` 中原样选择相对路径，不得根据函数、协议或模块语义自行补目录层级。源码证据直接使用 `repo_id`、相对路径和行号。
 
-校验返修时保留已有语义内容并重新写出完整 JSON 对象，不用行号切片、字符串拼接或临时脚本拼装。
+校验返修时保留已有有效语义内容，编辑方法自行选择，但不得把流程、风险、用例或取舍判断交给 Python 或脚本。
 
 写入前逐项自检：每个 step evidence 非空、每条 edge 的两端都存在、所有 `covered_flow_keys` / `linked_risk_keys` / `test_case_keys` 都有真实定义、evidence path 属于当前 unit；closure 还要保证 `review_finding_decisions` 与 task findings 一一对应。将完整语义 JSON 写到当前 task 的 `result_path`。不填写 unit ID、Agent ID、路径或运行状态。若校验器返回错误，只修正同一文件后重新提交。
 

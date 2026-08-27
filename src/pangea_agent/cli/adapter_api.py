@@ -4,7 +4,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from pangea_agent.agent_io import read_json, write_json
+from pangea_agent.agent_io import read_json
 from pangea_agent.assets import (
     complete_asset_extraction,
     load_asset,
@@ -37,8 +37,7 @@ from pangea_agent.models.analysis import (
 from pangea_agent.models.asset import AssetExtractionResult
 
 
-MAX_VALIDATION_FAILURES = 6
-MAX_REPEATED_VALIDATION_FAILURES = 3
+REPEATED_REPAIR_ATTENTION_AFTER = 3
 
 
 def _state(data_root: str, run_id: str) -> dict:
@@ -81,34 +80,37 @@ def _invalid_result(
             }
             for item in exc.errors(include_url=False)
         ]
-    exhausted = (
-        action.validation_failures >= MAX_VALIDATION_FAILURES
-        or action.repeated_validation_failures >= MAX_REPEATED_VALIDATION_FAILURES
-    )
-    if exhausted:
-        action.status = "failed"
-        progress.lifecycle_status = "failed"
-        progress.errors.append({
-            "action_id": action.action_id,
-            "code": "validation_repair_exhausted",
-            "message": message,
-            "validation_failures": action.validation_failures,
-            "repeated_validation_failures": action.repeated_validation_failures,
-        })
     save_progress(state, progress)
     payload = {
         "action_id": action.action_id,
-        "status": "failed" if exhausted else "invalid",
-        "recoverable": not exhausted,
+        "status": "invalid",
+        "recoverable": True,
         "error": error,
         "validation_failures": action.validation_failures,
-        "max_validation_failures": MAX_VALIDATION_FAILURES,
         "repeated_validation_failures": action.repeated_validation_failures,
-        "max_repeated_validation_failures": MAX_REPEATED_VALIDATION_FAILURES,
+        "attention_required": (
+            action.repeated_validation_failures
+            >= REPEATED_REPAIR_ATTENTION_AFTER
+        ),
+        "repair_action": _repair_action(action),
     }
-    if not exhausted:
-        payload["repair_action"] = _repair_action(action)
     return payload
+
+
+def _record_degradations(progress, action_id: str, warnings: list[str]) -> None:
+    progress.degradations = [
+        item
+        for item in progress.degradations
+        if item.get("action_id") != action_id
+    ]
+    progress.degradations.extend(
+        {
+            "action_id": action_id,
+            "kind": "agent_result_warning",
+            "message": warning,
+        }
+        for warning in warnings
+    )
 
 
 def bind_asset_action(
@@ -215,15 +217,22 @@ def bind_action(data_root: str, run_id: str, action_id: str, task_id: str) -> di
     return action.model_dump(mode="json")
 
 
-def _validate_planning(state: dict, task: PlanningTask, result: PlanningResult) -> None:
+def _validate_planning(
+    state: dict,
+    task: PlanningTask,
+    result: PlanningResult,
+) -> list[str]:
     run_dir = run_directory(state)
+    warnings: list[str] = []
     accept_plan(
         task,
         result,
         read_json(Path(task.compact_metadata_path)),
         read_json(run_dir / "inputs" / "asset-items.json"),
         read_json(run_dir / "inputs" / "coverage-gaps.json"),
+        warnings,
     )
+    return warnings
 
 
 def validate_action(data_root: str, run_id: str, action_id: str) -> dict:
@@ -248,8 +257,7 @@ def validate_action(data_root: str, run_id: str, action_id: str) -> dict:
         task = PlanningTask.model_validate(read_json(task_path))
         try:
             result = PlanningResult.model_validate(read_json(Path(task.result_path)))
-            _validate_planning(state, task, result)
-            write_json(Path(task.result_path), result.model_dump(mode="json"))
+            warnings = _validate_planning(state, task, result)
         except (FileNotFoundError, ValueError) as exc:
             return _invalid_result(state, progress, action, exc)
     elif action.role == "analysis":
@@ -258,7 +266,6 @@ def validate_action(data_root: str, run_id: str, action_id: str) -> dict:
         try:
             result = UnitSemanticResult.model_validate(read_json(Path(task.result_path)))
             warnings = validate_unit_result(task, result, selected_inputs)
-            write_json(Path(task.result_path), result.model_dump(mode="json"))
         except (FileNotFoundError, ValueError) as exc:
             return _invalid_result(state, progress, action, exc)
     elif action.role == "review":
@@ -272,7 +279,7 @@ def validate_action(data_root: str, run_id: str, action_id: str) -> dict:
                 independent = IndependentReviewResult.model_validate(
                     read_json(Path(task["independent_review_result_path"]))
                 )
-                _validate_comparison_review(
+                warnings = _validate_comparison_review(
                     progress,
                     independent,
                     result,
@@ -282,8 +289,7 @@ def validate_action(data_root: str, run_id: str, action_id: str) -> dict:
                 result = IndependentReviewResult.model_validate(
                     read_json(Path(task["result_path"]))
                 )
-                _validate_review(progress, result)
-            write_json(Path(task["result_path"]), result.model_dump(mode="json"))
+                warnings = _validate_review(progress, result)
         except (FileNotFoundError, ValueError) as exc:
             return _invalid_result(state, progress, action, exc)
     elif action.role == "closure":
@@ -296,22 +302,22 @@ def validate_action(data_root: str, run_id: str, action_id: str) -> dict:
             expected = {finding.finding_key for finding in task.review_findings}
             actual = [item.finding_key for item in result.review_finding_decisions]
             if len(actual) != len(set(actual)) or set(actual) != expected:
-                raise ValueError(
+                warnings.append(
                     "定向补齐没有逐项处理复核发现："
                     f"missing={sorted(expected - set(actual))} "
                     f"extra={sorted(set(actual) - expected)}"
                 )
-            write_json(Path(task.result_path), result.model_dump(mode="json"))
         except (FileNotFoundError, ValueError) as exc:
             return _invalid_result(state, progress, action, exc)
     else:
         raise ValueError(f"Run adapter 不处理 role={action.role}")
 
+    _record_degradations(progress, action_id, warnings)
     if action.error is not None:
         action.error = None
         action.validation_failures = 0
         action.repeated_validation_failures = 0
-        save_progress(state, progress)
+    save_progress(state, progress)
     payload = {"action_id": action_id, "status": "valid"}
     if warnings:
         payload["warnings"] = warnings

@@ -98,10 +98,14 @@ def _validate_evidence_for_units(
     evidence_items,
     unit_ids: list[str],
     label: str,
-) -> None:
+) -> list[str]:
     scopes = _unit_scopes(progress)
     allowed_by_repo: dict[str, set[str]] = defaultdict(set)
+    warnings: list[str] = []
     for unit_id in unit_ids:
+        if unit_id not in scopes:
+            warnings.append(f"{label}引用了未知单元：{unit_id}")
+            continue
         repo_id, paths = scopes[unit_id]
         allowed_by_repo[repo_id].update(paths)
 
@@ -109,13 +113,18 @@ def _validate_evidence_for_units(
         candidates = allowed_by_repo.get(evidence.repo_id, set())
         canonical = _canonical_evidence_path(evidence.path, candidates)
         if canonical is None:
-            raise ValueError(
-                f"{label}证据不属于 affected_unit_ids 的冻结源码："
+            warnings.append(
+                f"{label}证据待确认，不属于 affected_unit_ids 的冻结源码："
                 f"{evidence.repo_id}:{evidence.path}:{evidence.line_start}；"
                 f"affected_unit_ids={sorted(unit_ids)}；"
                 f"allowed_paths={sorted(candidates)}"
             )
-        evidence.path = canonical
+        elif _normalized_scope_path(evidence.path) != canonical:
+            warnings.append(
+                f"{label}证据路径待确认，保留 Agent 原值："
+                f"actual={evidence.path} possible_match={canonical}"
+            )
+    return warnings
 
 
 def _specialized_rubrics(unit, compact: dict) -> list[str]:
@@ -281,7 +290,6 @@ def _accept_analysis(state: PangeaState, progress) -> PangeaState:
         try:
             result = UnitSemanticResult.model_validate(read_json(Path(task.result_path)))
             validate_unit_result(task, result, read_json(Path(task.selected_inputs_path)))
-            write_json(Path(task.result_path), result.model_dump(mode="json"))
         except Exception as exc:
             _fail_action(state, progress, action, exc)
             raise
@@ -325,21 +333,23 @@ def _accept_analysis(state: PangeaState, progress) -> PangeaState:
     return _waiting(state, progress)
 
 
-def _validate_review(progress, result) -> None:
+def _validate_review(progress, result) -> list[str]:
+    warnings: list[str] = []
     known_units = {unit.unit_id for unit in progress.analysis_units}
     finding_keys = [finding.finding_key for finding in result.findings]
     if len(finding_keys) != len(set(finding_keys)):
-        raise ValueError("复核 finding_key 不能重复")
+        warnings.append("复核 finding_key 包含重复编号")
     for finding in result.findings:
         unknown = set(finding.affected_unit_ids) - known_units
         if unknown:
-            raise ValueError(f"复核引用了未知单元：{sorted(unknown)}")
-        _validate_evidence_for_units(
+            warnings.append(f"复核引用了未知单元：{sorted(unknown)}")
+        warnings.extend(_validate_evidence_for_units(
             progress,
             finding.evidence,
             finding.affected_unit_ids,
             f"复核 finding {finding.finding_key}",
-        )
+        ))
+    return warnings
 
 
 def _validate_comparison_review(
@@ -347,8 +357,8 @@ def _validate_comparison_review(
     independent: IndependentReviewResult,
     comparison: ComparisonReviewResult,
     selected_inputs: dict,
-) -> None:
-    _validate_review(progress, comparison)
+) -> list[str]:
+    warnings = _validate_review(progress, comparison)
     independent_keys = {finding.finding_key for finding in independent.findings}
     independent_by_key = {
         finding.finding_key: finding for finding in independent.findings
@@ -358,25 +368,28 @@ def _validate_comparison_review(
         for decision in comparison.independent_finding_decisions
     ]
     if len(decision_keys) != len(set(decision_keys)):
-        raise ValueError("盲审 finding 的复核决定不能重复")
+        warnings.append("盲审 finding 的复核决定包含重复编号")
     missing = independent_keys - set(decision_keys)
     extra = set(decision_keys) - independent_keys
     if missing or extra:
-        raise ValueError(
+        warnings.append(
             "对照复核没有逐条裁决盲审 finding："
             f"missing={sorted(missing)} extra={sorted(extra)}"
         )
     for decision in comparison.independent_finding_decisions:
-        _validate_evidence_for_units(
+        finding = independent_by_key.get(decision.finding_key)
+        if finding is None:
+            continue
+        warnings.extend(_validate_evidence_for_units(
             progress,
             decision.evidence,
-            independent_by_key[decision.finding_key].affected_unit_ids,
+            finding.affected_unit_ids,
             f"盲审裁决 {decision.finding_key}",
-        )
+        ))
     comparison_keys = {finding.finding_key for finding in comparison.findings}
     duplicates = independent_keys & comparison_keys
     if duplicates:
-        raise ValueError(f"对照复核 finding_key 与盲审重复：{sorted(duplicates)}")
+        warnings.append(f"对照复核 finding_key 与盲审重复：{sorted(duplicates)}")
 
     asset_items = selected_inputs.get("asset_items", {})
     mechanisms = selected_inputs.get("defect_mechanisms", {})
@@ -388,15 +401,17 @@ def _validate_comparison_review(
     def check_input_references(finding) -> None:
         unknown = set(finding.linked_input_ids) - known_input_ids
         if unknown:
-            raise ValueError(
+            warnings.append(
                 f"复核 finding {finding.finding_key} 引用了未知输入：{sorted(unknown)}"
             )
 
     for decision in comparison.independent_finding_decisions:
-        if decision.disposition != "dismissed":
-            check_input_references(independent_by_key[decision.finding_key])
+        finding = independent_by_key.get(decision.finding_key)
+        if decision.disposition != "dismissed" and finding is not None:
+            check_input_references(finding)
     for finding in comparison.findings:
         check_input_references(finding)
+    return warnings
 
 
 def _accept_independent_review(state: PangeaState, progress, action) -> PangeaState:
@@ -404,7 +419,6 @@ def _accept_independent_review(state: PangeaState, progress, action) -> PangeaSt
     try:
         result = IndependentReviewResult.model_validate(read_json(Path(task.result_path)))
         _validate_review(progress, result)
-        write_json(Path(task.result_path), result.model_dump(mode="json"))
     except Exception as exc:
         _fail_action(state, progress, action, exc)
         raise
@@ -467,7 +481,6 @@ def _accept_comparison_review(state: PangeaState, progress, action) -> PangeaSta
             comparison,
             read_json(Path(comparison_task.selected_inputs_path)),
         )
-        write_json(Path(comparison_task.result_path), comparison.model_dump(mode="json"))
     except Exception as exc:
         _fail_action(state, progress, action, exc)
         raise
@@ -479,7 +492,7 @@ def _accept_comparison_review(state: PangeaState, progress, action) -> PangeaSta
     retained_independent_findings = [
         finding
         for finding in independent.findings
-        if decisions[finding.finding_key] != "dismissed"
+        if decisions.get(finding.finding_key, "unresolved") != "dismissed"
     ]
     all_findings = [*retained_independent_findings, *comparison.findings]
     if not all_findings:
@@ -496,6 +509,7 @@ def _accept_comparison_review(state: PangeaState, progress, action) -> PangeaSta
         for item in independent_task.repositories
     }
     progress.stage = "closing"
+    closure_created = False
     for unit in progress.analysis_units:
         findings = findings_by_unit.get(unit.unit_id)
         if not findings:
@@ -536,6 +550,11 @@ def _accept_comparison_review(state: PangeaState, progress, action) -> PangeaSta
             task_path=str(task_path),
             task_id=origin_action.task_id,
         ))
+        closure_created = True
+    if not closure_created:
+        progress.stage = "reporting"
+        save_progress(state, progress)
+        return {**state, "ready_to_finalize": True}
     save_progress(state, progress)
     return _waiting(state, progress)
 
@@ -561,19 +580,7 @@ def _accept_closure(state: PangeaState, progress) -> PangeaState:
                 result,
                 read_json(Path(original_task.selected_inputs_path)),
             )
-            expected_findings = {
-                finding.finding_key for finding in closure_task.review_findings
-            }
-            actual_findings = [
-                decision.finding_key for decision in result.review_finding_decisions
-            ]
-            if len(actual_findings) != len(set(actual_findings)) or set(actual_findings) != expected_findings:
-                raise ValueError(
-                    "定向补齐没有逐项处理复核发现："
-                    f"missing={sorted(expected_findings - set(actual_findings))} "
-                    f"extra={sorted(set(actual_findings) - expected_findings)}"
-                )
-            write_json(Path(closure_task.result_path), result.model_dump(mode="json"))
+            # 引用不完整由 adapter 记录为降级；Graph 保留 Agent 原始结果继续汇总。
         except Exception as exc:
             _fail_action(state, progress, action, exc)
             raise

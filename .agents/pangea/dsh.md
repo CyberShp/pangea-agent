@@ -23,17 +23,16 @@
 
 主 Agent 不自行调用通用 `subagent`，不读取 task，也不重写子 Agent 提示。最多同时派发 8 个 action；8 是并发数量，不限制 Run 的总单元数。子 Agent 不得继续派发。
 
-`pangea_action_dispatch` 会自动把 action 与 DSH 真实任务 ID 绑定。子 Agent 回合结束后，主 Agent 的第一且唯一动作是对该回合绑定的 `action_id` 调用 `pangea_action_validate`；不得先读取结果、查询状态、检查其他 Agent 或发送普通消息。并行 Agent 的完成通知即使同时到达，也必须对当前 action 完成 validate -> settle 后再处理下一条：
+`pangea_action_dispatch` 会自动把 action 与 DSH 真实任务 ID 绑定。子 Agent 回合结束后，主 Agent 的第一且唯一动作是对该回合绑定的显式 `action_id` 调用 `pangea_action_settle`；该工具在同一次调用中校验当前结果并推进 Workflow。不得先读取结果、查询状态、检查其他 Agent 或发送普通消息。并行 Agent 的完成通知即使同时到达，也必须先处理当前 action 的 settle 返回，再处理下一条：
 
-- `status=valid`：调用 `pangea_action_settle`。
-- `status=invalid`：按返回的 `repair_action` 恢复同一个 `task_id`，把完整 `error`（包括 `details`）交回该任务，只修正同一 `result_path` 后再次 validate。不得用普通 `send_message` 或通用子 Agent 代替 `repair_action`。
-- `status=failed`：结构返修预算已经耗尽，立即停止当前 Run，不再恢复 Agent，也不把占位报告当成正式报告。
-- settle 防御性返回 `validation.status=invalid` 时，执行同一恢复动作。
+- 返回下一批 `agent_actions` 或完成状态：按返回值继续，不再补调 validate。
+- 返回 `validation.status=invalid`：按返回的 `repair_action` 恢复同一个 `task_id`，把完整 `error`（包括 `details`）交回该任务，只修正同一 `result_path` 后再次 settle。不得用普通 `send_message` 或通用子 Agent 代替 `repair_action`。
+- 返回 `validation.attention_required=true`：说明同一结构错误已连续出现 3 次。主 Agent 停止盲目重试该 Run，保留现场并把它记为“未完成”，不得让 Python 把 Run 判死，也不得把占位报告当成正式报告。
 
-Run/action/task 丢失、冻结输入损坏、`continue_agent` 缺少约定的 `task_id` 或 Workflow 返回未持久化 action 才属于流程错误。普通 JSON、schema、引用、evidence、Coverage 或 finding 校验错误由当前 worker 原地修复。返修时基于当前语义内容重新写出完整 JSON 对象，不做行号切片、字符串拼接或临时脚本拼装。主 Agent 不读取或代改结果，不得换 worker。Adapter 对连续相同错误和累计结构错误都有固定预算，防止无界循环。
+Run/action/task 丢失、冻结输入损坏、`continue_agent` 缺少约定的 `task_id` 或 Workflow 返回未持久化 action 才属于流程错误。无法解析或缺少下游必需结构的结果由当前 worker 原地修复；普通引用、evidence、Coverage、basis 或 finding 不一致由 Workflow 原样保留并标记降级。返修时保留已有有效语义内容，编辑方法由当前 Agent 自己选择；不得把语义判断交给 Python 或脚本。主 Agent 不读取或代改结果，不得换 worker。重试是否暂停由 DSH 主 Agent 根据 `attention_required` 决定，Python 只记录次数和提示。
 
 Review 固定分为同一 Reviewer 的两个 checkpoint：`independent_review` 不提供首轮结果；`comparison_review` 才提供首轮结果做对照。定向补齐后直接聚合，不启动新的复核 Agent。
 
 资料提取由资产插件管理。历史缺陷提取完成后等待人工审核，不自动批准。
 
-结果骨架由 Workflow 创建，主 Agent 不得另建、替换或用占位内容推进流程。最终以 Run JSON 状态和实际存在的 `report.md`、`report.html` 为准。
+结果骨架由 Workflow 创建，主 Agent 不得另建、替换或用占位内容推进流程。最终必须同时满足 Run `lifecycle_status=complete`、`report-complete.json` 完成标记以及实际存在的 `report.md`、`report.html`；单独存在的报告文件不是正式产物。
