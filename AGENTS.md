@@ -83,9 +83,9 @@
 - 首轮 analysis 最多同时派发 8 个互不重叠单元，总单元数不受 8 限制；worker 不得再派发子 Agent。
 - analysis 结果齐备后只启动 1 个独立 Reviewer。`independent_review` task 不包含 analysis result；随后由同一 Reviewer 续接 `comparison_review`，对照首轮结果裁决和补充 finding。
 - comparison review 保留的 finding 只为受影响单元生成一次 `targeted_closure`；该 action 必须续接对应单元首轮 analysis worker 的真实 `task_id`，在 Workflow 预先复制的 closure 结果中定向补齐，不能创建替代 worker，也不能修改原始 analysis 结果。
-- 主 Agent 只执行 CLI 返回的 action，并通过 adapter 完成 `bind`、`validate`、`settle`。不得自行填写或修正语义结果。
+- 主 Agent 只执行 CLI 返回的 action。DSH 在子 Agent 回合结束后直接调用 `pangea_action_settle`；该工具在一次调用内完成校验和推进，不得预先调用 `pangea_action_validate`。不得自行填写或修正语义结果。
 - Workflow 创建正式 task 时同时创建唯一 `result_path` 和对应结果骨架。客户端与 Adapter 不得另建、改名或从其他结果文件兜底读取。
-- `adapter validate` 返回 `status=invalid` 时，主 Agent 按 `repair_action` 续接同一个 `task_id`，把错误交回原 worker 修正同一 `result_path` 后重试。普通结果校验失败不推进 Action，也不停止 Run；Run/action/task、冻结输入或约定 task_id 损坏才属于流程错误。
+- `adapter settle` 返回 `validation.status=invalid` 时，主 Agent 按 `repair_action` 续接同一个 `task_id`，把错误交回原 worker 修正同一 `result_path` 后再次 settle。普通结果校验失败不推进 Action，也不停止 Run；同一错误连续 3 次或该 action 累计修复 6 次只提示宿主停止盲试，Python 不把 Run 判死。Run/action/task、冻结输入或约定 task_id 损坏才属于流程错误。
 - Python 只校验 schema、真实 ID、路径归属、引用关系和流程结构等确定性契约，不根据行号重叠、finding category 或测试用例内容推翻 Agent/Reviewer 的语义结论。Coverage 只提供当前 `source_scope` 中唯一匹配的零覆盖提示，不强制生成测试用例。
 
 ## Private House Code Policy

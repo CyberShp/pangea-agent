@@ -673,6 +673,120 @@ class ActionLifecycleTests(unittest.TestCase):
             self.assertEqual(progress.lifecycle_status, "running")
             self.assertEqual(progress.actions[action_id].status, "dispatched")
 
+    def test_cumulative_changing_errors_request_attention(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            state = {"data_root": root, "run_id": "RUN-TEST"}
+            task = _analysis_task(root)
+            task_path = (
+                Path(root) / "runs" / "RUN-TEST"
+                / "agent-tasks" / "analysis" / "U00.json"
+            )
+            write_json(task_path, task.model_dump(mode="json"))
+            write_json(Path(task.result_path), {"summary": "still incomplete"})
+            action_id = "RUN-TEST:analysis:U00"
+            save_progress(state, WorkflowProgress(
+                run_id="RUN-TEST",
+                stage="analyzing",
+                actions={
+                    action_id: ActionState(
+                        action_id=action_id,
+                        action="dispatch_agent",
+                        role="analysis",
+                        stage="unit_analysis",
+                        task_path=str(task_path),
+                        task_id="analysis-session",
+                        status="dispatched",
+                    )
+                },
+            ))
+
+            validation = None
+            for attempt in range(6):
+                progress = load_progress(state)
+                assert progress is not None
+                progress.actions[action_id].error = f"different-error-{attempt}"
+                save_progress(state, progress)
+                validation = validate_action(root, "RUN-TEST", action_id)
+            assert validation is not None
+            self.assertTrue(validation["attention_required"])
+            self.assertEqual(validation["validation_failures"], 6)
+            self.assertEqual(validation["repeated_validation_failures"], 1)
+
+    def test_validation_error_details_are_bounded(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            state = {"data_root": root, "run_id": "RUN-TEST"}
+            task = _analysis_task(root)
+            task_path = (
+                Path(root) / "runs" / "RUN-TEST"
+                / "agent-tasks" / "analysis" / "U00.json"
+            )
+            write_json(task_path, task.model_dump(mode="json"))
+            write_json(Path(task.result_path), {"flows": [{} for _ in range(30)]})
+            action_id = "RUN-TEST:analysis:U00"
+            save_progress(state, WorkflowProgress(
+                run_id="RUN-TEST",
+                stage="analyzing",
+                actions={
+                    action_id: ActionState(
+                        action_id=action_id,
+                        action="dispatch_agent",
+                        role="analysis",
+                        stage="unit_analysis",
+                        task_path=str(task_path),
+                        task_id="analysis-session",
+                        status="dispatched",
+                    )
+                },
+            ))
+
+            validation = validate_action(root, "RUN-TEST", action_id)
+            error = validation["error"]
+            self.assertEqual(len(error["details"]), 24)
+            self.assertGreater(error["detail_count"], len(error["details"]))
+            self.assertTrue(error["details_truncated"])
+
+    def test_successful_repair_preserves_cumulative_failure_count(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            state = {"data_root": root, "run_id": "RUN-TEST"}
+            task = _analysis_task(root)
+            task_path = (
+                Path(root) / "runs" / "RUN-TEST"
+                / "agent-tasks" / "analysis" / "U00.json"
+            )
+            write_json(task_path, task.model_dump(mode="json"))
+            write_json(
+                Path(task.result_path),
+                _semantic_result().model_dump(mode="json"),
+            )
+            action_id = "RUN-TEST:analysis:U00"
+            save_progress(state, WorkflowProgress(
+                run_id="RUN-TEST",
+                stage="analyzing",
+                actions={
+                    action_id: ActionState(
+                        action_id=action_id,
+                        action="dispatch_agent",
+                        role="analysis",
+                        stage="unit_analysis",
+                        task_path=str(task_path),
+                        task_id="analysis-session",
+                        status="dispatched",
+                        error="previous schema error",
+                        validation_failures=2,
+                        repeated_validation_failures=2,
+                    )
+                },
+            ))
+
+            validation = validate_action(root, "RUN-TEST", action_id)
+            self.assertEqual(validation["status"], "valid")
+            progress = load_progress(state)
+            assert progress is not None
+            action = progress.actions[action_id]
+            self.assertEqual(action.validation_failures, 2)
+            self.assertEqual(action.repeated_validation_failures, 0)
+            self.assertIsNone(action.error)
+
     def test_advisory_result_is_preserved_and_recorded_as_degraded(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             state = {"data_root": root, "run_id": "RUN-TEST"}

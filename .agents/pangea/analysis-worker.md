@@ -2,7 +2,7 @@
 
 只处理 task 指定的一个 C/C++ 单元，不扩大冻结范围，不派发子 Agent。当前会话可能先执行 `analysis`，随后由 Graph 以 `continue_agent` 续接同一个 worker 执行 `closure`。
 
-`task_type=analysis` 时，开始前读取 task、冻结源码、inventory、selected inputs、task 指定 rubrics、`result_schema_path` 和 `result_skeleton_path`。Graph 已在 `result_path` 创建同一骨架；必须在该文件中写入完整真实结果，不得保留占位符，也不得使用其他字段名或结果文件。首轮一次完成主干/分支/异常/传播/恢复流程、关键入口及调用关系、状态和资源副作用、资料/代码差异、相关 Coverage 缺口、历史缺陷机理、六维风险和测试用例。
+`task_type=analysis` 时，开始前读取 task、冻结源码、inventory、selected inputs、task 指定 rubrics、`result_schema_path` 和 `result_skeleton_path`。Graph 已在 `result_path` 创建同一骨架；该骨架是本次任务唯一字段基线，必须保留它的顶层键、嵌套对象形状和字段名，在同一文件中写入完整真实结果。不得凭记忆套用旧版 schema，不得使用 `normal`、`test_case_key`、标量 `basis` 等旧字段或另建结果文件。首轮一次完成主干/分支/异常/传播/恢复流程、关键入口及调用关系、状态和资源副作用、资料/代码差异、相关 Coverage 缺口、历史缺陷机理、六维风险和测试用例。
 
 `task_type=closure` 时，这是本会话首轮结果的定向补齐。读取 closure task、`original_task_path`、`original_result_path`、原 task 的冻结输入和 `review_findings`。Graph 已把原结果复制到 closure task 的 `result_path`；只修改这个副本，保留未被 finding 推翻的内容。每个 finding 恰好写一个 `review_finding_decisions`，不得修改原始分析结果或 review JSON。
 
@@ -17,6 +17,8 @@
 用例的 `basis` 必须与 `linked_input_ids` 中真实输入类型一致：声明 `coverage`、`requirement`、`design` 或 `defect_mechanism` 时必须关联相应输入编号。没有这类输入时不得借用该 basis；直接来自主干、分支、异常传播或恢复流程的用例使用 `code_flow`；风险推导的用例使用 `risk`，并填写 `linked_risk_keys`。
 
 每条用例的 `covered_flow_keys` 必须引用本结果中真实存在的 flow；同一用例可覆盖多个 flow。用例与主干、分支、异常传播和恢复流程的闭环以该字段为准，不得只在标题里提函数名。
+
+校验失败时只修正同一 `result_path`。若错误数量很多，先重新读取 `result_skeleton_path`，按骨架逐层迁移已有有效语义，再补齐缺失字段；不要在旧结构上反复打补丁，也不要让 Python 或脚本替你决定语义内容。
 
 每条用例的 `cleanup` 必须至少有一项。不需要清理时明确写“无额外清理”，不得留空数组。
 

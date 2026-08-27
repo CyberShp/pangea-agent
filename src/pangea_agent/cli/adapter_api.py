@@ -38,6 +38,8 @@ from pangea_agent.models.asset import AssetExtractionResult
 
 
 REPEATED_REPAIR_ATTENTION_AFTER = 3
+TOTAL_REPAIR_ATTENTION_AFTER = 6
+MAX_VALIDATION_ERROR_DETAILS = 24
 
 
 def _state(data_root: str, run_id: str) -> dict:
@@ -60,7 +62,20 @@ def _invalid_result(
     action: ActionState,
     exc: Exception,
 ) -> dict:
-    message = str(exc)
+    validation_details: list[dict] = []
+    if isinstance(exc, ValidationError):
+        all_errors = exc.errors(include_url=False)
+        message = f"{len(all_errors)} schema validation errors for {exc.title}"
+        validation_details = [
+            {
+                "path": ".".join(str(part) for part in item["loc"]),
+                "type": item["type"],
+                "message": item["msg"],
+            }
+            for item in all_errors[:MAX_VALIDATION_ERROR_DETAILS]
+        ]
+    else:
+        message = str(exc)
     action.validation_failures += 1
     if action.error == message:
         action.repeated_validation_failures += 1
@@ -71,15 +86,10 @@ def _invalid_result(
         "code": exc.__class__.__name__,
         "message": message,
     }
-    if isinstance(exc, ValidationError):
-        error["details"] = [
-            {
-                "path": ".".join(str(part) for part in item["loc"]),
-                "type": item["type"],
-                "message": item["msg"],
-            }
-            for item in exc.errors(include_url=False)
-        ]
+    if validation_details:
+        error["details"] = validation_details
+        error["detail_count"] = len(all_errors)
+        error["details_truncated"] = len(all_errors) > len(validation_details)
     save_progress(state, progress)
     payload = {
         "action_id": action.action_id,
@@ -91,6 +101,7 @@ def _invalid_result(
         "attention_required": (
             action.repeated_validation_failures
             >= REPEATED_REPAIR_ATTENTION_AFTER
+            or action.validation_failures >= TOTAL_REPAIR_ATTENTION_AFTER
         ),
         "repair_action": _repair_action(action),
     }
@@ -315,7 +326,6 @@ def validate_action(data_root: str, run_id: str, action_id: str) -> dict:
     _record_degradations(progress, action_id, warnings)
     if action.error is not None:
         action.error = None
-        action.validation_failures = 0
         action.repeated_validation_failures = 0
     save_progress(state, progress)
     payload = {"action_id": action_id, "status": "valid"}
