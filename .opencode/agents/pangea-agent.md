@@ -26,15 +26,17 @@ python -m pangea_agent.cli.main runs create --contract "<pending-contract>"
 
 CLI 返回 `agent_actions` 或 `adapter next` 返回 `actions` 后：
 
-1. 按 `role` 选择本目录对应 Agent，只传 `task_path`，不转述源码结论。
+1. `dispatch_agent` 才按 `role` 创建对应 Agent；`continue_agent` 必须无条件恢复 action 自带的 `task_id`，不得按 role 重新创建 Agent。
 2. 同时派发最多 8 个 action；8 是并发上限，不是 Run 单元总数。
-3. 取得真实子任务 ID 后执行 `adapter bind --run-id ... --action-id ... --task-id ...`。
-4. 子 Agent 完成后执行 `adapter validate`。失败时恢复**同一个 action 的同一个子任务**，把校验错误交回原角色修正同一 `result_path`，再次 validate；不得由主 Agent 代改，也不得改派其他角色做格式修复。尤其 review 结果校验失败仍由原 `review-worker` 修正，不能调用 `closure-worker` 修 review JSON。
+3. 取得真实子任务 ID 后执行 `adapter bind --run-id ... --action-id ... --task-id ...`。对 `continue_agent`，这里传回的必须仍是 action 给出的同一个 `task_id`。
+4. 子 Agent 完成后执行 `adapter validate`。失败时恢复**同一个 action 的同一个子任务**，把校验错误交回原会话修正同一 `result_path`，再次 validate；不得由主 Agent 代改，也不得改派其他角色做格式修复。尤其 review 结果校验失败仍由原 `review-worker` 修正，不能调用其他 worker 修 review JSON。
 5. 校验通过后执行 `adapter settle`，只按新的 JSON action 继续。
 
-Review 固定由同一个 `review-worker` 完成两个 checkpoint：先执行不提供首轮结果的 `independent_review`，再按 `continue_agent` action 续接原子任务执行 `comparison_review`。后者对照首轮结果与源码，排除错误结论并找遗漏；不新建第二个 Reviewer。`closure-worker` 只能处理 comparison review 已通过校验后由 Graph 正式生成的 `closure` action，不能作为 analysis/review 校验失败的通用修复器。
+Review 固定由同一个 `review-worker` 完成两个 checkpoint：先执行不提供首轮结果的 `independent_review`，再按 `continue_agent` action 续接原子任务执行 `comparison_review`。后者对照首轮结果与源码，排除错误结论并找遗漏；不新建第二个 Reviewer。
 
-角色映射：`planning` → `planning-worker`，`analysis` → `analysis-worker`，`review` → `review-worker`，`closure` → `closure-worker`，`asset_extraction` → `asset-extraction-worker`。
+Comparison review 产生定向补齐时，每个 `targeted_closure` action 必须是 `continue_agent`，并携带该单元首轮 analysis action 的真实 `task_id`。这一步继续原 `analysis-worker` 会话，worker 按 closure task 在原结果基础上定向修正；不得创建 `closure-worker`，不得用新的 task_id 替代 originating worker。如果 Adapter 拒绝绑定，按 workflow contract 错误停止，不自行绕过。
+
+角色映射仅用于 `dispatch_agent`：`planning` → `planning-worker`，`analysis` → `analysis-worker`，`review` → `review-worker`，`asset_extraction` → `asset-extraction-worker`。正常 workflow 的 `closure` 不走新建角色映射。
 
 不要根据 Agent 回复文本判断阶段，不轮询或手工修改 `progress.json`，不创建空结果骨架，不用占位内容让流程前进。最终以 Run 的 `lifecycle_status`、`quality_status`、`report_path` 和 `html_report_path` 为准。
 
