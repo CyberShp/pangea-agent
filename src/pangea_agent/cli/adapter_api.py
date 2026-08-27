@@ -246,7 +246,7 @@ def _validate_planning(
     return warnings
 
 
-def validate_action(data_root: str, run_id: str, action_id: str) -> dict:
+def _validate_action(data_root: str, run_id: str, action_id: str) -> dict:
     state = _state(data_root, run_id)
     progress = load_progress(state)
     if progress is None or action_id not in progress.actions:
@@ -334,6 +334,18 @@ def validate_action(data_root: str, run_id: str, action_id: str) -> dict:
     return payload
 
 
+def validate_action(data_root: str, run_id: str, action_id: str) -> dict:
+    return {
+        "run_id": run_id,
+        "action_id": action_id,
+        "status": "settle_required",
+        "message": (
+            "独立 validate 入口已停用；请直接调用 pangea_action_settle。"
+            "settle 会在同一次提交中校验结果并推进 Workflow。"
+        ),
+    }
+
+
 def settle_action(data_root: str, run_id: str, action_id: str) -> dict:
     state = _state(data_root, run_id)
     progress = load_progress(state)
@@ -349,7 +361,7 @@ def settle_action(data_root: str, run_id: str, action_id: str) -> dict:
     if action.status != "dispatched" or not action.task_id:
         raise ValueError("Action 必须先绑定真实 Agent 会话")
 
-    validation = validate_action(data_root, run_id, action_id)
+    validation = _validate_action(data_root, run_id, action_id)
     if validation["status"] != "valid":
         current = load_progress(state)
         if current is None:

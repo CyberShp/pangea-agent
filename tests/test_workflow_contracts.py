@@ -7,7 +7,12 @@ from pathlib import Path
 from unittest.mock import patch
 
 from pangea_agent.agent_io import read_json, write_json
-from pangea_agent.cli.adapter_api import bind_action, settle_action, validate_action
+from pangea_agent.cli.adapter_api import (
+    _validate_action,
+    bind_action,
+    settle_action,
+    validate_action,
+)
 from pangea_agent.cli.run_module_analysis import _default_run_id
 from pangea_agent.graph.nodes.advance_workflow import (
     _accept_comparison_review,
@@ -461,6 +466,14 @@ class ResultTrustBoundaryTests(unittest.TestCase):
 
 
 class ActionLifecycleTests(unittest.TestCase):
+    def test_public_validate_redirects_to_single_settle_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            result = validate_action(root, "RUN-TEST", "RUN-TEST:analysis:U00")
+
+            self.assertEqual(result["status"], "settle_required")
+            self.assertIn("pangea_action_settle", result["message"])
+            self.assertFalse((Path(root) / "runs").exists())
+
     def test_workflow_copies_closure_result_and_continues_analysis_worker(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             state = {
@@ -645,7 +658,7 @@ class ActionLifecycleTests(unittest.TestCase):
                 },
             ))
 
-            validation = validate_action(root, "RUN-TEST", action_id)
+            validation = _validate_action(root, "RUN-TEST", action_id)
             self.assertEqual(validation["status"], "invalid")
             self.assertEqual(
                 validation["repair_action"]["task_id"],
@@ -686,7 +699,7 @@ class ActionLifecycleTests(unittest.TestCase):
 
             validation = None
             for _ in range(3):
-                validation = validate_action(root, "RUN-TEST", action_id)
+                validation = _validate_action(root, "RUN-TEST", action_id)
             assert validation is not None
             self.assertEqual(validation["status"], "invalid")
             self.assertTrue(validation["attention_required"])
@@ -728,7 +741,7 @@ class ActionLifecycleTests(unittest.TestCase):
                 assert progress is not None
                 progress.actions[action_id].error = f"different-error-{attempt}"
                 save_progress(state, progress)
-                validation = validate_action(root, "RUN-TEST", action_id)
+                validation = _validate_action(root, "RUN-TEST", action_id)
             assert validation is not None
             self.assertTrue(validation["attention_required"])
             self.assertEqual(validation["validation_failures"], 6)
@@ -761,7 +774,7 @@ class ActionLifecycleTests(unittest.TestCase):
                 },
             ))
 
-            validation = validate_action(root, "RUN-TEST", action_id)
+            validation = _validate_action(root, "RUN-TEST", action_id)
             error = validation["error"]
             self.assertEqual(len(error["details"]), 24)
             self.assertGreater(error["detail_count"], len(error["details"]))
@@ -800,7 +813,7 @@ class ActionLifecycleTests(unittest.TestCase):
                 },
             ))
 
-            validation = validate_action(root, "RUN-TEST", action_id)
+            validation = _validate_action(root, "RUN-TEST", action_id)
             self.assertEqual(validation["status"], "valid")
             progress = load_progress(state)
             assert progress is not None
@@ -840,7 +853,7 @@ class ActionLifecycleTests(unittest.TestCase):
                 },
             ))
 
-            validation = validate_action(root, "RUN-TEST", action_id)
+            validation = _validate_action(root, "RUN-TEST", action_id)
             self.assertEqual(validation["status"], "valid")
             self.assertTrue(validation["warnings"])
             self.assertEqual(read_json(Path(task.result_path)), original)
