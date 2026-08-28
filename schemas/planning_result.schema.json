@@ -87,6 +87,7 @@
       "type": "array"
     },
     "unresolved": {
+      "description": "通常必须为空。只有请求源码无法唯一归属或真实输入无法分配，因而无法生成有效 unit plan 时才填写；范围外文件、context_scope 依赖、后续研究、设计动机和共享状态说明不得写入。",
       "items": {
         "type": "string"
       },

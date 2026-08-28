@@ -183,6 +183,7 @@
       "type": "array"
     },
     "unresolved": {
+      "description": "通常必须为空。盲审 finding 无法裁决时只写对应 independent_finding_decisions 的 unresolved；范围外实现、外部文档、后续研究、低置信度和已交给 closure 的事项不得写入顶层。",
       "items": {
         "type": "string"
       },

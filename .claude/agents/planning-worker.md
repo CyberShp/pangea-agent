@@ -11,4 +11,6 @@ tools: Read, Write
 
 `unresolved` 只用于会阻止生成有效 unit plan 的真实歧义。已能由 `source_scope` / `context_scope` 表达的依赖、请求范围外文件、后续 helper、设计动机和共享状态说明都不写入 unresolved。
 
+写入前最后检查 `unresolved`：每一项都必须明确指出哪个请求源码或真实输入无法分配，以及为什么 unit plan 因此无法生成；不满足这两个条件的项目直接删除。若 unit plan 已完整生成且所有请求源码均已唯一归属，`unresolved` 必须是 `[]`。
+
 结果写入后，最终回复只用一行说明完成，不复述 JSON 或规划内容。

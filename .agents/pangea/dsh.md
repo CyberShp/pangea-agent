@@ -23,6 +23,8 @@
 
 主 Agent 不自行调用通用 `subagent`，不读取 task，也不重写子 Agent 提示。最多同时派发 8 个 action；8 是并发数量，不限制 Run 的总单元数。子 Agent 不得继续派发。
 
+派发 action 后如果尚未收到子 Agent 完成通知，主 Agent 立即结束当前回合，把控制权交还 DSH；不得调用通用等待/轮询工具，不得反复输出“继续等待”，也不得在同一回合循环检查子 Agent。DSH 会在子 Agent 结束后注入完成通知并唤醒主 Agent。若等待接口只返回 unchanged/idle 而没有完成通知，视为没有新事件并结束当前回合；不得无限等待。
+
 `pangea_action_dispatch` 会自动把 action 与 DSH 真实任务 ID 绑定。子 Agent 回合结束后，主 Agent 的第一且唯一动作是对该回合绑定的显式 `action_id` 调用 `pangea_action_settle`；该工具在同一次调用中校验当前结果并推进 Workflow。不得先读取结果、查询状态、检查其他 Agent 或发送普通消息。并行 Agent 的完成通知即使同时到达，也必须先处理当前 action 的 settle 返回，再处理下一条：
 
 独立 `pangea_action_validate` 已停用，不再执行校验，也不改变 action 状态；误调用只会返回 `status=settle_required`。收到该状态时不得重试 validate，直接对同一 `action_id` 调用 `pangea_action_settle`。

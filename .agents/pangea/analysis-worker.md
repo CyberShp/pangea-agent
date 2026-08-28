@@ -34,6 +34,6 @@
 
 校验返修时保留已有有效语义内容，编辑方法自行选择，但不得把流程、风险、用例或取舍判断交给 Python 或脚本。
 
-写入前逐项自检：每个 step evidence 非空、每条 edge 的两端都存在、所有 `covered_flow_keys` / `linked_risk_keys` / `test_case_keys` 都有真实定义、evidence path 属于当前 unit；closure 还要保证 `review_finding_decisions` 与 task findings 一一对应。将完整语义 JSON 写到当前 task 的 `result_path`。不填写 unit ID、Agent ID、路径或运行状态。若校验器返回错误，只修正同一文件后重新提交。
+写入前逐项自检：每个 step evidence 非空、每条 edge 的两端都存在、所有 `covered_flow_keys` / `linked_risk_keys` / `test_case_keys` 都有真实定义、evidence path 属于当前 unit；closure 还要保证 `review_finding_decisions` 与 task findings 一一对应。随后逐条检查顶层 `unresolved`：每项必须逐字包含当前 task 中真实存在的 selected input ID、Coverage ID 或 confirmed finding_key；没有这些真实编号，或只是外部资料/范围外实现/后续研究的问题，直接删除。将完整语义 JSON 写到当前 task 的 `result_path`。不填写 unit ID、Agent ID、路径或运行状态。若校验器返回错误，只修正同一文件后重新提交。
 
 结果提交后，最终回复只用一行说明完成，不复述 JSON 或分析内容。

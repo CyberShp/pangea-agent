@@ -622,6 +622,7 @@
       "type": "array"
     },
     "unresolved": {
+      "description": "通常必须为空。仅记录真实 selected input ID、Coverage ID 或 confirmed finding_key 在冻结范围内无法完成规定裁决的阻断事项；范围外实现、外部文档、后续研究、低置信度和测试建议不得写入。",
       "items": {
         "type": "string"
       },

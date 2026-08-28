@@ -60,7 +60,13 @@ class PlanningResult(StrictModel):
     schema_version: Literal["1.0"] = "1.0"
     summary: str = Field(min_length=1)
     units: list[ProposedUnit] = Field(min_length=1)
-    unresolved: list[str] = Field(default_factory=list)
+    unresolved: list[str] = Field(
+        default_factory=list,
+        description=(
+            "通常必须为空。只有请求源码无法唯一归属或真实输入无法分配，因而无法生成有效 unit plan 时才填写；"
+            "范围外文件、context_scope 依赖、后续研究、设计动机和共享状态说明不得写入。"
+        ),
+    )
 
 
 class FlowStep(StrictModel):
@@ -171,7 +177,13 @@ class UnitSemanticResult(StrictModel):
     risks: list[RiskFinding] = Field(default_factory=list)
     test_cases: list[GeneratedTestCase] = Field(default_factory=list)
     review_finding_decisions: list[ReviewFindingDecision] = Field(default_factory=list)
-    unresolved: list[str] = Field(default_factory=list)
+    unresolved: list[str] = Field(
+        default_factory=list,
+        description=(
+            "通常必须为空。仅记录真实 selected input ID、Coverage ID 或 confirmed finding_key "
+            "在冻结范围内无法完成规定裁决的阻断事项；范围外实现、外部文档、后续研究、低置信度和测试建议不得写入。"
+        ),
+    )
 
 class AnalysisTask(StrictModel):
     schema_version: Literal["1.0"] = "1.0"
@@ -238,7 +250,13 @@ class IndependentReviewResult(StrictModel):
     schema_version: Literal["1.0"] = "1.0"
     summary: str = Field(min_length=1)
     findings: list[ReviewFinding] = Field(default_factory=list)
-    unresolved: list[str] = Field(default_factory=list)
+    unresolved: list[str] = Field(
+        default_factory=list,
+        description=(
+            "通常必须为空。仅当盲审任务的真实冻结输入本身缺失、无法完成盲审时填写；"
+            "范围外实现、外部文档、研究问题和低置信度 finding 不得写入。"
+        ),
+    )
 
 
 class IndependentFindingDecision(StrictModel):
@@ -259,7 +277,13 @@ class ComparisonReviewResult(StrictModel):
         default_factory=list
     )
     findings: list[ReviewFinding] = Field(default_factory=list)
-    unresolved: list[str] = Field(default_factory=list)
+    unresolved: list[str] = Field(
+        default_factory=list,
+        description=(
+            "通常必须为空。盲审 finding 无法裁决时只写对应 independent_finding_decisions 的 unresolved；"
+            "范围外实现、外部文档、后续研究、低置信度和已交给 closure 的事项不得写入顶层。"
+        ),
+    )
 
 
 class ComparisonReviewTask(StrictModel):

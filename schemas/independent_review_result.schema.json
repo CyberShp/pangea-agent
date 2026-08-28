@@ -135,6 +135,7 @@
       "type": "array"
     },
     "unresolved": {
+      "description": "通常必须为空。仅当盲审任务的真实冻结输入本身缺失、无法完成盲审时填写；范围外实现、外部文档、研究问题和低置信度 finding 不得写入。",
       "items": {
         "type": "string"
       },
