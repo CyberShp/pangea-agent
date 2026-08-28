@@ -6,13 +6,10 @@ from pathlib import Path
 from pangea_agent.agent_io import read_json, write_json
 from pangea_agent.graph.state import PangeaState
 from pangea_agent.graph.workflow_store import (
-    analysis_result_path,
-    closure_result_path,
-    comparison_review_result_path,
     load_progress,
-    review_result_path,
     run_directory,
     save_progress,
+    validated_result_path,
 )
 from pangea_agent.models.analysis import (
     ComparisonReviewResult,
@@ -42,10 +39,16 @@ def _mermaid(flow) -> str:
     return "\n".join(lines)
 
 
-def _load_final_unit_result(state: PangeaState, unit_id: str) -> UnitSemanticResult:
-    closure_path = closure_result_path(state, unit_id)
-    path = closure_path if closure_path.is_file() else analysis_result_path(state, unit_id)
-    return UnitSemanticResult.model_validate(read_json(path))
+def _load_final_unit_result(state: PangeaState, progress, unit_id: str) -> UnitSemanticResult:
+    closure_action_id = f"{state['run_id']}:closure:{unit_id}"
+    action_id = (
+        closure_action_id
+        if closure_action_id in progress.actions
+        else f"{state['run_id']}:analysis:{unit_id}"
+    )
+    return UnitSemanticResult.model_validate(
+        read_json(validated_result_path(state, action_id))
+    )
 
 
 def _deduplicate_degradations(items: list[dict]) -> list[dict]:
@@ -79,7 +82,7 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
         raise ValueError("Run progress 不存在")
     run_dir = run_directory(state)
     results = {
-        unit.unit_id: _load_final_unit_result(state, unit.unit_id)
+        unit.unit_id: _load_final_unit_result(state, progress, unit.unit_id)
         for unit in progress.analysis_units
     }
     risk_ids: dict[tuple[str, str], str] = {}
@@ -224,12 +227,16 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
     planning = read_json(run_dir / "inputs" / "unit-plan.json")
     unresolved.extend({"stage": "planning", "reason": value} for value in planning.get("unresolved", []))
     review = None
-    if review_result_path(state).is_file():
-        review = IndependentReviewResult.model_validate(read_json(review_result_path(state)))
+    review_action_id = f"{state['run_id']}:review"
+    if review_action_id in progress.actions:
+        review = IndependentReviewResult.model_validate(
+            read_json(validated_result_path(state, review_action_id))
+        )
     comparison_review = None
-    if comparison_review_result_path(state).is_file():
+    comparison_action_id = f"{state['run_id']}:comparison-review"
+    if comparison_action_id in progress.actions:
         comparison_review = ComparisonReviewResult.model_validate(
-            read_json(comparison_review_result_path(state))
+            read_json(validated_result_path(state, comparison_action_id))
         )
         unresolved.extend(
             {"stage": "review", "reason": value}

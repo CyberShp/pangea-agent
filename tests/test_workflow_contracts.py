@@ -27,13 +27,18 @@ from pangea_agent.graph.result_contract import (
     assert_unit_submission,
     validate_unit_result,
 )
-from pangea_agent.graph.workflow_store import load_progress, save_progress
+from pangea_agent.graph.workflow_store import (
+    load_progress,
+    save_progress,
+    validated_result_path,
+)
 from pangea_agent.models.analysis import (
     ActionState,
     AnalysisTask,
     AnalysisUnit,
     CodeFlow,
     ComparisonReviewResult,
+    CoverageDecision,
     IndependentReviewResult,
     ReviewFindingDecision,
     SourceEvidence,
@@ -414,6 +419,30 @@ class ResultTrustBoundaryTests(unittest.TestCase):
             )
         self.assertTrue(any("coverage_decisions" in item for item in warnings))
 
+    def test_unknown_coverage_decision_returns_same_agent_repair(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            result = _semantic_result()
+            result.coverage_decisions = [CoverageDecision(
+                coverage_id="coverage_gap-1",
+                disposition="unresolved",
+                test_case_keys=[],
+                reason="unknown id",
+            )]
+
+            with self.assertRaisesRegex(
+                ValueError,
+                "coverage_decisions 引用了当前任务不存在的编号",
+            ):
+                assert_unit_submission(
+                    _analysis_task(root),
+                    result,
+                    {
+                        "asset_items": {},
+                        "coverage_gaps": [],
+                        "defect_mechanisms": {},
+                    },
+                )
+
     def test_unknown_input_reference_is_advisory(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             warnings = validate_unit_result(
@@ -636,6 +665,14 @@ class ActionLifecycleTests(unittest.TestCase):
                     ),
                     comparison_action_id: comparison_action,
                 },
+            )
+            write_json(
+                validated_result_path(state, analysis_action_id),
+                original_result,
+            )
+            write_json(
+                validated_result_path(state, comparison_action_id),
+                read_json(comparison_result_path),
             )
 
             _accept_comparison_review(state, progress, comparison_action)
@@ -952,6 +989,42 @@ class ActionLifecycleTests(unittest.TestCase):
             self.assertEqual(action.validation_failures, 2)
             self.assertEqual(action.repeated_validation_failures, 0)
             self.assertIsNone(action.error)
+
+    def test_validated_submission_is_frozen_before_workflow_acceptance(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            state = {"data_root": root, "run_id": "RUN-TEST"}
+            task = _analysis_task(root)
+            task_path = (
+                Path(root) / "runs" / "RUN-TEST"
+                / "agent-tasks" / "analysis" / "U00.json"
+            )
+            write_json(task_path, task.model_dump(mode="json"))
+            submitted = _semantic_result().model_dump(mode="json")
+            write_json(Path(task.result_path), submitted)
+            action_id = "RUN-TEST:analysis:U00"
+            save_progress(state, WorkflowProgress(
+                run_id="RUN-TEST",
+                stage="analyzing",
+                actions={
+                    action_id: ActionState(
+                        action_id=action_id,
+                        action="dispatch_agent",
+                        role="analysis",
+                        stage="unit_analysis",
+                        task_path=str(task_path),
+                        task_id="analysis-session",
+                        status="dispatched",
+                    )
+                },
+            ))
+
+            validation = _validate_action(root, "RUN-TEST", action_id)
+            self.assertEqual(validation["status"], "valid")
+            frozen_path = validated_result_path(state, action_id)
+            self.assertEqual(read_json(frozen_path), submitted)
+
+            write_json(Path(task.result_path), {"late_agent_write": True})
+            self.assertEqual(read_json(frozen_path), submitted)
 
     def test_advisory_result_is_preserved_and_recorded_as_degraded(self) -> None:
         with tempfile.TemporaryDirectory() as root:

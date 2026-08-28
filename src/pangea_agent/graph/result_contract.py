@@ -89,6 +89,21 @@ def assert_unit_submission(
     asset_items = selected_inputs.get("asset_items", {})
     coverage_gaps = selected_inputs.get("coverage_gaps", [])
     mechanisms = selected_inputs.get("defect_mechanisms", {})
+    errors.extend(_check_decisions(
+        "input_decisions",
+        set(asset_items),
+        [item.item_id for item in result.input_decisions],
+    ))
+    errors.extend(_check_decisions(
+        "coverage_decisions",
+        {item["coverage_id"] for item in coverage_gaps},
+        [item.coverage_id for item in result.coverage_decisions],
+    ))
+    errors.extend(_check_decisions(
+        "mechanism_decisions",
+        set(mechanisms),
+        [item.mechanism_id for item in result.mechanism_decisions],
+    ))
     item_types = {
         item_id: item.get("item_type") for item_id, item in asset_items.items()
     }

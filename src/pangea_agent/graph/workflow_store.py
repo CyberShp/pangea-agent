@@ -78,6 +78,12 @@ def closure_result_path(state: dict, unit_id: str) -> Path:
     return run_directory(state) / "agent-results" / "closure" / f"{unit_id}.json"
 
 
+def validated_result_path(state: dict, action_id: str) -> Path:
+    """Return the workflow-owned copy of one validated Agent submission."""
+    filename = action_id.replace(":", "__") + ".json"
+    return run_directory(state) / "validated-results" / filename
+
+
 def pending_actions(progress: WorkflowProgress, limit: int = 8) -> list[dict]:
     active = sum(
         action.status == "dispatched" for action in progress.actions.values()

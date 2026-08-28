@@ -19,13 +19,13 @@ from pangea_agent.graph.workflow_store import (
     initialize_result,
     load_progress,
     pending_actions,
-    planning_result_path,
     planning_task_path,
     project_path,
     review_result_path,
     review_task_path,
     run_directory,
     save_progress,
+    validated_result_path,
 )
 from pangea_agent.models.analysis import (
     ActionState,
@@ -243,7 +243,12 @@ def _fail_action(state: PangeaState, progress, action: ActionState, exc: Excepti
 def _prepare_analysis(state: PangeaState, progress) -> PangeaState:
     run_dir = run_directory(state)
     task = PlanningTask.model_validate(read_json(planning_task_path(state)))
-    result = PlanningResult.model_validate(read_json(planning_result_path(state)))
+    planning_action = next(
+        action for action in progress.actions.values() if action.role == "planning"
+    )
+    result = PlanningResult.model_validate(
+        read_json(validated_result_path(state, planning_action.action_id))
+    )
     compact = read_json(Path(task.compact_metadata_path))
     all_asset_items = read_json(run_dir / "inputs" / "asset-items.json")
     coverage_gaps = read_json(run_dir / "inputs" / "coverage-gaps.json")
@@ -282,9 +287,6 @@ def _prepare_analysis(state: PangeaState, progress) -> PangeaState:
         for item in read_json(run_dir / "inputs" / "source-manifest.json")["repositories"]
     }
     progress.analysis_units = units
-    planning_action = next(
-        action for action in progress.actions.values() if action.role == "planning"
-    )
     planning_action.status = "accepted"
     progress.stage = "analyzing"
     for unit in units:
@@ -340,7 +342,9 @@ def _accept_analysis(state: PangeaState, progress) -> PangeaState:
         unit_id = action.action_id.rsplit(":", 1)[-1]
         task = AnalysisTask.model_validate(read_json(analysis_task_path(state, unit_id)))
         try:
-            result = UnitSemanticResult.model_validate(read_json(Path(task.result_path)))
+            result = UnitSemanticResult.model_validate(
+                read_json(validated_result_path(state, action.action_id))
+            )
             validate_unit_result(task, result, read_json(Path(task.selected_inputs_path)))
         except Exception as exc:
             _fail_action(state, progress, action, exc)
@@ -469,7 +473,9 @@ def _validate_comparison_review(
 def _accept_independent_review(state: PangeaState, progress, action) -> PangeaState:
     task = IndependentReviewTask.model_validate(read_json(review_task_path(state)))
     try:
-        result = IndependentReviewResult.model_validate(read_json(Path(task.result_path)))
+        result = IndependentReviewResult.model_validate(
+            read_json(validated_result_path(state, action.action_id))
+        )
         _validate_review(progress, result)
     except Exception as exc:
         _fail_action(state, progress, action, exc)
@@ -485,10 +491,15 @@ def _accept_independent_review(state: PangeaState, progress, action) -> PangeaSt
             for unit in progress.analysis_units
         },
         analysis_result_paths={
-            unit.unit_id: str(analysis_result_path(state, unit.unit_id))
+            unit.unit_id: str(validated_result_path(
+                state,
+                f"{state['run_id']}:analysis:{unit.unit_id}",
+            ))
             for unit in progress.analysis_units
         },
-        independent_review_result_path=task.result_path,
+        independent_review_result_path=str(
+            validated_result_path(state, action.action_id)
+        ),
         selected_inputs_path=task.selected_inputs_path,
         rubric_paths=task.rubric_paths,
         result_schema_path=str(project_path("schemas", "comparison_review_result.schema.json")),
@@ -522,7 +533,7 @@ def _accept_comparison_review(state: PangeaState, progress, action) -> PangeaSta
     independent_task = IndependentReviewTask.model_validate(read_json(review_task_path(state)))
     try:
         comparison = ComparisonReviewResult.model_validate(
-            read_json(Path(comparison_task.result_path))
+            read_json(validated_result_path(state, action.action_id))
         )
         independent = IndependentReviewResult.model_validate(
             read_json(Path(comparison_task.independent_review_result_path))
@@ -583,7 +594,10 @@ def _accept_comparison_review(state: PangeaState, progress, action) -> PangeaSta
             unit=unit,
             repository=repositories[unit.repo_id],
             original_task_path=str(original_task_path),
-            original_result_path=original_task.result_path,
+            original_result_path=str(validated_result_path(
+                state,
+                origin_action.action_id,
+            )),
             review_findings=findings,
             result_schema_path=str(project_path("schemas", "analysis_result.schema.json")),
             result_path=str(closure_result_path(state, unit.unit_id)),
@@ -626,7 +640,9 @@ def _accept_closure(state: PangeaState, progress) -> PangeaState:
         closure_task = ClosureTask.model_validate(read_json(closure_task_path(state, unit_id)))
         original_task = AnalysisTask.model_validate(read_json(Path(closure_task.original_task_path)))
         try:
-            result = UnitSemanticResult.model_validate(read_json(Path(closure_task.result_path)))
+            result = UnitSemanticResult.model_validate(
+                read_json(validated_result_path(state, action.action_id))
+            )
             validate_unit_result(
                 original_task,
                 result,

@@ -4,7 +4,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from pangea_agent.agent_io import read_json
+from pangea_agent.agent_io import read_json, write_json
 from pangea_agent.assets import (
     complete_asset_extraction,
     load_asset,
@@ -28,6 +28,7 @@ from pangea_agent.graph.workflow_store import (
     pending_actions,
     run_directory,
     save_progress,
+    validated_result_path,
 )
 from pangea_agent.models.analysis import (
     ActionState,
@@ -334,6 +335,10 @@ def _validate_action(data_root: str, run_id: str, action_id: str) -> dict:
     else:
         raise ValueError(f"Run adapter 不处理 role={action.role}")
 
+    write_json(
+        validated_result_path(state, action_id),
+        result.model_dump(mode="json"),
+    )
     _record_degradations(progress, action_id, warnings)
     if action.error is not None:
         action.error = None
