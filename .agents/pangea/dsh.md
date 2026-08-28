@@ -30,7 +30,11 @@
 独立 `pangea_action_validate` 已停用，不再执行校验，也不改变 action 状态；误调用只会返回 `status=settle_required`。收到该状态时不得重试 validate，直接对同一 `action_id` 调用 `pangea_action_settle`。
 
 - 返回下一批 `agent_actions` 或完成状态：按返回值继续，不再补调 validate。
-- 返回 `validation.status=invalid`：按返回的 `repair_action` 恢复同一个 `task_id`，把返回的 `error`（包括有界 `details`、`detail_count` 和截断标记）交回该任务，只修正同一 `result_path` 后再次 settle。错误很多时让原 Agent 以 `result_skeleton_path` 为唯一字段基线，保留可用语义后重建结构；不得套用旧版或其他项目的字段，不得用普通 `send_message` 或通用子 Agent 代替 `repair_action`。
+- 返回 `validation.status=invalid`：该次 settle **没有自动派发修复**。返回中的 `repair_dispatched=false`、`next_required_tool=pangea_action_dispatch` 和 `repair_action.status=pending` 是唯一真实状态。主 Agent 的下一个且唯一个工具调用必须是 `pangea_action_dispatch`，并原样传入 `next_required_action_id` / `repair_action.action_id`；该调用成功返回真实子任务信息后，才算已派发。不得因 progress 中原 action 仍为 `dispatched`、因 action_id 与首轮相同，或因 settle 返回了 `agent_actions` 就声称“repair 已自动 dispatch”。
+
+  修复 action 必须恢复同一个 `task_id`，把返回的 `error`（包括有界 `details`、`detail_count` 和截断标记）交回该任务，只修正同一 `result_path` 后再次 settle。错误很多时让原 Agent 以 `result_skeleton_path` 为唯一字段基线，保留可用语义后重建结构；不得套用旧版或其他项目的字段，不得用普通 `send_message` 或通用子 Agent 代替 `repair_action`。修复派发后立即结束当前回合，收到该修复任务的完成通知后再 settle 同一 action。
+
+  并行 Agent 的其他完成通知只能排队。当前 action 返回 invalid 后，在它的 repair 已真实 dispatch 之前，不得 settle 另一个已完成 action、读状态、猜测哪个任务已推进，也不得跳到下一条 repair。先完成这一次 `settle -> dispatch repair`，再处理队列中的下一个完成通知。
 - 返回 `validation.attention_required=true`：说明同一结构错误已连续出现 3 次，或该 action 累计结构修复已达到 6 次。主 Agent 停止盲目重试该 Run，保留现场并把它记为“未完成”，不得让 Python 把 Run 判死，也不得把占位报告当成正式报告。
 
 Run/action/task 丢失、冻结输入损坏、`continue_agent` 缺少约定的 `task_id` 或 Workflow 返回未持久化 action 才属于流程错误。无法解析、缺少下游必需结构、内部编号悬空、evidence 超出声明单元，或 `basis` 声明与实际链接不一致的结果由当前 worker 原地修复；这些检查只证明结构关联，不裁决风险、流程或用例语义。Coverage 取舍、finding 是否成立及其他语义分歧由 Workflow 原样保留并标记降级。返修时保留已有有效语义内容，编辑方法由当前 Agent 自己选择；不得把语义判断交给 Python 或脚本。主 Agent 不读取或代改结果，不得换 worker。重试是否暂停由 DSH 主 Agent 根据 `attention_required` 决定，Python 只记录次数和提示。

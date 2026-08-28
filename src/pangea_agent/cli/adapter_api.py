@@ -59,6 +59,11 @@ def _repair_action(action: ActionState) -> dict:
         )
     payload = action.model_dump(mode="json")
     payload["action"] = "continue_agent"
+    # This is a next-action descriptor, not evidence that the continuation
+    # has already been sent to the bound Agent session.
+    payload["status"] = "pending"
+    payload["dispatch_required"] = True
+    payload["repair_dispatched"] = False
     return payload
 
 
@@ -103,6 +108,9 @@ def _invalid_result(
         "action_id": action.action_id,
         "status": "invalid",
         "recoverable": True,
+        "next_required_tool": "pangea_action_dispatch",
+        "next_required_action_id": action.action_id,
+        "repair_dispatched": False,
         "error": error,
         "validation_failures": action.validation_failures,
         "repeated_validation_failures": action.repeated_validation_failures,
@@ -387,6 +395,9 @@ def settle_action(data_root: str, run_id: str, action_id: str) -> dict:
             "lifecycle_status": current.lifecycle_status,
             "stage": current.stage,
             "validation": validation,
+            "next_required_tool": "pangea_action_dispatch",
+            "next_required_action_id": action_id,
+            "repair_dispatched": False,
         }
         payload["agent_actions"] = (
             [validation["repair_action"]]
