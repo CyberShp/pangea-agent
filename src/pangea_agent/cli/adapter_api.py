@@ -13,12 +13,14 @@ from pangea_agent.assets import (
 )
 from pangea_agent.cli.run_module_analysis import resume_module_analysis
 from pangea_agent.graph.nodes.advance_workflow import (
+    assert_comparison_review_scope,
+    assert_review_scope,
     _validate_comparison_review,
     _validate_review,
 )
 from pangea_agent.graph.planning import accept_plan
 from pangea_agent.graph.result_contract import (
-    assert_unit_references,
+    assert_unit_submission,
     validate_unit_result,
 )
 from pangea_agent.graph.workflow_store import (
@@ -281,7 +283,7 @@ def _validate_action(data_root: str, run_id: str, action_id: str) -> dict:
         selected_inputs = read_json(Path(task.selected_inputs_path))
         try:
             result = UnitSemanticResult.model_validate(read_json(Path(task.result_path)))
-            assert_unit_references(result)
+            assert_unit_submission(task, result, selected_inputs)
             warnings = validate_unit_result(task, result, selected_inputs)
         except (FileNotFoundError, ValueError) as exc:
             return _invalid_result(state, progress, action, exc)
@@ -296,6 +298,7 @@ def _validate_action(data_root: str, run_id: str, action_id: str) -> dict:
                 independent = IndependentReviewResult.model_validate(
                     read_json(Path(task["independent_review_result_path"]))
                 )
+                assert_comparison_review_scope(progress, independent, result)
                 warnings = _validate_comparison_review(
                     progress,
                     independent,
@@ -306,6 +309,7 @@ def _validate_action(data_root: str, run_id: str, action_id: str) -> dict:
                 result = IndependentReviewResult.model_validate(
                     read_json(Path(task["result_path"]))
                 )
+                assert_review_scope(progress, result)
                 warnings = _validate_review(progress, result)
         except (FileNotFoundError, ValueError) as exc:
             return _invalid_result(state, progress, action, exc)
@@ -315,7 +319,7 @@ def _validate_action(data_root: str, run_id: str, action_id: str) -> dict:
         selected_inputs = read_json(Path(original.selected_inputs_path))
         try:
             result = UnitSemanticResult.model_validate(read_json(Path(task.result_path)))
-            assert_unit_references(result)
+            assert_unit_submission(original, result, selected_inputs)
             warnings = validate_unit_result(original, result, selected_inputs)
             expected = {finding.finding_key for finding in task.review_findings}
             actual = [item.finding_key for item in result.review_finding_decisions]

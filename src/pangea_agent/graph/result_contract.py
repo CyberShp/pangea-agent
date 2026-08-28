@@ -77,6 +77,64 @@ def assert_unit_references(result: UnitSemanticResult) -> None:
         raise ValueError("结果内部编号引用不完整：" + " | ".join(errors[:24]))
 
 
+def assert_unit_submission(
+    task: AnalysisTask,
+    result: UnitSemanticResult,
+    selected_inputs: dict,
+) -> None:
+    """Reject mechanically inconsistent ownership and declared links."""
+    errors = _reference_warnings(result)
+    errors.extend(_evidence_scope_warnings(task, result))
+
+    asset_items = selected_inputs.get("asset_items", {})
+    coverage_gaps = selected_inputs.get("coverage_gaps", [])
+    mechanisms = selected_inputs.get("defect_mechanisms", {})
+    item_types = {
+        item_id: item.get("item_type") for item_id, item in asset_items.items()
+    }
+    item_types.update({item_id: "historical_defect" for item_id in mechanisms})
+    item_types.update({
+        item["coverage_id"]: "coverage" for item in coverage_gaps
+    })
+    for case in result.test_cases:
+        unsupported_basis = _unsupported_basis(case, item_types)
+        if unsupported_basis:
+            errors.append(
+                f"测试用例 {case.case_key} 声明的 basis 没有对应链接："
+                f"unsupported={unsupported_basis}"
+            )
+
+    if errors:
+        raise ValueError("结果结构关联不完整：" + " | ".join(errors[:24]))
+
+
+def _evidence_scope_warnings(
+    task: AnalysisTask,
+    result: UnitSemanticResult,
+) -> list[str]:
+    warnings: list[str] = []
+    allowed_paths = {
+        path.replace("\\", "/").strip("/")
+        for path in [*task.unit.source_scope, *task.unit.context_scope]
+    }
+    for evidence in _all_evidence(result):
+        normalized_path = evidence.path.replace("\\", "/").strip("/")
+        if evidence.repo_id != task.unit.repo_id or normalized_path not in allowed_paths:
+            warnings.append(
+                "源码证据不属于当前分析单元："
+                f"{evidence.repo_id}:{evidence.path}:{evidence.line_start}；"
+                f"allowed_repo={task.unit.repo_id} "
+                f"allowed_paths={sorted(allowed_paths)}"
+            )
+        if evidence.line_end is not None and evidence.line_end < evidence.line_start:
+            warnings.append(
+                "源码证据行号范围无效："
+                f"{evidence.repo_id}:{evidence.path}:"
+                f"{evidence.line_start}-{evidence.line_end}"
+            )
+    return warnings
+
+
 def _check_decisions(name: str, expected: set[str], actual: list[str]) -> list[str]:
     warnings = []
     if len(actual) != len(set(actual)):

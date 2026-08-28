@@ -18,10 +18,15 @@ from pangea_agent.graph.nodes.advance_workflow import (
     _accept_comparison_review,
     _validate_comparison_review,
     _validate_review,
+    assert_comparison_review_scope,
+    assert_review_scope,
     advance_workflow,
 )
 from pangea_agent.graph.nodes.prepare_inputs import _coverage_for_owned_sources
-from pangea_agent.graph.result_contract import validate_unit_result
+from pangea_agent.graph.result_contract import (
+    assert_unit_submission,
+    validate_unit_result,
+)
 from pangea_agent.graph.workflow_store import load_progress, save_progress
 from pangea_agent.models.analysis import (
     ActionState,
@@ -281,6 +286,8 @@ class ReviewScopeTests(unittest.TestCase):
 
         warnings = _validate_review(progress, result)
         self.assertTrue(any("affected_unit_ids" in item for item in warnings))
+        with self.assertRaisesRegex(ValueError, "复核证据范围不完整"):
+            assert_review_scope(progress, result)
 
     def test_unique_basename_suggests_path_without_rewriting(self) -> None:
         progress = _progress(_unit("U03", ["tls/ntt_x.c"]))
@@ -354,6 +361,8 @@ class ReviewScopeTests(unittest.TestCase):
             selected_inputs={},
         )
         self.assertTrue(any("affected_unit_ids" in item for item in warnings))
+        with self.assertRaisesRegex(ValueError, "对照复核证据范围不完整"):
+            assert_comparison_review_scope(progress, independent, comparison)
 
     def test_python_does_not_overrule_confirmed_missed_flow(self) -> None:
         progress = _progress(_unit("U01", ["tls/u01.c"]))
@@ -434,6 +443,51 @@ class ResultTrustBoundaryTests(unittest.TestCase):
             )
         self.assertEqual(result.test_cases[0].basis, ["requirement"])
         self.assertTrue(any("basis" in item for item in warnings))
+        with self.assertRaisesRegex(ValueError, "basis 没有对应链接"):
+            assert_unit_submission(
+                _analysis_task(root),
+                result,
+                {
+                    "asset_items": {},
+                    "coverage_gaps": [{"coverage_id": "COV-1"}],
+                    "defect_mechanisms": {},
+                },
+            )
+
+    def test_cross_unit_evidence_is_returned_to_originating_agent(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            task = _analysis_task(root)
+            result = _semantic_result()
+            result.flows[0].steps[0].evidence[0].path = "src/other.c"
+
+            with self.assertRaisesRegex(ValueError, "不属于当前分析单元"):
+                assert_unit_submission(
+                    task,
+                    result,
+                    {
+                        "asset_items": {},
+                        "coverage_gaps": [],
+                        "defect_mechanisms": {},
+                    },
+                )
+
+    def test_semantic_conclusion_is_not_machine_judged(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            result = _semantic_result(
+                linked_input_ids=[],
+                basis=["code_flow"],
+            )
+            result.test_cases[0].title = "Agent 自主判断的边界用例"
+
+            assert_unit_submission(
+                _analysis_task(root),
+                result,
+                {
+                    "asset_items": {},
+                    "coverage_gaps": [],
+                    "defect_mechanisms": {},
+                },
+            )
 
     def test_noncanonical_flow_field_is_rejected(self) -> None:
         payload = _semantic_result().model_dump(mode="json")
@@ -833,7 +887,7 @@ class ActionLifecycleTests(unittest.TestCase):
             write_json(task_path, task.model_dump(mode="json"))
             original = _semantic_result(
                 linked_input_ids=["NOT-REAL"],
-                basis=["requirement"],
+                basis=["code_flow"],
             ).model_dump(mode="json")
             write_json(Path(task.result_path), original)
             action_id = "RUN-TEST:analysis:U00"

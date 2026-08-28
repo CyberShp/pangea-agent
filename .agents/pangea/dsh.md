@@ -31,7 +31,7 @@
 - 返回 `validation.status=invalid`：按返回的 `repair_action` 恢复同一个 `task_id`，把返回的 `error`（包括有界 `details`、`detail_count` 和截断标记）交回该任务，只修正同一 `result_path` 后再次 settle。错误很多时让原 Agent 以 `result_skeleton_path` 为唯一字段基线，保留可用语义后重建结构；不得套用旧版或其他项目的字段，不得用普通 `send_message` 或通用子 Agent 代替 `repair_action`。
 - 返回 `validation.attention_required=true`：说明同一结构错误已连续出现 3 次，或该 action 累计结构修复已达到 6 次。主 Agent 停止盲目重试该 Run，保留现场并把它记为“未完成”，不得让 Python 把 Run 判死，也不得把占位报告当成正式报告。
 
-Run/action/task 丢失、冻结输入损坏、`continue_agent` 缺少约定的 `task_id` 或 Workflow 返回未持久化 action 才属于流程错误。无法解析或缺少下游必需结构的结果由当前 worker 原地修复；普通引用、evidence、Coverage、basis 或 finding 不一致由 Workflow 原样保留并标记降级。返修时保留已有有效语义内容，编辑方法由当前 Agent 自己选择；不得把语义判断交给 Python 或脚本。主 Agent 不读取或代改结果，不得换 worker。重试是否暂停由 DSH 主 Agent 根据 `attention_required` 决定，Python 只记录次数和提示。
+Run/action/task 丢失、冻结输入损坏、`continue_agent` 缺少约定的 `task_id` 或 Workflow 返回未持久化 action 才属于流程错误。无法解析、缺少下游必需结构、内部编号悬空、evidence 超出声明单元，或 `basis` 声明与实际链接不一致的结果由当前 worker 原地修复；这些检查只证明结构关联，不裁决风险、流程或用例语义。Coverage 取舍、finding 是否成立及其他语义分歧由 Workflow 原样保留并标记降级。返修时保留已有有效语义内容，编辑方法由当前 Agent 自己选择；不得把语义判断交给 Python 或脚本。主 Agent 不读取或代改结果，不得换 worker。重试是否暂停由 DSH 主 Agent 根据 `attention_required` 决定，Python 只记录次数和提示。
 
 Review 固定分为同一 Reviewer 的两个 checkpoint：`independent_review` 不提供首轮结果；`comparison_review` 才提供首轮结果做对照。定向补齐后直接聚合，不启动新的复核 Agent。
 

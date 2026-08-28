@@ -124,7 +124,59 @@ def _validate_evidence_for_units(
                 f"{label}证据路径待确认，保留 Agent 原值："
                 f"actual={evidence.path} possible_match={canonical}"
             )
+        if evidence.line_end is not None and evidence.line_end < evidence.line_start:
+            warnings.append(
+                f"{label}证据行号范围无效："
+                f"{evidence.repo_id}:{evidence.path}:"
+                f"{evidence.line_start}-{evidence.line_end}"
+            )
     return warnings
+
+
+def assert_review_scope(progress, result: IndependentReviewResult) -> None:
+    """Reject review evidence that cannot belong to its declared units."""
+    errors: list[str] = []
+    known_units = {unit.unit_id for unit in progress.analysis_units}
+    for finding in result.findings:
+        unknown = set(finding.affected_unit_ids) - known_units
+        if unknown:
+            errors.append(f"复核引用了未知单元：{sorted(unknown)}")
+        errors.extend(_validate_evidence_for_units(
+            progress,
+            finding.evidence,
+            finding.affected_unit_ids,
+            f"复核 finding {finding.finding_key}",
+        ))
+    if errors:
+        raise ValueError("复核证据范围不完整：" + " | ".join(errors[:24]))
+
+
+def assert_comparison_review_scope(
+    progress,
+    independent: IndependentReviewResult,
+    comparison: ComparisonReviewResult,
+) -> None:
+    """Apply the ownership check to findings and blind-review decisions."""
+    errors: list[str] = []
+    try:
+        assert_review_scope(progress, comparison)
+    except ValueError as exc:
+        errors.append(str(exc))
+    independent_by_key = {
+        finding.finding_key: finding for finding in independent.findings
+    }
+    for decision in comparison.independent_finding_decisions:
+        finding = independent_by_key.get(decision.finding_key)
+        if finding is None:
+            continue
+        errors.extend(_validate_evidence_for_units(
+            progress,
+            decision.evidence,
+            finding.affected_unit_ids,
+            f"盲审裁决 {decision.finding_key}",
+        ))
+    if errors:
+        raise ValueError("对照复核证据范围不完整：" + " | ".join(errors[:24]))
 
 
 def _specialized_rubrics(unit, compact: dict) -> list[str]:
