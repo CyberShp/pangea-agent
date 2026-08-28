@@ -4,9 +4,9 @@
 
 ## 新 Run
 
-当前会话没有明确 `run_id` 时，准备新 Run 只允许做一件事：查看 `pangea-data/repositories/` 下与用户目标有关的业务源码，用于确定仓库和最小 `source_scope`。不得列举或读取 `pangea-data/runs/`、历史契约、历史报告或 Companion 历史状态；不得读取 PANGEA 的 CLI、graph、schema 或其他内部实现来学习调用方法；不得调用 `pangea_status` 猜测恢复对象。
+当前会话没有明确 `run_id` 时，准备新 Run 只允许在 `pangea-data/repositories/` 下列目录、按文件名搜索或 grep 符号，用于确定仓库和最小 `source_scope`。创建 Run 前不得调用 Read、分段读取或通读业务源码，不得统计文件行数后继续展开阅读。不得列举或读取 `pangea-data/runs/`、历史契约、历史报告或 Companion 历史状态；不得读取 PANGEA 的 CLI、graph、schema 或其他内部实现来学习调用方法；不得调用 `pangea_status` 猜测恢复对象。
 
-从用户要求确定仓库、目标、最小 `source_scope`、重点、资产 ID 和可选用例示例后，直接调用 `pangea_run_create`。主 Agent 可确认路径存在，但不得在 Planning action 之前逐份阅读业务源码或自行理解调用链。该工具负责创建并删除临时契约，不得自行写 pending contract。`pangea_status` 只能使用当前会话已持有或用户明确给出的 `run_id`。
+从用户要求确定仓库、目标、最小 `source_scope`、重点、资产 ID 和可选用例示例后，直接调用 `pangea_run_create`。业务源码的内容理解和调用链分析由 Planning/Analysis Agent 完成。该工具负责创建并删除临时契约，不得自行写 pending contract。`pangea_status` 只能使用当前会话已持有或用户明确给出的 `run_id`。
 
 `pangea_run_create` 和 action 工具会加载当前工作区的 `src`。主 Agent 不用 shell 启动 PANGEA，不用 `--help`、版本探测或源码阅读代替正式工具调用。
 
