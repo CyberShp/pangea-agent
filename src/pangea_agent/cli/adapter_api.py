@@ -324,7 +324,7 @@ def _validate_action(data_root: str, run_id: str, action_id: str) -> dict:
             expected = {finding.finding_key for finding in task.review_findings}
             actual = [item.finding_key for item in result.review_finding_decisions]
             if len(actual) != len(set(actual)) or set(actual) != expected:
-                warnings.append(
+                raise ValueError(
                     "定向补齐没有逐项处理复核发现："
                     f"missing={sorted(expected - set(actual))} "
                     f"extra={sorted(set(actual) - expected)}"

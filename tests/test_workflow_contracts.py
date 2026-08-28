@@ -35,6 +35,7 @@ from pangea_agent.models.analysis import (
     CodeFlow,
     ComparisonReviewResult,
     IndependentReviewResult,
+    ReviewFindingDecision,
     SourceEvidence,
     UnitSemanticResult,
     WorkflowProgress,
@@ -723,6 +724,82 @@ class ActionLifecycleTests(unittest.TestCase):
             progress = load_progress(state)
             assert progress is not None
             self.assertEqual(progress.actions[action_id].status, "dispatched")
+
+    def test_closure_finding_key_mismatch_returns_same_agent_repair(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            state = {"data_root": root, "run_id": "RUN-TEST"}
+            original_task = _analysis_task(root)
+            original_task_path = (
+                Path(root) / "runs" / "RUN-TEST"
+                / "agent-tasks" / "analysis" / "U00.json"
+            )
+            write_json(
+                original_task_path,
+                original_task.model_dump(mode="json"),
+            )
+            closure_result_path = (
+                Path(root) / "runs" / "RUN-TEST"
+                / "agent-results" / "closure" / "U00.json"
+            )
+            result = _semantic_result()
+            result.review_finding_decisions = [ReviewFindingDecision(
+                finding_key="rf-case",
+                disposition="incorporated",
+                conclusion="case-only mismatch",
+                evidence=[],
+            )]
+            write_json(
+                closure_result_path,
+                result.model_dump(mode="json"),
+            )
+            closure_task_path = (
+                Path(root) / "runs" / "RUN-TEST"
+                / "agent-tasks" / "closure" / "U00.json"
+            )
+            write_json(closure_task_path, {
+                "run_id": "RUN-TEST",
+                "target": "module",
+                "unit": original_task.unit.model_dump(mode="json"),
+                "repository": original_task.repository.model_dump(mode="json"),
+                "original_task_path": str(original_task_path),
+                "original_result_path": original_task.result_path,
+                "review_findings": [{
+                    **_finding(
+                        finding_key="RF-CASE",
+                        affected_unit_ids=["U00"],
+                        path="src/a.c",
+                    ),
+                    "category": "incorrect_conclusion",
+                }],
+                "result_path": str(closure_result_path),
+                "rubric_paths": ["rubric.md"],
+            })
+            action_id = "RUN-TEST:closure:U00"
+            save_progress(state, WorkflowProgress(
+                run_id="RUN-TEST",
+                stage="closing",
+                analysis_units=[original_task.unit],
+                actions={
+                    action_id: ActionState(
+                        action_id=action_id,
+                        action="continue_agent",
+                        role="closure",
+                        stage="targeted_closure",
+                        task_path=str(closure_task_path),
+                        task_id="analysis-session",
+                        status="dispatched",
+                    )
+                },
+            ))
+
+            validation = _validate_action(root, "RUN-TEST", action_id)
+
+            self.assertEqual(validation["status"], "invalid")
+            self.assertIn("RF-CASE", validation["error"]["message"])
+            self.assertEqual(
+                validation["repair_action"]["task_id"],
+                "analysis-session",
+            )
 
     def test_repeated_invalid_result_requests_attention_without_failing_run(self) -> None:
         with tempfile.TemporaryDirectory() as root:
