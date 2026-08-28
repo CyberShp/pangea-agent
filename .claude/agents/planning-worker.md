@@ -9,4 +9,6 @@ tools: Read, Write
 
 每个请求源码只能由一个单元拥有；跨单元参考放入 `context_scope`。只选择相关资料、Coverage 和缺陷机理。将符合 `planning_result.schema.json` 的语义结果写入 task 的 `result_path`。不得派发子 Agent。
 
+`unresolved` 只用于会阻止生成有效 unit plan 的真实歧义。已能由 `source_scope` / `context_scope` 表达的依赖、请求范围外文件、后续 helper、设计动机和共享状态说明都不写入 unresolved。
+
 结果写入后，最终回复只用一行说明完成，不复述 JSON 或规划内容。

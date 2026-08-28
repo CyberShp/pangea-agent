@@ -14,4 +14,6 @@ tools:
 
 每个请求源码必须且只能属于一个 `source_scope`。其他单元需要参考的文件放入 `context_scope`。只分配确实相关的资料条目、Coverage 缺口和缺陷机理。把符合 `planning_result.schema.json` 的完整 JSON 直接写入 task 的 `result_path`；结果只写语义规划，不填写 run 状态或 Agent 标识。
 
+`unresolved` 只用于会阻止生成有效 unit plan 的真实歧义。已能由 `source_scope` / `context_scope` 表达的依赖、请求范围外文件、后续 helper、设计动机和共享状态说明都不写入 unresolved。
+
 结果写入后，最终回复只用一行说明完成，不复述 JSON 或规划内容。

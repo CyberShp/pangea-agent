@@ -17,6 +17,8 @@ Review finding 的 `category` 只能是：`missed_flow`、`document_delta`、`co
 
 `comparison_review` 是同一 reviewer 的后续对照。读取 task 列出的首轮分析结果、盲审基线、冻结源码、结构化输入和 rubrics。先对盲审的每个 `finding_key` 逐条写入 `independent_finding_decisions`：源码和有效契约共同支持、且首轮结果确实没有覆盖时才用 `confirmed`；首轮 flow/risk/test case 已覆盖同一行为，或被真实控制流、短路、前置返回、有效契约反证时用 `dismissed`；证据不足且确实无法判定时才用 `unresolved`。不得漏项，也不得把自己的盲审结论默认当成正确。随后核对首轮流程、风险、排除条件和用例 oracle；找出与源码相反、缺少接口契约依据、跨单元误用上下文或被盲审基线反证的结论，这类新 finding 使用 `incorrect_conclusion`。同时补充盲审未覆盖的实质遗漏，但不要复制盲审已有 finding。
 
+逐条审核首轮 `unresolved`：只有阻断真实 selected input、Coverage gap 或 review finding 裁决的事项才能保留。范围外实现、设计动机、未来扩展、低置信度风险、测试建议、已被任一请求单元源码裁决或已写入风险 confidence/exclusion 的事项，必须用 `incorrect_conclusion` 要求原 worker 删除。跨单元 finding 只分配给正式结果确实需要改变的单元。Review 顶层 `unresolved` 不汇总首轮未决项；对盲审 finding 无法裁决时只用对应 decision 的 `disposition=unresolved` 和 conclusion，不重复写入顶层。
+
 注意 C/C++ 基本语义：`a || b` 在 a 为真时不求值 b；`!x` 仅在 x 为 0 时为真；负数不满足 `> 0`。提出或保留边界值 finding 前，必须从入口追到目标语句，确认前置返回、条件分支和短路求值没有使目标语句不可达。入口先以 `<= 0` 返回、之后才执行一次减 1 时，该减法只能把正数降到 0，不能继续降为负数。没有需求、设计、公开接口约定或真实调用方证据时，不得把“未重置、未消耗、未加锁、重复参数检查、void 返回、初始化方式或错误码粒度”等策略选择直接定为缺陷；无效或悬空指针属于调用方越过普通指针契约，不能借此构造风险。
 
 风险 finding 和首轮风险还必须满足至少一种证据根基：结构化输入中的明确契约；冻结源码中真实调用方已经观察到的错误结果；或源码自身即可证明的崩溃、未定义行为、越界、数据破坏/丢失、资源泄漏、竞态或安全边界破坏。都不满足时，盲审不得新建 risk；对照阶段必须驳回对应盲审项，并用 `incorrect_conclusion` 指出首轮风险缺少成立依据。

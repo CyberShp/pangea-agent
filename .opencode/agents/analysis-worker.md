@@ -13,11 +13,13 @@ tools:
 
 `task_type=analysis` 时，开始前读取 task、冻结源码、inventory、selected inputs、task 指定 rubrics、`result_schema_path` 和 `result_skeleton_path`。Graph 已在 `result_path` 创建同一骨架；必须在该文件中写入完整真实结果，不得保留占位符，也不得使用其他字段名或结果文件。首轮必须一次完成入口、主干、分支、异常、异常传播、恢复和退出流程，关键函数/分支入口、调用关系、状态和资源副作用，资料/代码差异，相关 Coverage 缺口，历史缺陷机理，六维风险和测试用例。
 
-`task_type=closure` 时，这是本会话首轮结果的定向补齐。读取 closure task、`original_task_path`、`original_result_path`、原 task 的冻结输入和 `review_findings`。Graph 已把原结果复制到 closure task 的 `result_path`；只修改这个副本，保留未被 finding 推翻的内容。每个 finding 恰好写一个 `review_finding_decisions`，不得修改原始分析结果或 review JSON。
+`task_type=closure` 时，这是本会话首轮结果的定向补齐。读取 closure task、`original_task_path`、`original_result_path`、原 task 的冻结输入和 `review_findings`。Graph 已把原结果复制到 closure task 的 `result_path`；只修改这个副本，保留未被 finding 推翻的内容。每个 finding 恰好写一个 `review_finding_decisions`，不得修改原始分析结果或 review JSON。closure 必须删除已由源码裁决、被 finding 驳回、已形成有证据风险/用例、或只是其他单元及范围外细节的首轮 `unresolved`；不得把跨单元提示复制成新的 unresolved。
 
 冻结风险前核对 C/C++ 真实求值：短路 `||` / `&&`、`!x` 只对 0 为真、负数不满足 `> 0`。被 `<= 0` 入口保护阻断的递减不得写成“耗尽后继续减为负数”。没有契约或可证外部错误结果时，缺锁、缺重置、缺范围检查、缺初始化入口或缺状态返回只是待确认点，不是缺陷；重复参数检查、`void` 返回和调用方传入悬空指针也不能据此构造风险。
 
 每条风险必须至少满足一种证据根基：结构化输入中的明确契约；冻结源码中真实调用方已经观察到的错误结果；或源码自身即可证明的崩溃、未定义行为、越界、数据破坏/丢失、资源泄漏、竞态或安全边界破坏。都不满足时只保留为 flow 或边界用例，`risks` 不收录。
+
+顶层 `unresolved` 只记录阻断明确任务义务的事项：真实 selected input、唯一 Coverage gap 或 confirmed review finding 在冻结范围内无法作出规定裁决。每项必须指出真实 ID/finding_key 和所缺必需证据。外部组件行为、设计动机、未来扩展、低置信度、故障注入、范围外 helper 和其他请求单元已覆盖的问题，写入 scope/exclusion、风险 `confidence`、测试前置条件或省略，不进入顶层 unresolved；同一事项不得在风险、finding decision 和 unresolved 重复。
 
 三个决策数组只处理 `selected_inputs` 中真实存在的编号，而且必须逐项且不重复：`input_decisions` 对应资料条目，`coverage_decisions` 对应 `coverage_gaps[].coverage_id`，`mechanism_decisions` 对应历史缺陷机理。某类输入为空时，对应数组必须是 `[]`。代码变量、函数、分支和风险编号写入 flows、risks 和 test_cases，不得塞进输入决策数组。
 

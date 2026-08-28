@@ -18,7 +18,9 @@ Review finding 的 `category` 只能是：`missed_flow`、`document_delta`、`co
 
 对照阶段必须逐条审核首轮所有 High/Medium 风险，以及排除条件已经否定系统结果的风险。正常清理、受支持能力边界、已被入口拒绝的模式和仅有实现风格差异的项目不得留在正式风险列表；为每个需要删除或降级的项目创建 `incorrect_conclusion` finding，交给原 worker 在 closure 中改正。逐条检查测试步骤的 oracle：同时允许成功与失败、把崩溃当作正确预期、依赖破坏对象不变量，或把内部注入用例标为 blackbox 时，也必须创建 `incorrect_conclusion` finding。
 
-同时审核首轮 `unresolved`：只有当前冻结证据确实不足以裁决的事项可以保留。已经被源码排除、已经确认属于合理设计或仅是实现风格的说明，必须通过 `incorrect_conclusion` finding 要求原 worker 从 `unresolved` 删除。
+同时审核首轮 `unresolved`：它必须阻断真实 selected input、Coverage gap 或 review finding 的规定裁决，不能只是范围外实现、设计动机、未来扩展、低置信度风险或测试建议。已经被任一请求单元源码裁决、已写入风险 `confidence` / 排除条件、已经确认属于合理设计、只是实现风格，或不影响任务结论的事项，必须通过 `incorrect_conclusion` finding 要求原 worker 从 `unresolved` 删除。跨单元 finding 只分配给正式结果确实需要改变的单元，不得让每个相关单元各自复制同一 unresolved。
+
+Review 自己的顶层 `unresolved` 也不是首轮未决项的汇总区。`independent_review` 只记录阻断盲审任务的真实输入义务；`comparison_review` 对某条盲审 finding 无法裁决时只在对应 `independent_finding_decisions[].disposition=unresolved` 及其 conclusion 中说明，不再复制到顶层。已经通过 finding 交给 closure 的事项也不得重复写入 Review 顶层 `unresolved`。
 
 对照阶段还要逐个结果做内部编号核对：每条 edge 的两端必须存在于同一 flow 的 `steps[].step_key`，每个 `covered_flow_keys`、`linked_risk_keys` 和处理决定中的 `test_case_keys` 都必须引用该结果真实定义的编号。发现悬空或重复编号时创建 `incorrect_conclusion` finding，要求原 worker 在 closure 中修正引用或删除无效关系；不得把这类结构错误留到最终报告。
 
