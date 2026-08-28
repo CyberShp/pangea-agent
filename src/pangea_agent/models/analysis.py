@@ -42,6 +42,7 @@ class AnalysisUnit(ProposedUnit):
 class PlanningTask(StrictModel):
     schema_version: Literal["1.0"] = "1.0"
     task_type: Literal["unit_planning"] = "unit_planning"
+    action_id: str | None = Field(default=None, min_length=1)
     run_id: str = Field(min_length=1)
     target: str = Field(min_length=1)
     repositories: list[RepositoryRef] = Field(min_length=1)
@@ -189,6 +190,7 @@ class UnitSemanticResult(StrictModel):
 class AnalysisTask(StrictModel):
     schema_version: Literal["1.0"] = "1.0"
     task_type: Literal["analysis"] = "analysis"
+    action_id: str | None = Field(default=None, min_length=1)
     run_id: str = Field(min_length=1)
     target: str = Field(min_length=1)
     unit: AnalysisUnit
@@ -231,6 +233,7 @@ class ReviewFinding(StrictModel):
 class IndependentReviewTask(StrictModel):
     schema_version: Literal["1.0"] = "1.0"
     task_type: Literal["independent_review"] = "independent_review"
+    action_id: str | None = Field(default=None, min_length=1)
     run_id: str = Field(min_length=1)
     target: str = Field(min_length=1)
     repositories: list[RepositoryRef] = Field(min_length=1)
@@ -300,6 +303,7 @@ class ComparisonReviewResult(StrictModel):
 class ComparisonReviewTask(StrictModel):
     schema_version: Literal["1.0"] = "1.0"
     task_type: Literal["comparison_review"] = "comparison_review"
+    action_id: str | None = Field(default=None, min_length=1)
     run_id: str = Field(min_length=1)
     target: str = Field(min_length=1)
     unit_plan_path: str = Field(min_length=1)
@@ -321,6 +325,7 @@ class ComparisonReviewTask(StrictModel):
 class ClosureTask(StrictModel):
     schema_version: Literal["1.0"] = "1.0"
     task_type: Literal["closure"] = "closure"
+    action_id: str | None = Field(default=None, min_length=1)
     run_id: str = Field(min_length=1)
     target: str = Field(min_length=1)
     unit: AnalysisUnit

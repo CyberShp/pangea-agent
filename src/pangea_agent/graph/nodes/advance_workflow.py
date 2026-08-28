@@ -290,6 +290,7 @@ def _prepare_analysis(state: PangeaState, progress) -> PangeaState:
     planning_action.status = "accepted"
     progress.stage = "analyzing"
     for unit in units:
+        action_id = f"{state['run_id']}:analysis:{unit.unit_id}"
         unit_inputs = {
             "asset_items": {
                 item_id: all_asset_items[item_id] for item_id in unit.asset_item_ids
@@ -306,6 +307,7 @@ def _prepare_analysis(state: PangeaState, progress) -> PangeaState:
         write_json(selected_path, unit_inputs)
         task_path = analysis_task_path(state, unit.unit_id)
         analysis_task = AnalysisTask(
+            action_id=action_id,
             run_id=state["run_id"],
             target=state["task_contract"]["target"],
             unit=unit,
@@ -327,7 +329,7 @@ def _prepare_analysis(state: PangeaState, progress) -> PangeaState:
             read_json(Path(analysis_task.result_skeleton_path)),
         )
         add_action(progress, ActionState(
-            action_id=f"{state['run_id']}:analysis:{unit.unit_id}",
+            action_id=action_id,
             action="dispatch_agent",
             role="analysis",
             stage="unit_analysis",
@@ -354,7 +356,9 @@ def _accept_analysis(state: PangeaState, progress) -> PangeaState:
 
     run_dir = run_directory(state)
     source_manifest = read_json(run_dir / "inputs" / "source-manifest.json")
+    action_id = f"{state['run_id']}:review"
     task = IndependentReviewTask(
+        action_id=action_id,
         run_id=state["run_id"],
         target=state["task_contract"]["target"],
         repositories=[
@@ -379,7 +383,7 @@ def _accept_analysis(state: PangeaState, progress) -> PangeaState:
     )
     progress.stage = "reviewing"
     add_action(progress, ActionState(
-        action_id=f"{state['run_id']}:review",
+        action_id=action_id,
         action="dispatch_agent",
         role="review",
         stage="independent_review",
@@ -482,7 +486,9 @@ def _accept_independent_review(state: PangeaState, progress, action) -> PangeaSt
         raise
     action.status = "accepted"
 
+    action_id = f"{state['run_id']}:comparison-review"
     comparison_task = ComparisonReviewTask(
+        action_id=action_id,
         run_id=state["run_id"],
         target=state["task_contract"]["target"],
         unit_plan_path=task.unit_plan_path,
@@ -515,7 +521,7 @@ def _accept_independent_review(state: PangeaState, progress, action) -> PangeaSt
         read_json(Path(comparison_task.result_skeleton_path)),
     )
     add_action(progress, ActionState(
-        action_id=f"{state['run_id']}:comparison-review",
+        action_id=action_id,
         action="continue_agent",
         role="review",
         stage="comparison_review",
@@ -577,6 +583,7 @@ def _accept_comparison_review(state: PangeaState, progress, action) -> PangeaSta
         findings = findings_by_unit.get(unit.unit_id)
         if not findings:
             continue
+        action_id = f"{state['run_id']}:closure:{unit.unit_id}"
         origin_action = progress.actions[
             f"{state['run_id']}:analysis:{unit.unit_id}"
         ]
@@ -589,6 +596,7 @@ def _accept_comparison_review(state: PangeaState, progress, action) -> PangeaSta
         original_task = AnalysisTask.model_validate(read_json(original_task_path))
         task_path = closure_task_path(state, unit.unit_id)
         closure_task = ClosureTask(
+            action_id=action_id,
             run_id=state["run_id"],
             target=state["task_contract"]["target"],
             unit=unit,
@@ -609,7 +617,7 @@ def _accept_comparison_review(state: PangeaState, progress, action) -> PangeaSta
             read_json(Path(closure_task.original_result_path)),
         )
         add_action(progress, ActionState(
-            action_id=f"{state['run_id']}:closure:{unit.unit_id}",
+            action_id=action_id,
             action="continue_agent",
             role="closure",
             stage="targeted_closure",

@@ -25,7 +25,7 @@
 
 派发 action 后如果尚未收到子 Agent 完成通知，主 Agent 立即结束当前回合，把控制权交还 DSH；不得调用通用等待/轮询工具，不得反复输出“继续等待”，也不得在同一回合循环检查子 Agent。DSH 会在子 Agent 结束后注入完成通知并唤醒主 Agent。若等待接口只返回 unchanged/idle 而没有完成通知，视为没有新事件并结束当前回合；不得无限等待。
 
-`pangea_action_dispatch` 会自动把 action 与 DSH 真实任务 ID 绑定。子 Agent 回合结束后，主 Agent 的第一且唯一动作是对该回合绑定的显式 `action_id` 调用 `pangea_action_settle`；该工具在同一次调用中校验当前结果并推进 Workflow。不得先读取结果、查询状态、检查其他 Agent 或发送普通消息。并行 Agent 的完成通知即使同时到达，也必须先处理当前 action 的 settle 返回，再处理下一条：
+`pangea_action_dispatch` 会自动把 action 与 DSH 真实任务 ID 绑定。新 task 还包含同一个不可变 `action_id`，子 Agent 的一行完成报告会原样回显它。子 Agent 回合结束后，主 Agent 的第一且唯一动作是对完成报告中这个 exact `action_id` 调用 `pangea_action_settle`；该工具在同一次调用中校验当前结果并推进 Workflow。不得先读取结果、查询状态、检查其他 Agent 或发送普通消息。并行 Agent 的完成通知即使同时到达，也必须逐条保留各自的 exact `action_id`，先处理当前 action 的 settle 返回，再处理下一条。不得根据 DSH 子任务 UUID、单元名、通知先后或记忆猜测待结算 action；已经 settle 成功的 action 不得因另一个修复完成而重新当成待处理 action。历史 task 没有 `action_id` 时，才使用 `pangea_action_dispatch` 已保存的 action 与 DSH 任务绑定：
 
 独立 `pangea_action_validate` 已停用，不再执行校验，也不改变 action 状态；误调用只会返回 `status=settle_required`。收到该状态时不得重试 validate，直接对同一 `action_id` 调用 `pangea_action_settle`。
 
@@ -34,7 +34,7 @@
 
   修复 action 必须恢复同一个 `task_id`，把返回的 `error`（包括有界 `details`、`detail_count` 和截断标记）交回该任务，只修正同一 `result_path` 后再次 settle。错误很多时让原 Agent 以 `result_skeleton_path` 为唯一字段基线，保留可用语义后重建结构；不得套用旧版或其他项目的字段，不得用普通 `send_message` 或通用子 Agent 代替 `repair_action`。修复派发后立即结束当前回合，收到该修复任务的完成通知后再 settle 同一 action。
 
-  并行 Agent 的其他完成通知只能排队。当前 action 返回 invalid 后，在它的 repair 已真实 dispatch 之前，不得 settle 另一个已完成 action、读状态、猜测哪个任务已推进，也不得跳到下一条 repair。先完成这一次 `settle -> dispatch repair`，再处理队列中的下一个完成通知。
+  并行 Agent 的其他完成通知只能按各自 exact `action_id` 排队。当前 action 返回 invalid 后，在它的 repair 已真实 dispatch 之前，不得 settle 另一个已完成 action、读状态、猜测哪个任务已推进，也不得跳到下一条 repair。先完成这一次 `settle -> dispatch repair`，再处理队列中的下一个完成通知。多个 repair 完成后，逐个 settle 它们各自回显的 action；不得改成等待另一个已经 settled 的 action，也不得在仍有已完成但未 settle 的 exact action 时结束会话。
 - 返回 `validation.attention_required=true`：说明同一结构错误已连续出现 3 次，或该 action 累计结构修复已达到 6 次。主 Agent 停止盲目重试该 Run，保留现场并把它记为“未完成”，不得让 Python 把 Run 判死，也不得把占位报告当成正式报告。
 
 Run/action/task 丢失、冻结输入损坏、`continue_agent` 缺少约定的 `task_id` 或 Workflow 返回未持久化 action 才属于流程错误。无法解析、缺少下游必需结构、内部编号悬空、evidence 超出声明单元，或 `basis` 声明与实际链接不一致的结果由当前 worker 原地修复；这些检查只证明结构关联，不裁决风险、流程或用例语义。Coverage 取舍、finding 是否成立及其他语义分歧由 Workflow 原样保留并标记降级。返修时保留已有有效语义内容，编辑方法由当前 Agent 自己选择；不得把语义判断交给 Python 或脚本。主 Agent 不读取或代改结果，不得换 worker。重试是否暂停由 DSH 主 Agent 根据 `attention_required` 决定，Python 只记录次数和提示。

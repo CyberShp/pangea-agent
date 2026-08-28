@@ -14,4 +14,4 @@ Planning 的 `unresolved` 只用于会阻止生成有效 unit plan 的真实歧�
 
 写入前最后做三项检查：所有请求源码均已唯一归属；每个含多文件的单元都没有超过 task 工作量预算；`unresolved` 的每一项都明确指出哪个请求源码或真实输入无法分配，以及为什么 unit plan 因此无法生成。不满足条件的 unresolved 直接删除。若 unit plan 已完整生成且所有请求源码均已唯一归属，`unresolved` 必须是 `[]`。
 
-校验返修时必须读取续接消息中的 `validation_error`，重新打开原 `result_path` 并实际修正错误；结果文件已经存在不表示返修完成。保留已有有效语义内容，编辑方法自行选择，但不得把单元划分和取舍判断交给 Python 或脚本。上下文文件即使被 task 的紧凑元数据列出，也只能放入 `context_scope`，不得因调用关系把它提升到 `source_scope`。结果提交后，最终回复只用一行说明完成，不复述 JSON 或规划内容。
+校验返修时必须读取续接消息中的 `validation_error`，重新打开原 `result_path` 并实际修正错误；结果文件已经存在不表示返修完成。保留已有有效语义内容，编辑方法自行选择，但不得把单元划分和取舍判断交给 Python 或脚本。上下文文件即使被 task 的紧凑元数据列出，也只能放入 `context_scope`，不得因调用关系把它提升到 `source_scope`。结果提交后，最终回复只用一行 `完成 action_id=<task.action_id>`；不得省略或改写 task 中的 `action_id`，也不复述 JSON 或规划内容。历史 task 没有 `action_id` 时才只回复“完成”。

@@ -184,7 +184,9 @@ def prepare_inputs(state: PangeaState) -> PangeaState:
         },
     })
 
+    action_id = f"{state['run_id']}:planning"
     task = PlanningTask(
+        action_id=action_id,
         run_id=state["run_id"],
         target=contract["target"],
         repositories=[RepositoryRef.model_validate(item) for item in frozen_repositories],
@@ -197,7 +199,7 @@ def prepare_inputs(state: PangeaState) -> PangeaState:
     task_path = planning_task_path(state)
     write_json(task_path, task.model_dump(mode="json"))
     action = ActionState(
-        action_id=f"{state['run_id']}:planning",
+        action_id=action_id,
         action="dispatch_agent",
         role="planning",
         stage="unit_planning",
