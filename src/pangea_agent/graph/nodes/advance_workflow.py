@@ -240,15 +240,40 @@ def _fail_action(state: PangeaState, progress, action: ActionState, exc: Excepti
     save_progress(state, progress)
 
 
+def _read_validated_result(state, progress, action: ActionState, result_type):
+    try:
+        return result_type.model_validate(
+            read_json(validated_result_path(state, action.action_id))
+        )
+    except (OSError, ValueError) as exc:
+        if not action.task_id:
+            raise ValueError(
+                f"已结算 Action 缺少原 Agent 会话：{action.action_id}"
+            ) from exc
+        action.action = "continue_agent"
+        action.status = "pending"
+        action.error = (
+            "Workflow 保存的已校验结果不可读取；请原 Agent 重新写入当前 task 的 "
+            f"result_path 后再次提交：{exc}"
+        )
+        save_progress(state, progress)
+        return None
+
+
 def _prepare_analysis(state: PangeaState, progress) -> PangeaState:
     run_dir = run_directory(state)
     task = PlanningTask.model_validate(read_json(planning_task_path(state)))
     planning_action = next(
         action for action in progress.actions.values() if action.role == "planning"
     )
-    result = PlanningResult.model_validate(
-        read_json(validated_result_path(state, planning_action.action_id))
+    result = _read_validated_result(
+        state,
+        progress,
+        planning_action,
+        PlanningResult,
     )
+    if result is None:
+        return _waiting(state, progress)
     compact = read_json(Path(task.compact_metadata_path))
     all_asset_items = read_json(run_dir / "inputs" / "asset-items.json")
     coverage_gaps = read_json(run_dir / "inputs" / "coverage-gaps.json")
@@ -343,10 +368,15 @@ def _accept_analysis(state: PangeaState, progress) -> PangeaState:
     for action in current_stage_actions(progress):
         unit_id = action.action_id.rsplit(":", 1)[-1]
         task = AnalysisTask.model_validate(read_json(analysis_task_path(state, unit_id)))
+        result = _read_validated_result(
+            state,
+            progress,
+            action,
+            UnitSemanticResult,
+        )
+        if result is None:
+            return _waiting(state, progress)
         try:
-            result = UnitSemanticResult.model_validate(
-                read_json(validated_result_path(state, action.action_id))
-            )
             validate_unit_result(task, result, read_json(Path(task.selected_inputs_path)))
         except Exception as exc:
             _fail_action(state, progress, action, exc)
@@ -476,14 +506,15 @@ def _validate_comparison_review(
 
 def _accept_independent_review(state: PangeaState, progress, action) -> PangeaState:
     task = IndependentReviewTask.model_validate(read_json(review_task_path(state)))
-    try:
-        result = IndependentReviewResult.model_validate(
-            read_json(validated_result_path(state, action.action_id))
-        )
-        _validate_review(progress, result)
-    except Exception as exc:
-        _fail_action(state, progress, action, exc)
-        raise
+    result = _read_validated_result(
+        state,
+        progress,
+        action,
+        IndependentReviewResult,
+    )
+    if result is None:
+        return _waiting(state, progress)
+    _validate_review(progress, result)
     action.status = "accepted"
 
     action_id = f"{state['run_id']}:comparison-review"
@@ -537,10 +568,15 @@ def _accept_comparison_review(state: PangeaState, progress, action) -> PangeaSta
         read_json(comparison_review_task_path(state))
     )
     independent_task = IndependentReviewTask.model_validate(read_json(review_task_path(state)))
+    comparison = _read_validated_result(
+        state,
+        progress,
+        action,
+        ComparisonReviewResult,
+    )
+    if comparison is None:
+        return _waiting(state, progress)
     try:
-        comparison = ComparisonReviewResult.model_validate(
-            read_json(validated_result_path(state, action.action_id))
-        )
         independent = IndependentReviewResult.model_validate(
             read_json(Path(comparison_task.independent_review_result_path))
         )
@@ -647,10 +683,15 @@ def _accept_closure(state: PangeaState, progress) -> PangeaState:
         unit_id = action.action_id.rsplit(":", 1)[-1]
         closure_task = ClosureTask.model_validate(read_json(closure_task_path(state, unit_id)))
         original_task = AnalysisTask.model_validate(read_json(Path(closure_task.original_task_path)))
+        result = _read_validated_result(
+            state,
+            progress,
+            action,
+            UnitSemanticResult,
+        )
+        if result is None:
+            return _waiting(state, progress)
         try:
-            result = UnitSemanticResult.model_validate(
-                read_json(validated_result_path(state, action.action_id))
-            )
             validate_unit_result(
                 original_task,
                 result,
