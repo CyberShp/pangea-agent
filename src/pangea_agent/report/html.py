@@ -378,7 +378,10 @@ def render_html_report(state: Mapping[str, Any]) -> str:
             )
         else:
             unresolved_html = f'<h3>未完成项</h3>{_list(quality.get("unresolved"))}'
-    body.append(f'<section id="quality"><a class="back" href="#top">回到顶部</a><h2>10. 质量门禁</h2><p class="summary {final_tone}">{_escape(_quality_summary(state, incomplete))}</p><h3>已完成检查</h3>{checks_html}{unresolved_html}<p><span class="badge {final_tone}">{completeness}</span></p></section>')
+    advisory_html = ""
+    if isinstance(quality, Mapping) and quality.get("advisories"):
+        advisory_html = f'<h3>建议告警</h3>{_list(quality.get("advisories"))}'
+    body.append(f'<section id="quality"><a class="back" href="#top">回到顶部</a><h2>10. 质量门禁</h2><p class="summary {final_tone}">{_escape(_quality_summary(state, incomplete))}</p><h3>已完成检查</h3>{checks_html}{unresolved_html}{advisory_html}<p><span class="badge {final_tone}">{completeness}</span></p></section>')
     return _shell(title, incomplete, navigation, "".join(body))
 
 

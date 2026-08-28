@@ -586,5 +586,8 @@ def render_report(state: "PangeaState | Mapping[str, Any]") -> str:
         if not semantic and not diagnostics:
             lines.extend(["", "### 未完成项", ""])
             _append_list(lines, quality.get("unresolved"))
+    if isinstance(quality, Mapping) and quality.get("advisories"):
+        lines.extend(["", "### 建议告警", ""])
+        _append_list(lines, quality.get("advisories"))
     lines.extend(["", f"**最终状态：{'INCOMPLETE' if incomplete else 'COMPLETE'}**", ""])
     return "\n".join(lines)

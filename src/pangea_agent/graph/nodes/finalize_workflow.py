@@ -252,13 +252,23 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
     }
     semantic_unresolved = list(unresolved)
     degradations = _deduplicate_degradations(progress.degradations)
+    advisories = [
+        item
+        for item in degradations
+        if item.get("kind") == "agent_result_warning"
+    ]
+    blocking_degradations = [
+        item
+        for item in degradations
+        if item.get("kind") != "agent_result_warning"
+    ]
     validation_unresolved = [
         {
             "stage": "validation",
             "action_ids": item.get("action_ids", []),
             "reason": item.get("message", "结果存在待确认项"),
         }
-        for item in degradations
+        for item in blocking_degradations
     ]
     unresolved.extend(validation_unresolved)
     quality_status = "UNRESOLVED" if unresolved else "PASS"
@@ -326,8 +336,9 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
             "unresolved": unresolved,
             "semantic_unresolved": semantic_unresolved,
             "workflow_diagnostics": validation_unresolved,
+            "advisories": advisories,
             "diagnostic_occurrence_count": sum(
-                item["occurrence_count"] for item in degradations
+                item["occurrence_count"] for item in blocking_degradations
             ),
         },
         "degradations": degradations,
