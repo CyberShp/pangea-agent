@@ -4,6 +4,7 @@
       "additionalProperties": false,
       "properties": {
         "finding_key": {
+          "description": "必须且只能引用 independent_review_result_path 顶层 findings[] 中已有的 finding_key；不得引用 Worker risk、flow、test case 或 Coverage 编号",
           "minLength": 1,
           "title": "Finding Key",
           "type": "string"
@@ -169,6 +170,7 @@
       "type": "string"
     },
     "independent_finding_decisions": {
+      "description": "编号集合必须与 independent review 顶层 findings[].finding_key 完全相等；盲审 findings 为空时本列表也必须为空",
       "items": {
         "$ref": "#/$defs/IndependentFindingDecision"
       },

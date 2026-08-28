@@ -65,6 +65,7 @@ class PlanningResult(StrictModel):
         description=(
             "通常必须为空。只有请求源码无法唯一归属或真实输入无法分配，因而无法生成有效 unit plan 时才填写；"
             "范围外文件、context_scope 依赖、后续研究、设计动机和共享状态说明不得写入。"
+            "声称请求文件元数据缺失前，必须同时核对 planning metadata 的 owned_source_paths 和 files[].path。"
         ),
     )
 
@@ -260,7 +261,13 @@ class IndependentReviewResult(StrictModel):
 
 
 class IndependentFindingDecision(StrictModel):
-    finding_key: str = Field(min_length=1)
+    finding_key: str = Field(
+        min_length=1,
+        description=(
+            "必须且只能引用 independent_review_result_path 顶层 findings[] 中已有的 finding_key；"
+            "不得引用 Worker risk、flow、test case 或 Coverage 编号"
+        ),
+    )
     disposition: Literal["confirmed", "dismissed", "unresolved"] = Field(
         description=(
             "只表示对盲审 finding 的裁决；不得填写 risk、incorrect_conclusion 等 category"
@@ -274,7 +281,11 @@ class ComparisonReviewResult(StrictModel):
     schema_version: Literal["1.0"] = "1.0"
     summary: str = Field(min_length=1)
     independent_finding_decisions: list[IndependentFindingDecision] = Field(
-        default_factory=list
+        default_factory=list,
+        description=(
+            "编号集合必须与 independent review 顶层 findings[].finding_key 完全相等；"
+            "盲审 findings 为空时本列表也必须为空"
+        ),
     )
     findings: list[ReviewFinding] = Field(default_factory=list)
     unresolved: list[str] = Field(

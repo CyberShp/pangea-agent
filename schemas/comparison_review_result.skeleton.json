@@ -3,7 +3,7 @@
   "summary": "<非空对照复核摘要>",
   "independent_finding_decisions": [
     {
-      "finding_key": "<必须对应盲审已有 finding_key>",
+      "finding_key": "<只能从 independent_review_result_path 顶层 findings[].finding_key 原样选择；不得填 Worker risk/flow/test case/Coverage ID>",
       "disposition": "<裁决字段，只能 confirmed|dismissed|unresolved；不要填写 finding category>",
       "conclusion": "<逐条裁决结论>",
       "evidence": [

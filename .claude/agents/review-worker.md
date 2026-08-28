@@ -17,6 +17,8 @@ Review finding 的 `category` 只能是：`missed_flow`、`document_delta`、`co
 
 `comparison_review` 是同一 reviewer 的后续对照。读取 task 列出的首轮分析结果、盲审基线、冻结源码、结构化输入和 rubrics。先对盲审的每个 `finding_key` 逐条写入 `independent_finding_decisions`：源码和有效契约共同支持、且首轮结果确实没有覆盖时才用 `confirmed`；首轮 flow/risk/test case 已覆盖同一行为，或被真实控制流、短路、前置返回、有效契约反证时用 `dismissed`；证据不足且确实无法判定时才用 `unresolved`。不得漏项，也不得把自己的盲审结论默认当成正确。随后核对首轮流程、风险、排除条件和用例 oracle；找出与源码相反、缺少接口契约依据、跨单元误用上下文或被盲审基线反证的结论，这类新 finding 使用 `incorrect_conclusion`。同时补充盲审未覆盖的实质遗漏，但不要复制盲审已有 finding。
 
+对照前先单独读取 `independent_review_result_path`；其顶层 `findings[].finding_key` 是 `independent_finding_decisions[].finding_key` 唯一允许的编号集合，两者必须一一对应。盲审 `findings` 为空时，decisions 也必须为 `[]`。不得把 `analysis_result_paths` 中的 risk key、flow key、test case key 或 Coverage ID 写入该列表。首轮 risk 正确时不新增任何字段；首轮结论错误时，在顶层 `findings` 中新建 `category=incorrect_conclusion` 的 finding，而不是为 risk key 创建 decision。
+
 逐条审核首轮 `unresolved`：只有阻断真实 selected input、Coverage gap 或 review finding 裁决的事项才能保留。范围外实现、设计动机、未来扩展、低置信度风险、测试建议、已被任一请求单元源码裁决或已写入风险 confidence/exclusion 的事项，必须用 `incorrect_conclusion` 要求原 worker 删除。跨单元 finding 只分配给正式结果确实需要改变的单元。Review 顶层 `unresolved` 不汇总首轮未决项；对盲审 finding 无法裁决时只用对应 decision 的 `disposition=unresolved` 和 conclusion，不重复写入顶层。
 
 注意 C/C++ 基本语义：`a || b` 在 a 为真时不求值 b；`!x` 仅在 x 为 0 时为真；负数不满足 `> 0`。提出或保留边界值 finding 前，必须从入口追到目标语句，确认前置返回、条件分支和短路求值没有使目标语句不可达。入口先以 `<= 0` 返回、之后才执行一次减 1 时，该减法只能把正数降到 0，不能继续降为负数。没有需求、设计、公开接口约定或真实调用方证据时，不得把“未重置、未消耗、未加锁、重复参数检查、void 返回、初始化方式或错误码粒度”等策略选择直接定为缺陷；无效或悬空指针属于调用方越过普通指针契约，不能借此构造风险。
@@ -28,6 +30,8 @@ Review finding 的 `category` 只能是：`missed_flow`、`document_delta`、`co
 `missed_flow` 只表示首轮确实没有覆盖的执行路径；若 finding 的源码区间已出现在同一首轮 flow 中必须驳回。`test_oracle` 只表示对应 flow 没有关联用例；若已有用例通过 `covered_flow_keys` 覆盖该 flow，而问题是预期结果与源码相反，使用 `incorrect_conclusion` 并指出具体错误预期。
 
 措辞、编号、路径格式和机械字段不构成 finding。每个 finding 和每条盲审裁决都必须有冻结源码证据；finding 还必须指定受影响单元和必要检查。
+
+`comparison_review` 写入前必须做编号集合等值检查：`set(independent_finding_decisions[].finding_key) == set(independent_review.findings[].finding_key)`，不得多、少、重复或出现 Worker risk key。
 
 写入前逐项自检：字段必须符合 schema、category 必须来自固定枚举、`affected_unit_ids` 必须来自 unit plan、evidence 必须是对象数组且 path 来自对应 affected unit、盲审裁决不得漏 `finding_key`。最后单独检查顶层 `unresolved`：`comparison_review` 必须为 `[]`，无法裁决的 finding 只写 decision；`independent_review` 除非 task 的冻结输入本身缺失，否则也必须为 `[]`。范围外实现、外部文档、运行时假设、后续研究和低置信度一律不写入。将完整 JSON 写到 task 的 `result_path`，不得修改其他结果。若校验器返回错误，只修正同一 `result_path` 后重新提交，不得改派其他 Agent 修 review JSON。
 

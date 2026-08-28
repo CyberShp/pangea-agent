@@ -13,6 +13,8 @@
 
 不要只根据文件名前缀拆分，也不要为了增加并发而把一条调用链切成多个很小的单元。每个源码文件只能归属于一个单元；其他单元需要读取时放入 `context_scope`。
 
-若不同提议单元之间存在请求范围内的直接函数调用，且合并后的源码行数和函数数均不超过 task 的 `merge_direct_call_chain_max_lines` 与 `merge_direct_call_chain_max_functions`，这些单元必须合并。Python 会按同一规则归并，保证同一输入不会因模型波动改变单元数。
+若不同提议单元之间存在请求范围内的直接函数调用，只有在合并后的源码行数和函数数同时不超过 task 的 `max_unit_*` 工作量预算与 `merge_direct_call_chain_*` 界限时才能合并。单元边界由 Planning Agent 按这些真实元数据决定；Python 只验证和记录结果，不替 Agent 做语义归并。
+
+读取 `compact_metadata_path` 后，先在 `owned_source_paths` 和 `files[].path` 中逐个核对 `requested_scope`，再做单元分组。不得仅从分组摘要推断某个请求文件缺少元数据。
 
 `asset_item_ids`、`coverage_ids` 和 `mechanism_ids` 只选择与该单元功能相关的候选。无法确定归属时保留在 `unresolved`，不要任意分配。
