@@ -33,8 +33,10 @@ def check_result_json(task_path: str) -> dict:
         "check": "json_syntax_with_non_blocking_structure_advisories",
         "result_path": result_path,
         "blocking": False,
+        "submission_ready": True,
         "advisory_count": 0,
         "advisories": [],
+        "agent_next_step": "仅在 status=PASS 时结束当前 worker 回合",
         "state_changed": False,
     }
     task_type = task_data.get("task_type")
@@ -47,6 +49,11 @@ def check_result_json(task_path: str) -> dict:
         response["advisories"] = _schema_advisories(exc)
         response["advisory_count"] = len(response["advisories"])
         response["status"] = "WARN"
+        response["submission_ready"] = False
+        response["agent_next_step"] = (
+            "当前 Agent 检查并修正 advisories 后重跑；"
+            "这些确定性结构项会由 settle 再次校验"
+        )
         return response
 
     if task_type == "analysis":
@@ -70,4 +77,9 @@ def check_result_json(task_path: str) -> dict:
     response["advisory_count"] = len(response["advisories"])
     if response["advisory_count"]:
         response["status"] = "WARN"
+        response["submission_ready"] = False
+        response["agent_next_step"] = (
+            "当前 Agent 检查并修正 advisories 后重跑；"
+            "这些确定性结构项会由 settle 再次校验"
+        )
     return response
