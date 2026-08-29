@@ -1,5 +1,29 @@
 {
   "$defs": {
+    "EvidenceScopeContract": {
+      "additionalProperties": false,
+      "properties": {
+        "repo_id": {
+          "minLength": 1,
+          "title": "Repo Id",
+          "type": "string"
+        },
+        "allowed_paths": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Allowed Paths",
+          "type": "array"
+        }
+      },
+      "required": [
+        "repo_id",
+        "allowed_paths"
+      ],
+      "title": "EvidenceScopeContract",
+      "type": "object"
+    },
     "RepositoryRef": {
       "additionalProperties": false,
       "properties": {
@@ -41,6 +65,19 @@
       "title": "Task Type",
       "type": "string"
     },
+    "action_id": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Action Id"
+    },
     "run_id": {
       "minLength": 1,
       "title": "Run Id",
@@ -58,6 +95,13 @@
       "minItems": 1,
       "title": "Repositories",
       "type": "array"
+    },
+    "evidence_scope_by_unit": {
+      "additionalProperties": {
+        "$ref": "#/$defs/EvidenceScopeContract"
+      },
+      "title": "Evidence Scope By Unit",
+      "type": "object"
     },
     "unit_plan_path": {
       "minLength": 1,

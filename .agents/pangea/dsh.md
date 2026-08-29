@@ -39,6 +39,8 @@
 
 Run/action/task 丢失、冻结输入损坏、`continue_agent` 缺少约定的 `task_id` 或 Workflow 返回未持久化 action 才属于流程错误。无法解析、缺少下游必需结构、内部编号悬空、evidence 超出声明单元，或 `basis` 声明与实际链接不一致的结果由当前 worker 原地修复；这些检查只证明结构关联，不裁决风险、流程或用例语义。Coverage 取舍、finding 是否成立及其他语义分歧由 Workflow 原样保留并标记降级。返修时保留已有有效语义内容，编辑方法由当前 Agent 自己选择；不得把语义判断交给 Python 或脚本。主 Agent 不读取或代改结果，不得换 worker。重试是否暂停由 DSH 主 Agent 根据 `attention_required` 决定，Python 只记录次数和提示。
 
+Worker 结束前可调用 `check-result-json --task`。该命令权限仅限读取 task 指向的结果并确认 JSON 可解析；不校验 schema、不检查内部编号或证据、不写文件、不改变 action / Run 状态，也不能代替 settle。任何内容修正仍由当前 Agent 自己完成。
+
 Review 固定分为同一 Reviewer 的两个 checkpoint：`independent_review` 不提供首轮结果；`comparison_review` 才提供首轮结果做对照。定向补齐后直接聚合，不启动新的复核 Agent。
 
 资料提取由资产插件管理。历史缺陷提取完成后等待人工审核，不自动批准。

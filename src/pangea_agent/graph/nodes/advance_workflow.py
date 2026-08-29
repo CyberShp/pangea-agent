@@ -33,6 +33,7 @@ from pangea_agent.models.analysis import (
     ClosureTask,
     ComparisonReviewResult,
     ComparisonReviewTask,
+    EvidenceScopeContract,
     IndependentReviewResult,
     IndependentReviewTask,
     PlanningResult,
@@ -66,6 +67,23 @@ def _unit_scopes(progress) -> dict[str, tuple[str, set[str]]]:
                 for path in [*unit.source_scope, *unit.context_scope]
             },
         )
+        for unit in progress.analysis_units
+    }
+
+
+def _evidence_scope(unit) -> EvidenceScopeContract:
+    return EvidenceScopeContract(
+        repo_id=unit.repo_id,
+        allowed_paths=list(dict.fromkeys([
+            *unit.source_scope,
+            *unit.context_scope,
+        ])),
+    )
+
+
+def _evidence_scope_by_unit(progress) -> dict[str, EvidenceScopeContract]:
+    return {
+        unit.unit_id: _evidence_scope(unit)
         for unit in progress.analysis_units
     }
 
@@ -114,9 +132,9 @@ def _validate_evidence_for_units(
         canonical = _canonical_evidence_path(evidence.path, candidates)
         if canonical is None:
             warnings.append(
-                f"{label}证据待确认，不属于 affected_unit_ids 的冻结源码："
+                f"{label}证据待确认，不属于指定冻结单元源码："
                 f"{evidence.repo_id}:{evidence.path}:{evidence.line_start}；"
-                f"affected_unit_ids={sorted(unit_ids)}；"
+                f"scope_unit_ids={sorted(unit_ids)}；"
                 f"allowed_paths={sorted(candidates)}"
             )
         elif _normalized_scope_path(evidence.path) != canonical:
@@ -134,7 +152,7 @@ def _validate_evidence_for_units(
 
 
 def assert_review_scope(progress, result: IndependentReviewResult) -> None:
-    """Reject review evidence that cannot belong to its declared units."""
+    """Reject review evidence outside the globally frozen analysis scope."""
     errors: list[str] = []
     known_units = {unit.unit_id for unit in progress.analysis_units}
     for finding in result.findings:
@@ -144,7 +162,7 @@ def assert_review_scope(progress, result: IndependentReviewResult) -> None:
         errors.extend(_validate_evidence_for_units(
             progress,
             finding.evidence,
-            finding.affected_unit_ids,
+            sorted(known_units),
             f"复核 finding {finding.finding_key}",
         ))
     if errors:
@@ -156,7 +174,7 @@ def assert_comparison_review_scope(
     independent: IndependentReviewResult,
     comparison: ComparisonReviewResult,
 ) -> None:
-    """Apply the ownership check to findings and blind-review decisions."""
+    """Keep findings and decisions inside the globally frozen source scope."""
     errors: list[str] = []
     try:
         assert_review_scope(progress, comparison)
@@ -172,7 +190,7 @@ def assert_comparison_review_scope(
         errors.extend(_validate_evidence_for_units(
             progress,
             decision.evidence,
-            finding.affected_unit_ids,
+            sorted({unit.unit_id for unit in progress.analysis_units}),
             f"盲审裁决 {decision.finding_key}",
         ))
     if errors:
@@ -342,6 +360,7 @@ def _prepare_analysis(state: PangeaState, progress) -> PangeaState:
             run_id=state["run_id"],
             target=state["task_contract"]["target"],
             unit=unit,
+            evidence_scope=_evidence_scope(unit),
             repository=repositories[unit.repo_id],
             inventory_path=str(run_dir / "inputs" / "inventory.json"),
             source_manifest_path=str(run_dir / "inputs" / "source-manifest.json"),
@@ -403,6 +422,7 @@ def _accept_analysis(state: PangeaState, progress) -> PangeaState:
         repositories=[
             RepositoryRef.model_validate(item) for item in source_manifest["repositories"]
         ],
+        evidence_scope_by_unit=_evidence_scope_by_unit(progress),
         unit_plan_path=str(run_dir / "inputs" / "unit-plan.json"),
         inventory_path=str(run_dir / "inputs" / "inventory.json"),
         source_manifest_path=str(run_dir / "inputs" / "source-manifest.json"),
@@ -445,7 +465,7 @@ def _validate_review(progress, result) -> list[str]:
         warnings.extend(_validate_evidence_for_units(
             progress,
             finding.evidence,
-            finding.affected_unit_ids,
+            sorted(known_units),
             f"复核 finding {finding.finding_key}",
         ))
     return warnings
@@ -482,7 +502,7 @@ def _validate_comparison_review(
         warnings.extend(_validate_evidence_for_units(
             progress,
             decision.evidence,
-            finding.affected_unit_ids,
+            sorted({unit.unit_id for unit in progress.analysis_units}),
             f"盲审裁决 {decision.finding_key}",
         ))
     comparison_keys = {finding.finding_key for finding in comparison.findings}
@@ -531,6 +551,7 @@ def _accept_independent_review(state: PangeaState, progress, action) -> PangeaSt
         action_id=action_id,
         run_id=state["run_id"],
         target=state["task_contract"]["target"],
+        evidence_scope_by_unit=_evidence_scope_by_unit(progress),
         unit_plan_path=task.unit_plan_path,
         analysis_task_paths={
             unit.unit_id: str(analysis_task_path(state, unit.unit_id))
@@ -645,6 +666,7 @@ def _accept_comparison_review(state: PangeaState, progress, action) -> PangeaSta
             run_id=state["run_id"],
             target=state["task_contract"]["target"],
             unit=unit,
+            evidence_scope=_evidence_scope(unit),
             repository=repositories[unit.repo_id],
             original_task_path=str(original_task_path),
             original_result_path=str(validated_result_path(

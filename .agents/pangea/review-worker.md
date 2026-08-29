@@ -2,13 +2,13 @@
 
 每个 task 只执行其 `task_type` 指定的一个检查点，不派发子 Agent。
 
-提交前先按每条 finding 或盲审裁决的 `affected_unit_ids` 汇总允许路径；每条 `evidence.path` 只能从这些 unit 的 `source_scope` / `context_scope` 原样选择一次，不加 `repo_id:` 前缀，不重复目录，也不借用其他 unit 的证据。
+Review 可以使用整个冻结分析范围内的源码作跨单元佐证；`affected_unit_ids` 只表示哪些单元的正式结果需要改变，不能为了容纳一条对照证据就扩大返工单元。每条 `evidence.path` 必须从 task 的 `evidence_scope_by_unit` 任一 `allowed_paths` 中原样选择，不加 `repo_id:` 前缀，不重复目录，也不得引用冻结范围外源码。
 
 开始分析前必须读取 task、`result_schema_path` 和 `result_skeleton_path`。Graph 已把对应骨架写入 task 的唯一 `result_path`；必须在该文件中输出完整真实结果，不得保留占位符、使用字段别名或另建结果文件。
 
 Review finding 的 `category` 只能是：`missed_flow`、`document_delta`、`coverage_gap`、`defect_mechanism`、`risk`、`test_oracle`、`incorrect_conclusion`。`resource_leak`、`race_condition`、越界、崩溃等是风险机理，不是 category；这类 finding 使用 `risk`，具体机理写入 `summary` / `required_check`。不得输出 schema 禁止的 `unit_id`、`severity`、`title`、`description` 等额外字段；必须填写 `affected_unit_ids`、`summary`、`required_check`。
 
-每条 `evidence` 必须是 `SourceEvidence` 对象数组，包含 `repo_id`、`path`、`line_start`、可选 `line_end` 和 `observation`，不能写成 `"file.c:123"` 字符串。`path` 必须从该 finding 的 `affected_unit_ids` 对应 unit 的 `source_scope` / `context_scope` 中原样选择相对路径，不得根据模块语义自行补目录层级。
+每条 `evidence` 必须是 `SourceEvidence` 对象数组，包含 `repo_id`、`path`、`line_start`、可选 `line_end` 和 `observation`，不能写成 `"file.c:123"` 字符串。`path` 必须从 `evidence_scope_by_unit` 的全局冻结路径中原样选择相对路径；`affected_unit_ids` 仍只按需要修改正式结果的单元填写，不得根据模块语义自行补目录层级。
 
 校验返修时保留已有有效语义结论，编辑方法自行选择，但不得把 finding、裁决或取舍判断交给 Python 或脚本。
 
@@ -38,6 +38,6 @@ Review 自己的顶层 `unresolved` 也不是首轮未决项的汇总区。`inde
 
 措辞、编号、路径格式和机械字段不构成 finding。每个 finding 和每条盲审裁决都必须有冻结源码证据；finding 还必须指定受影响单元和必要检查。
 
-写入前逐项自检：字段必须符合 schema、category 必须来自固定枚举、`affected_unit_ids` 必须来自 unit plan、evidence 必须是对象数组且 path 来自对应 affected unit。`comparison_review` 还必须用编号集合做最后等值检查：`set(independent_finding_decisions[].finding_key) == set(independent_review.findings[].finding_key)`，不得多、少或重复，也不得出现任何 Worker risk key。最后单独检查顶层 `unresolved`：`comparison_review` 必须为 `[]`，无法裁决的 finding 只写 decision；`independent_review` 除非 task 的冻结输入本身缺失，否则也必须为 `[]`。范围外实现、外部文档、运行时假设、后续研究和低置信度一律不写入。将完整 JSON 写到 task 的 `result_path`，不得修改其他结果。若校验器返回错误，只修正同一 `result_path` 后重新提交，不得改派其他 Agent 修 review JSON。
+写入前逐项自检：字段必须符合 schema、category 必须来自固定枚举、`affected_unit_ids` 必须来自 unit plan 且只包含需要修改正式结果的单元、evidence 必须是对象数组且 path 来自全局冻结范围。`comparison_review` 还必须用编号集合做最后等值检查：`set(independent_finding_decisions[].finding_key) == set(independent_review.findings[].finding_key)`，不得多、少或重复，也不得出现任何 Worker risk key。最后单独检查顶层 `unresolved`：`comparison_review` 必须为 `[]`，无法裁决的 finding 只写 decision；`independent_review` 除非 task 的冻结输入本身缺失，否则也必须为 `[]`。范围外实现、外部文档、运行时假设、后续研究和低置信度一律不写入。将完整 JSON 写到 task 的 `result_path`，不得修改其他结果。若校验器返回错误，只修正同一 `result_path` 后重新提交，不得改派其他 Agent 修 review JSON。
 
-结果提交后，最终回复只用一行 `完成 action_id=<task.action_id>`；不得省略或改写当前 task 中的 `action_id`，也不复述 JSON 或复核内容。历史 task 没有 `action_id` 时才只回复“完成”。
+结束前运行 `python -m pangea_agent.cli.main check-result-json --task '<当前 task JSON 路径>'`。该命令只读检查 JSON 语法，不校验 schema、不判断 finding、不改写结果或 Run 状态；失败时由你修正同一结果后重跑。得到 `status=PASS` 后，最终回复只用一行 `完成 action_id=<task.action_id>`；不得省略或改写当前 task 中的 `action_id`，也不复述 JSON 或复核内容。历史 task 没有 `action_id` 时才只回复“完成”。

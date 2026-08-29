@@ -218,6 +218,12 @@ class UnitSemanticResult(StrictModel):
         ),
     )
 
+
+class EvidenceScopeContract(StrictModel):
+    repo_id: str = Field(min_length=1)
+    allowed_paths: list[str] = Field(min_length=1)
+
+
 class AnalysisTask(StrictModel):
     schema_version: Literal["1.0"] = "1.0"
     task_type: Literal["analysis"] = "analysis"
@@ -225,6 +231,7 @@ class AnalysisTask(StrictModel):
     run_id: str = Field(min_length=1)
     target: str = Field(min_length=1)
     unit: AnalysisUnit
+    evidence_scope: EvidenceScopeContract | None = None
     repository: RepositoryRef
     inventory_path: str = Field(min_length=1)
     source_manifest_path: str = Field(min_length=1)
@@ -272,6 +279,9 @@ class IndependentReviewTask(StrictModel):
     run_id: str = Field(min_length=1)
     target: str = Field(min_length=1)
     repositories: list[RepositoryRef] = Field(min_length=1)
+    evidence_scope_by_unit: dict[str, EvidenceScopeContract] = Field(
+        default_factory=dict
+    )
     unit_plan_path: str = Field(min_length=1)
     inventory_path: str = Field(min_length=1)
     source_manifest_path: str = Field(min_length=1)
@@ -341,6 +351,9 @@ class ComparisonReviewTask(StrictModel):
     action_id: str | None = Field(default=None, min_length=1)
     run_id: str = Field(min_length=1)
     target: str = Field(min_length=1)
+    evidence_scope_by_unit: dict[str, EvidenceScopeContract] = Field(
+        default_factory=dict
+    )
     unit_plan_path: str = Field(min_length=1)
     analysis_task_paths: dict[str, str] = Field(min_length=1)
     analysis_result_paths: dict[str, str] = Field(min_length=1)
@@ -364,6 +377,7 @@ class ClosureTask(StrictModel):
     run_id: str = Field(min_length=1)
     target: str = Field(min_length=1)
     unit: AnalysisUnit
+    evidence_scope: EvidenceScopeContract | None = None
     repository: RepositoryRef
     original_task_path: str = Field(min_length=1)
     original_result_path: str = Field(min_length=1)

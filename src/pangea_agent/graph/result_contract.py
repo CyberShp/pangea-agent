@@ -132,21 +132,26 @@ def _evidence_scope_warnings(
         path.replace("\\", "/").strip("/")
         for path in [*task.unit.source_scope, *task.unit.context_scope]
     }
+    out_of_scope: dict[tuple[str, str], list[int]] = {}
     for evidence in _all_evidence(result):
         normalized_path = evidence.path.replace("\\", "/").strip("/")
         if evidence.repo_id != task.unit.repo_id or normalized_path not in allowed_paths:
-            warnings.append(
-                "源码证据不属于当前分析单元："
-                f"{evidence.repo_id}:{evidence.path}:{evidence.line_start}；"
-                f"allowed_repo={task.unit.repo_id} "
-                f"allowed_paths={sorted(allowed_paths)}"
-            )
+            out_of_scope.setdefault(
+                (evidence.repo_id, evidence.path), []
+            ).append(evidence.line_start)
         if evidence.line_end is not None and evidence.line_end < evidence.line_start:
             warnings.append(
                 "源码证据行号范围无效："
                 f"{evidence.repo_id}:{evidence.path}:"
                 f"{evidence.line_start}-{evidence.line_end}"
             )
+    for (repo_id, path), lines in out_of_scope.items():
+        warnings.append(
+            "源码证据不属于当前分析单元："
+            f"{repo_id}:{path}；lines={sorted(set(lines))[:12]} "
+            f"occurrences={len(lines)}；allowed_repo={task.unit.repo_id} "
+            f"allowed_paths={sorted(allowed_paths)}"
+        )
     return warnings
 
 
@@ -185,17 +190,18 @@ def _reference_warnings(result: UnitSemanticResult) -> list[str]:
         if len(step_keys) != len(set(step_keys)):
             warnings.append(f"流程 {flow.flow_key} 的 step_key 包含重复编号")
         known_steps = set(step_keys)
+        missing_step_keys: set[str] = set()
         for edge in flow.edges:
-            missing = {
+            missing_step_keys.update({
                 key
                 for key in (edge.source_step_key, edge.target_step_key)
                 if key not in known_steps
-            }
-            if missing:
-                warnings.append(
-                    f"流程 {flow.flow_key} 的 edge 引用了未知 step_key："
-                    f"{sorted(missing)}"
-                )
+            })
+        if missing_step_keys:
+            warnings.append(
+                f"流程 {flow.flow_key} 的 edge 引用了未知 step_key："
+                f"{sorted(missing_step_keys)}"
+            )
     for case in result.test_cases:
         unknown_flows = set(case.covered_flow_keys) - known_flows
         if unknown_flows:

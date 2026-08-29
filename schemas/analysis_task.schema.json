@@ -82,6 +82,30 @@
       "title": "AnalysisUnit",
       "type": "object"
     },
+    "EvidenceScopeContract": {
+      "additionalProperties": false,
+      "properties": {
+        "repo_id": {
+          "minLength": 1,
+          "title": "Repo Id",
+          "type": "string"
+        },
+        "allowed_paths": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Allowed Paths",
+          "type": "array"
+        }
+      },
+      "required": [
+        "repo_id",
+        "allowed_paths"
+      ],
+      "title": "EvidenceScopeContract",
+      "type": "object"
+    },
     "RepositoryRef": {
       "additionalProperties": false,
       "properties": {
@@ -123,6 +147,19 @@
       "title": "Task Type",
       "type": "string"
     },
+    "action_id": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Action Id"
+    },
     "run_id": {
       "minLength": 1,
       "title": "Run Id",
@@ -135,6 +172,17 @@
     },
     "unit": {
       "$ref": "#/$defs/AnalysisUnit"
+    },
+    "evidence_scope": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/EvidenceScopeContract"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "repository": {
       "$ref": "#/$defs/RepositoryRef"

@@ -27,6 +27,7 @@ from .public_api import (
     stop_run,
     update_asset_result,
 )
+from .result_check import check_result_json
 from .run_module_analysis import resume_module_analysis, run_module_analysis
 
 
@@ -34,6 +35,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="pangea")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("init-data")
+    result_check = sub.add_parser("check-result-json")
+    result_check.add_argument("--task", required=True)
     run = sub.add_parser("module-analysis")
     run.add_argument("--contract", required=True)
     resume = sub.add_parser("resume-run")
@@ -129,6 +132,12 @@ def main() -> None:
     if args.command == "init-data":
         init_data()
         print_success({"initialized": True, "data_root": "pangea-data"})
+    elif args.command == "check-result-json":
+        try:
+            print_success(check_result_json(args.task))
+        except Exception as exc:
+            print_error(exc)
+            raise SystemExit(1) from exc
     elif args.command == "module-analysis":
         try:
             print_success(run_module_analysis(args.contract))
