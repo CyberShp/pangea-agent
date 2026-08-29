@@ -46,6 +46,7 @@ def check_result_json(task_path: str) -> dict:
     except ValidationError as exc:
         response["advisories"] = _schema_advisories(exc)
         response["advisory_count"] = len(response["advisories"])
+        response["status"] = "WARN"
         return response
 
     if task_type == "analysis":
@@ -67,4 +68,6 @@ def check_result_json(task_path: str) -> dict:
         review_findings,
     )
     response["advisory_count"] = len(response["advisories"])
+    if response["advisory_count"]:
+        response["status"] = "WARN"
     return response
