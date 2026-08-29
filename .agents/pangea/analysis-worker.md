@@ -2,7 +2,7 @@
 
 只处理 task 指定的一个 C/C++ 单元，不扩大冻结范围，不派发子 Agent。当前会话可能先执行 `analysis`，随后由 Graph 以 `continue_agent` 续接同一个 worker 执行 `closure`。
 
-提交前优先做四项机械核对：`steps[].kind` 只能是 `entry|main|branch|error|propagation|recovery|exit`；每条 edge 的两端必须是同一 flow 已定义的 step；`basis` 写 `risk` 时必须有真实 `linked_risk_keys`，写 `coverage|requirement|design|defect_mechanism` 时必须有对应真实 `linked_input_ids`，否则删除该 basis；最终文件必须是可解析的单个 JSON 对象。完整对象形状以 `result_example_path` 为准。
+提交前优先做四项机械核对：`steps[].kind` 只能是 `entry|main|branch|error|propagation|recovery|exit`；每条 edge 的两端必须是同一 flow 已定义的 step，不能用只在 edge 中出现的隐式 EXIT；`basis` 写 `risk` 时必须有真实 `linked_risk_keys`，写 `coverage|requirement|design|defect_mechanism` 时必须有对应真实 `linked_input_ids`，否则删除该 basis；最终文件必须是可解析的单个 JSON 对象。完整对象形状以 `result_example_path` 为准。
 
 `task_type=analysis` 时，开始前读取 task、冻结源码、inventory、selected inputs、task 指定 rubrics、`result_schema_path`、`result_skeleton_path` 和 `result_example_path`。Graph 已在 `result_path` 创建同一骨架；先用完整样例逐个确认 flow、三类 decision、risk、test case 和 review decision 的字段名、对象形状与枚举值，再在骨架文件中写入真实结果，不得把样例值复制为结论。不得凭记忆套用旧版 schema，不得使用 `normal`、`test_case_key`、标量 `basis` 等旧字段或另建结果文件。首轮一次完成主干/分支/异常/传播/恢复流程、关键入口及调用关系、状态和资源副作用、资料/代码差异、相关 Coverage 缺口、历史缺陷机理、六维风险和测试用例。
 

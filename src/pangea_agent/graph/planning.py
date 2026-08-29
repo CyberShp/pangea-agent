@@ -159,7 +159,11 @@ def accept_plan_v2(
     for definition in result.units:
         owned = assignments[definition.unit_key]
         if not owned:
-            raise ValueError(f"规划单元没有请求源码：{definition.unit_key}")
+            if warnings is not None:
+                warnings.append(
+                    f"规划忽略没有源码归属的空单元：{definition.unit_key}"
+                )
+            continue
         mismatched_repositories = {
             repo_id for repo_id, _ in owned if repo_id != definition.repo_id
         }
@@ -176,11 +180,20 @@ def accept_plan_v2(
             for repo_id, path in requested_order
             if repo_id == definition.repo_id and path in owned_paths
         ]
+        context_scope = [
+            path for path in definition.context_scope if path not in owned_paths
+        ]
+        removed_context = sorted(set(definition.context_scope) - set(context_scope))
+        if removed_context and warnings is not None:
+            warnings.append(
+                f"规划移除与源码归属重复的上下文："
+                f"{definition.unit_key}={removed_context}"
+            )
         proposed_units.append(ProposedUnit(
             repo_id=definition.repo_id,
             title=definition.title,
             source_scope=source_scope,
-            context_scope=definition.context_scope,
+            context_scope=context_scope,
             rationale=definition.rationale,
             asset_item_ids=definition.asset_item_ids,
             coverage_ids=definition.coverage_ids,

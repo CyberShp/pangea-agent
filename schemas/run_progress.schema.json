@@ -150,6 +150,19 @@
           },
           "title": "Validation History",
           "type": "array"
+        },
+        "incomplete_attempts": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Incomplete Attempts",
+          "type": "integer"
+        },
+        "incomplete_history": {
+          "items": {
+            "$ref": "#/$defs/ValidationFailureRecord"
+          },
+          "title": "Incomplete History",
+          "type": "array"
         }
       },
       "required": [

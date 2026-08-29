@@ -134,6 +134,53 @@ def _invalid_result(
     return payload
 
 
+def _is_untouched_result_skeleton(task: dict) -> bool:
+    result_path = task.get("result_path")
+    skeleton_path = task.get("result_skeleton_path")
+    if not result_path or not skeleton_path:
+        return False
+    try:
+        return read_json(Path(result_path)) == read_json(Path(skeleton_path))
+    except (OSError, ValueError):
+        return False
+
+
+def _incomplete_result(
+    state: dict,
+    progress,
+    action: ActionState,
+) -> dict:
+    message = "Agent 未写入结果：result_path 仍是 Graph 创建的原始骨架"
+    action.incomplete_attempts += 1
+    action.error = message
+    record = ValidationFailureRecord(
+        attempt=action.incomplete_attempts,
+        code="IncompleteAgentResult",
+        message=message,
+    )
+    action.incomplete_history.append(record)
+    save_progress(state, progress)
+    repair_action = _repair_action(action)
+    error = {
+        "code": record.code,
+        "message": record.message,
+    }
+    repair_action["validation_error"] = error
+    return {
+        "action_id": action.action_id,
+        "status": "incomplete",
+        "recoverable": True,
+        "next_required_tool": "pangea_action_dispatch",
+        "next_required_action_id": action.action_id,
+        "repair_dispatched": False,
+        "error": error,
+        "validation_failures": action.validation_failures,
+        "incomplete_attempts": action.incomplete_attempts,
+        "attention_required": action.incomplete_attempts >= REPEATED_REPAIR_ATTENTION_AFTER,
+        "repair_action": repair_action,
+    }
+
+
 def _record_degradations(progress, action_id: str, warnings: list[str]) -> None:
     progress.degradations = [
         item
@@ -289,9 +336,13 @@ def _validate_action(data_root: str, run_id: str, action_id: str) -> dict:
     if not task_path.is_file():
         raise ValueError(f"Action task 不存在：{task_path}")
 
+    raw_task = read_json(task_path)
+    if _is_untouched_result_skeleton(raw_task):
+        return _incomplete_result(state, progress, action)
+
     warnings: list[str] = []
     if action.role == "planning":
-        task = PlanningTask.model_validate(read_json(task_path))
+        task = PlanningTask.model_validate(raw_task)
         try:
             result = planning_result_model(task).model_validate(
                 read_json(Path(task.result_path))
@@ -300,7 +351,7 @@ def _validate_action(data_root: str, run_id: str, action_id: str) -> dict:
         except (FileNotFoundError, ValueError) as exc:
             return _invalid_result(state, progress, action, exc)
     elif action.role == "analysis":
-        task = AnalysisTask.model_validate(read_json(task_path))
+        task = AnalysisTask.model_validate(raw_task)
         selected_inputs = read_json(Path(task.selected_inputs_path))
         try:
             result = UnitSemanticResult.model_validate(read_json(Path(task.result_path)))
@@ -309,7 +360,7 @@ def _validate_action(data_root: str, run_id: str, action_id: str) -> dict:
         except (FileNotFoundError, ValueError) as exc:
             return _invalid_result(state, progress, action, exc)
     elif action.role == "review":
-        task = read_json(task_path)
+        task = raw_task
         selected_inputs = read_json(Path(task["selected_inputs_path"]))
         try:
             if task["task_type"] == "comparison_review":
@@ -335,7 +386,7 @@ def _validate_action(data_root: str, run_id: str, action_id: str) -> dict:
         except (FileNotFoundError, ValueError) as exc:
             return _invalid_result(state, progress, action, exc)
     elif action.role == "closure":
-        task = ClosureTask.model_validate(read_json(task_path))
+        task = ClosureTask.model_validate(raw_task)
         original = AnalysisTask.model_validate(read_json(Path(task.original_task_path)))
         selected_inputs = read_json(Path(original.selected_inputs_path))
         try:

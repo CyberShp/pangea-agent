@@ -409,6 +409,8 @@ class ActionState(AgentAction):
     validation_failures: int = Field(default=0, ge=0)
     repeated_validation_failures: int = Field(default=0, ge=0)
     validation_history: list[ValidationFailureRecord] = Field(default_factory=list)
+    incomplete_attempts: int = Field(default=0, ge=0)
+    incomplete_history: list[ValidationFailureRecord] = Field(default_factory=list)
 
 
 class WorkflowProgress(StrictModel):

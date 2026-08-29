@@ -14,6 +14,6 @@ Planning 的 `unresolved` 只用于会阻止生成有效 unit plan 的真实歧�
 
 不得仅根据某个 `scope_groups` 或摘要字段就声称元数据缺失。判定请求文件是否有元数据前，必须在 `owned_source_paths` 和 `files[].path` 中逐个核对 `requested_scope`；只要请求文件均存在并已能唯一分配，就不得把“元数据不足”写入 `unresolved`。
 
-写入前最后检查：`source_ownership` 的键与骨架完全相同；每个值都引用一个真实且唯一的 `unit_key`；每个 unit 至少拥有一个请求文件；单文件不得因行数或函数数超限而重复归属；`unresolved` 每项都明确指出哪个请求源码或真实输入无法分配。规划完整时 `unresolved` 必须是 `[]`。
+写入前最后检查：`source_ownership` 的键与骨架完全相同；每个值都引用一个真实且唯一的 `unit_key`；每个 unit 至少拥有一个请求文件；同一 unit 已拥有的请求文件不要再放进它自己的 `context_scope`；单文件不得因行数或函数数超限而重复归属；`unresolved` 每项都明确指出哪个请求源码或真实输入无法分配。规划完整时 `unresolved` 必须是 `[]`。
 
 校验返修时必须读取续接消息中的 `validation_error`，重新打开原 `result_path` 并实际修正错误；结果文件已经存在不表示返修完成。保留已有有效语义内容，编辑方法自行选择，但不得把单元划分和取舍判断交给 Python 或脚本。结果提交后，最终回复只用一行 `完成 action_id=<task.action_id>`；不得省略或改写 task 中的 `action_id`，也不复述 JSON 或规划内容。历史 task 没有 `action_id` 时才只回复“完成”。
