@@ -8,6 +8,8 @@
 
 `task_type=closure` 时，这是本会话首轮结果的定向补齐。读取 closure task、`result_example_path`、`original_task_path`、`original_result_path`、原 task 的冻结输入和 `review_findings`。Graph 已把原结果复制到 closure task 的 `result_path`；只修改这个副本，保留未被 finding 推翻的内容。每个 finding 恰好写一个 `review_finding_decisions`，不得修改原始分析结果或 review JSON。`incorrect_conclusion` 指向已有风险或用例时，必须从正式结果中删除被源码反证的项目，或把错误字段改成证据支持的结论，不能只追加 decision 而保留原错误内容。closure 还必须重审首轮 `unresolved`：已经由本单元源码裁决、已被 finding 驳回、已形成有证据的风险/用例，或只是其他单元和范围外实现细节的问题必须删除；finding 仅提及其他单元但不要求本单元改变正式结论时，按证据如实 `dismissed`，不得复制成新的 unresolved。
 
+closure 写入新风险前，必须按“触发条件、缺陷机理、系统结果、证据区间”与现有风险逐条比对。finding 若只是补充或纠正同一个风险，保留原 `risk_key` 并原位修改该风险及其关联用例，不得追加第二条。finding 改变了源码事实时，要同步检查并修正受影响的 `summary`、flows、risks、test cases 和 review decision，不能让旧说法残留在其他字段；完成后再通读一次这些字段，确认同一函数、状态和资源生命周期没有相互矛盾的描述。
+
 冻结风险前先做 C/C++ 语义校验：`a || b` 在 a 为真时不读 b，`a && b` 在 a 为假时不读 b；`!x` 只在 x 为 0 时为真，负数也是非零真值；入口先以 `<= 0` 返回、之后才执行一次减 1 时，该减法只能把正数降到 0，不能用“已耗尽后继续递减为负数”构造风险或用例预期。缺少锁、重置、范围校验、恢复动作、初始化入口或返回状态本身不是缺陷；必须有契约依据或能从当前源码证明的外部错误结果。重复参数检查、void 返回和调用方传入悬空指针同样不能在没有契约时构造风险。不得假设源码中没有发生的“部分初始化”或隐藏副作用。
 
 每条风险必须至少满足一种证据根基：结构化输入中的明确契约；冻结源码中真实调用方已经观察到的错误结果；或源码自身即可证明的崩溃、未定义行为、越界、数据破坏/丢失、资源泄漏、竞态或安全边界破坏。都不满足时只保留为 flow 或边界用例，`risks` 不收录。
@@ -38,4 +40,4 @@
 
 写入前逐项自检：每个 step evidence 非空、每条 edge 的两端都存在、所有 `covered_flow_keys` / `linked_risk_keys` / `test_case_keys` 都有真实定义、evidence path 属于当前 unit；closure 还要保证 `review_finding_decisions` 与 task findings 一一对应。随后逐条检查顶层 `unresolved`：每项必须逐字包含当前 task 中真实存在的 selected input ID、Coverage ID 或 confirmed finding_key；没有这些真实编号，或只是外部资料/范围外实现/后续研究的问题，直接删除。将完整语义 JSON 写到当前 task 的 `result_path`。不填写 unit ID、Agent ID、路径或运行状态。若校验器返回错误，只修正同一文件后重新提交。
 
-结束前运行 `.venv/bin/python -m pangea_agent.cli.main check-result-json --task '<当前 task JSON 路径>'`；Windows 工作区对应使用 `.venv\Scripts\python.exe`。不要改用 `PYTHONPATH`、系统 `python3` 或只检查 JSON 语法的临时代码。该命令只读 JSON，并会列出 schema、编号引用、`basis` 链接和证据路径的 `advisories`；它不修改结果、不改变 Run 状态，也不判断风险、流程或用例语义。`blocking=false` 只表示这个预检命令本身不写状态、不替你提交；不表示 `WARN` 可以提交。`status=WARN` / `submission_ready=false` 中列出的确定性结构项会由 settle 再次校验，你必须逐条检查，由自己修正后重跑到 `status=PASS`，不得让 Python 替你补写或删改语义内容。只有得到 `status=PASS` 后，最终回复一行 `完成 action_id=<task.action_id>`；不得省略或改写当前 task 中的 `action_id`，也不复述 JSON 或分析内容。历史 task 没有 `action_id` 时才只回复“完成”。
+结束前运行 `.venv/bin/python -m pangea_agent.cli.main check-result-json --task '<当前 task JSON 路径>'`；Windows 工作区对应使用 `.venv\Scripts\python.exe`。不要改用 `PYTHONPATH`、系统 `python3` 或只检查 JSON 语法的临时代码。该命令只读 JSON，并会列出 schema、编号引用、`basis` 链接和证据路径的 `advisories`；它不修改结果、不改变 Run 状态，也不判断风险、流程或用例语义。`submission_ready=false` 表示 JSON 无法被下游读取，必须修正后重跑；`submission_ready=true` 时可以结束当前回合，`status=WARN` 的确定性提示由 settle 保留为降级，不要求为迎合 Python 改写语义。最终回复一行 `完成 action_id=<task.action_id>`；不得省略或改写当前 task 中的 `action_id`，也不复述 JSON 或分析内容。历史 task 没有 `action_id` 时才只回复“完成”。

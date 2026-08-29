@@ -17,6 +17,8 @@ Review finding 的 `category` 只能是：`missed_flow`、`document_delta`、`co
 
 `comparison_review` 是同一 reviewer 的后续对照。读取 task 列出的首轮分析结果、盲审基线、冻结源码、结构化输入和 rubrics。先对盲审的每个 `finding_key` 逐条写入 `independent_finding_decisions`：源码和有效契约共同支持、且首轮结果确实没有覆盖时才用 `confirmed`；首轮 flow/risk/test case 已覆盖同一行为，或被真实控制流、短路、前置返回、有效契约反证时用 `dismissed`；证据不足且确实无法判定时才用 `unresolved`。不得漏项，也不得把自己的盲审结论默认当成正确。随后核对首轮流程、风险、排除条件和用例 oracle；找出与源码相反、缺少接口契约依据、跨单元误用上下文或被盲审基线反证的结论，这类新 finding 使用 `incorrect_conclusion`。同时补充盲审未覆盖的实质遗漏，但不要复制盲审已有 finding。
 
+裁决盲审 finding 前，先从入口沿真实分支读到被指控的操作，逐句核对 evidence observation；关于分配、覆盖、释放、重置、回调和状态迁移的描述，必须由对应语句或完整条件分支直接支持，不能把未执行分支写成已执行事实。然后按“触发条件、缺陷机理、系统结果、证据区间”与首轮所有 flow/risk/test case 比对：只是修正已有风险的触发条件、证据或措辞，或者最终仍是同一资源/状态以同一方式产生同一结果时，不是新遗漏，裁决为 `dismissed`，并在需要时另建一个 `incorrect_conclusion` finding 修正原项。不得因 finding 名称不同、证据多一段或触发路径表述不同就确认成第二条风险。
+
 对照前先单独读取 `independent_review_result_path`；其顶层 `findings[].finding_key` 是 `independent_finding_decisions[].finding_key` 唯一允许的编号集合，两者必须一一对应。盲审 `findings` 为空时，decisions 也必须为 `[]`。不得把 `analysis_result_paths` 中的 risk key、flow key、test case key 或 Coverage ID 写入该列表。首轮 risk 正确时不新增任何字段；首轮结论错误时，在顶层 `findings` 中新建 `category=incorrect_conclusion` 的 finding，而不是为 risk key 创建 decision。
 
 逐条审核首轮 `unresolved`：只有阻断真实 selected input、Coverage gap 或 review finding 裁决的事项才能保留。范围外实现、设计动机、未来扩展、低置信度风险、测试建议、已被任一请求单元源码裁决或已写入风险 confidence/exclusion 的事项，必须用 `incorrect_conclusion` 要求原 worker 删除。跨单元 finding 只分配给正式结果确实需要改变的单元。Review 顶层 `unresolved` 不汇总首轮未决项；对盲审 finding 无法裁决时只用对应 decision 的 `disposition=unresolved` 和 conclusion，不重复写入顶层。

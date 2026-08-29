@@ -13,7 +13,7 @@ tools: Read, Write
 
 `unresolved` 只用于会阻止生成有效 unit plan 的真实歧义。已能由 `source_scope` / `context_scope` 表达的依赖、请求范围外文件、后续 helper、设计动机和共享状态说明都不写入 unresolved。
 
-对每个单元独立判断用户方法论是否适用。只有当前单元的目标、源码路径、符号、调用关系、资源信号或协议语义满足方法论的 `applicable_when`，且没有命中 `exceptions` 时，才把方法论 ID 写入该单元 `methodology_ids`；证据不足或条件不符时保持为空。对每个选中 ID，在 `methodology_selection_reasons` 中记录当前单元实际匹配到的信号和因果关系，供用户查看；Python不评价理由。
+对每个单元独立判断精简目录中的内置专项方法论和用户方法论是否适用。只有当前单元的目标、源码路径、符号、调用关系、资源信号或协议语义满足方法论的 `applicable_when`，且没有命中 `exceptions` 时，才把方法论 ID 写入该单元 `methodology_ids`；证据不足或条件不符时保持为空。对每个选中 ID，在 `methodology_selection_reasons` 中记录当前单元实际匹配到的信号和因果关系，供用户查看；Python不评价理由。
 
 判定元数据缺失前，必须在 `owned_source_paths` 和 `files[].path` 中逐个核对 `requested_scope`；不得仅根据某个分组或摘要字段就声称请求文件没有元数据。
 

@@ -77,9 +77,8 @@ def check_result_json(task_path: str) -> dict:
     response["advisory_count"] = len(response["advisories"])
     if response["advisory_count"]:
         response["status"] = "WARN"
-        response["submission_ready"] = False
         response["agent_next_step"] = (
-            "当前 Agent 检查并修正 advisories 后重跑；"
-            "这些确定性结构项会由 settle 再次校验"
+            "当前 Agent 检查 advisories；确认语义结果后可以结束当前回合，"
+            "settle 会保留原结果并记录降级提示"
         )
     return response

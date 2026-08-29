@@ -22,6 +22,9 @@ def _known_methodology_ids(task: PlanningTask) -> set[str]:
         identifiers.update(
             item.methodology_id for item in catalog.enabled_user_methodologies
         )
+        identifiers.update(
+            item.methodology_id for item in catalog.builtin_methodologies
+        )
     return identifiers
 
 
@@ -108,6 +111,20 @@ def accept_plan(
                 f"coverage={sorted(unknown_coverage)} "
                 f"mechanisms={sorted(unknown_mechanisms)} "
                 f"methodologies={sorted(unknown_methodologies)}"
+            )
+        selected_methodologies = set(proposed.methodology_ids)
+        recorded_reasons = set(proposed.methodology_selection_reasons)
+        missing_reasons = selected_methodologies - recorded_reasons
+        extra_reasons = recorded_reasons - selected_methodologies
+        if missing_reasons:
+            advisory.append(
+                f"单元 U{index:02d} 未记录方法论选择依据："
+                f"{sorted(missing_reasons)}"
+            )
+        if extra_reasons:
+            advisory.append(
+                f"单元 U{index:02d} 记录了未选择方法论的依据："
+                f"{sorted(extra_reasons)}"
             )
         for coverage_id in proposed.coverage_ids:
             if coverage_id in coverage_owners:

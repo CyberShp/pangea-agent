@@ -516,6 +516,13 @@ def _selection_catalog(
             "applicable_when": item.applicable_when,
             "exceptions": item.exceptions,
         } for item in manifest.enabled_user_methodologies],
+        builtin_methodologies=[{
+            "methodology_id": Path(filename).stem,
+            "origin": "builtin",
+            "title": metadata[0],
+            "applicable_when": [metadata[1]],
+            "exceptions": [],
+        } for filename, metadata in SPECIALIZED_METHODOLOGIES.items()],
     )
 
 
@@ -527,7 +534,12 @@ def _ensure_selection_catalog(
     expected = _selection_catalog(manifest)
     if catalog_path.is_file():
         current = FrozenMethodologyCatalog.model_validate(read_json(catalog_path))
-        if current != expected:
+        comparable_expected = expected
+        if not current.builtin_methodologies:
+            comparable_expected = expected.model_copy(update={
+                "builtin_methodologies": [],
+            })
+        if current != comparable_expected:
             raise ValueError("Run 冻结方法论精简目录与冻结清单不一致")
     else:
         write_json(catalog_path, expected.model_dump(mode="json"))
@@ -645,7 +657,7 @@ def methodology_manifest(task_path: str | Path) -> dict:
                 frozen_user.title,
                 selection_reasons.get(
                     frozen_user.methodology_id,
-                    "Planning Agent 选择用于当前单元",
+                    "未记录选择依据",
                 ),
                 "用户确认的历史缺陷资产",
             )
@@ -671,6 +683,12 @@ def methodology_manifest(task_path: str | Path) -> dict:
                 "任务提供的方法论；来源由对应资产或任务契约追溯",
             )
             selection_kind = "task"
+        elif selection_kind == "specialized":
+            metadata = (
+                metadata[0],
+                selection_reasons.get(path.stem, "未记录选择依据"),
+                metadata[2],
+            )
         if selection_kind == "specialized" and source_catalog is None:
             candidate = path.parent / "SOURCES.md"
             source_catalog = str(candidate) if candidate.is_file() else None

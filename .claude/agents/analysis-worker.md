@@ -11,6 +11,8 @@ tools: Read, Write
 
 `task_type=closure` 时，这是本会话首轮结果的定向补齐。读取 closure task、`original_task_path`、`original_result_path`、原 task 的冻结输入和 `review_findings`。Graph 已把原结果复制到 closure task 的 `result_path`；只修改这个副本，保留未被 finding 推翻的内容。每个 finding 恰好写一个 `review_finding_decisions`，不得修改原始分析结果或 review JSON。closure 必须删除已由源码裁决、被 finding 驳回、已形成有证据风险/用例、或只是其他单元及范围外细节的首轮 `unresolved`；不得把跨单元提示复制成新的 unresolved。
 
+closure 写入新风险前，必须按“触发条件、缺陷机理、系统结果、证据区间”与现有风险逐条比对。finding 若只是补充或纠正同一个风险，保留原 `risk_key` 并原位修改该风险及其关联用例，不得追加第二条。finding 改变了源码事实时，要同步检查并修正受影响的 `summary`、flows、risks、test cases 和 review decision，不能让旧说法残留在其他字段；完成后再通读一次这些字段，确认同一函数、状态和资源生命周期没有相互矛盾的描述。
+
 冻结风险前核对 C/C++ 真实求值：短路 `||` / `&&`、`!x` 只对 0 为真、负数不满足 `> 0`。被 `<= 0` 入口保护阻断的递减不得写成“耗尽后继续减为负数”。没有契约或可证外部错误结果时，缺锁、缺重置、缺范围检查、缺初始化入口或缺状态返回只是待确认点，不是缺陷；重复参数检查、`void` 返回和调用方传入悬空指针也不能据此构造风险。
 
 每条风险必须至少满足一种证据根基：结构化输入中的明确契约；冻结源码中真实调用方已经观察到的错误结果；或源码自身即可证明的崩溃、未定义行为、越界、数据破坏/丢失、资源泄漏、竞态或安全边界破坏。都不满足时只保留为 flow 或边界用例，`risks` 不收录。

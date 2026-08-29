@@ -69,12 +69,13 @@ pangea-data/
 - 用例设计顺序是：Coverage 与代码流程为基础，需求/设计约束次之，历史缺陷机理和六维 DFX 风险补充。
 - 黑盒优先；纯黑盒不可行时允许灰盒，但必须保留业务入口、外部观测和清理/恢复。
 
-## 用户方法论
+## 分析方法论
 
 PANGEA 从已经人工批准的历史缺陷条目准备方法论提炼 task；DSH 按 task 派发仓库内的
 `methodology-worker`，再由 PANGEA 校验来源和候选结构。候选必须由用户明确启用，之后创建的 Run 才会在
-`inputs/methodologies/` 中冻结独立副本。Planning Agent 只读取独立 `catalog.json` 中的 ID、标题、适用条件和例外，
-按分析单元记录选择理由；只有选中的方法论全文才加入该单元 analysis worker 和 reviewer 的
+`inputs/methodologies/` 中冻结独立副本。内置专项方法论和已启用的用户方法论都会进入 Run 的精简
+`catalog.json`；Planning Agent 只读取其中的 ID、标题、适用条件和例外，按分析单元记录选择理由。只有选中的
+方法论全文才加入该单元 analysis worker 和 reviewer 的
 `rubric_paths`。旧 Run 始终使用自己的冻结副本。
 
 ```powershell

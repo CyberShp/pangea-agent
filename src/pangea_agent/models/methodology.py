@@ -137,6 +137,17 @@ class MethodologySelectionRef(StrictModel):
     exceptions: list[NonEmptyText] = Field(default_factory=list)
 
 
+class BuiltinMethodologySelectionRef(StrictModel):
+    methodology_id: str = Field(
+        min_length=1,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$",
+    )
+    origin: Literal["builtin"] = "builtin"
+    title: NonEmptyText
+    applicable_when: list[NonEmptyText] = Field(min_length=1)
+    exceptions: list[NonEmptyText] = Field(default_factory=list)
+
+
 class FrozenMethodologyCatalog(StrictModel):
     schema_version: Literal["1.0"] = "1.0"
     run_id: str = Field(min_length=1)
@@ -144,14 +155,25 @@ class FrozenMethodologyCatalog(StrictModel):
     enabled_user_methodologies: list[MethodologySelectionRef] = Field(
         default_factory=list
     )
+    builtin_methodologies: list[BuiltinMethodologySelectionRef] = Field(
+        default_factory=list
+    )
 
     @model_validator(mode="after")
     def unique_entries(self) -> "FrozenMethodologyCatalog":
-        identifiers = [
+        user_identifiers = [
             item.methodology_id for item in self.enabled_user_methodologies
         ]
-        if len(identifiers) != len(set(identifiers)):
+        builtin_identifiers = [
+            item.methodology_id for item in self.builtin_methodologies
+        ]
+        if len(user_identifiers) != len(set(user_identifiers)):
             raise ValueError("方法论精简目录中的 methodology_id 不能重复")
+        if len(builtin_identifiers) != len(set(builtin_identifiers)):
+            raise ValueError("内置方法论精简目录中的 methodology_id 不能重复")
+        overlap = set(user_identifiers) & set(builtin_identifiers)
+        if overlap:
+            raise ValueError(f"用户方法论与内置方法论 ID 冲突：{sorted(overlap)}")
         return self
 
 

@@ -27,7 +27,10 @@ from pangea_agent.graph.workflow_store import (
     save_progress,
     validated_result_path,
 )
-from pangea_agent.methodology import frozen_methodology_paths
+from pangea_agent.methodology import (
+    SPECIALIZED_METHODOLOGIES,
+    frozen_methodology_paths,
+)
 from pangea_agent.models.analysis import (
     ActionState,
     AnalysisTask,
@@ -53,6 +56,13 @@ GENERAL_RUBRICS = [
         "test_case_generation.md",
     )
 ]
+
+SPECIALIZED_RUBRICS = {
+    Path(name).stem: str(
+        project_path("src", "pangea_agent", "rubrics", "builtin", name)
+    )
+    for name in SPECIALIZED_METHODOLOGIES
+}
 
 
 def _normalized_scope_path(path: str) -> str:
@@ -198,72 +208,6 @@ def assert_comparison_review_scope(
         raise ValueError("对照复核证据范围不完整：" + " | ".join(errors[:24]))
 
 
-def _rubric_signal_text(unit, compact: dict, paths: set[str]) -> str:
-    files = [
-        item for item in compact.get("files", [])
-        if item.get("repo_id") == unit.repo_id and item.get("path") in paths
-    ]
-    return "\n".join([
-        *(path.lower() for path in paths),
-        *(
-            str(function.get("symbol", "")).lower()
-            for item in files
-            for function in item.get("functions", [])
-        ),
-        *(
-            str(signal.get("text", "")).lower()
-            for item in files
-            for signal in item.get("resource_signals", [])
-        ),
-    ])
-
-
-def _specialized_rubrics(unit, compact: dict) -> list[str]:
-    source_text = _rubric_signal_text(unit, compact, set(unit.source_scope))
-    all_text = _rubric_signal_text(
-        unit,
-        compact,
-        set(unit.source_scope) | set(unit.context_scope),
-    )
-    selected = []
-    if "iscsi" in source_text:
-        selected.append(str(project_path("src", "pangea_agent", "rubrics", "builtin", "storage_iscsi.md")))
-    if any(token in source_text for token in ("/nvme/", "nvme_", "nvm express")):
-        selected.append(str(project_path("src", "pangea_agent", "rubrics", "builtin", "storage_nvme.md")))
-    if any(token in source_text for token in (
-        "/nvmf/", "nvmf_", "nvme_tcp", "nvme_rdma", "nvme_fabric",
-        "nvme-of", "nvmeof", "dhchap", "nvme_auth",
-    )):
-        selected.append(str(project_path("src", "pangea_agent", "rubrics", "builtin", "storage_nvmeof.md")))
-    if any(token in source_text for token in (
-        "/sas/", "/scsi/", "libsas", "sas_", "scsi_cmnd", "scsi_device",
-        "scsi_host", "scsi_eh", "scsi_status", "sense_key", "ascq", "ssp_", "smp_", "stp_",
-    )):
-        selected.append(str(project_path("src", "pangea_agent", "rubrics", "builtin", "storage_sas_scsi.md")))
-    has_resource_lifecycle = (
-        ("alloc" in all_text and "free" in all_text)
-        or ("register" in all_text and "unregister" in all_text)
-        or "refcount" in all_text
-        or "mempool" in all_text
-        or (
-            "resource" in all_text
-            and any(token in all_text for token in ("release", "destroy", "cleanup"))
-        )
-    )
-    if has_resource_lifecycle:
-        selected.append(str(project_path("src", "pangea_agent", "rubrics", "builtin", "storage_resource_recovery.md")))
-    if any(token in source_text for token in ("dpdk", "rte_", "ethdev")):
-        selected.append(str(project_path("src", "pangea_agent", "rubrics", "builtin", "vendor_dpdk.md")))
-    if any(token in source_text for token in (
-        "mlx4", "mlx5", "ibv_", "rdma_", "librdmacm", "libibverbs",
-        "devx", "/rdma/", "roce", "infiniband",
-    )):
-        selected.append(str(project_path("src", "pangea_agent", "rubrics", "builtin", "vendor_mlx_rdma.md")))
-    if any(token in source_text for token in ("doca_", "/doca/", "bluefield")):
-        selected.append(str(project_path("src", "pangea_agent", "rubrics", "builtin", "vendor_nvidia_doca.md")))
-    return selected
-
-
 def _stage_ready(progress) -> bool:
     actions = current_stage_actions(progress)
     return bool(actions) and all(action.status == "settled" for action in actions)
@@ -373,6 +317,7 @@ def _prepare_analysis(state: PangeaState, progress) -> PangeaState:
     user_rubric_paths = {
         Path(path).stem: path for path in frozen_methodology_paths(run_dir)
     }
+    selectable_rubric_paths = {**SPECIALIZED_RUBRICS, **user_rubric_paths}
     for unit in units:
         action_id = f"{state['run_id']}:analysis:{unit.unit_id}"
         unit_inputs = {
@@ -411,9 +356,8 @@ def _prepare_analysis(state: PangeaState, progress) -> PangeaState:
             result_path=str(analysis_result_path(state, unit.unit_id)),
             rubric_paths=[
                 *GENERAL_RUBRICS,
-                *_specialized_rubrics(unit, compact),
                 *[
-                    user_rubric_paths[methodology_id]
+                    selectable_rubric_paths[methodology_id]
                     for methodology_id in unit.methodology_ids
                 ],
             ],
@@ -460,6 +404,7 @@ def _accept_analysis(state: PangeaState, progress) -> PangeaState:
     user_rubric_paths = {
         Path(path).stem: path for path in frozen_methodology_paths(run_dir)
     }
+    selectable_rubric_paths = {**SPECIALIZED_RUBRICS, **user_rubric_paths}
     selected_methodology_ids = {
         methodology_id
         for unit in progress.analysis_units
@@ -481,7 +426,7 @@ def _accept_analysis(state: PangeaState, progress) -> PangeaState:
             *GENERAL_RUBRICS,
             *[
                 path
-                for methodology_id, path in user_rubric_paths.items()
+                for methodology_id, path in selectable_rubric_paths.items()
                 if methodology_id in selected_methodology_ids
             ],
         ],

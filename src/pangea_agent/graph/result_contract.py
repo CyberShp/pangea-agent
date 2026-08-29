@@ -52,6 +52,12 @@ def validate_unit_result(
         result,
         review_findings,
     ))
+    if review_findings is not None:
+        warnings.extend(_check_decisions(
+            "review_finding_decisions",
+            {item.finding_key for item in review_findings},
+            [item.finding_key for item in result.review_finding_decisions],
+        ))
 
     known_inputs = expected_inputs | expected_coverage | expected_mechanisms
     item_types = {
@@ -74,31 +80,6 @@ def validate_unit_result(
             )
 
     return warnings
-
-
-def assert_unit_references(result: UnitSemanticResult) -> None:
-    """Reject only broken internal identifiers, never semantic conclusions."""
-    errors = _reference_warnings(result)
-    if errors:
-        raise ValueError("结果内部编号引用不完整：" + " | ".join(errors[:24]))
-
-
-def assert_unit_submission(
-    task: AnalysisTask,
-    result: UnitSemanticResult,
-    selected_inputs: dict,
-    review_findings: list[ReviewFinding] | None = None,
-) -> None:
-    """Reject mechanically inconsistent ownership and declared links."""
-    errors = unit_submission_warnings(
-        task,
-        result,
-        selected_inputs,
-        review_findings,
-    )
-
-    if errors:
-        raise ValueError("结果结构关联不完整：" + " | ".join(errors[:24]))
 
 
 def unit_submission_warnings(

@@ -37,9 +37,9 @@
   并行 Agent 的其他完成通知只能按各自 exact `action_id` 排队。当前 action 返回 invalid 后，在它的 repair 已真实 dispatch 之前，不得 settle 另一个已完成 action、读状态、猜测哪个任务已推进，也不得跳到下一条 repair。先完成这一次 `settle -> dispatch repair`，再处理队列中的下一个完成通知。多个 repair 完成后，逐个 settle 它们各自回显的 action；不得改成等待另一个已经 settled 的 action，也不得在仍有已完成但未 settle 的 exact action 时结束会话。
 - 返回 `validation.attention_required=true`：说明同一结构错误已连续出现 3 次，或该 action 累计结构修复已达到 6 次。主 Agent 停止盲目重试该 Run，保留现场并把它记为“未完成”，不得让 Python 把 Run 判死，也不得把占位报告当成正式报告。
 
-Run/action/task 丢失、冻结输入损坏、`continue_agent` 缺少约定的 `task_id` 或 Workflow 返回未持久化 action 才属于流程错误。无法解析、缺少下游必需结构、内部编号悬空、evidence 超出声明单元，或 `basis` 声明与实际链接不一致的结果由当前 worker 原地修复；这些检查只证明结构关联，不裁决风险、流程或用例语义。Coverage 取舍、finding 是否成立及其他语义分歧由 Workflow 原样保留并标记降级。返修时保留已有有效语义内容，编辑方法由当前 Agent 自己选择；不得把语义判断交给 Python 或脚本。主 Agent 不读取或代改结果，不得换 worker。重试是否暂停由 DSH 主 Agent 根据 `attention_required` 决定，Python 只记录次数和提示。
+Run/action/task 丢失、冻结输入损坏、`continue_agent` 缺少约定的 `task_id` 或 Workflow 返回未持久化 action 才属于流程错误。无法解析或缺少下游必需结构的结果由当前 worker 原地修复；内部编号悬空、evidence 超出声明单元、`basis` 声明与实际链接不一致，以及 Coverage 取舍、finding 是否成立等分歧，由 Workflow 保留原结果并标记降级。这些检查只说明契约关联状态，不裁决风险、流程或用例语义。返修时保留已有有效语义内容，编辑方法由当前 Agent 自己选择；不得把语义判断交给 Python 或脚本。主 Agent 不读取或代改结果，不得换 worker。重试是否暂停由 DSH 主 Agent 根据 `attention_required` 决定，Python 只记录次数和提示。
 
-Worker 结束前可调用 `check-result-json --task`。DSH 在 POSIX 工作区固定使用 `.venv/bin/python -m pangea_agent.cli.main check-result-json --task '<当前 task JSON 路径>'`，Windows 工作区使用 `.venv\Scripts\python.exe`；不要用 `PYTHONPATH` 或系统 `python3` 绕过项目运行环境。该命令只读取 task 指向的结果，确认 JSON 可解析，并以 `advisories` 提示 schema、内部编号、声明链接和证据路径问题。`blocking=false` 只说明该命令不写文件、不改变 action / Run 状态、不代替 settle；它不等于允许忽略 `WARN`。出现 `status=WARN` / `submission_ready=false` 时，当前 Agent 必须自行检查和修正提示并重跑到 `PASS`，因为 settle 会再次检查同一批确定性结构项。它不判断语义，任何内容修正仍由当前 Agent 自己完成。
+Worker 结束前可调用 `check-result-json --task`。DSH 在 POSIX 工作区固定使用 `.venv/bin/python -m pangea_agent.cli.main check-result-json --task '<当前 task JSON 路径>'`，Windows 工作区使用 `.venv\Scripts\python.exe`；不要用 `PYTHONPATH` 或系统 `python3` 绕过项目运行环境。该命令只读取 task 指向的结果，确认 JSON 能否被下游消费，并以 `advisories` 提示内部编号、声明链接和证据路径问题。`submission_ready=false` 时由当前 Agent 修正无法读取的结构；`submission_ready=true` 时允许结束回合，`status=WARN` 由 settle 保留为降级提示并继续流程。它不判断语义，任何内容修正仍由当前 Agent 自己决定。
 
 Review 固定分为同一 Reviewer 的两个 checkpoint：`independent_review` 不提供首轮结果；`comparison_review` 才提供首轮结果做对照。定向补齐后直接聚合，不启动新的复核 Agent。
 
