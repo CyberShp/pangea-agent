@@ -14,6 +14,7 @@ from pangea_agent.assets import (
 )
 from pangea_agent.repositories.registry import list_registered_repositories
 from pangea_agent.graph.workflow_store import load_progress, save_progress
+from pangea_agent.methodology import run_methodology_manifests
 from pangea_agent.report import reports_are_complete
 
 
@@ -98,6 +99,7 @@ def run_detail(data_root: str, run_id: str) -> dict:
         "html": str(run_dir / "report.html") if summary["report_available"] else None,
         "markdown": str(run_dir / "report.md") if summary["report_available"] else None,
     }
+    summary["methodologies"] = run_methodology_manifests(run_dir)
     return summary
 
 

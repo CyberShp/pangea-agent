@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from pangea_agent.agent_io import read_json, write_json
+from pangea_agent.methodology import methodology_manifest
 from pangea_agent.models.analysis import ActionState, WorkflowProgress
 
 
@@ -89,11 +90,15 @@ def pending_actions(progress: WorkflowProgress, limit: int = 8) -> list[dict]:
         action.status == "dispatched" for action in progress.actions.values()
     )
     available = max(0, limit - active)
-    return [
-        action.model_dump(mode="json")
-        for action in progress.actions.values()
-        if action.status == "pending"
-    ][:available]
+    pending = []
+    for action in progress.actions.values():
+        if action.status != "pending":
+            continue
+        payload = action.model_dump(mode="json")
+        if action.role in {"analysis", "closure"}:
+            payload["methodologies"] = methodology_manifest(action.task_path)
+        pending.append(payload)
+    return pending[:available]
 
 
 def add_action(progress: WorkflowProgress, action: ActionState) -> None:

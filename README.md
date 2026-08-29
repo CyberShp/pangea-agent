@@ -78,6 +78,10 @@ CLI 每次只向 stdout 输出一个 JSON envelope。主要能力分为：
 - `system capabilities`：返回当前支持语言和接口版本；
 - `adapter`：供客户端绑定、校验和提交 Agent action。
 
+analysis/closure action 的 `methodologies` 字段列出当前单元实际冻结的方法论；`runs get` 在 Run
+级别返回同结构清单。每项包含稳定 ID、标题、内容 SHA-256、通用/专项类型、选择依据、来源基线摘要和
+专项来源目录路径。该字段只用于展示和追溯，不参与结果校验，也不替 Agent 判断风险或用例是否成立。
+
 当前只宣布 `c_cpp` 支持。Lua 会在 C/C++ 流程稳定后单独实现，不预建跨语言抽象层。
 
 ## 报告
