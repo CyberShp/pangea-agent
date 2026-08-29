@@ -1,0 +1,51 @@
+{
+  "schema_version": "2.0",
+  "summary": "按 Host、Target 与 Subsystem 三条功能链划分请求源码",
+  "units": [
+    {
+      "unit_key": "HOST_AUTH",
+      "repo_id": "spdk",
+      "title": "Host 认证与 Fabric 连接",
+      "context_scope": [
+        "include/spdk/nvmf.h"
+      ],
+      "rationale": "认证状态机与 Fabric 连接属于同一直接调用链且规模未超限",
+      "asset_item_ids": [],
+      "coverage_ids": [],
+      "mechanism_ids": []
+    },
+    {
+      "unit_key": "TARGET_AUTH",
+      "repo_id": "spdk",
+      "title": "Target 认证状态机",
+      "context_scope": [
+        "lib/nvmf/nvmf_internal.h"
+      ],
+      "rationale": "Target 侧认证处理形成独立状态机",
+      "asset_item_ids": [],
+      "coverage_ids": [],
+      "mechanism_ids": []
+    },
+    {
+      "unit_key": "SUBSYSTEM_AUTH",
+      "repo_id": "spdk",
+      "title": "Subsystem 认证集成",
+      "context_scope": [
+        "lib/nvmf/auth.c"
+      ],
+      "rationale": "Subsystem 主机管理、密钥访问和公开接口共同形成认证集成边界",
+      "asset_item_ids": [],
+      "coverage_ids": [],
+      "mechanism_ids": []
+    }
+  ],
+  "source_ownership": {
+    "spdk:lib/nvme/nvme_auth.c": "HOST_AUTH",
+    "spdk:lib/nvme/nvme_fabric.c": "HOST_AUTH",
+    "spdk:lib/nvmf/auth.c": "TARGET_AUTH",
+    "spdk:lib/nvmf/subsystem.c": "SUBSYSTEM_AUTH",
+    "spdk:lib/nvmf/nvmf_internal.h": "SUBSYSTEM_AUTH",
+    "spdk:include/spdk/nvmf.h": "SUBSYSTEM_AUTH"
+  },
+  "unresolved": []
+}

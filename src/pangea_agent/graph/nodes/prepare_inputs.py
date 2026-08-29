@@ -3,12 +3,13 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from pangea_agent.agent_io import write_json
+from pangea_agent.agent_io import read_json, write_json
 from pangea_agent.assets import analysis_asset_inputs
 from pangea_agent.documents.coverage import match_coverage_records, relevant_zero_coverage
 from pangea_agent.graph.state import PangeaState
 from pangea_agent.graph.workflow_store import (
     add_action,
+    initialize_result,
     planning_result_path,
     planning_task_path,
     project_path,
@@ -167,7 +168,8 @@ def prepare_inputs(state: PangeaState) -> PangeaState:
     coverage_path = run_dir / "inputs" / "coverage-gaps.json"
     inventory_path = run_dir / "inputs" / "inventory.json"
     source_manifest_path = run_dir / "inputs" / "source-manifest.json"
-    write_json(compact_path, _compact_inventory(inventory, expansion))
+    compact_metadata = _compact_inventory(inventory, expansion)
+    write_json(compact_path, compact_metadata)
     write_json(candidates_path, assets["candidates"])
     write_json(asset_items_path, assets["items"])
     write_json(coverage_path, zero_coverage)
@@ -184,6 +186,18 @@ def prepare_inputs(state: PangeaState) -> PangeaState:
         },
     })
 
+    planning_skeleton_path = run_dir / "inputs" / "planning-result.skeleton.json"
+    write_json(planning_skeleton_path, {
+        "schema_version": "2.0",
+        "summary": "<非空规划摘要>",
+        "units": [],
+        "source_ownership": {
+            f"{item['repo_id']}:{item['path']}": "<unit_key>"
+            for item in compact_metadata.get("owned_source_paths", [])
+        },
+        "unresolved": [],
+    })
+
     action_id = f"{state['run_id']}:planning"
     task = PlanningTask(
         action_id=action_id,
@@ -193,12 +207,18 @@ def prepare_inputs(state: PangeaState) -> PangeaState:
         requested_scope=requested_scope,
         compact_metadata_path=str(compact_path),
         asset_candidates_path=str(candidates_path),
-        result_schema_path=str(project_path("schemas", "planning_result.schema.json")),
-        result_example_path=str(project_path("schemas", "planning_result.example.json")),
+        result_contract_version="2.0",
+        result_schema_path=str(project_path("schemas", "planning_result_v2.schema.json")),
+        result_skeleton_path=str(planning_skeleton_path),
+        result_example_path=str(project_path("schemas", "planning_result_v2.example.json")),
         result_path=str(planning_result_path(state)),
     )
     task_path = planning_task_path(state)
     write_json(task_path, task.model_dump(mode="json"))
+    initialize_result(
+        Path(task.result_path),
+        read_json(Path(task.result_skeleton_path)),
+    )
     action = ActionState(
         action_id=action_id,
         action="dispatch_agent",

@@ -2,6 +2,8 @@
 
 只处理 task 指定的一个 C/C++ 单元，不扩大冻结范围，不派发子 Agent。当前会话可能先执行 `analysis`，随后由 Graph 以 `continue_agent` 续接同一个 worker 执行 `closure`。
 
+提交前优先做四项机械核对：`steps[].kind` 只能是 `entry|main|branch|error|propagation|recovery|exit`；每条 edge 的两端必须是同一 flow 已定义的 step；`basis` 写 `risk` 时必须有真实 `linked_risk_keys`，写 `coverage|requirement|design|defect_mechanism` 时必须有对应真实 `linked_input_ids`，否则删除该 basis；最终文件必须是可解析的单个 JSON 对象。完整对象形状以 `result_example_path` 为准。
+
 `task_type=analysis` 时，开始前读取 task、冻结源码、inventory、selected inputs、task 指定 rubrics、`result_schema_path`、`result_skeleton_path` 和 `result_example_path`。Graph 已在 `result_path` 创建同一骨架；先用完整样例逐个确认 flow、三类 decision、risk、test case 和 review decision 的字段名、对象形状与枚举值，再在骨架文件中写入真实结果，不得把样例值复制为结论。不得凭记忆套用旧版 schema，不得使用 `normal`、`test_case_key`、标量 `basis` 等旧字段或另建结果文件。首轮一次完成主干/分支/异常/传播/恢复流程、关键入口及调用关系、状态和资源副作用、资料/代码差异、相关 Coverage 缺口、历史缺陷机理、六维风险和测试用例。
 
 `task_type=closure` 时，这是本会话首轮结果的定向补齐。读取 closure task、`result_example_path`、`original_task_path`、`original_result_path`、原 task 的冻结输入和 `review_findings`。Graph 已把原结果复制到 closure task 的 `result_path`；只修改这个副本，保留未被 finding 推翻的内容。每个 finding 恰好写一个 `review_finding_decisions`，不得修改原始分析结果或 review JSON。`incorrect_conclusion` 指向已有风险或用例时，必须从正式结果中删除被源码反证的项目，或把错误字段改成证据支持的结论，不能只追加 decision 而保留原错误内容。closure 还必须重审首轮 `unresolved`：已经由本单元源码裁决、已被 finding 驳回、已形成有证据的风险/用例，或只是其他单元和范围外实现细节的问题必须删除；finding 仅提及其他单元但不要求本单元改变正式结论时，按证据如实 `dismissed`，不得复制成新的 unresolved。

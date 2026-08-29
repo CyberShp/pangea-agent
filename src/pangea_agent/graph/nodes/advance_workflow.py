@@ -4,7 +4,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from pangea_agent.agent_io import read_json, write_json
-from pangea_agent.graph.planning import accept_plan
+from pangea_agent.graph.planning import accept_planning_result, planning_result_model
 from pangea_agent.graph.result_contract import validate_unit_result
 from pangea_agent.graph.state import PangeaState
 from pangea_agent.graph.workflow_store import (
@@ -270,14 +270,20 @@ def _prepare_analysis(state: PangeaState, progress) -> PangeaState:
         state,
         progress,
         planning_action,
-        PlanningResult,
+        planning_result_model(task),
     )
     if result is None:
         return _waiting(state, progress)
     compact = read_json(Path(task.compact_metadata_path))
     all_asset_items = read_json(run_dir / "inputs" / "asset-items.json")
     coverage_gaps = read_json(run_dir / "inputs" / "coverage-gaps.json")
-    units = accept_plan(task, result, compact, all_asset_items, coverage_gaps)
+    units = accept_planning_result(
+        task,
+        result,
+        compact,
+        all_asset_items,
+        coverage_gaps,
+    )
     unit_plan_summary = result.summary
     if len(units) != len(result.units):
         unit_plan_summary = (

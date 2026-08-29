@@ -18,7 +18,7 @@ from pangea_agent.graph.nodes.advance_workflow import (
     _validate_comparison_review,
     _validate_review,
 )
-from pangea_agent.graph.planning import accept_plan
+from pangea_agent.graph.planning import accept_planning_result, planning_result_model
 from pangea_agent.graph.result_contract import (
     assert_unit_submission,
     validate_unit_result,
@@ -37,6 +37,7 @@ from pangea_agent.models.analysis import (
     ComparisonReviewResult,
     IndependentReviewResult,
     PlanningResult,
+    PlanningResultV2,
     PlanningTask,
     UnitSemanticResult,
     ValidationFailureRecord,
@@ -256,11 +257,11 @@ def bind_action(data_root: str, run_id: str, action_id: str, task_id: str) -> di
 def _validate_planning(
     state: dict,
     task: PlanningTask,
-    result: PlanningResult,
+    result: PlanningResult | PlanningResultV2,
 ) -> list[str]:
     run_dir = run_directory(state)
     warnings: list[str] = []
-    accept_plan(
+    accept_planning_result(
         task,
         result,
         read_json(Path(task.compact_metadata_path)),
@@ -292,7 +293,9 @@ def _validate_action(data_root: str, run_id: str, action_id: str) -> dict:
     if action.role == "planning":
         task = PlanningTask.model_validate(read_json(task_path))
         try:
-            result = PlanningResult.model_validate(read_json(Path(task.result_path)))
+            result = planning_result_model(task).model_validate(
+                read_json(Path(task.result_path))
+            )
             warnings = _validate_planning(state, task, result)
         except (FileNotFoundError, ValueError) as exc:
             return _invalid_result(state, progress, action, exc)

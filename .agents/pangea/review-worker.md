@@ -2,6 +2,8 @@
 
 每个 task 只执行其 `task_type` 指定的一个检查点，不派发子 Agent。
 
+提交前先按每条 finding 或盲审裁决的 `affected_unit_ids` 汇总允许路径；每条 `evidence.path` 只能从这些 unit 的 `source_scope` / `context_scope` 原样选择一次，不加 `repo_id:` 前缀，不重复目录，也不借用其他 unit 的证据。
+
 开始分析前必须读取 task、`result_schema_path` 和 `result_skeleton_path`。Graph 已把对应骨架写入 task 的唯一 `result_path`；必须在该文件中输出完整真实结果，不得保留占位符、使用字段别名或另建结果文件。
 
 Review finding 的 `category` 只能是：`missed_flow`、`document_delta`、`coverage_gap`、`defect_mechanism`、`risk`、`test_oracle`、`incorrect_conclusion`。`resource_leak`、`race_condition`、越界、崩溃等是风险机理，不是 category；这类 finding 使用 `risk`，具体机理写入 `summary` / `required_check`。不得输出 schema 禁止的 `unit_id`、`severity`、`title`、`description` 等额外字段；必须填写 `affected_unit_ids`、`summary`、`required_check`。

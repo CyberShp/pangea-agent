@@ -1,6 +1,18 @@
 from __future__ import annotations
 
-from pangea_agent.models.analysis import AnalysisUnit, PlanningResult, PlanningTask
+from pangea_agent.models.analysis import (
+    AnalysisUnit,
+    PlanningResult,
+    PlanningResultV2,
+    PlanningTask,
+    ProposedUnit,
+)
+
+
+def planning_result_model(task: PlanningTask):
+    if task.result_contract_version == "2.0":
+        return PlanningResultV2
+    return PlanningResult
 
 
 def accept_plan(
@@ -103,3 +115,115 @@ def accept_plan(
     if missing_coverage:
         advisory.append(f"规划没有分配 Coverage 缺口：{sorted(missing_coverage)}")
     return units
+
+
+def accept_plan_v2(
+    task: PlanningTask,
+    result: PlanningResultV2,
+    compact_metadata: dict,
+    asset_inputs: dict,
+    coverage_gaps: list[dict],
+    warnings: list[str] | None = None,
+) -> list[AnalysisUnit]:
+    requested_order = [
+        (item["repo_id"], item["path"])
+        for item in compact_metadata.get("owned_source_paths", [])
+    ]
+    requested_keys = {
+        f"{repo_id}:{path}": (repo_id, path)
+        for repo_id, path in requested_order
+    }
+    actual_keys = set(result.source_ownership)
+    expected_keys = set(requested_keys)
+    if actual_keys != expected_keys:
+        raise ValueError(
+            "源码归属清单与请求范围不一致："
+            f"missing={sorted(expected_keys - actual_keys)} "
+            f"extra={sorted(actual_keys - expected_keys)}"
+        )
+
+    definitions = {unit.unit_key: unit for unit in result.units}
+    if len(definitions) != len(result.units):
+        raise ValueError("规划 units[].unit_key 包含重复值")
+    unknown_units = set(result.source_ownership.values()) - set(definitions)
+    if unknown_units:
+        raise ValueError(f"源码归属引用了未知 unit_key：{sorted(unknown_units)}")
+
+    assignments: dict[str, list[tuple[str, str]]] = {
+        unit_key: [] for unit_key in definitions
+    }
+    for ownership_key, unit_key in result.source_ownership.items():
+        assignments[unit_key].append(requested_keys[ownership_key])
+
+    proposed_units: list[ProposedUnit] = []
+    for definition in result.units:
+        owned = assignments[definition.unit_key]
+        if not owned:
+            raise ValueError(f"规划单元没有请求源码：{definition.unit_key}")
+        mismatched_repositories = {
+            repo_id for repo_id, _ in owned if repo_id != definition.repo_id
+        }
+        if mismatched_repositories:
+            raise ValueError(
+                f"规划单元 {definition.unit_key} 的 repo_id 与源码归属不一致："
+                f"unit_repo={definition.repo_id} source_repos={sorted(mismatched_repositories)}"
+            )
+        owned_paths = {
+            path for repo_id, path in owned if repo_id == definition.repo_id
+        }
+        source_scope = [
+            path
+            for repo_id, path in requested_order
+            if repo_id == definition.repo_id and path in owned_paths
+        ]
+        proposed_units.append(ProposedUnit(
+            repo_id=definition.repo_id,
+            title=definition.title,
+            source_scope=source_scope,
+            context_scope=definition.context_scope,
+            rationale=definition.rationale,
+            asset_item_ids=definition.asset_item_ids,
+            coverage_ids=definition.coverage_ids,
+            mechanism_ids=definition.mechanism_ids,
+        ))
+
+    legacy_shape = PlanningResult(
+        summary=result.summary,
+        units=proposed_units,
+        unresolved=result.unresolved,
+    )
+    return accept_plan(
+        task,
+        legacy_shape,
+        compact_metadata,
+        asset_inputs,
+        coverage_gaps,
+        warnings,
+    )
+
+
+def accept_planning_result(
+    task: PlanningTask,
+    result: PlanningResult | PlanningResultV2,
+    compact_metadata: dict,
+    asset_inputs: dict,
+    coverage_gaps: list[dict],
+    warnings: list[str] | None = None,
+) -> list[AnalysisUnit]:
+    if isinstance(result, PlanningResultV2):
+        return accept_plan_v2(
+            task,
+            result,
+            compact_metadata,
+            asset_inputs,
+            coverage_gaps,
+            warnings,
+        )
+    return accept_plan(
+        task,
+        result,
+        compact_metadata,
+        asset_inputs,
+        coverage_gaps,
+        warnings,
+    )

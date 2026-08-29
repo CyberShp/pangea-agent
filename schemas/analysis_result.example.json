@@ -23,6 +23,76 @@
           ]
         },
         {
+          "step_key": "STEP-MAIN",
+          "label": "执行核心处理",
+          "kind": "main",
+          "evidence": [
+            {
+              "repo_id": "example-repo",
+              "path": "src/example.c",
+              "line_start": 13,
+              "line_end": 13,
+              "observation": "核心实现开始处理输入"
+            }
+          ]
+        },
+        {
+          "step_key": "STEP-BRANCH",
+          "label": "检查处理结果",
+          "kind": "branch",
+          "evidence": [
+            {
+              "repo_id": "example-repo",
+              "path": "src/example.c",
+              "line_start": 14,
+              "line_end": 14,
+              "observation": "返回值决定成功或失败分支"
+            }
+          ]
+        },
+        {
+          "step_key": "STEP-ERROR",
+          "label": "记录失败状态",
+          "kind": "error",
+          "evidence": [
+            {
+              "repo_id": "example-repo",
+              "path": "src/example.c",
+              "line_start": 15,
+              "line_end": 15,
+              "observation": "失败分支保存错误状态"
+            }
+          ]
+        },
+        {
+          "step_key": "STEP-PROPAGATION",
+          "label": "向调用方传播错误",
+          "kind": "propagation",
+          "evidence": [
+            {
+              "repo_id": "example-repo",
+              "path": "src/example.c",
+              "line_start": 16,
+              "line_end": 16,
+              "observation": "错误码沿调用链返回"
+            }
+          ]
+        },
+        {
+          "step_key": "STEP-RECOVERY",
+          "label": "恢复临时状态",
+          "kind": "recovery",
+          "evidence": [
+            {
+              "repo_id": "example-repo",
+              "path": "src/example.c",
+              "line_start": 17,
+              "line_end": 19,
+              "observation": "退出前恢复临时状态"
+            }
+          ]
+        },
+        {
           "step_key": "STEP-EXIT",
           "label": "返回处理结果",
           "kind": "exit",
@@ -40,8 +110,33 @@
       "edges": [
         {
           "source_step_key": "STEP-ENTRY",
-          "target_step_key": "STEP-EXIT",
+          "target_step_key": "STEP-MAIN",
           "condition": "参数有效"
+        },
+        {
+          "source_step_key": "STEP-MAIN",
+          "target_step_key": "STEP-BRANCH",
+          "condition": null
+        },
+        {
+          "source_step_key": "STEP-BRANCH",
+          "target_step_key": "STEP-ERROR",
+          "condition": "处理失败"
+        },
+        {
+          "source_step_key": "STEP-ERROR",
+          "target_step_key": "STEP-PROPAGATION",
+          "condition": null
+        },
+        {
+          "source_step_key": "STEP-PROPAGATION",
+          "target_step_key": "STEP-RECOVERY",
+          "condition": null
+        },
+        {
+          "source_step_key": "STEP-RECOVERY",
+          "target_step_key": "STEP-EXIT",
+          "condition": null
         }
       ]
     }

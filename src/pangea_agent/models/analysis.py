@@ -33,6 +33,17 @@ class ProposedUnit(StrictModel):
     mechanism_ids: list[str] = Field(default_factory=list)
 
 
+class ProposedUnitV2(StrictModel):
+    unit_key: str = Field(min_length=1)
+    repo_id: str = Field(min_length=1)
+    title: str = Field(min_length=1)
+    context_scope: list[str] = Field(default_factory=list)
+    rationale: str = Field(min_length=1)
+    asset_item_ids: list[str] = Field(default_factory=list)
+    coverage_ids: list[str] = Field(default_factory=list)
+    mechanism_ids: list[str] = Field(default_factory=list)
+
+
 class AnalysisUnit(ProposedUnit):
     unit_id: str = Field(min_length=1)
     line_count: int = Field(ge=0)
@@ -49,7 +60,9 @@ class PlanningTask(StrictModel):
     requested_scope: list[str] = Field(min_length=1)
     compact_metadata_path: str = Field(min_length=1)
     asset_candidates_path: str = Field(min_length=1)
+    result_contract_version: Literal["1.0", "2.0"] = "1.0"
     result_schema_path: str = Field(default="schemas/planning_result.schema.json", min_length=1)
+    result_skeleton_path: str | None = Field(default=None, min_length=1)
     result_example_path: str = Field(
         default="schemas/planning_result.example.json",
         min_length=1,
@@ -73,6 +86,20 @@ class PlanningResult(StrictModel):
             "声称请求文件元数据缺失前，必须同时核对 planning metadata 的 owned_source_paths 和 files[].path。"
         ),
     )
+
+
+class PlanningResultV2(StrictModel):
+    schema_version: Literal["2.0"] = "2.0"
+    summary: str = Field(min_length=1)
+    units: list[ProposedUnitV2] = Field(min_length=1)
+    source_ownership: dict[str, str] = Field(
+        min_length=1,
+        description=(
+            "键必须与 Planning task 骨架中预填的 repo_id:path 完全一致；"
+            "值必须引用 units[].unit_key。每个键在 JSON 对象中只能出现一次。"
+        ),
+    )
+    unresolved: list[str] = Field(default_factory=list)
 
 
 class FlowStep(StrictModel):
