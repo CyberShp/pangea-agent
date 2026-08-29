@@ -38,4 +38,4 @@
 
 写入前逐项自检：每个 step evidence 非空、每条 edge 的两端都存在、所有 `covered_flow_keys` / `linked_risk_keys` / `test_case_keys` 都有真实定义、evidence path 属于当前 unit；closure 还要保证 `review_finding_decisions` 与 task findings 一一对应。随后逐条检查顶层 `unresolved`：每项必须逐字包含当前 task 中真实存在的 selected input ID、Coverage ID 或 confirmed finding_key；没有这些真实编号，或只是外部资料/范围外实现/后续研究的问题，直接删除。将完整语义 JSON 写到当前 task 的 `result_path`。不填写 unit ID、Agent ID、路径或运行状态。若校验器返回错误，只修正同一文件后重新提交。
 
-结束前运行 `python -m pangea_agent.cli.main check-result-json --task '<当前 task JSON 路径>'`。该命令只读检查 JSON 语法，不校验 schema、不判断语义、不改写结果或 Run 状态；失败时由你修正同一结果后重跑。得到 `status=PASS` 后，最终回复只用一行 `完成 action_id=<task.action_id>`；不得省略或改写当前 task 中的 `action_id`，也不复述 JSON 或分析内容。历史 task 没有 `action_id` 时才只回复“完成”。
+结束前运行 `python -m pangea_agent.cli.main check-result-json --task '<当前 task JSON 路径>'`。该命令只读 JSON，并会列出 schema、编号引用、`basis` 链接和证据路径的 `advisories`；它不修改结果、不改变 Run 状态、不判断风险/流程/用例语义，也不会阻止提交。你必须逐条阅读 `advisories`，由自己修正确定的编号、链接或路径错误并重跑；不得让 Python 替你补写或删改语义内容。得到 `status=PASS` 后，最终回复只用一行 `完成 action_id=<task.action_id>`；不得省略或改写当前 task 中的 `action_id`，也不复述 JSON 或分析内容。历史 task 没有 `action_id` 时才只回复“完成”。

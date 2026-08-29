@@ -90,6 +90,24 @@ def assert_unit_submission(
     review_findings: list[ReviewFinding] | None = None,
 ) -> None:
     """Reject mechanically inconsistent ownership and declared links."""
+    errors = unit_submission_warnings(
+        task,
+        result,
+        selected_inputs,
+        review_findings,
+    )
+
+    if errors:
+        raise ValueError("结果结构关联不完整：" + " | ".join(errors[:24]))
+
+
+def unit_submission_warnings(
+    task: AnalysisTask,
+    result: UnitSemanticResult,
+    selected_inputs: dict,
+    review_findings: list[ReviewFinding] | None = None,
+) -> list[str]:
+    """Return deterministic submission warnings without changing workflow state."""
     errors = _reference_warnings(result)
     errors.extend(_evidence_scope_warnings(task, result))
     errors.extend(_review_decision_evidence_warnings(
@@ -130,9 +148,7 @@ def assert_unit_submission(
                 f"测试用例 {case.case_key} 声明的 basis 没有对应链接："
                 f"unsupported={unsupported_basis}"
             )
-
-    if errors:
-        raise ValueError("结果结构关联不完整：" + " | ".join(errors[:24]))
+    return errors
 
 
 def _evidence_scope_warnings(
