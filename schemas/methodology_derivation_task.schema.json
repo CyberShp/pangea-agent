@@ -23,6 +23,19 @@
       "title": "Action Id",
       "type": "string"
     },
+    "created_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Created At"
+    },
     "data_root": {
       "minLength": 1,
       "title": "Data Root",

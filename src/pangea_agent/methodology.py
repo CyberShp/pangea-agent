@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shutil
+from datetime import datetime
 from hashlib import sha256
 from pathlib import Path
 from typing import Literal
@@ -9,9 +10,11 @@ from uuid import uuid4
 from pangea_agent.agent_io import read_json, write_json
 from pangea_agent.assets import analysis_asset_inputs
 from pangea_agent.models.methodology import (
+    FrozenMethodologyCatalog,
     FrozenMethodologyManifest,
     MethodologyCandidate,
     MethodologyCandidateFile,
+    MethodologyDerivationReceipt,
     MethodologyDerivationTask,
     MethodologyRecord,
     MethodologyRegistry,
@@ -91,6 +94,92 @@ def methodology_registry_path(data_root: str | Path) -> Path:
     return Path(data_root) / "methodologies" / "registry.json"
 
 
+def _derivation_task_path(data_root: str | Path, task_id: str) -> Path:
+    if (
+        not task_id
+        or task_id in {".", ".."}
+        or Path(task_id).name != task_id
+    ):
+        raise ValueError("方法论提炼 task_id 无效")
+    return Path(data_root) / "methodologies" / "tasks" / task_id / "task.json"
+
+
+def _derivation_view(
+    task_path: Path,
+    *,
+    include_completion: bool = False,
+) -> dict:
+    task = MethodologyDerivationTask.model_validate(read_json(task_path))
+    result_path = Path(task.result_path)
+    receipt_path = task_path.parent / "completion.json"
+    receipt = None
+    if receipt_path.is_file():
+        receipt = MethodologyDerivationReceipt.model_validate(
+            read_json(receipt_path)
+        )
+        status = "completed"
+    elif result_path.is_file():
+        status = "ready"
+    else:
+        status = "pending"
+    view = {
+        "task_id": task.task_id,
+        "action_id": task.action_id,
+        "status": status,
+        "created_at": (
+            task.created_at.isoformat()
+            if task.created_at is not None
+            else datetime.fromtimestamp(
+                task_path.stat().st_mtime
+            ).astimezone().isoformat()
+        ),
+        "completed_at": (
+            receipt.completed_at.isoformat() if receipt is not None else None
+        ),
+        "source_asset_ids": task.source_asset_ids,
+        "task_path": str(task_path),
+        "result_path": task.result_path,
+    }
+    if include_completion and receipt is not None:
+        view["completion"] = receipt.model_dump(mode="json")
+    return view
+
+
+def list_methodology_derivations(
+    data_root: str | Path,
+    *,
+    cursor: int = 0,
+    limit: int = 50,
+) -> dict:
+    if cursor < 0:
+        raise ValueError("cursor 不能小于 0")
+    if limit < 1 or limit > 200:
+        raise ValueError("limit 必须在 1 到 200 之间")
+    root = Path(data_root) / "methodologies" / "tasks"
+    task_paths = sorted(
+        root.glob("*/task.json") if root.is_dir() else [],
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    page = task_paths[cursor : cursor + limit]
+    next_cursor = cursor + len(page)
+    return {
+        "items": [_derivation_view(path) for path in page],
+        "next_cursor": next_cursor if next_cursor < len(task_paths) else None,
+        "total": len(task_paths),
+    }
+
+
+def show_methodology_derivation(
+    data_root: str | Path,
+    task_id: str,
+) -> dict:
+    task_path = _derivation_task_path(data_root, task_id)
+    if not task_path.is_file():
+        raise ValueError(f"方法论提炼任务不存在：{task_id}")
+    return _derivation_view(task_path, include_completion=True)
+
+
 def prepare_methodology_derivation(
     data_root: str | Path,
     asset_ids: list[str],
@@ -135,17 +224,14 @@ def prepare_methodology_derivation(
     })
     write_json(existing_methodologies_path, {
         "items": [
-            {
-                "methodology_id": item.methodology_id,
-                "title": item.title,
-                "status": item.status,
-            }
+            item.model_dump(mode="json")
             for item in _read_registry(data_root).methodologies
         ]
     })
     task = MethodologyDerivationTask(
         task_id=task_id,
         action_id=action_id,
+        created_at=utc_now(),
         data_root=str(data_root),
         source_asset_ids=selected_asset_ids,
         source_items_path=str(source_items_path),
@@ -168,10 +254,24 @@ def prepare_methodology_derivation(
 
 
 def complete_methodology_derivation(task_path: str | Path) -> dict:
-    task = MethodologyDerivationTask.model_validate(read_json(Path(task_path)))
+    path = Path(task_path)
+    task = MethodologyDerivationTask.model_validate(read_json(path))
     result_path = Path(task.result_path)
     if not result_path.is_file():
         raise ValueError(f"方法论 Agent 尚未写入结果：{result_path}")
+    result_sha256 = sha256(result_path.read_bytes()).hexdigest()
+    receipt_path = path.parent / "completion.json"
+    if receipt_path.is_file():
+        receipt = MethodologyDerivationReceipt.model_validate(
+            read_json(receipt_path)
+        )
+        if receipt.result_sha256 != result_sha256:
+            raise ValueError("已完成的方法论提炼结果发生变化，请创建新任务")
+        return {
+            "task_id": receipt.task_id,
+            "status": "completed",
+            "imported": receipt.imported,
+        }
     candidate_file = MethodologyCandidateFile.model_validate(read_json(result_path))
     allowed_source_ids = set(
         read_json(Path(task.source_items_path)).get("items", {})
@@ -188,7 +288,18 @@ def complete_methodology_derivation(task_path: str | Path) -> dict:
             + ", ".join(unknown_source_ids)
         )
     imported = import_methodology_candidates(task.data_root, result_path)
-    return {"task_id": task.task_id, "imported": imported}
+    receipt = MethodologyDerivationReceipt(
+        task_id=task.task_id,
+        completed_at=utc_now(),
+        result_sha256=result_sha256,
+        imported=imported,
+    )
+    write_json(receipt_path, receipt.model_dump(mode="json"))
+    return {
+        "task_id": task.task_id,
+        "status": "completed",
+        "imported": imported,
+    }
 
 
 def _read_registry(data_root: str | Path) -> MethodologyRegistry:
@@ -391,6 +502,38 @@ def _validate_frozen_manifest(
     return manifest
 
 
+def _selection_catalog(
+    manifest: FrozenMethodologyManifest,
+) -> FrozenMethodologyCatalog:
+    return FrozenMethodologyCatalog(
+        run_id=manifest.run_id,
+        frozen_at=manifest.frozen_at,
+        enabled_user_methodologies=[{
+            "methodology_id": item.methodology_id,
+            "origin": item.origin,
+            "title": item.title,
+            "source_item_ids": item.source_item_ids,
+            "applicable_when": item.applicable_when,
+            "exceptions": item.exceptions,
+        } for item in manifest.enabled_user_methodologies],
+    )
+
+
+def _ensure_selection_catalog(
+    destination_root: Path,
+    manifest: FrozenMethodologyManifest,
+) -> Path:
+    catalog_path = destination_root / "catalog.json"
+    expected = _selection_catalog(manifest)
+    if catalog_path.is_file():
+        current = FrozenMethodologyCatalog.model_validate(read_json(catalog_path))
+        if current != expected:
+            raise ValueError("Run 冻结方法论精简目录与冻结清单不一致")
+    else:
+        write_json(catalog_path, expected.model_dump(mode="json"))
+    return catalog_path
+
+
 def freeze_enabled_methodologies(
     data_root: str | Path,
     run_dir: str | Path,
@@ -399,9 +542,11 @@ def freeze_enabled_methodologies(
     destination_root = Path(run_dir) / "inputs" / "methodologies"
     manifest_path = destination_root / "manifest.json"
     if manifest_path.is_file():
-        return _validate_frozen_manifest(
+        manifest = _validate_frozen_manifest(
             FrozenMethodologyManifest.model_validate(read_json(manifest_path))
         )
+        _ensure_selection_catalog(destination_root, manifest)
+        return manifest
 
     staging_root = destination_root.parent / ".methodology-staging"
     if staging_root.exists():
@@ -432,6 +577,8 @@ def freeze_enabled_methodologies(
             "path": str(destination_root / relative_path),
             "content_sha256": sha256(content.encode("utf-8")).hexdigest(),
             "source_item_ids": record.source_item_ids,
+            "applicable_when": record.applicable_when,
+            "exceptions": record.exceptions,
         })
     manifest = FrozenMethodologyManifest(
         run_id=run_id,
@@ -440,6 +587,10 @@ def freeze_enabled_methodologies(
         excluded_user_methodologies=excluded,
     )
     write_json(staging_root / "manifest.json", manifest.model_dump(mode="json"))
+    write_json(
+        staging_root / "catalog.json",
+        _selection_catalog(manifest).model_dump(mode="json"),
+    )
     if destination_root.exists():
         shutil.rmtree(destination_root)
     staging_root.replace(destination_root)
@@ -478,6 +629,10 @@ def methodology_manifest(task_path: str | Path) -> dict:
     if not path_to_task.is_file():
         return {"unit_id": None, "items": []}
     task = read_json(path_to_task)
+    selection_reasons = task.get("unit", {}).get(
+        "methodology_selection_reasons",
+        {},
+    )
     source_catalog = None
     items = []
     for raw_path in task.get("rubric_paths", []):
@@ -488,7 +643,10 @@ def methodology_manifest(task_path: str | Path) -> dict:
         if frozen_user is not None:
             metadata = (
                 frozen_user.title,
-                "创建 Run 时冻结，并由 Planning Agent 选择用于当前单元",
+                selection_reasons.get(
+                    frozen_user.methodology_id,
+                    "Planning Agent 选择用于当前单元",
+                ),
                 "用户确认的历史缺陷资产",
             )
             selection_kind = "user"

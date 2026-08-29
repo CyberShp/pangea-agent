@@ -13,7 +13,8 @@
       "asset_item_ids": [],
       "coverage_ids": [],
       "mechanism_ids": [],
-      "methodology_ids": []
+      "methodology_ids": [],
+      "methodology_selection_reasons": {}
     },
     {
       "unit_key": "TARGET_AUTH",
@@ -26,7 +27,8 @@
       "asset_item_ids": [],
       "coverage_ids": [],
       "mechanism_ids": [],
-      "methodology_ids": []
+      "methodology_ids": [],
+      "methodology_selection_reasons": {}
     },
     {
       "unit_key": "SUBSYSTEM_AUTH",
@@ -39,7 +41,8 @@
       "asset_item_ids": [],
       "coverage_ids": [],
       "mechanism_ids": [],
-      "methodology_ids": []
+      "methodology_ids": [],
+      "methodology_selection_reasons": {}
     }
   ],
   "source_ownership": {

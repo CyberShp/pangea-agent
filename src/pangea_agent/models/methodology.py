@@ -91,6 +91,8 @@ class FrozenMethodologyRef(StrictModel):
     path: str = Field(min_length=1)
     content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     source_item_ids: list[NonEmptyText] = Field(min_length=1)
+    applicable_when: list[NonEmptyText] = Field(default_factory=list)
+    exceptions: list[NonEmptyText] = Field(default_factory=list)
 
 
 class ExcludedMethodologyRef(StrictModel):
@@ -123,17 +125,56 @@ class FrozenMethodologyManifest(StrictModel):
         return self
 
 
+class MethodologySelectionRef(StrictModel):
+    methodology_id: str = Field(
+        min_length=1,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$",
+    )
+    origin: Literal["user"] = "user"
+    title: NonEmptyText
+    source_item_ids: list[NonEmptyText] = Field(min_length=1)
+    applicable_when: list[NonEmptyText] = Field(min_length=1)
+    exceptions: list[NonEmptyText] = Field(default_factory=list)
+
+
+class FrozenMethodologyCatalog(StrictModel):
+    schema_version: Literal["1.0"] = "1.0"
+    run_id: str = Field(min_length=1)
+    frozen_at: AwareDatetime
+    enabled_user_methodologies: list[MethodologySelectionRef] = Field(
+        default_factory=list
+    )
+
+    @model_validator(mode="after")
+    def unique_entries(self) -> "FrozenMethodologyCatalog":
+        identifiers = [
+            item.methodology_id for item in self.enabled_user_methodologies
+        ]
+        if len(identifiers) != len(set(identifiers)):
+            raise ValueError("方法论精简目录中的 methodology_id 不能重复")
+        return self
+
+
 class MethodologyDerivationTask(StrictModel):
     schema_version: Literal["1.0"] = "1.0"
     task_type: Literal["methodology_derivation"] = "methodology_derivation"
     task_id: str = Field(min_length=1)
     action_id: str = Field(min_length=1)
+    created_at: AwareDatetime | None = None
     data_root: str = Field(min_length=1)
     source_asset_ids: list[NonEmptyText] = Field(min_length=1)
     source_items_path: str = Field(min_length=1)
     existing_methodologies_path: str = Field(min_length=1)
     result_schema_path: str = Field(min_length=1)
     result_path: str = Field(min_length=1)
+
+
+class MethodologyDerivationReceipt(StrictModel):
+    schema_version: Literal["1.0"] = "1.0"
+    task_id: str = Field(min_length=1)
+    completed_at: AwareDatetime
+    result_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    imported: dict
 
 
 def utc_now() -> datetime:

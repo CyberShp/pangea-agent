@@ -1,0 +1,39 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "task_id": {
+      "minLength": 1,
+      "title": "Task Id",
+      "type": "string"
+    },
+    "completed_at": {
+      "format": "date-time",
+      "title": "Completed At",
+      "type": "string"
+    },
+    "result_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Result Sha256",
+      "type": "string"
+    },
+    "imported": {
+      "additionalProperties": true,
+      "title": "Imported",
+      "type": "object"
+    }
+  },
+  "required": [
+    "task_id",
+    "completed_at",
+    "result_sha256",
+    "imported"
+  ],
+  "title": "MethodologyDerivationReceipt",
+  "type": "object"
+}

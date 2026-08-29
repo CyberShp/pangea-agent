@@ -60,6 +60,13 @@
           },
           "title": "Methodology Ids",
           "type": "array"
+        },
+        "methodology_selection_reasons": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Methodology Selection Reasons",
+          "type": "object"
         }
       },
       "required": [

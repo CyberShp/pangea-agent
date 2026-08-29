@@ -23,7 +23,10 @@
       ],
       "methodology_ids": [
         "example-recovery-check"
-      ]
+      ],
+      "methodology_selection_reasons": {
+        "example-recovery-check": "当前单元包含多步资源申请和中途失败回滚路径"
+      }
     }
   ],
   "unresolved": []

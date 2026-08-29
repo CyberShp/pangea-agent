@@ -32,6 +32,7 @@ class ProposedUnit(StrictModel):
     coverage_ids: list[str] = Field(default_factory=list)
     mechanism_ids: list[str] = Field(default_factory=list)
     methodology_ids: list[str] = Field(default_factory=list)
+    methodology_selection_reasons: dict[str, str] = Field(default_factory=dict)
 
 
 class ProposedUnitV2(StrictModel):
@@ -44,6 +45,7 @@ class ProposedUnitV2(StrictModel):
     coverage_ids: list[str] = Field(default_factory=list)
     mechanism_ids: list[str] = Field(default_factory=list)
     methodology_ids: list[str] = Field(default_factory=list)
+    methodology_selection_reasons: dict[str, str] = Field(default_factory=dict)
 
 
 class AnalysisUnit(ProposedUnit):
@@ -63,6 +65,7 @@ class PlanningTask(StrictModel):
     compact_metadata_path: str = Field(min_length=1)
     asset_candidates_path: str = Field(min_length=1)
     methodology_paths: list[str] = Field(default_factory=list)
+    methodology_catalog_path: str | None = Field(default=None, min_length=1)
     result_contract_version: Literal["1.0", "2.0"] = "1.0"
     result_schema_path: str = Field(default="schemas/planning_result.schema.json", min_length=1)
     result_skeleton_path: str | None = Field(default=None, min_length=1)

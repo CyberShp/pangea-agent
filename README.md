@@ -73,8 +73,9 @@ pangea-data/
 
 PANGEA 从已经人工批准的历史缺陷条目准备方法论提炼 task；DSH 按 task 派发仓库内的
 `methodology-worker`，再由 PANGEA 校验来源和候选结构。候选必须由用户明确启用，之后创建的 Run 才会在
-`inputs/methodologies/` 中冻结独立副本。Planning Agent 按分析单元判断适用性，只有选中的方法论才加入
-该单元 analysis worker 和 reviewer 的 `rubric_paths`。旧 Run 始终使用自己的冻结副本。
+`inputs/methodologies/` 中冻结独立副本。Planning Agent 只读取独立 `catalog.json` 中的 ID、标题、适用条件和例外，
+按分析单元记录选择理由；只有选中的方法论全文才加入该单元 analysis worker 和 reviewer 的
+`rubric_paths`。旧 Run 始终使用自己的冻结副本。
 
 ```powershell
 & ".\.venv\Scripts\python.exe" -m pangea_agent.cli.main methodologies derive --data-root "pangea-data" --asset-id "asset-260830-001"
@@ -84,6 +85,13 @@ DSH 使用返回的 `task_path` 派发 `.agents/pangea/methodology-worker.md`。
 
 ```powershell
 & ".\.venv\Scripts\python.exe" -m pangea_agent.cli.main methodologies complete-derivation --task "pangea-data\methodologies\tasks\<task-id>\task.json"
+```
+
+提炼 task 和完成回执保存在 `pangea-data/methodologies/tasks/`。客户端重启后通过以下接口查询
+`pending`、`ready` 或 `completed`，复用原 task 或提交已经写好的结果：
+
+```powershell
+& ".\.venv\Scripts\python.exe" -m pangea_agent.cli.main methodologies derivations list --data-root "pangea-data"
 ```
 
 ```powershell

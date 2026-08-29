@@ -17,10 +17,12 @@ from pangea_agent.graph.workflow_store import load_progress, save_progress
 from pangea_agent.methodology import (
     complete_methodology_derivation,
     import_methodology_candidates,
+    list_methodology_derivations,
     list_methodologies,
     prepare_methodology_derivation,
     run_methodology_manifests,
     set_methodology_status,
+    show_methodology_derivation,
     show_methodology,
 )
 from pangea_agent.report import reports_are_complete
@@ -57,6 +59,7 @@ def system_capabilities(data_root: str) -> dict:
                 / "methodology-worker.md"
             ),
             "statuses": ["candidate", "enabled", "disabled"],
+            "derivation_statuses": ["pending", "ready", "completed"],
         },
     }
 
@@ -165,6 +168,7 @@ __all__ = [
     "complete_methodology_derivation",
     "list_assets",
     "list_methodologies",
+    "list_methodology_derivations",
     "list_runs",
     "prepare_asset_extraction",
     "prepare_methodology_derivation",
@@ -172,6 +176,7 @@ __all__ = [
     "run_detail",
     "run_report",
     "set_methodology_status",
+    "show_methodology_derivation",
     "show_methodology",
     "system_capabilities",
     "stop_run",

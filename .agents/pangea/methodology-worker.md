@@ -11,6 +11,6 @@
 - `expected_signals` 和 `failure_signals` 都是当前源码或测试中可观察的信号；
 - `exceptions` 保留可以排除该机理的条件；
 - `source_item_ids` 只能使用 `source_items_path` 中的完整键；
-- 与现有方法论实质相同的内容优先沿用原 ID，避免换名重复。
+- 对照 `existing_methodologies_path` 中现有方法论的完整适用条件、检查项、信号和例外；因果机理相同的内容沿用原 ID并更新，不换名重复创建。
 
 把符合 `methodology_candidate.schema.json` 的完整 JSON 写入 task 的 `result_path`。没有可迁移机理时允许 `candidates=[]`，不得为了完成任务硬造方法论。候选保持 `non_binding=true`，等待用户确认后才能启用。最终只回复 `完成 task_id=<task.task_id>`。

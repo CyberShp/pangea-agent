@@ -61,6 +61,13 @@
           "title": "Methodology Ids",
           "type": "array"
         },
+        "methodology_selection_reasons": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Methodology Selection Reasons",
+          "type": "object"
+        },
         "unit_id": {
           "minLength": 1,
           "title": "Unit Id",

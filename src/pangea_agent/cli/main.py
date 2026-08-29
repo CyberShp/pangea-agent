@@ -20,6 +20,7 @@ from .public_api import (
     import_asset,
     import_methodology_candidates,
     list_assets,
+    list_methodology_derivations,
     list_methodologies,
     list_runs,
     prepare_asset_extraction,
@@ -28,6 +29,7 @@ from .public_api import (
     run_detail,
     run_report,
     set_methodology_status,
+    show_methodology_derivation,
     show_methodology,
     system_capabilities,
     stop_run,
@@ -101,6 +103,18 @@ def main() -> None:
     )
     methodology_complete = methodology_commands.add_parser("complete-derivation")
     methodology_complete.add_argument("--task", required=True)
+    methodology_derivations = methodology_commands.add_parser("derivations")
+    derivation_commands = methodology_derivations.add_subparsers(
+        dest="derivation_command",
+        required=True,
+    )
+    derivation_list = derivation_commands.add_parser("list")
+    derivation_list.add_argument("--data-root", default="pangea-data")
+    derivation_list.add_argument("--cursor", type=int, default=0)
+    derivation_list.add_argument("--limit", type=int, default=50)
+    derivation_get = derivation_commands.add_parser("get")
+    derivation_get.add_argument("--data-root", default="pangea-data")
+    derivation_get.add_argument("--task-id", required=True)
     methodology_list = methodology_commands.add_parser("list")
     methodology_list.add_argument("--data-root", default="pangea-data")
     methodology_list.add_argument("--cursor", type=int, default=0)
@@ -236,6 +250,18 @@ def main() -> None:
                 ))
             elif args.methodology_command == "complete-derivation":
                 print_success(complete_methodology_derivation(args.task))
+            elif args.methodology_command == "derivations":
+                if args.derivation_command == "list":
+                    print_success(list_methodology_derivations(
+                        args.data_root,
+                        cursor=args.cursor,
+                        limit=args.limit,
+                    ))
+                elif args.derivation_command == "get":
+                    print_success(show_methodology_derivation(
+                        args.data_root,
+                        args.task_id,
+                    ))
             elif args.methodology_command == "list":
                 print_success(list_methodologies(
                     args.data_root,

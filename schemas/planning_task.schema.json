@@ -97,6 +97,19 @@
       "title": "Methodology Paths",
       "type": "array"
     },
+    "methodology_catalog_path": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Methodology Catalog Path"
+    },
     "result_contract_version": {
       "default": "1.0",
       "enum": [

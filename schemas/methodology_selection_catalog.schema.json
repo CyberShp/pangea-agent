@@ -1,40 +1,11 @@
 {
   "$defs": {
-    "ExcludedMethodologyRef": {
+    "MethodologySelectionRef": {
       "additionalProperties": false,
       "properties": {
         "methodology_id": {
           "minLength": 1,
-          "title": "Methodology Id",
-          "type": "string"
-        },
-        "title": {
-          "minLength": 1,
-          "title": "Title",
-          "type": "string"
-        },
-        "status": {
-          "enum": [
-            "candidate",
-            "disabled"
-          ],
-          "title": "Status",
-          "type": "string"
-        }
-      },
-      "required": [
-        "methodology_id",
-        "title",
-        "status"
-      ],
-      "title": "ExcludedMethodologyRef",
-      "type": "object"
-    },
-    "FrozenMethodologyRef": {
-      "additionalProperties": false,
-      "properties": {
-        "methodology_id": {
-          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
           "title": "Methodology Id",
           "type": "string"
         },
@@ -47,16 +18,6 @@
         "title": {
           "minLength": 1,
           "title": "Title",
-          "type": "string"
-        },
-        "path": {
-          "minLength": 1,
-          "title": "Path",
-          "type": "string"
-        },
-        "content_sha256": {
-          "pattern": "^[0-9a-f]{64}$",
-          "title": "Content Sha256",
           "type": "string"
         },
         "source_item_ids": {
@@ -73,6 +34,7 @@
             "minLength": 1,
             "type": "string"
           },
+          "minItems": 1,
           "title": "Applicable When",
           "type": "array"
         },
@@ -88,11 +50,10 @@
       "required": [
         "methodology_id",
         "title",
-        "path",
-        "content_sha256",
-        "source_item_ids"
+        "source_item_ids",
+        "applicable_when"
       ],
-      "title": "FrozenMethodologyRef",
+      "title": "MethodologySelectionRef",
       "type": "object"
     }
   },
@@ -116,16 +77,9 @@
     },
     "enabled_user_methodologies": {
       "items": {
-        "$ref": "#/$defs/FrozenMethodologyRef"
+        "$ref": "#/$defs/MethodologySelectionRef"
       },
       "title": "Enabled User Methodologies",
-      "type": "array"
-    },
-    "excluded_user_methodologies": {
-      "items": {
-        "$ref": "#/$defs/ExcludedMethodologyRef"
-      },
-      "title": "Excluded User Methodologies",
       "type": "array"
     }
   },
@@ -133,6 +87,6 @@
     "run_id",
     "frozen_at"
   ],
-  "title": "FrozenMethodologyManifest",
+  "title": "FrozenMethodologyCatalog",
   "type": "object"
 }

@@ -130,7 +130,7 @@ def _freeze_test_case_examples(state: PangeaState, examples: list[str]) -> list[
 def prepare_inputs(state: PangeaState) -> PangeaState:
     contract = state["task_contract"]
     run_dir = run_directory(state)
-    methodology_manifest = freeze_enabled_methodologies(
+    freeze_enabled_methodologies(
         state["data_root"],
         run_dir,
         state["run_id"],
@@ -213,9 +213,9 @@ def prepare_inputs(state: PangeaState) -> PangeaState:
         requested_scope=requested_scope,
         compact_metadata_path=str(compact_path),
         asset_candidates_path=str(candidates_path),
-        methodology_paths=[
-            item.path for item in methodology_manifest.enabled_user_methodologies
-        ],
+        methodology_catalog_path=str(
+            run_dir / "inputs" / "methodologies" / "catalog.json"
+        ),
         result_contract_version="2.0",
         result_schema_path=str(project_path("schemas", "planning_result_v2.schema.json")),
         result_skeleton_path=str(planning_skeleton_path),

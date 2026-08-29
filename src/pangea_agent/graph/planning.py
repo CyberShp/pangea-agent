@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from pangea_agent.agent_io import read_json
 from pangea_agent.models.analysis import (
     AnalysisUnit,
     PlanningResult,
@@ -9,6 +10,19 @@ from pangea_agent.models.analysis import (
     PlanningTask,
     ProposedUnit,
 )
+from pangea_agent.models.methodology import FrozenMethodologyCatalog
+
+
+def _known_methodology_ids(task: PlanningTask) -> set[str]:
+    identifiers = {Path(item).stem for item in task.methodology_paths}
+    if task.methodology_catalog_path:
+        catalog = FrozenMethodologyCatalog.model_validate(
+            read_json(Path(task.methodology_catalog_path))
+        )
+        identifiers.update(
+            item.methodology_id for item in catalog.enabled_user_methodologies
+        )
+    return identifiers
 
 
 def planning_result_model(task: PlanningTask):
@@ -46,7 +60,7 @@ def accept_plan(
         for item_id, item in asset_inputs.items()
         if item.get("item_type") == "historical_defect"
     }
-    known_methodologies = {Path(item).stem for item in task.methodology_paths}
+    known_methodologies = _known_methodology_ids(task)
     units: list[AnalysisUnit] = []
     coverage_owners: dict[str, int] = {}
     for index, proposed in enumerate(result.units):
@@ -211,6 +225,9 @@ def accept_plan_v2(
             coverage_ids=definition.coverage_ids,
             mechanism_ids=definition.mechanism_ids,
             methodology_ids=definition.methodology_ids,
+            methodology_selection_reasons=(
+                definition.methodology_selection_reasons
+            ),
         ))
 
     legacy_shape = PlanningResult(

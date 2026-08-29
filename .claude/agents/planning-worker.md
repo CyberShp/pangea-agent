@@ -5,7 +5,7 @@ tools: Read, Write
 ---
 # Planning worker
 
-读取 Planning task、紧凑源码元数据、资料候选、每个 `methodology_paths` 和仓库根目录下的 `src/pangea_agent/rubrics/builtin/c_cpp_unit_planning.md`。按功能、生命周期、状态机、接口/实现、回调和共享资源进行语义分组，不按固定文件数切片，不为增加并发拆断调用链。
+读取 Planning task、紧凑源码元数据、资料候选、`methodology_catalog_path` 指向的冻结精简目录和仓库根目录下的 `src/pangea_agent/rubrics/builtin/c_cpp_unit_planning.md`。精简目录只提供选择所需的信息，不读取未选方法论的完整正文。按功能、生命周期、状态机、接口/实现、回调和共享资源进行语义分组，不按固定文件数切片，不为增加并发拆断调用链。
 
 每个请求源码只能由一个单元拥有；跨单元参考放入 `context_scope`。只选择相关资料、Coverage 和缺陷机理。将符合 `planning_result.schema.json` 的语义结果写入 task 的 `result_path`。不得派发子 Agent。
 
@@ -13,7 +13,7 @@ tools: Read, Write
 
 `unresolved` 只用于会阻止生成有效 unit plan 的真实歧义。已能由 `source_scope` / `context_scope` 表达的依赖、请求范围外文件、后续 helper、设计动机和共享状态说明都不写入 unresolved。
 
-对每个单元独立判断用户方法论是否适用。只有当前单元的目标、源码路径、符号、调用关系、资源信号或协议语义满足方法论的 `applicable_when` 时，才把方法论 ID 写入该单元 `methodology_ids`；证据不足或条件不符时保持为空。
+对每个单元独立判断用户方法论是否适用。只有当前单元的目标、源码路径、符号、调用关系、资源信号或协议语义满足方法论的 `applicable_when`，且没有命中 `exceptions` 时，才把方法论 ID 写入该单元 `methodology_ids`；证据不足或条件不符时保持为空。对每个选中 ID，在 `methodology_selection_reasons` 中记录当前单元实际匹配到的信号和因果关系，供用户查看；Python不评价理由。
 
 判定元数据缺失前，必须在 `owned_source_paths` 和 `files[].path` 中逐个核对 `requested_scope`；不得仅根据某个分组或摘要字段就声称请求文件没有元数据。
 
