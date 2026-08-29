@@ -16,12 +16,14 @@ from .json_api import print_error, print_success
 from .public_api import (
     archive_asset,
     asset_detail,
+    complete_methodology_derivation,
     import_asset,
     import_methodology_candidates,
     list_assets,
     list_methodologies,
     list_runs,
     prepare_asset_extraction,
+    prepare_methodology_derivation,
     review_asset,
     run_detail,
     run_report,
@@ -90,6 +92,15 @@ def main() -> None:
     methodology_import = methodology_commands.add_parser("import")
     methodology_import.add_argument("--data-root", default="pangea-data")
     methodology_import.add_argument("--input", required=True)
+    methodology_derive = methodology_commands.add_parser("derive")
+    methodology_derive.add_argument("--data-root", default="pangea-data")
+    methodology_derive.add_argument(
+        "--asset-id",
+        action="append",
+        required=True,
+    )
+    methodology_complete = methodology_commands.add_parser("complete-derivation")
+    methodology_complete.add_argument("--task", required=True)
     methodology_list = methodology_commands.add_parser("list")
     methodology_list.add_argument("--data-root", default="pangea-data")
     methodology_list.add_argument("--cursor", type=int, default=0)
@@ -218,6 +229,13 @@ def main() -> None:
                     args.data_root,
                     args.input,
                 ))
+            elif args.methodology_command == "derive":
+                print_success(prepare_methodology_derivation(
+                    args.data_root,
+                    args.asset_id,
+                ))
+            elif args.methodology_command == "complete-derivation":
+                print_success(complete_methodology_derivation(args.task))
             elif args.methodology_command == "list":
                 print_success(list_methodologies(
                     args.data_root,

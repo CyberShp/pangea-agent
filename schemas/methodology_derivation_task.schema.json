@@ -1,0 +1,73 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "task_type": {
+      "const": "methodology_derivation",
+      "default": "methodology_derivation",
+      "title": "Task Type",
+      "type": "string"
+    },
+    "task_id": {
+      "minLength": 1,
+      "title": "Task Id",
+      "type": "string"
+    },
+    "action_id": {
+      "minLength": 1,
+      "title": "Action Id",
+      "type": "string"
+    },
+    "data_root": {
+      "minLength": 1,
+      "title": "Data Root",
+      "type": "string"
+    },
+    "source_asset_ids": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Source Asset Ids",
+      "type": "array"
+    },
+    "source_items_path": {
+      "minLength": 1,
+      "title": "Source Items Path",
+      "type": "string"
+    },
+    "existing_methodologies_path": {
+      "minLength": 1,
+      "title": "Existing Methodologies Path",
+      "type": "string"
+    },
+    "result_schema_path": {
+      "minLength": 1,
+      "title": "Result Schema Path",
+      "type": "string"
+    },
+    "result_path": {
+      "minLength": 1,
+      "title": "Result Path",
+      "type": "string"
+    }
+  },
+  "required": [
+    "task_id",
+    "action_id",
+    "data_root",
+    "source_asset_ids",
+    "source_items_path",
+    "existing_methodologies_path",
+    "result_schema_path",
+    "result_path"
+  ],
+  "title": "MethodologyDerivationTask",
+  "type": "object"
+}

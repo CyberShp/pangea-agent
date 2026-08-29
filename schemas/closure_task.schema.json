@@ -54,6 +54,13 @@
           "title": "Mechanism Ids",
           "type": "array"
         },
+        "methodology_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Methodology Ids",
+          "type": "array"
+        },
         "unit_id": {
           "minLength": 1,
           "title": "Unit Id",

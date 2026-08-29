@@ -370,7 +370,9 @@ def _prepare_analysis(state: PangeaState, progress) -> PangeaState:
     progress.analysis_units = units
     planning_action.status = "accepted"
     progress.stage = "analyzing"
-    user_rubric_paths = frozen_methodology_paths(run_dir)
+    user_rubric_paths = {
+        Path(path).stem: path for path in frozen_methodology_paths(run_dir)
+    }
     for unit in units:
         action_id = f"{state['run_id']}:analysis:{unit.unit_id}"
         unit_inputs = {
@@ -410,7 +412,10 @@ def _prepare_analysis(state: PangeaState, progress) -> PangeaState:
             rubric_paths=[
                 *GENERAL_RUBRICS,
                 *_specialized_rubrics(unit, compact),
-                *user_rubric_paths,
+                *[
+                    user_rubric_paths[methodology_id]
+                    for methodology_id in unit.methodology_ids
+                ],
             ],
         )
         write_json(task_path, analysis_task.model_dump(mode="json"))
@@ -452,6 +457,14 @@ def _accept_analysis(state: PangeaState, progress) -> PangeaState:
     run_dir = run_directory(state)
     source_manifest = read_json(run_dir / "inputs" / "source-manifest.json")
     action_id = f"{state['run_id']}:review"
+    user_rubric_paths = {
+        Path(path).stem: path for path in frozen_methodology_paths(run_dir)
+    }
+    selected_methodology_ids = {
+        methodology_id
+        for unit in progress.analysis_units
+        for methodology_id in unit.methodology_ids
+    }
     task = IndependentReviewTask(
         action_id=action_id,
         run_id=state["run_id"],
@@ -464,7 +477,14 @@ def _accept_analysis(state: PangeaState, progress) -> PangeaState:
         inventory_path=str(run_dir / "inputs" / "inventory.json"),
         source_manifest_path=str(run_dir / "inputs" / "source-manifest.json"),
         selected_inputs_path=str(run_dir / "inputs" / "selected-inputs.json"),
-        rubric_paths=[*GENERAL_RUBRICS, *frozen_methodology_paths(run_dir)],
+        rubric_paths=[
+            *GENERAL_RUBRICS,
+            *[
+                path
+                for methodology_id, path in user_rubric_paths.items()
+                if methodology_id in selected_methodology_ids
+            ],
+        ],
         result_schema_path=str(project_path("schemas", "independent_review_result.schema.json")),
         result_skeleton_path=str(
             project_path("schemas", "independent_review_result.skeleton.json")

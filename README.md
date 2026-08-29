@@ -71,9 +71,20 @@ pangea-data/
 
 ## 用户方法论
 
-DSH Desktop 可以从已经人工批准的历史缺陷条目生成非约束性候选，再通过 PANGEA 接口导入。候选必须由
-用户明确启用，之后创建的 Run 才会在 `inputs/methodologies/` 中冻结独立副本并把该副本加入 analysis
-worker 与 reviewer 的 `rubric_paths`。旧 Run 始终使用自己的冻结副本。
+PANGEA 从已经人工批准的历史缺陷条目准备方法论提炼 task；DSH 按 task 派发仓库内的
+`methodology-worker`，再由 PANGEA 校验来源和候选结构。候选必须由用户明确启用，之后创建的 Run 才会在
+`inputs/methodologies/` 中冻结独立副本。Planning Agent 按分析单元判断适用性，只有选中的方法论才加入
+该单元 analysis worker 和 reviewer 的 `rubric_paths`。旧 Run 始终使用自己的冻结副本。
+
+```powershell
+& ".\.venv\Scripts\python.exe" -m pangea_agent.cli.main methodologies derive --data-root "pangea-data" --asset-id "asset-260830-001"
+```
+
+DSH 使用返回的 `task_path` 派发 `.agents/pangea/methodology-worker.md`。Agent 完成后提交 task：
+
+```powershell
+& ".\.venv\Scripts\python.exe" -m pangea_agent.cli.main methodologies complete-derivation --task "pangea-data\methodologies\tasks\<task-id>\task.json"
+```
 
 ```powershell
 & ".\.venv\Scripts\python.exe" -m pangea_agent.cli.main methodologies import --data-root "pangea-data" --input "methodology-candidates.json"

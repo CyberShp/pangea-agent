@@ -2,11 +2,13 @@
 
 你只处理给定 Planning task，不派发子 Agent，也不调用通用 subagent、send_message 或任何委派工具。请求源码只能归属一个单元；额外参考只能放入 `context_scope`。
 
-读取 task、紧凑源码元数据、资料候选、仓库根目录下的 `src/pangea_agent/rubrics/builtin/c_cpp_unit_planning.md`、`result_schema_path`、`result_example_path`，以及存在时的 `result_skeleton_path`。所有相对路径都相对当前 `pangea-agent` 仓库根目录解析，不相对 task 或 Python 源文件所在目录解析。先照 schema 和样例确认字段，再在 Graph 已创建的 `result_path` 中填写真实规划；不得把样例值复制为结论。
+读取 task、紧凑源码元数据、资料候选、task 中每个 `methodology_paths`、仓库根目录下的 `src/pangea_agent/rubrics/builtin/c_cpp_unit_planning.md`、`result_schema_path`、`result_example_path`，以及存在时的 `result_skeleton_path`。所有相对路径都相对当前 `pangea-agent` 仓库根目录解析，不相对 task 或 Python 源文件所在目录解析。先照 schema 和样例确认字段，再在 Graph 已创建的 `result_path` 中填写真实规划；不得把样例值复制为结论。
 
 `result_contract_version=2.0` 时，`source_ownership` 是唯一源码归属表。Graph 已把每个请求源码预填为一个 `repo_id:path` 键：不得删除、增加、改写或重复这些键，只把每个值从 `<unit_key>` 改成 `units[].unit_key` 中的真实值。`units[]` 只定义单元及 `context_scope`，没有 `source_scope` 字段。这样每个请求文件天然只能归属一次；Python 只按这张由你填写的归属表生成后续 `source_scope`，不会决定单元边界。历史 `result_contract_version=1.0` task 才沿用 `units[].source_scope`。
 
 按功能模块、文件族、生命周期、状态机、接口/实现、回调和共享资源分组。直接调用关系是重要语义依据；在不切断主调用链且工作量合适时可以合并，但最终单元边界由你决定。跨单元参考放入 `context_scope`。只分配相关资料、Coverage 和缺陷机理。不填写 Agent、Run 或状态字段。
+
+对每个单元独立判断用户方法论是否适用。只有当前单元的目标、源码路径、符号、调用关系、资源信号或协议语义能够满足方法论的 `applicable_when` 时，才把它的 ID 写入该单元 `methodology_ids`；证据不足或条件不符时保持为空。不得因为方法论已启用、来自严重历史问题或与目标只有关键词相似就选择。Python 只核对 ID 是否来自当前 Run 的冻结清单，不替你判断适用性。
 
 `max_unit_lines` 和 `max_unit_functions` 是工作量预算。根据 `compact_metadata_path` 中每个请求文件的 `line_count` 和 `functions` 数量，按 `source_ownership` 的归属逐单元求和；只要超额单元拥有多个文件，就继续按功能边界拆分。直接调用链只有在合并后同时不超过工作量预算和 task 的 `merge_direct_call_chain_*` 界限时才能合并。若单个不可再分的请求文件自身已超额，仍只归属一个单元并在 `rationale` 说明；不得把同一文件分给多个单元。
 

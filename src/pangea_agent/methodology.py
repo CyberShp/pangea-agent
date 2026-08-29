@@ -4,6 +4,7 @@ import shutil
 from hashlib import sha256
 from pathlib import Path
 from typing import Literal
+from uuid import uuid4
 
 from pangea_agent.agent_io import read_json, write_json
 from pangea_agent.assets import analysis_asset_inputs
@@ -11,6 +12,7 @@ from pangea_agent.models.methodology import (
     FrozenMethodologyManifest,
     MethodologyCandidate,
     MethodologyCandidateFile,
+    MethodologyDerivationTask,
     MethodologyRecord,
     MethodologyRegistry,
     MethodologyStatus,
@@ -87,6 +89,106 @@ SPECIALIZED_METHODOLOGIES = {
 
 def methodology_registry_path(data_root: str | Path) -> Path:
     return Path(data_root) / "methodologies" / "registry.json"
+
+
+def prepare_methodology_derivation(
+    data_root: str | Path,
+    asset_ids: list[str],
+) -> dict:
+    selected_asset_ids = list(dict.fromkeys(
+        asset_id.strip() for asset_id in asset_ids if asset_id.strip()
+    ))
+    if not selected_asset_ids:
+        raise ValueError("至少选择一个已批准的历史缺陷资产")
+    items = analysis_asset_inputs(str(data_root), selected_asset_ids)["items"]
+    historical_items = {
+        item_id: item
+        for item_id, item in items.items()
+        if item.get("item_type") == "historical_defect"
+    }
+    historical_asset_ids = {
+        item["asset_id"] for item in historical_items.values()
+    }
+    unavailable_asset_ids = sorted(
+        set(selected_asset_ids) - historical_asset_ids
+    )
+    if unavailable_asset_ids:
+        raise ValueError(
+            "以下资产不是含有效条目的已批准历史缺陷："
+            + ", ".join(unavailable_asset_ids)
+        )
+
+    task_id = f"methodology-{uuid4()}"
+    action_id = f"{task_id}:derive"
+    task_root = Path(data_root) / "methodologies" / "tasks" / task_id
+    source_items_path = task_root / "source-items.json"
+    existing_methodologies_path = task_root / "existing-methodologies.json"
+    result_path = task_root / "result.json"
+    result_schema_path = (
+        Path(__file__).resolve().parents[2]
+        / "schemas"
+        / "methodology_candidate.schema.json"
+    )
+    write_json(source_items_path, {
+        "source": "approved_historical_defects",
+        "items": historical_items,
+    })
+    write_json(existing_methodologies_path, {
+        "items": [
+            {
+                "methodology_id": item.methodology_id,
+                "title": item.title,
+                "status": item.status,
+            }
+            for item in _read_registry(data_root).methodologies
+        ]
+    })
+    task = MethodologyDerivationTask(
+        task_id=task_id,
+        action_id=action_id,
+        data_root=str(data_root),
+        source_asset_ids=selected_asset_ids,
+        source_items_path=str(source_items_path),
+        existing_methodologies_path=str(existing_methodologies_path),
+        result_schema_path=str(result_schema_path),
+        result_path=str(result_path),
+    )
+    task_path = task_root / "task.json"
+    write_json(task_path, task.model_dump(mode="json"))
+    return {
+        "action": {
+            "action_id": action_id,
+            "action": "dispatch_agent",
+            "role": "methodology",
+            "stage": "candidate_derivation",
+            "task_path": str(task_path),
+            "task_id": task_id,
+        }
+    }
+
+
+def complete_methodology_derivation(task_path: str | Path) -> dict:
+    task = MethodologyDerivationTask.model_validate(read_json(Path(task_path)))
+    result_path = Path(task.result_path)
+    if not result_path.is_file():
+        raise ValueError(f"方法论 Agent 尚未写入结果：{result_path}")
+    candidate_file = MethodologyCandidateFile.model_validate(read_json(result_path))
+    allowed_source_ids = set(
+        read_json(Path(task.source_items_path)).get("items", {})
+    )
+    unknown_source_ids = sorted({
+        source_item_id
+        for candidate in candidate_file.candidates
+        for source_item_id in candidate.source_item_ids
+        if source_item_id not in allowed_source_ids
+    })
+    if unknown_source_ids:
+        raise ValueError(
+            "方法论候选引用了本任务未提供的历史缺陷条目："
+            + ", ".join(unknown_source_ids)
+        )
+    imported = import_methodology_candidates(task.data_root, result_path)
+    return {"task_id": task.task_id, "imported": imported}
 
 
 def _read_registry(data_root: str | Path) -> MethodologyRegistry:
@@ -386,7 +488,7 @@ def methodology_manifest(task_path: str | Path) -> dict:
         if frozen_user is not None:
             metadata = (
                 frozen_user.title,
-                "创建 Run 时处于启用状态并冻结",
+                "创建 Run 时冻结，并由 Planning Agent 选择用于当前单元",
                 "用户确认的历史缺陷资产",
             )
             selection_kind = "user"

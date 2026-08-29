@@ -1,51 +1,5 @@
 {
   "$defs": {
-    "ValidationFailureRecord": {
-      "additionalProperties": false,
-      "properties": {
-        "attempt": {
-          "exclusiveMinimum": 0,
-          "title": "Attempt",
-          "type": "integer"
-        },
-        "code": {
-          "minLength": 1,
-          "title": "Code",
-          "type": "string"
-        },
-        "message": {
-          "minLength": 1,
-          "title": "Message",
-          "type": "string"
-        },
-        "detail_count": {
-          "default": 0,
-          "minimum": 0,
-          "title": "Detail Count",
-          "type": "integer"
-        },
-        "details": {
-          "items": {
-            "additionalProperties": true,
-            "type": "object"
-          },
-          "title": "Details",
-          "type": "array"
-        },
-        "details_truncated": {
-          "default": false,
-          "title": "Details Truncated",
-          "type": "boolean"
-        }
-      },
-      "required": [
-        "attempt",
-        "code",
-        "message"
-      ],
-      "title": "ValidationFailureRecord",
-      "type": "object"
-    },
     "ActionState": {
       "additionalProperties": false,
       "properties": {
@@ -229,6 +183,13 @@
           "title": "Mechanism Ids",
           "type": "array"
         },
+        "methodology_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Methodology Ids",
+          "type": "array"
+        },
         "unit_id": {
           "minLength": 1,
           "title": "Unit Id",
@@ -255,6 +216,52 @@
         "function_count"
       ],
       "title": "AnalysisUnit",
+      "type": "object"
+    },
+    "ValidationFailureRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "attempt": {
+          "exclusiveMinimum": 0,
+          "title": "Attempt",
+          "type": "integer"
+        },
+        "code": {
+          "minLength": 1,
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "minLength": 1,
+          "title": "Message",
+          "type": "string"
+        },
+        "detail_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Detail Count",
+          "type": "integer"
+        },
+        "details": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Details",
+          "type": "array"
+        },
+        "details_truncated": {
+          "default": false,
+          "title": "Details Truncated",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "attempt",
+        "code",
+        "message"
+      ],
+      "title": "ValidationFailureRecord",
       "type": "object"
     }
   },

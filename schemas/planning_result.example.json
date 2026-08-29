@@ -20,6 +20,9 @@
       ],
       "mechanism_ids": [
         "MECH-EXAMPLE"
+      ],
+      "methodology_ids": [
+        "example-recovery-check"
       ]
     }
   ],

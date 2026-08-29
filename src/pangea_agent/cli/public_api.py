@@ -15,8 +15,10 @@ from pangea_agent.assets import (
 from pangea_agent.repositories.registry import list_registered_repositories
 from pangea_agent.graph.workflow_store import load_progress, save_progress
 from pangea_agent.methodology import (
+    complete_methodology_derivation,
     import_methodology_candidates,
     list_methodologies,
+    prepare_methodology_derivation,
     run_methodology_manifests,
     set_methodology_status,
     show_methodology,
@@ -42,6 +44,17 @@ def system_capabilities(data_root: str) -> dict:
                 Path(__file__).resolve().parents[3]
                 / "schemas"
                 / "methodology_candidate.schema.json"
+            ),
+            "derivation_task_schema_path": str(
+                Path(__file__).resolve().parents[3]
+                / "schemas"
+                / "methodology_derivation_task.schema.json"
+            ),
+            "derivation_worker_path": str(
+                Path(__file__).resolve().parents[3]
+                / ".agents"
+                / "pangea"
+                / "methodology-worker.md"
             ),
             "statuses": ["candidate", "enabled", "disabled"],
         },
@@ -149,10 +162,12 @@ __all__ = [
     "asset_detail",
     "import_asset",
     "import_methodology_candidates",
+    "complete_methodology_derivation",
     "list_assets",
     "list_methodologies",
     "list_runs",
     "prepare_asset_extraction",
+    "prepare_methodology_derivation",
     "review_asset",
     "run_detail",
     "run_report",

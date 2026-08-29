@@ -43,6 +43,9 @@ Worker 结束前可调用 `check-result-json --task`。DSH 在 POSIX 工作区�
 
 Review 固定分为同一 Reviewer 的两个 checkpoint：`independent_review` 不提供首轮结果；`comparison_review` 才提供首轮结果做对照。定向补齐后直接聚合，不启动新的复核 Agent。
 
-资料提取由资产插件管理。历史缺陷提取完成后等待人工审核，不自动批准。
+资料提取和方法论提炼由资产插件管理。历史缺陷提取使用
+`asset-extraction-worker.md`，完成后等待人工审核，不自动批准。方法论提炼只接受已批准历史缺陷，
+使用 `methodology-worker.md` 写入 task 的 `result_path`；资产插件再调用
+`methodologies complete-derivation --task <task_path>` 校验并登记为待确认候选，不自动启用。
 
 结果骨架由 Workflow 创建，主 Agent 不得另建、替换或用占位内容推进流程。最终必须同时满足 Run `lifecycle_status=complete`、`report-complete.json` 完成标记以及实际存在的 `report.md`、`report.html`；单独存在的报告文件不是正式产物。

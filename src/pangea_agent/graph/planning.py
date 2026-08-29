@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from pangea_agent.models.analysis import (
     AnalysisUnit,
     PlanningResult,
@@ -44,6 +46,7 @@ def accept_plan(
         for item_id, item in asset_inputs.items()
         if item.get("item_type") == "historical_defect"
     }
+    known_methodologies = {Path(item).stem for item in task.methodology_paths}
     units: list[AnalysisUnit] = []
     coverage_owners: dict[str, int] = {}
     for index, proposed in enumerate(result.units):
@@ -76,12 +79,21 @@ def accept_plan(
         unknown_assets = set(proposed.asset_item_ids) - known_assets
         unknown_coverage = set(proposed.coverage_ids) - known_coverage
         unknown_mechanisms = set(proposed.mechanism_ids) - known_mechanisms
-        if unknown_assets or unknown_coverage or unknown_mechanisms:
+        unknown_methodologies = (
+            set(proposed.methodology_ids) - known_methodologies
+        )
+        if (
+            unknown_assets
+            or unknown_coverage
+            or unknown_mechanisms
+            or unknown_methodologies
+        ):
             raise ValueError(
                 "规划引用了未知输入："
                 f"assets={sorted(unknown_assets)} "
                 f"coverage={sorted(unknown_coverage)} "
-                f"mechanisms={sorted(unknown_mechanisms)}"
+                f"mechanisms={sorted(unknown_mechanisms)} "
+                f"methodologies={sorted(unknown_methodologies)}"
             )
         for coverage_id in proposed.coverage_ids:
             if coverage_id in coverage_owners:
@@ -198,6 +210,7 @@ def accept_plan_v2(
             asset_item_ids=definition.asset_item_ids,
             coverage_ids=definition.coverage_ids,
             mechanism_ids=definition.mechanism_ids,
+            methodology_ids=definition.methodology_ids,
         ))
 
     legacy_shape = PlanningResult(

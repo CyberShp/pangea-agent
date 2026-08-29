@@ -123,5 +123,18 @@ class FrozenMethodologyManifest(StrictModel):
         return self
 
 
+class MethodologyDerivationTask(StrictModel):
+    schema_version: Literal["1.0"] = "1.0"
+    task_type: Literal["methodology_derivation"] = "methodology_derivation"
+    task_id: str = Field(min_length=1)
+    action_id: str = Field(min_length=1)
+    data_root: str = Field(min_length=1)
+    source_asset_ids: list[NonEmptyText] = Field(min_length=1)
+    source_items_path: str = Field(min_length=1)
+    existing_methodologies_path: str = Field(min_length=1)
+    result_schema_path: str = Field(min_length=1)
+    result_path: str = Field(min_length=1)
+
+
 def utc_now() -> datetime:
     return datetime.now().astimezone()

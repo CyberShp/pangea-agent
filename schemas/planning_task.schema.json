@@ -41,6 +41,19 @@
       "title": "Task Type",
       "type": "string"
     },
+    "action_id": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Action Id"
+    },
     "run_id": {
       "minLength": 1,
       "title": "Run Id",
@@ -76,6 +89,13 @@
       "minLength": 1,
       "title": "Asset Candidates Path",
       "type": "string"
+    },
+    "methodology_paths": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Methodology Paths",
+      "type": "array"
     },
     "result_contract_version": {
       "default": "1.0",

@@ -50,6 +50,13 @@
           },
           "title": "Mechanism Ids",
           "type": "array"
+        },
+        "methodology_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Methodology Ids",
+          "type": "array"
         }
       },
       "required": [
