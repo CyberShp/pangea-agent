@@ -1,0 +1,122 @@
+{
+  "$defs": {
+    "MethodologyCandidate": {
+      "additionalProperties": false,
+      "properties": {
+        "methodology_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "title": "Methodology Id",
+          "type": "string"
+        },
+        "title": {
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "applicable_when": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Applicable When",
+          "type": "array"
+        },
+        "checks": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Checks",
+          "type": "array"
+        },
+        "expected_signals": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Expected Signals",
+          "type": "array"
+        },
+        "failure_signals": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Failure Signals",
+          "type": "array"
+        },
+        "exceptions": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Exceptions",
+          "type": "array"
+        },
+        "source_item_ids": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Source Item Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "methodology_id",
+        "title",
+        "applicable_when",
+        "checks",
+        "expected_signals",
+        "failure_signals",
+        "source_item_ids"
+      ],
+      "title": "MethodologyCandidate",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "generated_at": {
+      "format": "date-time",
+      "title": "Generated At",
+      "type": "string"
+    },
+    "source": {
+      "const": "confirmed_historical_defects",
+      "default": "confirmed_historical_defects",
+      "title": "Source",
+      "type": "string"
+    },
+    "non_binding": {
+      "const": true,
+      "default": true,
+      "title": "Non Binding",
+      "type": "boolean"
+    },
+    "candidates": {
+      "items": {
+        "$ref": "#/$defs/MethodologyCandidate"
+      },
+      "title": "Candidates",
+      "type": "array"
+    }
+  },
+  "required": [
+    "generated_at"
+  ],
+  "title": "MethodologyCandidateFile",
+  "type": "object"
+}

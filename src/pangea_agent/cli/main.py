@@ -17,12 +17,16 @@ from .public_api import (
     archive_asset,
     asset_detail,
     import_asset,
+    import_methodology_candidates,
     list_assets,
+    list_methodologies,
     list_runs,
     prepare_asset_extraction,
     review_asset,
     run_detail,
     run_report,
+    set_methodology_status,
+    show_methodology,
     system_capabilities,
     stop_run,
     update_asset_result,
@@ -77,6 +81,33 @@ def main() -> None:
     asset_archive = asset_commands.add_parser("archive")
     asset_archive.add_argument("--data-root", default="pangea-data")
     asset_archive.add_argument("--asset-id", required=True)
+
+    methodologies = sub.add_parser("methodologies")
+    methodology_commands = methodologies.add_subparsers(
+        dest="methodology_command",
+        required=True,
+    )
+    methodology_import = methodology_commands.add_parser("import")
+    methodology_import.add_argument("--data-root", default="pangea-data")
+    methodology_import.add_argument("--input", required=True)
+    methodology_list = methodology_commands.add_parser("list")
+    methodology_list.add_argument("--data-root", default="pangea-data")
+    methodology_list.add_argument("--cursor", type=int, default=0)
+    methodology_list.add_argument("--limit", type=int, default=50)
+    methodology_list.add_argument(
+        "--status",
+        choices=("candidate", "enabled", "disabled"),
+    )
+    methodology_list.add_argument("--query")
+    methodology_get = methodology_commands.add_parser("get")
+    methodology_get.add_argument("--data-root", default="pangea-data")
+    methodology_get.add_argument("--id", required=True)
+    methodology_enable = methodology_commands.add_parser("enable")
+    methodology_enable.add_argument("--data-root", default="pangea-data")
+    methodology_enable.add_argument("--id", required=True)
+    methodology_disable = methodology_commands.add_parser("disable")
+    methodology_disable.add_argument("--data-root", default="pangea-data")
+    methodology_disable.add_argument("--id", required=True)
 
     runs = sub.add_parser("runs")
     run_commands = runs.add_subparsers(dest="run_command", required=True)
@@ -177,6 +208,38 @@ def main() -> None:
             elif args.asset_command == "archive":
                 result = archive_asset(args.data_root, args.asset_id)
                 print_success(result.model_dump(mode="json"))
+        except Exception as exc:
+            print_error(exc)
+            raise SystemExit(1) from exc
+    elif args.command == "methodologies":
+        try:
+            if args.methodology_command == "import":
+                print_success(import_methodology_candidates(
+                    args.data_root,
+                    args.input,
+                ))
+            elif args.methodology_command == "list":
+                print_success(list_methodologies(
+                    args.data_root,
+                    cursor=args.cursor,
+                    limit=args.limit,
+                    status=args.status,
+                    query=args.query,
+                ))
+            elif args.methodology_command == "get":
+                print_success(show_methodology(args.data_root, args.id))
+            elif args.methodology_command == "enable":
+                print_success(set_methodology_status(
+                    args.data_root,
+                    args.id,
+                    "enabled",
+                ))
+            elif args.methodology_command == "disable":
+                print_success(set_methodology_status(
+                    args.data_root,
+                    args.id,
+                    "disabled",
+                ))
         except Exception as exc:
             print_error(exc)
             raise SystemExit(1) from exc

@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from pangea_agent.agent_io import read_json, write_json
-from pangea_agent.methodology import methodology_manifest
 from pangea_agent.models.analysis import ActionState, WorkflowProgress
 
 
@@ -86,6 +85,8 @@ def validated_result_path(state: dict, action_id: str) -> Path:
 
 
 def pending_actions(progress: WorkflowProgress, limit: int = 8) -> list[dict]:
+    from pangea_agent.methodology import methodology_manifest
+
     active = sum(
         action.status == "dispatched" for action in progress.actions.values()
     )

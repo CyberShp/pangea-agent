@@ -1,0 +1,122 @@
+{
+  "$defs": {
+    "ExcludedMethodologyRef": {
+      "additionalProperties": false,
+      "properties": {
+        "methodology_id": {
+          "minLength": 1,
+          "title": "Methodology Id",
+          "type": "string"
+        },
+        "title": {
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "candidate",
+            "disabled"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "methodology_id",
+        "title",
+        "status"
+      ],
+      "title": "ExcludedMethodologyRef",
+      "type": "object"
+    },
+    "FrozenMethodologyRef": {
+      "additionalProperties": false,
+      "properties": {
+        "methodology_id": {
+          "minLength": 1,
+          "title": "Methodology Id",
+          "type": "string"
+        },
+        "origin": {
+          "const": "user",
+          "default": "user",
+          "title": "Origin",
+          "type": "string"
+        },
+        "title": {
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "path": {
+          "minLength": 1,
+          "title": "Path",
+          "type": "string"
+        },
+        "content_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Content Sha256",
+          "type": "string"
+        },
+        "source_item_ids": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Source Item Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "methodology_id",
+        "title",
+        "path",
+        "content_sha256",
+        "source_item_ids"
+      ],
+      "title": "FrozenMethodologyRef",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "run_id": {
+      "minLength": 1,
+      "title": "Run Id",
+      "type": "string"
+    },
+    "frozen_at": {
+      "format": "date-time",
+      "title": "Frozen At",
+      "type": "string"
+    },
+    "enabled_user_methodologies": {
+      "items": {
+        "$ref": "#/$defs/FrozenMethodologyRef"
+      },
+      "title": "Enabled User Methodologies",
+      "type": "array"
+    },
+    "excluded_user_methodologies": {
+      "items": {
+        "$ref": "#/$defs/ExcludedMethodologyRef"
+      },
+      "title": "Excluded User Methodologies",
+      "type": "array"
+    }
+  },
+  "required": [
+    "run_id",
+    "frozen_at"
+  ],
+  "title": "FrozenMethodologyManifest",
+  "type": "object"
+}

@@ -27,6 +27,7 @@ from pangea_agent.graph.workflow_store import (
     save_progress,
     validated_result_path,
 )
+from pangea_agent.methodology import frozen_methodology_paths
 from pangea_agent.models.analysis import (
     ActionState,
     AnalysisTask,
@@ -369,6 +370,7 @@ def _prepare_analysis(state: PangeaState, progress) -> PangeaState:
     progress.analysis_units = units
     planning_action.status = "accepted"
     progress.stage = "analyzing"
+    user_rubric_paths = frozen_methodology_paths(run_dir)
     for unit in units:
         action_id = f"{state['run_id']}:analysis:{unit.unit_id}"
         unit_inputs = {
@@ -405,7 +407,11 @@ def _prepare_analysis(state: PangeaState, progress) -> PangeaState:
                 project_path("schemas", "analysis_result.example.json")
             ),
             result_path=str(analysis_result_path(state, unit.unit_id)),
-            rubric_paths=[*GENERAL_RUBRICS, *_specialized_rubrics(unit, compact)],
+            rubric_paths=[
+                *GENERAL_RUBRICS,
+                *_specialized_rubrics(unit, compact),
+                *user_rubric_paths,
+            ],
         )
         write_json(task_path, analysis_task.model_dump(mode="json"))
         initialize_result(
@@ -458,7 +464,7 @@ def _accept_analysis(state: PangeaState, progress) -> PangeaState:
         inventory_path=str(run_dir / "inputs" / "inventory.json"),
         source_manifest_path=str(run_dir / "inputs" / "source-manifest.json"),
         selected_inputs_path=str(run_dir / "inputs" / "selected-inputs.json"),
-        rubric_paths=GENERAL_RUBRICS,
+        rubric_paths=[*GENERAL_RUBRICS, *frozen_methodology_paths(run_dir)],
         result_schema_path=str(project_path("schemas", "independent_review_result.schema.json")),
         result_skeleton_path=str(
             project_path("schemas", "independent_review_result.skeleton.json")

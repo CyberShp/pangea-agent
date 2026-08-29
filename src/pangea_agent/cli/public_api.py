@@ -14,7 +14,13 @@ from pangea_agent.assets import (
 )
 from pangea_agent.repositories.registry import list_registered_repositories
 from pangea_agent.graph.workflow_store import load_progress, save_progress
-from pangea_agent.methodology import run_methodology_manifests
+from pangea_agent.methodology import (
+    import_methodology_candidates,
+    list_methodologies,
+    run_methodology_manifests,
+    set_methodology_status,
+    show_methodology,
+)
 from pangea_agent.report import reports_are_complete
 
 
@@ -30,6 +36,15 @@ def system_capabilities(data_root: str) -> dict:
         ],
         "repositories": list_registered_repositories(data_root),
         "report_formats": ["html", "markdown"],
+        "methodologies": {
+            "schema_version": "1.0",
+            "candidate_schema_path": str(
+                Path(__file__).resolve().parents[3]
+                / "schemas"
+                / "methodology_candidate.schema.json"
+            ),
+            "statuses": ["candidate", "enabled", "disabled"],
+        },
     }
 
 
@@ -133,12 +148,16 @@ __all__ = [
     "archive_asset",
     "asset_detail",
     "import_asset",
+    "import_methodology_candidates",
     "list_assets",
+    "list_methodologies",
     "list_runs",
     "prepare_asset_extraction",
     "review_asset",
     "run_detail",
     "run_report",
+    "set_methodology_status",
+    "show_methodology",
     "system_capabilities",
     "stop_run",
     "update_asset_result",

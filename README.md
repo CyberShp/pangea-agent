@@ -69,6 +69,27 @@ pangea-data/
 - 用例设计顺序是：Coverage 与代码流程为基础，需求/设计约束次之，历史缺陷机理和六维 DFX 风险补充。
 - 黑盒优先；纯黑盒不可行时允许灰盒，但必须保留业务入口、外部观测和清理/恢复。
 
+## 用户方法论
+
+DSH Desktop 可以从已经人工批准的历史缺陷条目生成非约束性候选，再通过 PANGEA 接口导入。候选必须由
+用户明确启用，之后创建的 Run 才会在 `inputs/methodologies/` 中冻结独立副本并把该副本加入 analysis
+worker 与 reviewer 的 `rubric_paths`。旧 Run 始终使用自己的冻结副本。
+
+```powershell
+& ".\.venv\Scripts\python.exe" -m pangea_agent.cli.main methodologies import --data-root "pangea-data" --input "methodology-candidates.json"
+```
+
+```powershell
+& ".\.venv\Scripts\python.exe" -m pangea_agent.cli.main methodologies list --data-root "pangea-data" --status candidate
+```
+
+```powershell
+& ".\.venv\Scripts\python.exe" -m pangea_agent.cli.main methodologies enable --data-root "pangea-data" --id "iscsi-session-recovery"
+```
+
+再次导入同一 ID 且内容未变化时保留状态；内容变化后回到 `candidate`，等待重新确认。方法论只提供检查方向，
+不能直接充当当前风险或测试预期的证据。
+
 ## 对外 JSON 接口
 
 CLI 每次只向 stdout 输出一个 JSON envelope。主要能力分为：

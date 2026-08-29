@@ -18,6 +18,7 @@ from pangea_agent.graph.workflow_store import (
 )
 from pangea_agent.inventory.scope_expander import expand_analysis_scope
 from pangea_agent.inventory.source_scanner import build_lightweight_inventory
+from pangea_agent.methodology import freeze_enabled_methodologies
 from pangea_agent.models.analysis import (
     ActionState,
     PlanningTask,
@@ -128,6 +129,12 @@ def _freeze_test_case_examples(state: PangeaState, examples: list[str]) -> list[
 
 def prepare_inputs(state: PangeaState) -> PangeaState:
     contract = state["task_contract"]
+    run_dir = run_directory(state)
+    freeze_enabled_methodologies(
+        state["data_root"],
+        run_dir,
+        state["run_id"],
+    )
     repositories = resolve_repositories_from_contract(contract, state["data_root"])
     requested_scope = list(contract.get("source_scope") or ["."])
     expansion = expand_analysis_scope(
@@ -161,7 +168,6 @@ def prepare_inputs(state: PangeaState) -> PangeaState:
         list(contract.get("test_case_examples", [])),
     )
 
-    run_dir = run_directory(state)
     compact_path = run_dir / "inputs" / "planning-metadata.json"
     candidates_path = run_dir / "inputs" / "asset-candidates.json"
     asset_items_path = run_dir / "inputs" / "asset-items.json"
