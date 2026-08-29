@@ -93,26 +93,53 @@ def accept_plan(
             raise ValueError(f"规划引用了未知上下文：{unknown_context}")
         if set(source_keys) & set(context_keys):
             raise ValueError("同一文件不能同时属于 source_scope 和 context_scope")
-        unknown_assets = set(proposed.asset_item_ids) - known_assets
-        unknown_coverage = set(proposed.coverage_ids) - known_coverage
-        unknown_mechanisms = set(proposed.mechanism_ids) - known_mechanisms
-        unknown_methodologies = (
-            set(proposed.methodology_ids) - known_methodologies
-        )
-        if (
-            unknown_assets
-            or unknown_coverage
-            or unknown_mechanisms
-            or unknown_methodologies
-        ):
-            raise ValueError(
-                "规划引用了未知输入："
-                f"assets={sorted(unknown_assets)} "
-                f"coverage={sorted(unknown_coverage)} "
-                f"mechanisms={sorted(unknown_mechanisms)} "
-                f"methodologies={sorted(unknown_methodologies)}"
+        misplaced_mechanisms = [
+            item_id for item_id in proposed.asset_item_ids
+            if item_id in known_mechanisms
+        ]
+        misplaced_assets = [
+            item_id for item_id in proposed.mechanism_ids
+            if item_id in known_assets
+        ]
+        asset_item_ids = list(dict.fromkeys([
+            *(item_id for item_id in proposed.asset_item_ids if item_id in known_assets),
+            *misplaced_assets,
+        ]))
+        mechanism_ids = list(dict.fromkeys([
+            *(item_id for item_id in proposed.mechanism_ids if item_id in known_mechanisms),
+            *misplaced_mechanisms,
+        ]))
+        coverage_ids = list(dict.fromkeys(
+            item_id for item_id in proposed.coverage_ids
+            if item_id in known_coverage
+        ))
+        methodology_ids = list(dict.fromkeys(
+            item_id for item_id in proposed.methodology_ids
+            if item_id in known_methodologies
+        ))
+        ignored_inputs = {
+            "assets": sorted(
+                set(proposed.asset_item_ids) - known_assets - known_mechanisms
+            ),
+            "coverage": sorted(set(proposed.coverage_ids) - known_coverage),
+            "mechanisms": sorted(
+                set(proposed.mechanism_ids) - known_mechanisms - known_assets
+            ),
+            "methodologies": sorted(
+                set(proposed.methodology_ids) - known_methodologies
+            ),
+        }
+        if misplaced_mechanisms or misplaced_assets:
+            advisory.append(
+                f"单元 U{index:02d} 按冻结资产类型归位输入："
+                f"mechanisms={misplaced_mechanisms} assets={misplaced_assets}"
             )
-        selected_methodologies = set(proposed.methodology_ids)
+        if any(ignored_inputs.values()):
+            advisory.append(
+                f"单元 U{index:02d} 忽略冻结输入中不存在的编号："
+                f"{ignored_inputs}"
+            )
+        selected_methodologies = set(methodology_ids)
         recorded_reasons = set(proposed.methodology_selection_reasons)
         missing_reasons = selected_methodologies - recorded_reasons
         extra_reasons = recorded_reasons - selected_methodologies
@@ -126,7 +153,7 @@ def accept_plan(
                 f"单元 U{index:02d} 记录了未选择方法论的依据："
                 f"{sorted(extra_reasons)}"
             )
-        for coverage_id in proposed.coverage_ids:
+        for coverage_id in coverage_ids:
             if coverage_id in coverage_owners:
                 advisory.append(
                     f"Coverage 缺口被多个单元处理：{coverage_id} "
@@ -142,8 +169,21 @@ def accept_plan(
                 f"lines={line_count}/{task.max_unit_lines}, "
                 f"functions={function_count}/{task.max_unit_functions}"
             )
+        normalized = proposed.model_dump(mode="json")
+        normalized.update({
+            "asset_item_ids": asset_item_ids,
+            "coverage_ids": coverage_ids,
+            "mechanism_ids": mechanism_ids,
+            "methodology_ids": methodology_ids,
+            "methodology_selection_reasons": {
+                methodology_id: reason
+                for methodology_id, reason
+                in proposed.methodology_selection_reasons.items()
+                if methodology_id in selected_methodologies
+            },
+        })
         units.append(AnalysisUnit(
-            **proposed.model_dump(mode="json"),
+            **normalized,
             unit_id=f"U{index:02d}",
             line_count=line_count,
             function_count=function_count,
