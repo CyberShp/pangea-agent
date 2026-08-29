@@ -39,6 +39,7 @@ from pangea_agent.models.analysis import (
     PlanningResult,
     PlanningTask,
     UnitSemanticResult,
+    ValidationFailureRecord,
 )
 from pangea_agent.models.asset import AssetExtractionResult
 
@@ -101,6 +102,14 @@ def _invalid_result(
         error["details"] = validation_details
         error["detail_count"] = len(all_errors)
         error["details_truncated"] = len(all_errors) > len(validation_details)
+    action.validation_history.append(ValidationFailureRecord(
+        attempt=action.validation_failures,
+        code=error["code"],
+        message=message,
+        detail_count=error.get("detail_count", 0),
+        details=validation_details,
+        details_truncated=error.get("details_truncated", False),
+    ))
     save_progress(state, progress)
     repair_action = _repair_action(action)
     repair_action["validation_error"] = error

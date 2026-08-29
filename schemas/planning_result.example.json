@@ -1,0 +1,27 @@
+{
+  "schema_version": "1.0",
+  "summary": "将请求范围按真实调用关系和功能边界划分为可独立分析的单元",
+  "units": [
+    {
+      "repo_id": "example-repo",
+      "title": "示例功能单元",
+      "source_scope": [
+        "src/example.c"
+      ],
+      "context_scope": [
+        "include/example.h"
+      ],
+      "rationale": "入口与核心实现属于同一调用链，规模未超过任务预算",
+      "asset_item_ids": [
+        "REQ-EXAMPLE"
+      ],
+      "coverage_ids": [
+        "COV-EXAMPLE"
+      ],
+      "mechanism_ids": [
+        "MECH-EXAMPLE"
+      ]
+    }
+  ],
+  "unresolved": []
+}

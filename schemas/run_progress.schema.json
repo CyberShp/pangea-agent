@@ -1,5 +1,51 @@
 {
   "$defs": {
+    "ValidationFailureRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "attempt": {
+          "exclusiveMinimum": 0,
+          "title": "Attempt",
+          "type": "integer"
+        },
+        "code": {
+          "minLength": 1,
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "minLength": 1,
+          "title": "Message",
+          "type": "string"
+        },
+        "detail_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Detail Count",
+          "type": "integer"
+        },
+        "details": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Details",
+          "type": "array"
+        },
+        "details_truncated": {
+          "default": false,
+          "title": "Details Truncated",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "attempt",
+        "code",
+        "message"
+      ],
+      "title": "ValidationFailureRecord",
+      "type": "object"
+    },
     "ActionState": {
       "additionalProperties": false,
       "properties": {
@@ -97,6 +143,13 @@
           "minimum": 0,
           "title": "Repeated Validation Failures",
           "type": "integer"
+        },
+        "validation_history": {
+          "items": {
+            "$ref": "#/$defs/ValidationFailureRecord"
+          },
+          "title": "Validation History",
+          "type": "array"
         }
       },
       "required": [

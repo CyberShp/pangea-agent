@@ -83,6 +83,12 @@
       "title": "Result Schema Path",
       "type": "string"
     },
+    "result_example_path": {
+      "default": "schemas/planning_result.example.json",
+      "minLength": 1,
+      "title": "Result Example Path",
+      "type": "string"
+    },
     "result_path": {
       "minLength": 1,
       "title": "Result Path",

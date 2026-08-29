@@ -2,9 +2,9 @@
 
 只处理 task 指定的一个 C/C++ 单元，不扩大冻结范围，不派发子 Agent。当前会话可能先执行 `analysis`，随后由 Graph 以 `continue_agent` 续接同一个 worker 执行 `closure`。
 
-`task_type=analysis` 时，开始前读取 task、冻结源码、inventory、selected inputs、task 指定 rubrics、`result_schema_path` 和 `result_skeleton_path`。Graph 已在 `result_path` 创建同一骨架；该骨架是本次任务唯一字段基线，必须保留它的顶层键、嵌套对象形状和字段名，在同一文件中写入完整真实结果。不得凭记忆套用旧版 schema，不得使用 `normal`、`test_case_key`、标量 `basis` 等旧字段或另建结果文件。首轮一次完成主干/分支/异常/传播/恢复流程、关键入口及调用关系、状态和资源副作用、资料/代码差异、相关 Coverage 缺口、历史缺陷机理、六维风险和测试用例。
+`task_type=analysis` 时，开始前读取 task、冻结源码、inventory、selected inputs、task 指定 rubrics、`result_schema_path`、`result_skeleton_path` 和 `result_example_path`。Graph 已在 `result_path` 创建同一骨架；先用完整样例逐个确认 flow、三类 decision、risk、test case 和 review decision 的字段名、对象形状与枚举值，再在骨架文件中写入真实结果，不得把样例值复制为结论。不得凭记忆套用旧版 schema，不得使用 `normal`、`test_case_key`、标量 `basis` 等旧字段或另建结果文件。首轮一次完成主干/分支/异常/传播/恢复流程、关键入口及调用关系、状态和资源副作用、资料/代码差异、相关 Coverage 缺口、历史缺陷机理、六维风险和测试用例。
 
-`task_type=closure` 时，这是本会话首轮结果的定向补齐。读取 closure task、`original_task_path`、`original_result_path`、原 task 的冻结输入和 `review_findings`。Graph 已把原结果复制到 closure task 的 `result_path`；只修改这个副本，保留未被 finding 推翻的内容。每个 finding 恰好写一个 `review_finding_decisions`，不得修改原始分析结果或 review JSON。`incorrect_conclusion` 指向已有风险或用例时，必须从正式结果中删除被源码反证的项目，或把错误字段改成证据支持的结论，不能只追加 decision 而保留原错误内容。closure 还必须重审首轮 `unresolved`：已经由本单元源码裁决、已被 finding 驳回、已形成有证据的风险/用例，或只是其他单元和范围外实现细节的问题必须删除；finding 仅提及其他单元但不要求本单元改变正式结论时，按证据如实 `dismissed`，不得复制成新的 unresolved。
+`task_type=closure` 时，这是本会话首轮结果的定向补齐。读取 closure task、`result_example_path`、`original_task_path`、`original_result_path`、原 task 的冻结输入和 `review_findings`。Graph 已把原结果复制到 closure task 的 `result_path`；只修改这个副本，保留未被 finding 推翻的内容。每个 finding 恰好写一个 `review_finding_decisions`，不得修改原始分析结果或 review JSON。`incorrect_conclusion` 指向已有风险或用例时，必须从正式结果中删除被源码反证的项目，或把错误字段改成证据支持的结论，不能只追加 decision 而保留原错误内容。closure 还必须重审首轮 `unresolved`：已经由本单元源码裁决、已被 finding 驳回、已形成有证据的风险/用例，或只是其他单元和范围外实现细节的问题必须删除；finding 仅提及其他单元但不要求本单元改变正式结论时，按证据如实 `dismissed`，不得复制成新的 unresolved。
 
 冻结风险前先做 C/C++ 语义校验：`a || b` 在 a 为真时不读 b，`a && b` 在 a 为假时不读 b；`!x` 只在 x 为 0 时为真，负数也是非零真值；入口先以 `<= 0` 返回、之后才执行一次减 1 时，该减法只能把正数降到 0，不能用“已耗尽后继续递减为负数”构造风险或用例预期。缺少锁、重置、范围校验、恢复动作、初始化入口或返回状态本身不是缺陷；必须有契约依据或能从当前源码证明的外部错误结果。重复参数检查、void 返回和调用方传入悬空指针同样不能在没有契约时构造风险。不得假设源码中没有发生的“部分初始化”或隐藏副作用。
 

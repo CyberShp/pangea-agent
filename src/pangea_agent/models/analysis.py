@@ -50,6 +50,10 @@ class PlanningTask(StrictModel):
     compact_metadata_path: str = Field(min_length=1)
     asset_candidates_path: str = Field(min_length=1)
     result_schema_path: str = Field(default="schemas/planning_result.schema.json", min_length=1)
+    result_example_path: str = Field(
+        default="schemas/planning_result.example.json",
+        min_length=1,
+    )
     result_path: str = Field(min_length=1)
     max_unit_lines: int = Field(default=5000, gt=0)
     max_unit_functions: int = Field(default=140, gt=0)
@@ -204,6 +208,10 @@ class AnalysisTask(StrictModel):
         default="schemas/analysis_result.skeleton.json",
         min_length=1,
     )
+    result_example_path: str = Field(
+        default="schemas/analysis_result.example.json",
+        min_length=1,
+    )
     result_path: str = Field(min_length=1)
     rubric_paths: list[str] = Field(min_length=1)
 
@@ -334,6 +342,10 @@ class ClosureTask(StrictModel):
     original_result_path: str = Field(min_length=1)
     review_findings: list[ReviewFinding] = Field(min_length=1)
     result_schema_path: str = Field(default="schemas/analysis_result.schema.json", min_length=1)
+    result_example_path: str = Field(
+        default="schemas/analysis_result.example.json",
+        min_length=1,
+    )
     result_path: str = Field(min_length=1)
     rubric_paths: list[str] = Field(min_length=1)
 
@@ -355,11 +367,21 @@ class AgentAction(StrictModel):
     task_id: str | None = None
 
 
+class ValidationFailureRecord(StrictModel):
+    attempt: int = Field(gt=0)
+    code: str = Field(min_length=1)
+    message: str = Field(min_length=1)
+    detail_count: int = Field(default=0, ge=0)
+    details: list[dict] = Field(default_factory=list)
+    details_truncated: bool = False
+
+
 class ActionState(AgentAction):
     status: Literal["pending", "dispatched", "settled", "accepted", "failed"] = "pending"
     error: str | None = None
     validation_failures: int = Field(default=0, ge=0)
     repeated_validation_failures: int = Field(default=0, ge=0)
+    validation_history: list[ValidationFailureRecord] = Field(default_factory=list)
 
 
 class WorkflowProgress(StrictModel):

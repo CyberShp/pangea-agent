@@ -194,6 +194,7 @@ def prepare_inputs(state: PangeaState) -> PangeaState:
         compact_metadata_path=str(compact_path),
         asset_candidates_path=str(candidates_path),
         result_schema_path=str(project_path("schemas", "planning_result.schema.json")),
+        result_example_path=str(project_path("schemas", "planning_result.example.json")),
         result_path=str(planning_result_path(state)),
     )
     task_path = planning_task_path(state)

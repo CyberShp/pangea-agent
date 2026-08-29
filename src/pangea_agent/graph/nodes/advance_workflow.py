@@ -345,6 +345,9 @@ def _prepare_analysis(state: PangeaState, progress) -> PangeaState:
             result_skeleton_path=str(
                 project_path("schemas", "analysis_result.skeleton.json")
             ),
+            result_example_path=str(
+                project_path("schemas", "analysis_result.example.json")
+            ),
             result_path=str(analysis_result_path(state, unit.unit_id)),
             rubric_paths=[*GENERAL_RUBRICS, *_specialized_rubrics(unit, compact)],
         )
@@ -644,6 +647,9 @@ def _accept_comparison_review(state: PangeaState, progress, action) -> PangeaSta
             )),
             review_findings=findings,
             result_schema_path=str(project_path("schemas", "analysis_result.schema.json")),
+            result_example_path=str(
+                project_path("schemas", "analysis_result.example.json")
+            ),
             result_path=str(closure_result_path(state, unit.unit_id)),
             rubric_paths=original_task.rubric_paths,
         )

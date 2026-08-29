@@ -1,0 +1,176 @@
+{
+  "schema_version": "1.0",
+  "summary": "示例单元的流程、输入裁决、风险与测试分析",
+  "flows": [
+    {
+      "flow_key": "FLOW-EXAMPLE",
+      "title": "示例主流程",
+      "entry": "example_entry",
+      "summary": "入口检查参数后调用核心实现并返回结果",
+      "steps": [
+        {
+          "step_key": "STEP-ENTRY",
+          "label": "进入公开入口",
+          "kind": "entry",
+          "evidence": [
+            {
+              "repo_id": "example-repo",
+              "path": "src/example.c",
+              "line_start": 10,
+              "line_end": 12,
+              "observation": "公开入口接收参数并开始处理"
+            }
+          ]
+        },
+        {
+          "step_key": "STEP-EXIT",
+          "label": "返回处理结果",
+          "kind": "exit",
+          "evidence": [
+            {
+              "repo_id": "example-repo",
+              "path": "src/example.c",
+              "line_start": 20,
+              "line_end": 20,
+              "observation": "入口把核心实现结果返回给调用方"
+            }
+          ]
+        }
+      ],
+      "edges": [
+        {
+          "source_step_key": "STEP-ENTRY",
+          "target_step_key": "STEP-EXIT",
+          "condition": "参数有效"
+        }
+      ]
+    }
+  ],
+  "input_decisions": [
+    {
+      "item_id": "REQ-EXAMPLE",
+      "disposition": "confirmed",
+      "conclusion": "源码行为与示例要求一致",
+      "evidence": [
+        {
+          "repo_id": "example-repo",
+          "path": "src/example.c",
+          "line_start": 10,
+          "line_end": 20,
+          "observation": "入口到返回路径实现了要求描述的行为"
+        }
+      ]
+    }
+  ],
+  "coverage_decisions": [
+    {
+      "coverage_id": "COV-EXAMPLE",
+      "disposition": "test_generated",
+      "test_case_keys": [
+        "TC-EXAMPLE"
+      ],
+      "reason": "该零覆盖入口可从受支持接口触达"
+    }
+  ],
+  "mechanism_decisions": [
+    {
+      "mechanism_id": "MECH-EXAMPLE",
+      "disposition": "equivalent_present",
+      "current_causal_chain": [
+        "无效输入进入入口",
+        "核心实现未拒绝输入",
+        "调用方观察到错误状态"
+      ],
+      "test_case_keys": [
+        "TC-EXAMPLE"
+      ],
+      "conclusion": "当前源码存在与历史机理等价的触发链",
+      "evidence": [
+        {
+          "repo_id": "example-repo",
+          "path": "src/example.c",
+          "line_start": 10,
+          "line_end": 20,
+          "observation": "入口未在调用核心实现前拒绝该输入"
+        }
+      ]
+    }
+  ],
+  "risks": [
+    {
+      "risk_key": "RISK-EXAMPLE",
+      "title": "无效输入导致错误状态外泄",
+      "dfx": [
+        "reliability"
+      ],
+      "severity": "Medium",
+      "confidence": "high",
+      "trigger": "调用方通过公开入口传入受支持格式但语义无效的参数",
+      "system_result": "核心状态被更新为错误值",
+      "external_observation": "公开接口返回成功但后续查询得到错误状态",
+      "exclusion_condition": "入口在更新状态前明确拒绝该参数",
+      "evidence": [
+        {
+          "repo_id": "example-repo",
+          "path": "src/example.c",
+          "line_start": 10,
+          "line_end": 20,
+          "observation": "该路径在缺少语义校验时更新并返回状态"
+        }
+      ]
+    }
+  ],
+  "test_cases": [
+    {
+      "case_key": "TC-EXAMPLE",
+      "title": "公开入口拒绝语义无效输入",
+      "basis": [
+        "code_flow",
+        "coverage",
+        "risk"
+      ],
+      "covered_flow_keys": [
+        "FLOW-EXAMPLE"
+      ],
+      "linked_input_ids": [
+        "COV-EXAMPLE"
+      ],
+      "linked_risk_keys": [
+        "RISK-EXAMPLE"
+      ],
+      "level": "blackbox",
+      "preconditions": [
+        "系统已通过正式入口初始化"
+      ],
+      "steps": [
+        {
+          "action": "通过公开接口提交语义无效参数",
+          "expected_result": "接口拒绝请求且原状态保持不变"
+        }
+      ],
+      "observability": [
+        "检查公开接口返回值并再次查询状态"
+      ],
+      "cleanup": [
+        "无额外清理"
+      ]
+    }
+  ],
+  "review_finding_decisions": [
+    {
+      "finding_key": "FINDING-EXAMPLE",
+      "disposition": "incorporated",
+      "conclusion": "已补充复核指出的异常路径和对应测试",
+      "evidence": [
+        {
+          "repo_id": "example-repo",
+          "path": "src/example.c",
+          "line_start": 10,
+          "line_end": 20,
+          "observation": "异常路径由该入口与返回逻辑直接支持"
+        }
+      ]
+    }
+  ],
+  "unresolved": []
+}
