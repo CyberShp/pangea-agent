@@ -730,6 +730,7 @@ def _accept_closure(state: PangeaState, progress) -> PangeaState:
                 original_task,
                 result,
                 read_json(Path(original_task.selected_inputs_path)),
+                closure_task.review_findings,
             )
             # 引用不完整由 adapter 记录为降级；Graph 保留 Agent 原始结果继续汇总。
         except Exception as exc:

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from pangea_agent.models.analysis import AnalysisTask, UnitSemanticResult
+from pangea_agent.models.analysis import AnalysisTask, ReviewFinding, UnitSemanticResult
 
 
 def validate_unit_result(
     task: AnalysisTask,
     result: UnitSemanticResult,
     selected_inputs: dict,
+    review_findings: list[ReviewFinding] | None = None,
 ) -> list[str]:
     """Validate deterministic references without judging Agent semantics."""
     asset_items = selected_inputs.get("asset_items", {})
@@ -34,7 +35,7 @@ def validate_unit_result(
     ))
 
     allowed_paths = set(task.unit.source_scope) | set(task.unit.context_scope)
-    for evidence in _all_evidence(result):
+    for evidence in _all_evidence(result, include_review_decisions=False):
         if evidence.repo_id != task.unit.repo_id or evidence.path not in allowed_paths:
             warnings.append(
                 "源码证据待确认，不属于当前分析单元："
@@ -46,6 +47,11 @@ def validate_unit_result(
                 f"{evidence.repo_id}:{evidence.path}:"
                 f"{evidence.line_start}-{evidence.line_end}"
             )
+    warnings.extend(_review_decision_evidence_warnings(
+        task,
+        result,
+        review_findings,
+    ))
 
     known_inputs = expected_inputs | expected_coverage | expected_mechanisms
     item_types = {
@@ -81,10 +87,16 @@ def assert_unit_submission(
     task: AnalysisTask,
     result: UnitSemanticResult,
     selected_inputs: dict,
+    review_findings: list[ReviewFinding] | None = None,
 ) -> None:
     """Reject mechanically inconsistent ownership and declared links."""
     errors = _reference_warnings(result)
     errors.extend(_evidence_scope_warnings(task, result))
+    errors.extend(_review_decision_evidence_warnings(
+        task,
+        result,
+        review_findings,
+    ))
 
     asset_items = selected_inputs.get("asset_items", {})
     coverage_gaps = selected_inputs.get("coverage_gaps", [])
@@ -133,7 +145,7 @@ def _evidence_scope_warnings(
         for path in [*task.unit.source_scope, *task.unit.context_scope]
     }
     out_of_scope: dict[tuple[str, str], list[int]] = {}
-    for evidence in _all_evidence(result):
+    for evidence in _all_evidence(result, include_review_decisions=False):
         normalized_path = evidence.path.replace("\\", "/").strip("/")
         if evidence.repo_id != task.unit.repo_id or normalized_path not in allowed_paths:
             out_of_scope.setdefault(
@@ -152,6 +164,60 @@ def _evidence_scope_warnings(
             f"occurrences={len(lines)}；allowed_repo={task.unit.repo_id} "
             f"allowed_paths={sorted(allowed_paths)}"
         )
+    return warnings
+
+
+def _review_decision_evidence_warnings(
+    task: AnalysisTask,
+    result: UnitSemanticResult,
+    review_findings: list[ReviewFinding] | None,
+) -> list[str]:
+    warnings: list[str] = []
+    unit_paths = {
+        path.replace("\\", "/").strip("/")
+        for path in [*task.unit.source_scope, *task.unit.context_scope]
+    }
+    finding_paths: dict[str, set[tuple[str, str]]] = {}
+    for finding in review_findings or []:
+        finding_paths[finding.finding_key] = {
+            (
+                evidence.repo_id,
+                evidence.path.replace("\\", "/").strip("/"),
+            )
+            for evidence in finding.evidence
+        }
+    for decision in result.review_finding_decisions:
+        allowed_finding_paths = finding_paths.get(decision.finding_key, set())
+        invalid: dict[tuple[str, str], list[int]] = {}
+        for evidence in decision.evidence:
+            normalized_path = evidence.path.replace("\\", "/").strip("/")
+            belongs_to_unit = (
+                evidence.repo_id == task.unit.repo_id
+                and normalized_path in unit_paths
+            )
+            belongs_to_finding = (
+                evidence.repo_id,
+                normalized_path,
+            ) in allowed_finding_paths
+            if not belongs_to_unit and not belongs_to_finding:
+                invalid.setdefault(
+                    (evidence.repo_id, evidence.path), []
+                ).append(evidence.line_start)
+            if (
+                evidence.line_end is not None
+                and evidence.line_end < evidence.line_start
+            ):
+                warnings.append(
+                    "复核裁决证据行号范围无效："
+                    f"{evidence.repo_id}:{evidence.path}:"
+                    f"{evidence.line_start}-{evidence.line_end}"
+                )
+        for (repo_id, path), lines in invalid.items():
+            warnings.append(
+                f"复核裁决 {decision.finding_key} 使用了未授权证据："
+                f"{repo_id}:{path}；lines={sorted(set(lines))[:12]}；"
+                "只允许当前单元路径或对应 review finding 已冻结的证据路径"
+            )
     return warnings
 
 
@@ -248,7 +314,11 @@ def _unsupported_basis(case, item_types: dict[str, str | None]) -> list[str]:
     return [basis for basis in case.basis if basis not in supported]
 
 
-def _all_evidence(result: UnitSemanticResult):
+def _all_evidence(
+    result: UnitSemanticResult,
+    *,
+    include_review_decisions: bool = True,
+):
     for flow in result.flows:
         for step in flow.steps:
             yield from step.evidence
@@ -258,5 +328,6 @@ def _all_evidence(result: UnitSemanticResult):
         yield from decision.evidence
     for risk in result.risks:
         yield from risk.evidence
-    for decision in result.review_finding_decisions:
-        yield from decision.evidence
+    if include_review_decisions:
+        for decision in result.review_finding_decisions:
+            yield from decision.evidence

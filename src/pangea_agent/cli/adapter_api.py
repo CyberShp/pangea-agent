@@ -391,8 +391,18 @@ def _validate_action(data_root: str, run_id: str, action_id: str) -> dict:
         selected_inputs = read_json(Path(original.selected_inputs_path))
         try:
             result = UnitSemanticResult.model_validate(read_json(Path(task.result_path)))
-            assert_unit_submission(original, result, selected_inputs)
-            warnings = validate_unit_result(original, result, selected_inputs)
+            assert_unit_submission(
+                original,
+                result,
+                selected_inputs,
+                task.review_findings,
+            )
+            warnings = validate_unit_result(
+                original,
+                result,
+                selected_inputs,
+                task.review_findings,
+            )
             expected = {finding.finding_key for finding in task.review_findings}
             actual = [item.finding_key for item in result.review_finding_decisions]
             if len(actual) != len(set(actual)) or set(actual) != expected:

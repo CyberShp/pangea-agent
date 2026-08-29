@@ -32,7 +32,7 @@
 
 每个 `flow.steps[]` 都必须至少有一条直接源码 `evidence`。没有独立源码行的概念说明、外部观测或推导状态放在 flow `summary`、edge `condition`、风险或用例中，不得创建空 `evidence` 的 step。每条 `flow.edges[]` 的 `source_step_key` 和 `target_step_key` 必须引用同一个 flow 的 `steps[].step_key` 中已经定义的键；不得在 edge 中首次创造 step_key，也不得跨 flow 引用。
 
-所有 `SourceEvidence.path` 必须从当前 task 的 `evidence_scope.allowed_paths` 中原样选择；历史 task 没有该字段时，才使用 analysis task，或 closure task 的 `original_task_path` 所指 task 的 `unit.source_scope` / `unit.context_scope`。跨单元源码只能作为理解背景，不得写进本单元正式 evidence。不得根据函数、协议或模块语义自行补目录层级。源码证据直接使用 `repo_id`、相对路径和行号。
+所有 flow、input/mechanism decision 和 risk 的 `SourceEvidence.path` 必须从当前 task 的 `evidence_scope.allowed_paths` 中原样选择；历史 task 没有该字段时，才使用 analysis task，或 closure task 的 `original_task_path` 所指 task 的 `unit.source_scope` / `unit.context_scope`。跨单元源码只能作为理解背景，不得写进这些本单元正式 evidence。closure 的 `review_finding_decisions[].evidence` 可额外原样复用同一个 `finding_key` 对应 `review_findings[].evidence` 中已冻结的路径，但不得把这些跨单元证据复制到 flow、risk 或其他 decision，也不得引用其他 finding 的证据。不得根据函数、协议或模块语义自行补目录层级。源码证据直接使用 `repo_id`、相对路径和行号。
 
 校验返修时保留已有有效语义内容，编辑方法自行选择，但不得把流程、风险、用例或取舍判断交给 Python 或脚本。
 
