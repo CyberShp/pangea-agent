@@ -16,6 +16,48 @@ DFX_DIMENSIONS = (
     "可靠性与一致性",
 )
 
+DFX_DIMENSION_ALIASES = {
+    "功能与状态": frozenset({
+        "功能与状态",
+        "functional",
+        "functionality",
+        "state",
+    }),
+    "资源与规格": frozenset({
+        "资源与规格",
+        "resource",
+        "resources",
+        "capacity",
+        "specification",
+    }),
+    "性能与压力": frozenset({
+        "性能与压力",
+        "performance",
+        "scalability",
+        "stress",
+    }),
+    "并发与异常": frozenset({
+        "并发与异常",
+        "concurrency",
+        "exception",
+        "error_handling",
+        "race",
+    }),
+    "升级与兼容": frozenset({
+        "升级与兼容",
+        "compatibility",
+        "upgrade",
+    }),
+    "可靠性与一致性": frozenset({
+        "可靠性与一致性",
+        "availability",
+        "consistency",
+        "recoverability",
+        "reliability",
+        "resilience",
+    }),
+}
+
 MODE_LABELS = {
     "module_analysis": "模块分析",
     "mr_analysis": "MR 修改影响分析",
@@ -95,12 +137,33 @@ def _markdown_table(headers: tuple[str, ...], rows: list[tuple[Any, ...]]) -> li
 def _risk_dimension_rows(risks: list[Any]) -> list[tuple[Any, ...]]:
     rows = []
     for dimension in DFX_DIMENSIONS:
+        aliases = DFX_DIMENSION_ALIASES[dimension]
         risk_ids = [
             _text(risk.get("risk_id"), "未编号")
             for risk in risks
-            if isinstance(risk, Mapping) and dimension in _items(risk.get("dfx"))
+            if isinstance(risk, Mapping)
+            and any(
+                _text(value, "").strip().lower() in aliases
+                for value in _items(risk.get("dfx"))
+            )
         ]
         rows.append((dimension, len(risk_ids), risk_ids or "未发现有证据支撑的风险"))
+
+    known_aliases = set().union(*DFX_DIMENSION_ALIASES.values())
+    unclassified = []
+    for risk in risks:
+        if not isinstance(risk, Mapping):
+            continue
+        unknown_labels = [
+            _text(value, "").strip()
+            for value in _items(risk.get("dfx"))
+            if _text(value, "").strip().lower() not in known_aliases
+        ]
+        if unknown_labels:
+            risk_id = _text(risk.get("risk_id"), "未编号")
+            unclassified.append(f"{risk_id}（{'、'.join(unknown_labels)}）")
+    if unclassified:
+        rows.append(("未归类", len(unclassified), unclassified))
     return rows
 
 
