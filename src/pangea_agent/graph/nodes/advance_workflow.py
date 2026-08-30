@@ -5,7 +5,7 @@ from pathlib import Path
 
 from pangea_agent.agent_io import read_json, write_json
 from pangea_agent.graph.planning import accept_planning_result, planning_result_model
-from pangea_agent.graph.result_contract import validate_unit_result
+from pangea_agent.graph.result_contract import risk_test_obligations, validate_unit_result
 from pangea_agent.graph.state import PangeaState
 from pangea_agent.graph.workflow_store import (
     add_action,
@@ -643,7 +643,16 @@ def _accept_comparison_review(state: PangeaState, progress, action) -> PangeaSta
         if decisions.get(finding.finding_key, "unresolved") != "dismissed"
     ]
     all_findings = [*retained_independent_findings, *comparison.findings]
-    if not all_findings:
+    obligations_by_unit = {}
+    for unit in progress.analysis_units:
+        analysis_action = progress.actions[
+            f"{state['run_id']}:analysis:{unit.unit_id}"
+        ]
+        result = UnitSemanticResult.model_validate(
+            read_json(validated_result_path(state, analysis_action.action_id))
+        )
+        obligations_by_unit[unit.unit_id] = risk_test_obligations(result)
+    if not all_findings and not any(obligations_by_unit.values()):
         progress.stage = "reporting"
         save_progress(state, progress)
         return {**state, "ready_to_finalize": True}
@@ -659,8 +668,9 @@ def _accept_comparison_review(state: PangeaState, progress, action) -> PangeaSta
     progress.stage = "closing"
     closure_created = False
     for unit in progress.analysis_units:
-        findings = findings_by_unit.get(unit.unit_id)
-        if not findings:
+        findings = findings_by_unit.get(unit.unit_id, [])
+        risk_obligations = obligations_by_unit.get(unit.unit_id, [])
+        if not findings and not risk_obligations:
             continue
         action_id = f"{state['run_id']}:closure:{unit.unit_id}"
         origin_action = progress.actions[
@@ -688,6 +698,7 @@ def _accept_comparison_review(state: PangeaState, progress, action) -> PangeaSta
                 origin_action.action_id,
             )),
             review_findings=findings,
+            risk_test_obligations=risk_obligations,
             result_schema_path=str(project_path("schemas", "analysis_result.schema.json")),
             result_example_path=str(
                 project_path("schemas", "analysis_result.example.json")

@@ -337,8 +337,14 @@
       "items": {
         "$ref": "#/$defs/ReviewFinding"
       },
-      "minItems": 1,
       "title": "Review Findings",
+      "type": "array"
+    },
+    "risk_test_obligations": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Risk Test Obligations",
       "type": "array"
     },
     "result_schema_path": {
@@ -374,7 +380,6 @@
     "repository",
     "original_task_path",
     "original_result_path",
-    "review_findings",
     "result_path",
     "rubric_paths"
   ],

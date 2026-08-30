@@ -5,6 +5,7 @@ from pathlib import Path
 
 from pangea_agent.agent_io import read_json, write_json
 from pangea_agent.graph.state import PangeaState
+from pangea_agent.graph.result_contract import risk_test_obligations
 from pangea_agent.graph.workflow_store import (
     load_progress,
     run_directory,
@@ -98,6 +99,14 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
     for unit in progress.analysis_units:
         result = results[unit.unit_id]
         unresolved.extend({"unit_id": unit.unit_id, "reason": value} for value in result.unresolved)
+        unresolved.extend(
+            {
+                "stage": "risk_test_coverage",
+                "unit_id": unit.unit_id,
+                "reason": obligation,
+            }
+            for obligation in risk_test_obligations(result)
+        )
         for number, risk in enumerate(result.risks, 1):
             risk_id = f"R-{unit.unit_id}-{number:03d}"
             risk_ids[(unit.unit_id, risk.risk_key)] = risk_id
@@ -220,9 +229,17 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
     for risk in risks:
         linked_case_ids = linked_cases_by_risk.get(risk["risk_id"], [])
         risk["test_case_ids"] = linked_case_ids
-        risk["translation_status"] = (
-            "Test-ready" if linked_case_ids else "Uncovered"
-        )
+        if linked_case_ids:
+            risk["translation_status"] = "Test-ready"
+        elif (
+            risk.get("test_disposition")
+            == "unreachable_from_supported_entry"
+            and risk.get("unreachable_reason")
+            and risk.get("unreachable_evidence")
+        ):
+            risk["translation_status"] = "Unreachable"
+        else:
+            risk["translation_status"] = "Uncovered"
 
     planning = read_json(run_dir / "inputs" / "unit-plan.json")
     unresolved.extend({"stage": "planning", "reason": value} for value in planning.get("unresolved", []))

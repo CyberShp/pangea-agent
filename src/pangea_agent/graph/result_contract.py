@@ -3,6 +3,33 @@ from __future__ import annotations
 from pangea_agent.models.analysis import AnalysisTask, ReviewFinding, UnitSemanticResult
 
 
+def risk_test_obligations(result: UnitSemanticResult) -> list[str]:
+    """Return risks whose test disposition is structurally incomplete."""
+    linked_risks = {
+        risk_key
+        for case in result.test_cases
+        for risk_key in case.linked_risk_keys
+    }
+    obligations: list[str] = []
+    for risk in result.risks:
+        linked = risk.risk_key in linked_risks
+        if risk.test_disposition == "test_required":
+            if not linked:
+                obligations.append(
+                    f"{risk.risk_key}: 关联至少一个测试用例，或由 Agent 改判为从受支持业务入口不可达"
+                )
+            continue
+        if linked:
+            obligations.append(
+                f"{risk.risk_key}: 已关联测试用例，不能同时声明从受支持业务入口不可达"
+            )
+        elif not risk.unreachable_reason or not risk.unreachable_evidence:
+            obligations.append(
+                f"{risk.risk_key}: 不可达决定必须包含原因和源码证据"
+            )
+    return obligations
+
+
 def validate_unit_result(
     task: AnalysisTask,
     result: UnitSemanticResult,
@@ -325,6 +352,7 @@ def _all_evidence(
         yield from decision.evidence
     for risk in result.risks:
         yield from risk.evidence
+        yield from risk.unreachable_evidence
     if include_review_decisions:
         for decision in result.review_finding_decisions:
             yield from decision.evidence

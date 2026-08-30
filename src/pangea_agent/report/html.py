@@ -320,13 +320,20 @@ def render_html_report(state: Mapping[str, Any]) -> str:
             ("DFX 维度", "、".join(_text(item) for item in _items(risk.get("dfx"))) or "未提供"),
             ("严重度", risk.get("severity")), ("置信度", risk.get("confidence")),
             ("风险状态", risk.get("status")), ("测试转化状态", risk.get("translation_status")),
+            ("测试处置", risk.get("test_disposition")),
             ("复现条件", risk.get("trigger") or risk.get("reproduction_condition")),
             ("系统结果", risk.get("system_result")), ("外部观测", risk.get("external_observation")),
             ("排除条件", risk.get("exclusion_condition")),
         )
         facts = "".join(f"<dt>{label}</dt><dd>{_escape(value)}</dd>" for label, value in fields)
         semantics_html = _upstream_semantics(risk.get("upstream_semantics"))
-        cards.append(f'<details><summary>{_escape(risk.get("risk_id"), "未编号")} · {_escape(risk.get("title"))}</summary><div class="detail-body"><dl>{facts}</dl><h4>上游语义核对</h4>{semantics_html}<h4>证据</h4>{_evidence(risk.get("evidence"))}</div></details>')
+        unreachable_html = ""
+        if risk.get("translation_status") == "Unreachable":
+            unreachable_html = (
+                f'<h4>不可达原因</h4><p>{_escape(risk.get("unreachable_reason"))}</p>'
+                f'<h4>不可达证据</h4>{_evidence(risk.get("unreachable_evidence"))}'
+            )
+        cards.append(f'<details><summary>{_escape(risk.get("risk_id"), "未编号")} · {_escape(risk.get("title"))}</summary><div class="detail-body"><dl>{facts}</dl><h4>上游语义核对</h4>{semantics_html}{unreachable_html}<h4>证据</h4>{_evidence(risk.get("evidence"))}</div></details>')
     rendered_cards = "".join(cards) or '<p class="muted">未发现有源码或资料证据支撑的风险。</p>'
     dimension_summary = _table(("DFX 维度", "风险数", "风险编号"), _risk_dimension_rows(risks))
     body.append(f'<section id="risks"><a class="back" href="#top">回到顶部</a><h2>6. 六维 DFX 风险</h2>{dimension_summary}<h3>风险明细</h3>{rendered_cards}</section>')

@@ -185,6 +185,12 @@ class RiskFinding(StrictModel):
     external_observation: str = Field(min_length=1)
     exclusion_condition: str = Field(min_length=1)
     evidence: list[SourceEvidence] = Field(min_length=1)
+    test_disposition: Literal[
+        "test_required",
+        "unreachable_from_supported_entry",
+    ] = "test_required"
+    unreachable_reason: str | None = Field(default=None, min_length=1)
+    unreachable_evidence: list[SourceEvidence] = Field(default_factory=list)
 
 
 class TestStep(StrictModel):
@@ -400,7 +406,8 @@ class ClosureTask(StrictModel):
     repository: RepositoryRef
     original_task_path: str = Field(min_length=1)
     original_result_path: str = Field(min_length=1)
-    review_findings: list[ReviewFinding] = Field(min_length=1)
+    review_findings: list[ReviewFinding] = Field(default_factory=list)
+    risk_test_obligations: list[str] = Field(default_factory=list)
     result_schema_path: str = Field(default="schemas/analysis_result.schema.json", min_length=1)
     result_example_path: str = Field(
         default="schemas/analysis_result.example.json",

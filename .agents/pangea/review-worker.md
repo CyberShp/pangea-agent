@@ -22,7 +22,7 @@ Review finding 的 `category` 只能是：`missed_flow`、`document_delta`、`co
 
 裁决盲审 finding 前，先从入口沿真实分支读到被指控的操作，逐句核对 evidence observation；关于分配、覆盖、释放、重置、回调和状态迁移的描述，必须由对应语句或完整条件分支直接支持，不能把未执行分支写成已执行事实。然后按“触发条件、缺陷机理、系统结果、证据区间”与首轮所有 flow/risk/test case 比对：只是修正已有风险的触发条件、证据或措辞，或者最终仍是同一资源/状态以同一方式产生同一结果时，不是新遗漏，裁决为 `dismissed`，并在需要时另建一个 `incorrect_conclusion` finding 修正原项。不得因 finding 名称不同、证据多一段或触发路径表述不同就确认成第二条风险。
 
-对照阶段必须逐条审核首轮所有 High/Medium 风险，以及排除条件已经否定系统结果的风险。正常清理、受支持能力边界、已被入口拒绝的模式和仅有实现风格差异的项目不得留在正式风险列表；为每个需要删除或降级的项目创建 `incorrect_conclusion` finding，交给原 worker 在 closure 中改正。逐条检查测试步骤的 oracle：同时允许成功与失败、把崩溃当作正确预期、依赖破坏对象不变量，或把内部注入用例标为 blackbox 时，也必须创建 `incorrect_conclusion` finding。
+对照阶段必须逐条审核首轮所有 High/Medium 风险，以及排除条件已经否定系统结果的风险。每条声明 `unreachable_from_supported_entry` 的风险也必须沿冻结入口和调用路径审核；可达、原因与证据不符或只是环境暂未准备好时，创建 `incorrect_conclusion` finding，要求原 worker 生成或关联用例。正常清理、受支持能力边界、已被入口拒绝的模式和仅有实现风格差异的项目不得留在正式风险列表；为每个需要删除或降级的项目创建 `incorrect_conclusion` finding，交给原 worker 在 closure 中改正。逐条检查测试步骤的 oracle：同时允许成功与失败、把崩溃当作正确预期、依赖破坏对象不变量，或把内部注入用例标为 blackbox 时，也必须创建 `incorrect_conclusion` finding。
 
 同时审核首轮 `unresolved`：它必须阻断真实 selected input、Coverage gap 或 review finding 的规定裁决，不能只是范围外实现、设计动机、未来扩展、低置信度风险或测试建议。已经被任一请求单元源码裁决、已写入风险 `confidence` / 排除条件、已经确认属于合理设计、只是实现风格，或不影响任务结论的事项，必须通过 `incorrect_conclusion` finding 要求原 worker 从 `unresolved` 删除。跨单元 finding 只分配给正式结果确实需要改变的单元，不得让每个相关单元各自复制同一 unresolved。
 

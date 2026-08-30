@@ -204,6 +204,9 @@
       "system_result": "核心状态被更新为错误值",
       "external_observation": "公开接口返回成功但后续查询得到错误状态",
       "exclusion_condition": "入口在更新状态前明确拒绝该参数",
+      "test_disposition": "test_required",
+      "unreachable_reason": null,
+      "unreachable_evidence": [],
       "evidence": [
         {
           "repo_id": "example-repo",

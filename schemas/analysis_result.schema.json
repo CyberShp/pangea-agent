@@ -473,6 +473,35 @@
           "minItems": 1,
           "title": "Evidence",
           "type": "array"
+        },
+        "test_disposition": {
+          "default": "test_required",
+          "enum": [
+            "test_required",
+            "unreachable_from_supported_entry"
+          ],
+          "title": "Test Disposition",
+          "type": "string"
+        },
+        "unreachable_reason": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Unreachable Reason"
+        },
+        "unreachable_evidence": {
+          "items": {
+            "$ref": "#/$defs/SourceEvidence"
+          },
+          "title": "Unreachable Evidence",
+          "type": "array"
         }
       },
       "required": [

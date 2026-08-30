@@ -571,6 +571,7 @@ def render_report(state: "PangeaState | Mapping[str, Any]") -> str:
                 f"- **置信度**：{_text(risk.get('confidence'))}",
                 f"- **风险状态**：{_text(risk.get('status'))}",
                 f"- **测试转化状态**：{_text(risk.get('translation_status'))}",
+                f"- **测试处置**：{_text(risk.get('test_disposition'))}",
                 f"- **复现条件**：{_text(risk.get('trigger') or risk.get('reproduction_condition'))}",
                 f"- **系统结果**：{_text(risk.get('system_result'))}",
                 f"- **外部观测**：{_text(risk.get('external_observation'))}",
@@ -589,6 +590,12 @@ def render_report(state: "PangeaState | Mapping[str, Any]") -> str:
             ])
         else:
             lines.append("  - 未提供。")
+        if risk.get("translation_status") == "Unreachable":
+            lines.append(
+                f"- **不可达原因**：{_text(risk.get('unreachable_reason'))}"
+            )
+            lines.append("- **不可达证据**：")
+            lines.extend(_evidence_lines(risk.get("unreachable_evidence")))
         lines.append("- **证据**：")
         lines.extend(_evidence_lines(risk.get("evidence")))
         lines.append("")
