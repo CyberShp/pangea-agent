@@ -74,6 +74,8 @@ BOUNDARY_LABELS = {
         "源码范围 = 用户指定范围 + 声明的直接实现；上下文范围 = 函数指针的直接实现 + 直接调用者 + 相关配置、文档和测试",
     "source_scope = explicit scope + declared implementations; context_scope = called inline headers + direct function-pointer implementations + callers + target-related config/docs/tests":
         "源码范围 = 用户指定范围 + 声明的直接实现；上下文范围 = 当前源码实际调用的内联头文件 + 函数指针的直接实现 + 直接调用者 + 相关配置、文档和测试",
+    "source_scope = explicit Lua scope; context_scope = directly required repository-local Lua modules":
+        "源码范围 = 用户指定的 Lua 模块；上下文范围 = 仓库内直接 require 的 Lua 模块",
 }
 
 
@@ -200,10 +202,15 @@ def _coverage_rows(coverage: Mapping[str, Any]) -> list[tuple[Any, ...]]:
 
 
 def _contract_rows(state: Mapping[str, Any], contract: Mapping[str, Any]) -> list[tuple[Any, Any]]:
+    manifest = state.get("source_manifest") or {}
+    analysis_language = (
+        manifest.get("analysis_language") if isinstance(manifest, Mapping) else None
+    )
     return [
         ("运行编号", state.get("run_id") or contract.get("run_id")),
         ("分析对象", contract.get("target")),
         ("分析类型", MODE_LABELS.get(str(contract.get("mode")), contract.get("mode"))),
+        ("分析语言", {"c_cpp": "C/C++", "lua": "Lua"}.get(analysis_language, analysis_language)),
         ("源码仓", contract.get("repositories") or contract.get("repository")),
         ("分析重点", contract.get("focus")),
         ("用户指定源码", contract.get("source_scope")),
@@ -221,6 +228,8 @@ def _reason_text(reason: Any) -> str:
         return f"函数指针直接实现 {raw.split(':', 1)[1]}"
     if raw.startswith("direct_inline_dependency:"):
         return f"当前源码调用的内联实现 {raw.split(':', 1)[1]}"
+    if raw.startswith("direct_require:"):
+        return f"Lua 直接 require {raw.split(':', 1)[1]}"
     return REASON_LABELS.get(raw, raw)
 
 
@@ -268,9 +277,37 @@ def _repository_rows(state: Mapping[str, Any]) -> list[tuple[Any, ...]]:
     return rows
 
 
+def _methodology_rows(state: Mapping[str, Any]) -> list[tuple[Any, ...]]:
+    rows = []
+    for unit in _items(state.get("analysis_units")):
+        if not isinstance(unit, Mapping):
+            continue
+        reasons = unit.get("methodology_selection_reasons") or {}
+        for methodology_id in _items(unit.get("methodology_ids")):
+            reason = (
+                reasons.get(methodology_id)
+                if isinstance(reasons, Mapping)
+                else None
+            )
+            rows.append((
+                unit.get("unit_id"),
+                unit.get("title"),
+                methodology_id,
+                reason or "未记录选择依据",
+            ))
+    return rows
+
+
 def _quality_summary(state: Mapping[str, Any], incomplete: bool) -> str:
     inventory = state.get("inventory") or {}
     expansion = state.get("scope_expansion") or {}
+    manifest = state.get("source_manifest") or {}
+    analysis_language = (
+        manifest.get("analysis_language") if isinstance(manifest, Mapping) else None
+    )
+    source_label = {"c_cpp": "C/C++ 文件", "lua": "Lua 文件"}.get(
+        analysis_language, "源码文件"
+    )
     context_count = len(_items(expansion.get("context_files"))) if isinstance(expansion, Mapping) else 0
     completed_units = state.get("completed_analysis_units")
     completed_count = (
@@ -280,7 +317,7 @@ def _quality_summary(state: Mapping[str, Any], incomplete: bool) -> str:
     )
     counts = (
         f"完成 {completed_count} 个分析单元，"
-        f"覆盖 {inventory.get('file_count', 0) if isinstance(inventory, Mapping) else 0} 个 C/C++ 文件"
+        f"覆盖 {inventory.get('file_count', 0) if isinstance(inventory, Mapping) else 0} 个 {source_label}"
         f"和 {context_count} 个上游语义文件；"
         f"形成 {len(_items(state.get('business_flows') or state.get('flows')))} 条业务流程、"
         f"{len(_items(state.get('risks')))} 个风险、{len(_items(state.get('test_cases')))} 个测试用例。"
@@ -406,6 +443,13 @@ def render_report(state: "PangeaState | Mapping[str, Any]") -> str:
     lines.extend(["", "### 明确排除", ""])
     exclusions = state.get("excluded_scope") or state.get("exclusions")
     _append_list(lines, exclusions)
+    methodology_rows = _methodology_rows(state)
+    if methodology_rows:
+        lines.extend(["", "### 已使用方法论", ""])
+        lines.extend(_markdown_table(
+            ("分析单元", "单元名称", "方法论", "选择依据"),
+            methodology_rows,
+        ))
     material_decisions = _items(state.get("material_decisions"))
     if material_decisions:
         lines.extend(["", "### 资料采用与排除结论", ""])
@@ -436,7 +480,7 @@ def render_report(state: "PangeaState | Mapping[str, Any]") -> str:
         inventory = state.get("inventory") or {}
         if isinstance(manifest, Mapping):
             lines.extend(_markdown_table(("项目", "结果"), [
-                ("C/C++ 文件数", inventory.get("file_count", 0) if isinstance(inventory, Mapping) else 0),
+                ("源码文件数", inventory.get("file_count", 0) if isinstance(inventory, Mapping) else 0),
                 ("结构化解析", "完整" if isinstance(inventory, Mapping) and inventory.get("structural_parse_complete") else "存在缺口"),
                 ("文档告警", len(_items(manifest.get("warnings")))),
                 ("缺少依赖", len(_items(manifest.get("missing_dependencies")))),

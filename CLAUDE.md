@@ -4,7 +4,7 @@
 
 ## Run 生命周期
 
-- 新模块分析先确定最小 `source_scope`，再通过当前客户端的稳定入口启动；没有当前会话明确 `run_id` 时不扫描历史 Run。
+- 新模块分析先在 `pangea-data/repositories/` 自动搜索目标模块并确定最小 `source_scope`，再通过当前客户端的稳定入口启动；`.c` / `.h` / `.cc` / `.cpp` / `.cxx` / `.hpp` / `.hh` 识别为 `c_cpp`，`.lua` 识别为 `lua`，用户不需要另填语言。没有当前会话明确 `run_id` 时不扫描历史 Run。
 - 同时派发最多 8 个 action；8 是并发上限，不是整个 Run 的单元总数。
 - `dispatch_agent` 按 role 创建专用 Agent；`continue_agent` 恢复 action 自带的同一 `task_id`，不得创建替代任务。
 - 子 Agent 返回后先执行 adapter validate。`status=invalid` 时按 `repair_action` 把错误交回同一任务，只修正同一 `result_path`；通过后再 settle。

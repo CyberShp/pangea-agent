@@ -64,6 +64,15 @@
       "title": "Target",
       "type": "string"
     },
+    "analysis_language": {
+      "default": "c_cpp",
+      "enum": [
+        "c_cpp",
+        "lua"
+      ],
+      "title": "Analysis Language",
+      "type": "string"
+    },
     "repositories": {
       "items": {
         "$ref": "#/$defs/RepositoryRef"
@@ -148,6 +157,14 @@
       "minLength": 1,
       "title": "Result Path",
       "type": "string"
+    },
+    "rubric_paths": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Rubric Paths",
+      "type": "array"
     },
     "max_unit_lines": {
       "default": 5000,

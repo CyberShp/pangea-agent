@@ -26,7 +26,9 @@ Review finding 的 `category` 只能是：`missed_flow`、`document_delta`、`co
 
 逐条审核首轮 `unresolved`：只有阻断真实 selected input、Coverage gap 或 review finding 裁决的事项才能保留。范围外实现、设计动机、未来扩展、低置信度风险、测试建议、已被任一请求单元源码裁决或已写入风险 confidence/exclusion 的事项，必须用 `incorrect_conclusion` 要求原 worker 删除。跨单元 finding 只分配给正式结果确实需要改变的单元。Review 顶层 `unresolved` 不汇总首轮未决项；对盲审 finding 无法裁决时只用对应 decision 的 `disposition=unresolved` 和 conclusion，不重复写入顶层。
 
-注意 C/C++ 基本语义：`a || b` 在 a 为真时不求值 b；`!x` 仅在 x 为 0 时为真；负数不满足 `> 0`。提出或保留边界值 finding 前，必须从入口追到目标语句，确认前置返回、条件分支和短路求值没有使目标语句不可达。入口先以 `<= 0` 返回、之后才执行一次减 1 时，该减法只能把正数降到 0，不能继续降为负数。没有需求、设计、公开接口约定或真实调用方证据时，不得把“未重置、未消耗、未加锁、重复参数检查、void 返回、初始化方式或错误码粒度”等策略选择直接定为缺陷；无效或悬空指针属于调用方越过普通指针契约，不能借此构造风险。
+按 task 的 `analysis_language` 应用对应语言语义。`c_cpp` 检查短路求值、整数真假值和入口边界；`lua` 检查 truthiness、`and` / `or` 操作数返回、`nil` 调用、module 缓存与错误传播。提出或保留 finding 前，必须从入口追到目标语句，确认前置返回、条件分支和短路求值没有使目标语句不可达。没有需求、设计、公开接口约定或真实调用方证据时，不得把实现策略直接定为缺陷。
+
+`analysis_language=lua` 时，使用 inventory 的 `requires`、`module_exports`、`state_writes`、`protected_calls`、`coroutine_calls` 建立盲审检查清单，并以冻结源码复核 module 状态、protected call 副作用、coroutine 生命周期和 task 指定专项 rubric。external、dynamic、ambiguous require 只有在妨碍结论时才形成待确认项。
 
 风险 finding 和首轮风险还必须满足至少一种证据根基：结构化输入中的明确契约；冻结源码中真实调用方已经观察到的错误结果；或源码自身即可证明的崩溃、未定义行为、越界、数据破坏/丢失、资源泄漏、竞态或安全边界破坏。都不满足时，盲审不得新建 risk；对照阶段必须驳回对应盲审项，并用 `incorrect_conclusion` 指出首轮风险缺少成立依据。
 

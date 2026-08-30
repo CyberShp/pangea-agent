@@ -17,6 +17,9 @@ from pangea_agent.graph.workflow_store import (
     save_progress,
 )
 from pangea_agent.inventory.scope_expander import expand_analysis_scope
+from pangea_agent.inventory.languages import detect_analysis_language
+from pangea_agent.inventory.lua_scope_expander import expand_lua_analysis_scope
+from pangea_agent.inventory.lua_source_scanner import build_lua_inventory
 from pangea_agent.inventory.source_scanner import build_lightweight_inventory
 from pangea_agent.methodology import freeze_enabled_methodologies
 from pangea_agent.models.analysis import (
@@ -68,9 +71,12 @@ def _freeze_sources(state: PangeaState, repositories: list[dict], expansion: dic
     return frozen_repositories
 
 
-def _compact_inventory(inventory: dict, expansion: dict) -> dict:
-    return {
-        "files": [{
+def _compact_inventory(
+    inventory: dict, expansion: dict, analysis_language: str
+) -> dict:
+    files = []
+    for item in inventory.get("files", []):
+        record = {
             "repo_id": item["repo_id"],
             "path": item["path"],
             "line_count": item.get("line_count", 0),
@@ -82,7 +88,20 @@ def _compact_inventory(inventory: dict, expansion: dict) -> dict:
             "branch_count": len(item.get("branches", [])),
             "calls": item.get("calls", []),
             "resource_signals": item.get("resource_signals", []),
-        } for item in inventory.get("files", [])],
+        }
+        if analysis_language == "lua":
+            record.update({
+                "requires": item.get("requires", []),
+                "module_exports": item.get("module_exports", []),
+                "state_writes": item.get("state_writes", []),
+                "protected_calls": item.get("protected_calls", []),
+                "coroutine_calls": item.get("coroutine_calls", []),
+            })
+        files.append(record)
+
+    compact = {
+        "analysis_language": analysis_language,
+        "files": files,
         "owned_source_paths": [
             {"repo_id": group["repo_id"], "path": path}
             for group in expansion.get("groups", [])
@@ -92,6 +111,11 @@ def _compact_inventory(inventory: dict, expansion: dict) -> dict:
         "context_files": expansion.get("context_files", []),
         "parse_failures": inventory.get("parse_failures", []),
     }
+    if analysis_language == "lua":
+        compact["require_dependencies"] = expansion.get(
+            "require_dependencies", []
+        )
+    return compact
 
 
 def _coverage_for_owned_sources(records: list[dict], expansion: dict) -> list[dict]:
@@ -137,14 +161,20 @@ def prepare_inputs(state: PangeaState) -> PangeaState:
     )
     repositories = resolve_repositories_from_contract(contract, state["data_root"])
     requested_scope = list(contract.get("source_scope") or ["."])
-    expansion = expand_analysis_scope(
-        repositories,
-        requested_scope,
-        target=str(contract.get("target", "")),
-        focus=list(contract.get("focus", [])),
-    )
+    analysis_language = detect_analysis_language(repositories, requested_scope)
+    if analysis_language == "lua":
+        expansion = expand_lua_analysis_scope(repositories, requested_scope)
+    else:
+        expansion = expand_analysis_scope(
+            repositories,
+            requested_scope,
+            target=str(contract.get("target", "")),
+            focus=list(contract.get("focus", [])),
+        )
     if not any(group.get("code_paths") for group in expansion.get("groups", [])):
-        raise ValueError("用户指定范围没有可分析的 C/C++ 源码")
+        raise ValueError(
+            f"用户指定范围没有可分析的 {'Lua' if analysis_language == 'lua' else 'C/C++'} 源码"
+        )
     frozen_repositories = _freeze_sources(state, repositories, expansion)
     module_scope = list(dict.fromkeys(
         path
@@ -156,7 +186,10 @@ def prepare_inputs(state: PangeaState) -> PangeaState:
         for group in expansion.get("groups", [])
         for path in [*group.get("code_paths", []), *group.get("context_paths", [])]
     ]))
-    inventory = build_lightweight_inventory(frozen_repositories, inventory_scope)
+    if analysis_language == "lua":
+        inventory = build_lua_inventory(frozen_repositories, inventory_scope)
+    else:
+        inventory = build_lightweight_inventory(frozen_repositories, inventory_scope)
     assets = analysis_asset_inputs(state["data_root"], contract.get("asset_ids"))
     coverage_match = match_coverage_records(assets["coverage_records"], inventory)
     zero_coverage = _coverage_for_owned_sources(
@@ -174,7 +207,9 @@ def prepare_inputs(state: PangeaState) -> PangeaState:
     coverage_path = run_dir / "inputs" / "coverage-gaps.json"
     inventory_path = run_dir / "inputs" / "inventory.json"
     source_manifest_path = run_dir / "inputs" / "source-manifest.json"
-    compact_metadata = _compact_inventory(inventory, expansion)
+    compact_metadata = _compact_inventory(
+        inventory, expansion, analysis_language
+    )
     write_json(compact_path, compact_metadata)
     write_json(candidates_path, assets["candidates"])
     write_json(asset_items_path, assets["items"])
@@ -182,6 +217,7 @@ def prepare_inputs(state: PangeaState) -> PangeaState:
     write_json(run_dir / "inputs" / "test-case-examples.json", frozen_examples)
     write_json(inventory_path, inventory)
     write_json(source_manifest_path, {
+        "analysis_language": analysis_language,
         "repositories": frozen_repositories,
         "requested_scope": requested_scope,
         "source_scope": module_scope,
@@ -209,6 +245,7 @@ def prepare_inputs(state: PangeaState) -> PangeaState:
         action_id=action_id,
         run_id=state["run_id"],
         target=contract["target"],
+        analysis_language=analysis_language,
         repositories=[RepositoryRef.model_validate(item) for item in frozen_repositories],
         requested_scope=requested_scope,
         compact_metadata_path=str(compact_path),
@@ -221,6 +258,13 @@ def prepare_inputs(state: PangeaState) -> PangeaState:
         result_skeleton_path=str(planning_skeleton_path),
         result_example_path=str(project_path("schemas", "planning_result_v2.example.json")),
         result_path=str(planning_result_path(state)),
+        rubric_paths=[str(project_path(
+            "src",
+            "pangea_agent",
+            "rubrics",
+            "builtin",
+            f"{analysis_language}_unit_planning.md",
+        ))],
     )
     task_path = planning_task_path(state)
     write_json(task_path, task.model_dump(mode="json"))

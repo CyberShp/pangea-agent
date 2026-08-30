@@ -29,6 +29,11 @@ GENERAL_METHODOLOGIES = {
         "每个分析单元默认加载",
         "项目内置通用方法",
     ),
+    "lua_analysis.md": (
+        "Lua 源码分析",
+        "每个纯 Lua 分析单元默认加载",
+        "Lua 5.x 语义与项目内置通用方法",
+    ),
     "dfx.md": (
         "六维 DFX 分析",
         "每个分析单元默认加载",
@@ -47,6 +52,11 @@ GENERAL_METHODOLOGIES = {
 }
 
 SPECIALIZED_METHODOLOGIES = {
+    "openubmc_lua.md": (
+        "openUBMC Lua 专项分析",
+        "纯 Lua 单元命中 openUBMC、Skynet、component service 或平台公共库信号",
+        "openUBMC 官方组件开发、Lua 编码与测试指南",
+    ),
     "storage_iscsi.md": (
         "iSCSI 专项分析",
         "源码范围命中 iSCSI 协议信号",

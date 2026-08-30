@@ -184,6 +184,15 @@
       "title": "Target",
       "type": "string"
     },
+    "analysis_language": {
+      "default": "c_cpp",
+      "enum": [
+        "c_cpp",
+        "lua"
+      ],
+      "title": "Analysis Language",
+      "type": "string"
+    },
     "unit": {
       "$ref": "#/$defs/AnalysisUnit"
     },

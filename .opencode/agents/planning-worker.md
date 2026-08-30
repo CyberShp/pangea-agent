@@ -1,5 +1,5 @@
 ---
-description: 按功能模块和文件族规划 C/C++ 分析单元
+description: 按功能模块和文件族规划源码分析单元
 mode: subagent
 temperature: 0.1
 tools:
@@ -10,7 +10,7 @@ tools:
 
 只处理主 Agent 给出的 Planning task，不派发子 Agent。
 
-读取 task、`compact_metadata_path`、`asset_candidates_path`、`methodology_catalog_path` 指向的冻结精简目录和仓库根目录下的 `src/pangea_agent/rubrics/builtin/c_cpp_unit_planning.md`，结合函数、调用关系、资源信号和资料摘要进行语义分组。精简目录只提供选择所需的 ID、标题、适用条件、排除条件和来源；不要读取未选方法论的完整正文。优先保持完整功能、生命周期、状态机、接口/实现、回调注册/实现和共享资源关系；不要按固定文件数切片，也不要为了并发拆开一条主调用链。
+读取 task、`compact_metadata_path`、`asset_candidates_path`、`methodology_catalog_path` 指向的冻结精简目录和 task 指定的 `rubric_paths`，按 `analysis_language` 应用对应语言的规划规则，结合函数、调用关系、资源信号和资料摘要进行语义分组。精简目录只提供选择所需的 ID、标题、适用条件、排除条件和来源；不要读取未选方法论的完整正文。优先保持完整功能、生命周期、状态机、接口/实现、回调注册/实现和共享资源关系；不要按固定文件数切片，也不要为了并发拆开一条主调用链。
 
 每个请求源码必须且只能属于一个 `source_scope`。其他单元需要参考的文件放入 `context_scope`。只分配确实相关的资料条目、Coverage 缺口和缺陷机理。把符合 `planning_result.schema.json` 的完整 JSON 直接写入 task 的 `result_path`；结果只写语义规划，不填写 run 状态或 Agent 标识。
 

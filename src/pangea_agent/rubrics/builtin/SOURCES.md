@@ -11,6 +11,17 @@
 - SAS：SAS-4.1，INCITS 567-2023；来源：https://www.t10.org/members/w_sas41-.htm 。
 - SCSI：SPC-6，INCITS 566-2025；SBC-5，INCITS 571-2025；来源：https://t10.org/drafts.htm 。
 
+## openUBMC Lua 基线
+
+- 组件目录、`src/service/main.lua`、`src/lualib` 与部署路径：
+  https://www.openubmc.cn/docs/en/development/develop_guide/app_development/app_creation.html 。
+- Lua VM 隔离、module 搜索根、class、protected call、coroutine 与资源管理：
+  https://www.openubmc.cn/docs/en/development/develop_guide/app_development/lua_guide.html 。
+- openUBMC Lua 编码约定：
+  https://www.openubmc.cn/docs/en/development/develop_guide/app_development/coding.html 。
+- LuaUnit 测试组织与执行：
+  https://www.openubmc.cn/docs/en/development/develop_guide/app_development/testing.html 。
+
 ## GitHub 固定引用
 
 | 用途 | 仓库 | 分支 | 固定提交 |

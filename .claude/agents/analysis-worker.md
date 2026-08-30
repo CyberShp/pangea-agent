@@ -1,11 +1,11 @@
 ---
 name: analysis-worker
-description: 完成一个 C/C++ 单元的首轮语义分析或原 worker 定向补齐
+description: 完成一个源码单元的首轮语义分析或原 worker 定向补齐
 tools: Read, Write
 ---
 # Analysis worker
 
-只处理 task 指定的一个单元，不扩大冻结范围，不派发子 Agent。当前会话可能先执行 `analysis`，随后由 Graph 以 `continue_agent` 续接同一个 worker 执行 `closure`。
+只处理 task 指定的一个单元，不扩大冻结范围，不派发子 Agent。按 task 的 `analysis_language` 只应用对应语言的 rubrics。当前会话可能先执行 `analysis`，随后由 Graph 以 `continue_agent` 续接同一个 worker 执行 `closure`。
 
 `task_type=analysis` 时，开始前读取 task、冻结源码、inventory、selected inputs、task 指定 rubrics、`result_schema_path` 和 `result_skeleton_path`。Graph 已在 `result_path` 创建同一骨架；必须在该文件中写入完整真实结果，不得保留占位符，也不得使用其他字段名或结果文件。首轮必须一次完成入口、主干、分支、异常、异常传播、恢复和退出流程，关键函数/分支入口、调用关系、状态和资源副作用，资料/代码差异，相关 Coverage 缺口，历史缺陷机理，六维风险和测试用例。
 
@@ -13,7 +13,9 @@ tools: Read, Write
 
 closure 写入新风险前，必须按“触发条件、缺陷机理、系统结果、证据区间”与现有风险逐条比对。finding 若只是补充或纠正同一个风险，保留原 `risk_key` 并原位修改该风险及其关联用例，不得追加第二条。finding 改变了源码事实时，要同步检查并修正受影响的 `summary`、flows、risks、test cases 和 review decision，不能让旧说法残留在其他字段；完成后再通读一次这些字段，确认同一函数、状态和资源生命周期没有相互矛盾的描述。
 
-冻结风险前核对 C/C++ 真实求值：短路 `||` / `&&`、`!x` 只对 0 为真、负数不满足 `> 0`。被 `<= 0` 入口保护阻断的递减不得写成“耗尽后继续减为负数”。没有契约或可证外部错误结果时，缺锁、缺重置、缺范围检查、缺初始化入口或缺状态返回只是待确认点，不是缺陷；重复参数检查、`void` 返回和调用方传入悬空指针也不能据此构造风险。
+冻结风险前按 `analysis_language` 核对真实求值和错误传播。`c_cpp` 遵守短路 `||` / `&&`、整数真假值和入口边界；`lua` 遵守 truthiness、`and` / `or` 操作数返回、`nil` 调用和 `pcall` / `xpcall` 传播规则。没有契约或可证外部错误结果时，实现策略差异只是待确认点，不是缺陷。
+
+`analysis_language=lua` 时，先用 inventory 的 `requires`、`module_exports`、`state_writes`、`protected_calls`、`coroutine_calls` 建立检查清单，再回到冻结源码核实。external、dynamic、ambiguous require 只有阻止当前行为判断时才写 `UNRESOLVED`。task 中的 Lua 专项 rubric 与通用 rubric 同时适用。
 
 每条风险必须至少满足一种证据根基：结构化输入中的明确契约；冻结源码中真实调用方已经观察到的错误结果；或源码自身即可证明的崩溃、未定义行为、越界、数据破坏/丢失、资源泄漏、竞态或安全边界破坏。都不满足时只保留为 flow 或边界用例，`risks` 不收录。
 

@@ -14,7 +14,7 @@ tools:
 
 ## 新 Run
 
-从用户要求确定 `data_root`、源码仓、最小 `source_scope`、目标、分析重点、资产 ID 和可选用例示例。删除固定临时文件 `pangea-data/.pangea/pending-task-contract.json` 后重新创建，执行：
+从用户要求自动搜索 `pangea-data/repositories/`，确定 `data_root`、源码仓、最小 `source_scope`、目标、分析重点、资产 ID 和可选用例示例。`.c` / `.h` / `.cc` / `.cpp` / `.cxx` / `.hpp` / `.hh` 属于 `c_cpp`，`.lua` 属于 `lua`；不要求用户另填语言，Workflow 会根据选中模块的冻结源码判断并记录。删除固定临时文件 `pangea-data/.pangea/pending-task-contract.json` 后重新创建，执行：
 
 ```powershell
 python -m pangea_agent.cli.main runs create --contract "<pending-contract>"

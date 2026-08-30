@@ -4,6 +4,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+AnalysisLanguage = Literal["c_cpp", "lua"]
+
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -60,6 +62,7 @@ class PlanningTask(StrictModel):
     action_id: str | None = Field(default=None, min_length=1)
     run_id: str = Field(min_length=1)
     target: str = Field(min_length=1)
+    analysis_language: AnalysisLanguage = "c_cpp"
     repositories: list[RepositoryRef] = Field(min_length=1)
     requested_scope: list[str] = Field(min_length=1)
     compact_metadata_path: str = Field(min_length=1)
@@ -74,6 +77,12 @@ class PlanningTask(StrictModel):
         min_length=1,
     )
     result_path: str = Field(min_length=1)
+    rubric_paths: list[str] = Field(
+        default_factory=lambda: [
+            "src/pangea_agent/rubrics/builtin/c_cpp_unit_planning.md"
+        ],
+        min_length=1,
+    )
     max_unit_lines: int = Field(default=5000, gt=0)
     max_unit_functions: int = Field(default=140, gt=0)
     merge_direct_call_chain_max_lines: int = Field(default=800, gt=0)
@@ -236,6 +245,7 @@ class AnalysisTask(StrictModel):
     action_id: str | None = Field(default=None, min_length=1)
     run_id: str = Field(min_length=1)
     target: str = Field(min_length=1)
+    analysis_language: AnalysisLanguage = "c_cpp"
     unit: AnalysisUnit
     evidence_scope: EvidenceScopeContract | None = None
     repository: RepositoryRef
@@ -284,6 +294,7 @@ class IndependentReviewTask(StrictModel):
     action_id: str | None = Field(default=None, min_length=1)
     run_id: str = Field(min_length=1)
     target: str = Field(min_length=1)
+    analysis_language: AnalysisLanguage = "c_cpp"
     repositories: list[RepositoryRef] = Field(min_length=1)
     evidence_scope_by_unit: dict[str, EvidenceScopeContract] = Field(
         default_factory=dict
@@ -357,6 +368,7 @@ class ComparisonReviewTask(StrictModel):
     action_id: str | None = Field(default=None, min_length=1)
     run_id: str = Field(min_length=1)
     target: str = Field(min_length=1)
+    analysis_language: AnalysisLanguage = "c_cpp"
     evidence_scope_by_unit: dict[str, EvidenceScopeContract] = Field(
         default_factory=dict
     )
@@ -382,6 +394,7 @@ class ClosureTask(StrictModel):
     action_id: str | None = Field(default=None, min_length=1)
     run_id: str = Field(min_length=1)
     target: str = Field(min_length=1)
+    analysis_language: AnalysisLanguage = "c_cpp"
     unit: AnalysisUnit
     evidence_scope: EvidenceScopeContract | None = None
     repository: RepositoryRef

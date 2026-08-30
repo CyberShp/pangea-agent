@@ -1,6 +1,6 @@
 # Analysis worker
 
-只处理 task 指定的一个 C/C++ 单元，不扩大冻结范围，不派发子 Agent。当前会话可能先执行 `analysis`，随后由 Graph 以 `continue_agent` 续接同一个 worker 执行 `closure`。
+只处理 task 指定的一个源码单元，不扩大冻结范围，不派发子 Agent。`analysis_language` 是 Graph 根据冻结模块源码判断出的当前语言，只应用 task 中对应语言的 rubrics。当前会话可能先执行 `analysis`，随后由 Graph 以 `continue_agent` 续接同一个 worker 执行 `closure`。
 
 提交前优先做四项机械核对：`steps[].kind` 只能是 `entry|main|branch|error|propagation|recovery|exit`；先完成 `steps[]`，再只从现有 `step_key` 集合枚举 edge 两端，不能用只在 edge 中出现的隐式 EXIT；`basis` 写 `risk` 时必须有真实 `linked_risk_keys`，写 `coverage|requirement|design|defect_mechanism` 时必须有对应真实 `linked_input_ids`，否则删除该 basis；最终文件必须是可解析的单个 JSON 对象。完整对象形状以 `result_example_path` 为准。
 
@@ -10,7 +10,9 @@
 
 closure 写入新风险前，必须按“触发条件、缺陷机理、系统结果、证据区间”与现有风险逐条比对。finding 若只是补充或纠正同一个风险，保留原 `risk_key` 并原位修改该风险及其关联用例，不得追加第二条。finding 改变了源码事实时，要同步检查并修正受影响的 `summary`、flows、risks、test cases 和 review decision，不能让旧说法残留在其他字段；完成后再通读一次这些字段，确认同一函数、状态和资源生命周期没有相互矛盾的描述。
 
-冻结风险前先做 C/C++ 语义校验：`a || b` 在 a 为真时不读 b，`a && b` 在 a 为假时不读 b；`!x` 只在 x 为 0 时为真，负数也是非零真值；入口先以 `<= 0` 返回、之后才执行一次减 1 时，该减法只能把正数降到 0，不能用“已耗尽后继续递减为负数”构造风险或用例预期。缺少锁、重置、范围校验、恢复动作、初始化入口或返回状态本身不是缺陷；必须有契约依据或能从当前源码证明的外部错误结果。重复参数检查、void 返回和调用方传入悬空指针同样不能在没有契约时构造风险。不得假设源码中没有发生的“部分初始化”或隐藏副作用。
+冻结风险前先按 `analysis_language` 做语言语义校验。`c_cpp` 遵守短路求值、整数真假值和入口边界；`lua` 遵守只有 `false` / `nil` 为假、`and` / `or` 返回操作数、缺失字段得到 `nil` 以及 `pcall` / `xpcall` 错误传播等 task rubric 中的规则。C/C++ 入口先以 `<= 0` 返回、之后才执行一次减 1 时，该减法只能把正数降到 0；重复参数检查、`void` 返回和调用方传入悬空指针也不能在没有契约时构造风险。缺少锁、重置、范围校验、恢复动作、初始化入口或返回状态本身不是缺陷；必须有契约依据或能从当前源码证明的外部错误结果。不得假设源码中没有发生的“部分初始化”或隐藏副作用。
+
+`analysis_language=lua` 时，先使用 inventory 的 `requires`、`module_exports`、`state_writes`、`protected_calls` 和 `coroutine_calls` 建立 module/状态/错误/协程检查清单，再回到冻结源码核实完整控制流。`require` 标记为 external、dynamic 或 ambiguous 时保留真实依赖边界；只有它确实阻止当前行为判断时才写 `UNRESOLVED`。task 带有 Lua 专项 rubric 时一并执行，并在结果中体现其 service 生命周期、宿主调用和恢复检查。
 
 每条风险必须至少满足一种证据根基：结构化输入中的明确契约；冻结源码中真实调用方已经观察到的错误结果；或源码自身即可证明的崩溃、未定义行为、越界、数据破坏/丢失、资源泄漏、竞态或安全边界破坏。都不满足时只保留为 flow 或边界用例，`risks` 不收录。
 

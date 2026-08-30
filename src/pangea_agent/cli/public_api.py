@@ -30,7 +30,7 @@ from pangea_agent.report import reports_are_complete
 
 def system_capabilities(data_root: str) -> dict:
     return {
-        "analysis_languages": ["c_cpp"],
+        "analysis_languages": ["c_cpp", "lua"],
         "asset_types": [
             "requirement",
             "design",

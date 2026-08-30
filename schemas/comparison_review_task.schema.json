@@ -62,6 +62,15 @@
       "title": "Target",
       "type": "string"
     },
+    "analysis_language": {
+      "default": "c_cpp",
+      "enum": [
+        "c_cpp",
+        "lua"
+      ],
+      "title": "Analysis Language",
+      "type": "string"
+    },
     "evidence_scope_by_unit": {
       "additionalProperties": {
         "$ref": "#/$defs/EvidenceScopeContract"

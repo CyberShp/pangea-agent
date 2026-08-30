@@ -47,15 +47,18 @@ from pangea_agent.models.analysis import (
 )
 
 
-GENERAL_RUBRICS = [
-    str(project_path("src", "pangea_agent", "rubrics", "builtin", name))
-    for name in (
-        "c_cpp_analysis.md",
-        "dfx.md",
-        "risk_reproducibility.md",
-        "test_case_generation.md",
-    )
-]
+COMMON_RUBRIC_NAMES = (
+    "dfx.md",
+    "risk_reproducibility.md",
+    "test_case_generation.md",
+)
+
+
+def _general_rubrics(analysis_language: str) -> list[str]:
+    return [
+        str(project_path("src", "pangea_agent", "rubrics", "builtin", name))
+        for name in (f"{analysis_language}_analysis.md", *COMMON_RUBRIC_NAMES)
+    ]
 
 SPECIALIZED_RUBRICS = {
     Path(name).stem: str(
@@ -307,9 +310,12 @@ def _prepare_analysis(state: PangeaState, progress) -> PangeaState:
     }
     global_inputs_path = run_dir / "inputs" / "selected-inputs.json"
     write_json(global_inputs_path, global_inputs)
+    source_manifest = read_json(run_dir / "inputs" / "source-manifest.json")
+    analysis_language = source_manifest.get("analysis_language", "c_cpp")
+    general_rubrics = _general_rubrics(analysis_language)
     repositories = {
         item["repo_id"]: RepositoryRef.model_validate(item)
-        for item in read_json(run_dir / "inputs" / "source-manifest.json")["repositories"]
+        for item in source_manifest["repositories"]
     }
     progress.analysis_units = units
     planning_action.status = "accepted"
@@ -339,6 +345,7 @@ def _prepare_analysis(state: PangeaState, progress) -> PangeaState:
             action_id=action_id,
             run_id=state["run_id"],
             target=state["task_contract"]["target"],
+            analysis_language=analysis_language,
             unit=unit,
             evidence_scope=_evidence_scope(unit),
             repository=repositories[unit.repo_id],
@@ -355,7 +362,7 @@ def _prepare_analysis(state: PangeaState, progress) -> PangeaState:
             ),
             result_path=str(analysis_result_path(state, unit.unit_id)),
             rubric_paths=[
-                *GENERAL_RUBRICS,
+                *general_rubrics,
                 *[
                     selectable_rubric_paths[methodology_id]
                     for methodology_id in unit.methodology_ids
@@ -400,6 +407,8 @@ def _accept_analysis(state: PangeaState, progress) -> PangeaState:
 
     run_dir = run_directory(state)
     source_manifest = read_json(run_dir / "inputs" / "source-manifest.json")
+    analysis_language = source_manifest.get("analysis_language", "c_cpp")
+    review_rubrics = _general_rubrics(analysis_language)
     action_id = f"{state['run_id']}:review"
     user_rubric_paths = {
         Path(path).stem: path for path in frozen_methodology_paths(run_dir)
@@ -414,6 +423,7 @@ def _accept_analysis(state: PangeaState, progress) -> PangeaState:
         action_id=action_id,
         run_id=state["run_id"],
         target=state["task_contract"]["target"],
+        analysis_language=analysis_language,
         repositories=[
             RepositoryRef.model_validate(item) for item in source_manifest["repositories"]
         ],
@@ -423,7 +433,7 @@ def _accept_analysis(state: PangeaState, progress) -> PangeaState:
         source_manifest_path=str(run_dir / "inputs" / "source-manifest.json"),
         selected_inputs_path=str(run_dir / "inputs" / "selected-inputs.json"),
         rubric_paths=[
-            *GENERAL_RUBRICS,
+            *review_rubrics,
             *[
                 path
                 for methodology_id, path in selectable_rubric_paths.items()
@@ -553,6 +563,7 @@ def _accept_independent_review(state: PangeaState, progress, action) -> PangeaSt
         action_id=action_id,
         run_id=state["run_id"],
         target=state["task_contract"]["target"],
+        analysis_language=task.analysis_language,
         evidence_scope_by_unit=_evidence_scope_by_unit(progress),
         unit_plan_path=task.unit_plan_path,
         analysis_task_paths={
@@ -667,6 +678,7 @@ def _accept_comparison_review(state: PangeaState, progress, action) -> PangeaSta
             action_id=action_id,
             run_id=state["run_id"],
             target=state["task_contract"]["target"],
+            analysis_language=original_task.analysis_language,
             unit=unit,
             evidence_scope=_evidence_scope(unit),
             repository=repositories[unit.repo_id],

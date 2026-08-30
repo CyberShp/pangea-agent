@@ -1,5 +1,5 @@
 ---
-description: 启动或继续一次 PANGEA C/C++ 模块分析
+description: 启动或继续一次 PANGEA C/C++ 或 Lua 模块分析
 ---
 # module-analysis
 
