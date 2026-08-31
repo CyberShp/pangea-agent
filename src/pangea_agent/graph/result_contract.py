@@ -274,7 +274,6 @@ def _reference_warnings(result: UnitSemanticResult) -> list[str]:
 
     known_flows = set(keyed["flow_key"])
     known_risks = set(keyed["risk_key"])
-    known_cases = set(keyed["case_key"])
     for flow in result.flows:
         step_keys = [step.step_key for step in flow.steps]
         if len(step_keys) != len(set(step_keys)):
@@ -304,13 +303,6 @@ def _reference_warnings(result: UnitSemanticResult) -> list[str]:
             warnings.append(
                 f"测试用例 {case.case_key} 引用了未知 risk_key："
                 f"{sorted(unknown_risks)}"
-            )
-    for decision in [*result.coverage_decisions, *result.mechanism_decisions]:
-        unknown_cases = set(decision.test_case_keys) - known_cases
-        if unknown_cases:
-            warnings.append(
-                "处理决定引用了未知 case_key："
-                f"{sorted(unknown_cases)}"
             )
     return warnings
 

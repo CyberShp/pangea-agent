@@ -29,10 +29,10 @@ CLI 返回 `agent_actions` 或 `adapter next` 返回 `actions` 后：
 1. `dispatch_agent` 按 role 创建对应 Agent，只传 `task_path`；`continue_agent` 恢复 action 自带的 `task_id`，不得按 role 创建新 Agent。
 2. 同时派发最多 8 个 action；8 是并发上限，不是 Run 单元总数。
 3. 取得真实子任务 ID 后执行 `adapter bind --run-id ... --action-id ... --task-id ...`。`continue_agent` 必须传回 action 中原有的同一 `task_id`。
-4. 子 Agent 完成后执行 `adapter validate`。`status=valid` 才进入 settle；`status=invalid` 时执行返回的 `repair_action`，恢复同一 `task_id`，把 `error.message` 交回原会话，只修正同一 `result_path`，然后再次 validate。
-5. 校验通过后执行 `adapter settle`。如果 settle 防御性返回 `validation.status=invalid`，执行其中的 `repair_action`。
+4. 子 Agent 完成后直接执行 `adapter settle`；独立 `adapter validate` 已停用。首次返回 `validation.status=invalid|incomplete` 时执行其中的 `repair_action`，恢复同一 `task_id`，把完整 `validation_error` 交回原会话，只修正同一 `result_path`。
+5. 修复 Agent 完成后对同一 action 再执行一次 `adapter settle`。第二次仍不合法时 Workflow 自动冻结降级结果并继续，不再派发第二轮修复，也不询问用户是否重跑。每份可消费的 Analysis 结果都会整理确定性结构并补齐尚未覆盖的分支、Coverage gap 和输入裁决；降级结果额外保留未决事项，最终 Run 以 `UNRESOLVED` 完成报告。
 
-Run/action/task 丢失、冻结输入损坏、`continue_agent` 缺少约定的 `task_id` 或 Workflow 返回未持久化 action 才属于流程错误。普通 JSON、schema、引用、evidence、Coverage 或 finding 校验错误由当前 worker 原地修复。主 Agent 不代改结果，不换 worker。
+Run/action/task 丢失、冻结输入损坏、`continue_agent` 缺少约定的 `task_id` 或 Workflow 返回未持久化 action 才属于流程错误。无法解析、缺少摘要或没有可消费流程的结果由当前 worker 原地修复一次，仍失败时由 Workflow 自动降级；可确定的字段、编号和引用由 Workflow 整理，语义分歧交给 Reviewer。主 Agent 不代改结果、不换 worker，也不因可降级的结构问题询问用户是否重跑。
 
 Review 由同一个 `review-worker` 完成两个 checkpoint：先执行不提供首轮结果的 `independent_review`，再按 `continue_agent` 续接 `comparison_review`。Comparison review 产生 `targeted_closure` 时，action 继续对应单元首轮 `analysis-worker` 的 `task_id`；不得创建替代 worker。
 

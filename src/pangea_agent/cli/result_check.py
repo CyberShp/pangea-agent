@@ -5,11 +5,16 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from pangea_agent.agent_io import read_json
+from pangea_agent.graph.degraded_results import normalize_analysis_result
+from pangea_agent.graph.planning import (
+    accept_planning_result,
+    normalize_planning_result,
+)
 from pangea_agent.graph.result_contract import unit_submission_warnings
 from pangea_agent.models.analysis import (
     AnalysisTask,
     ClosureTask,
-    UnitSemanticResult,
+    PlanningTask,
 )
 
 
@@ -40,20 +45,37 @@ def check_result_json(task_path: str) -> dict:
         "state_changed": False,
     }
     task_type = task_data.get("task_type")
-    if task_type not in {"analysis", "closure"}:
-        return response
-
-    try:
-        result = UnitSemanticResult.model_validate(result_data)
-    except ValidationError as exc:
-        response["advisories"] = _schema_advisories(exc)
+    if task_type == "unit_planning":
+        try:
+            task = PlanningTask.model_validate(task_data)
+            warnings: list[str] = []
+            result = normalize_planning_result(task, result_data, warnings)
+            inputs_root = Path(task.compact_metadata_path).parent
+            accept_planning_result(
+                task,
+                result,
+                read_json(Path(task.compact_metadata_path)),
+                read_json(inputs_root / "asset-items.json"),
+                read_json(inputs_root / "coverage-gaps.json"),
+                warnings,
+            )
+        except ValidationError as exc:
+            response["advisories"] = _schema_advisories(exc)
+            response["submission_ready"] = False
+        except (OSError, ValueError) as exc:
+            response["advisories"] = [str(exc)]
+            response["submission_ready"] = False
+        else:
+            response["advisories"] = warnings
         response["advisory_count"] = len(response["advisories"])
-        response["status"] = "WARN"
-        response["submission_ready"] = False
-        response["agent_next_step"] = (
-            "当前 Agent 检查并修正 advisories 后重跑；"
-            "这些确定性结构项会由 settle 再次校验"
-        )
+        if response["advisory_count"]:
+            response["status"] = "WARN"
+            response["agent_next_step"] = (
+                "当前 Agent 只需修正 submission_ready=false 的源码归属问题；"
+                "可归一化提示会由 settle 记录并继续流程"
+            )
+        return response
+    if task_type not in {"analysis", "closure"}:
         return response
 
     if task_type == "analysis":
@@ -68,7 +90,38 @@ def check_result_json(task_path: str) -> dict:
         selected_inputs = read_json(Path(task.selected_inputs_path))
         review_findings = closure_task.review_findings
 
-    response["advisories"] = unit_submission_warnings(
+    try:
+        try:
+            inventory = read_json(Path(task.inventory_path))
+        except (OSError, ValueError):
+            inventory = {}
+        normalization_warnings: list[str] = []
+        result = normalize_analysis_result(
+            task,
+            result_data,
+            inventory,
+            selected_inputs,
+            normalization_warnings,
+        )
+    except ValidationError as exc:
+        response["advisories"] = _schema_advisories(exc)
+        response["advisory_count"] = len(response["advisories"])
+        response["status"] = "WARN"
+        response["submission_ready"] = False
+        response["agent_next_step"] = (
+            "当前 Agent 检查并修正 advisories 后重跑；"
+            "这些确定性结构项会由 settle 再次校验"
+        )
+        return response
+    except (OSError, ValueError) as exc:
+        response["advisories"] = [str(exc)]
+        response["advisory_count"] = 1
+        response["status"] = "WARN"
+        response["submission_ready"] = False
+        response["agent_next_step"] = "补充可消费的分析摘要、流程和源码证据后重跑"
+        return response
+
+    response["advisories"] = normalization_warnings + unit_submission_warnings(
         task,
         result,
         selected_inputs,

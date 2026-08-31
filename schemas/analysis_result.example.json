@@ -14,7 +14,6 @@
           "kind": "entry",
           "evidence": [
             {
-              "repo_id": "example-repo",
               "path": "src/example.c",
               "line_start": 10,
               "line_end": 12,
@@ -28,7 +27,6 @@
           "kind": "main",
           "evidence": [
             {
-              "repo_id": "example-repo",
               "path": "src/example.c",
               "line_start": 13,
               "line_end": 13,
@@ -42,7 +40,6 @@
           "kind": "branch",
           "evidence": [
             {
-              "repo_id": "example-repo",
               "path": "src/example.c",
               "line_start": 14,
               "line_end": 14,
@@ -56,7 +53,6 @@
           "kind": "error",
           "evidence": [
             {
-              "repo_id": "example-repo",
               "path": "src/example.c",
               "line_start": 15,
               "line_end": 15,
@@ -70,7 +66,6 @@
           "kind": "propagation",
           "evidence": [
             {
-              "repo_id": "example-repo",
               "path": "src/example.c",
               "line_start": 16,
               "line_end": 16,
@@ -84,7 +79,6 @@
           "kind": "recovery",
           "evidence": [
             {
-              "repo_id": "example-repo",
               "path": "src/example.c",
               "line_start": 17,
               "line_end": 19,
@@ -98,7 +92,6 @@
           "kind": "exit",
           "evidence": [
             {
-              "repo_id": "example-repo",
               "path": "src/example.c",
               "line_start": 20,
               "line_end": 20,
@@ -148,7 +141,6 @@
       "conclusion": "源码行为与示例要求一致",
       "evidence": [
         {
-          "repo_id": "example-repo",
           "path": "src/example.c",
           "line_start": 10,
           "line_end": 20,
@@ -161,9 +153,6 @@
     {
       "coverage_id": "COV-EXAMPLE",
       "disposition": "test_generated",
-      "test_case_keys": [
-        "TC-EXAMPLE"
-      ],
       "reason": "该零覆盖入口可从受支持接口触达"
     }
   ],
@@ -176,13 +165,9 @@
         "核心实现未拒绝输入",
         "调用方观察到错误状态"
       ],
-      "test_case_keys": [
-        "TC-EXAMPLE"
-      ],
       "conclusion": "当前源码存在与历史机理等价的触发链",
       "evidence": [
         {
-          "repo_id": "example-repo",
           "path": "src/example.c",
           "line_start": 10,
           "line_end": 20,
@@ -209,7 +194,6 @@
       "unreachable_evidence": [],
       "evidence": [
         {
-          "repo_id": "example-repo",
           "path": "src/example.c",
           "line_start": 10,
           "line_end": 20,
@@ -220,7 +204,6 @@
   ],
   "test_cases": [
     {
-      "case_key": "TC-EXAMPLE",
       "title": "公开入口拒绝语义无效输入",
       "basis": [
         "code_flow",
@@ -261,7 +244,6 @@
       "conclusion": "已补充复核指出的异常路径和对应测试",
       "evidence": [
         {
-          "repo_id": "example-repo",
           "path": "src/example.c",
           "line_start": 10,
           "line_end": 20,

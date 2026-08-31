@@ -182,15 +182,11 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
                 "unit_id": unit.unit_id,
                 **item.model_dump(mode="json", exclude={"test_case_keys"}),
                 "test_case_ids": [
-                    case_ids[(unit.unit_id, key)]
-                    for key in item.test_case_keys
-                    if (unit.unit_id, key) in case_ids
+                    case_ids[(unit.unit_id, case.case_key)]
+                    for case in result.test_cases
+                    if item.coverage_id in case.linked_input_ids
                 ],
-                "unresolved_test_case_keys": [
-                    key
-                    for key in item.test_case_keys
-                    if (unit.unit_id, key) not in case_ids
-                ],
+                "unresolved_test_case_keys": [],
             }
             for item in result.coverage_decisions
         )
@@ -199,15 +195,11 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
                 "unit_id": unit.unit_id,
                 **item.model_dump(mode="json", exclude={"test_case_keys", "evidence"}),
                 "test_case_ids": [
-                    case_ids[(unit.unit_id, key)]
-                    for key in item.test_case_keys
-                    if (unit.unit_id, key) in case_ids
+                    case_ids[(unit.unit_id, case.case_key)]
+                    for case in result.test_cases
+                    if item.mechanism_id in case.linked_input_ids
                 ],
-                "unresolved_test_case_keys": [
-                    key
-                    for key in item.test_case_keys
-                    if (unit.unit_id, key) not in case_ids
-                ],
+                "unresolved_test_case_keys": [],
                 "evidence": [_evidence(evidence) for evidence in item.evidence],
             }
             for item in result.mechanism_decisions

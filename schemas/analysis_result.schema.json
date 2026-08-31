@@ -70,6 +70,7 @@
           "type": "string"
         },
         "test_case_keys": {
+          "description": "可选系统字段；Analysis Agent 不填写，由 Workflow 从 test_cases[].linked_input_ids 派生",
           "items": {
             "type": "string"
           },
@@ -172,6 +173,7 @@
       "additionalProperties": false,
       "properties": {
         "case_key": {
+          "description": "可选系统字段；Analysis Agent 不填写，由 Workflow 生成",
           "minLength": 1,
           "title": "Case Key",
           "type": "string"
@@ -261,7 +263,6 @@
         }
       },
       "required": [
-        "case_key",
         "title",
         "basis",
         "covered_flow_keys",
@@ -341,6 +342,7 @@
           "type": "array"
         },
         "test_case_keys": {
+          "description": "可选系统字段；Analysis Agent 不填写，由 Workflow 从 test_cases[].linked_input_ids 派生",
           "items": {
             "type": "string"
           },
@@ -523,6 +525,7 @@
       "additionalProperties": false,
       "properties": {
         "repo_id": {
+          "description": "可选系统字段；单元内 Analysis 证据由 Workflow 使用 task.unit.repo_id 补充",
           "minLength": 1,
           "title": "Repo Id",
           "type": "string"
@@ -557,7 +560,6 @@
         }
       },
       "required": [
-        "repo_id",
         "path",
         "line_start",
         "observation"

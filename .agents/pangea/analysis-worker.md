@@ -4,7 +4,7 @@
 
 提交前优先做四项机械核对：`steps[].kind` 只能是 `entry|main|branch|error|propagation|recovery|exit`；先完成 `steps[]`，再只从现有 `step_key` 集合枚举 edge 两端，不能用只在 edge 中出现的隐式 EXIT；`basis` 写 `risk` 时必须有真实 `linked_risk_keys`，写 `coverage|requirement|design|defect_mechanism` 时必须有对应真实 `linked_input_ids`，否则删除该 basis；最终文件必须是可解析的单个 JSON 对象。完整对象形状以 `result_example_path` 为准。
 
-`task_type=analysis` 时，开始前读取 task、冻结源码、inventory、selected inputs、task 指定 rubrics、`result_schema_path`、`result_skeleton_path` 和 `result_example_path`。Graph 已在 `result_path` 创建同一骨架；先用完整样例逐个确认 flow、三类 decision、risk、test case 和 review decision 的字段名、对象形状与枚举值，再在骨架文件中写入真实结果，不得把样例值复制为结论。不得凭记忆套用旧版 schema，不得使用 `normal`、`test_case_key`、标量 `basis` 等旧字段或另建结果文件。首轮一次完成主干/分支/异常/传播/恢复流程、关键入口及调用关系、状态和资源副作用、资料/代码差异、相关 Coverage 缺口、历史缺陷机理、六维风险和测试用例。
+`task_type=analysis` 时，开始前读取 task、冻结源码、inventory、selected inputs、task 指定 rubrics、`result_schema_path`、`result_skeleton_path` 和 `result_example_path`。Graph 已在 `result_path` 创建同一骨架；先用完整样例逐个确认 flow、三类 decision、risk、test case 和 review decision 的字段名、对象形状与枚举值，再在骨架文件中写入真实结果，不得把样例值复制为结论。不得凭记忆套用旧版 schema，不得使用 `normal` 或标量 `basis` 等旧字段或另建结果文件。证据只填写 path、行号和 observation；用例不填写 `case_key`；Coverage/缺陷机理决策不填写 `test_case_keys`，这些系统字段由 Workflow 生成。首轮一次完成主干/分支/异常/传播/恢复流程、关键入口及调用关系、状态和资源副作用、资料/代码差异、相关 Coverage 缺口、历史缺陷机理、六维风险和测试用例。
 
 `task_type=closure` 时，这是本会话首轮结果的定向补齐。读取 closure task、`result_example_path`、`original_task_path`、`original_result_path`、原 task 的冻结输入、`review_findings` 和 `risk_test_obligations`。Graph 已把原结果复制到 closure task 的 `result_path`；只修改这个副本，保留未被 finding 推翻的内容。每个 finding 恰好写一个 `review_finding_decisions`；没有 review finding 时保持空数组。逐条完成 `risk_test_obligations`：为可达风险生成或关联真实用例，只有源码证明无法从受支持业务入口到达时才改写风险的不可达处置、原因和证据。不得修改原始分析结果或 review JSON。`incorrect_conclusion` 指向已有风险或用例时，必须从正式结果中删除被源码反证的项目，或把错误字段改成证据支持的结论，不能只追加 decision 而保留原错误内容。closure 还必须重审首轮 `unresolved`：已经由本单元源码裁决、已被 finding 驳回、已形成有证据的风险/用例，或只是其他单元和范围外实现细节的问题必须删除；finding 仅提及其他单元但不要求本单元改变正式结论时，按证据如实 `dismissed`，不得复制成新的 unresolved。
 
@@ -22,7 +22,7 @@ closure 写入新风险前，必须按“触发条件、缺陷机理、系统结
 
 顶层 `unresolved` 不是研究问题、后续建议或低置信度清单。只有明确任务义务被阻断时才填写：真实 selected input 无法作出规定的 decision、唯一 Coverage gap 无法闭环，或 confirmed review finding 在当前冻结范围内无法作出 `incorporated` / `dismissed` 裁决。每项必须写明所阻断的真实输入 ID、Coverage ID 或 finding_key 以及缺少哪项必需证据。外部组件行为、设计动机、未来扩展、性能影响、常规故障注入、当前范围外 helper 的实现细节，以及已被其他请求单元覆盖的问题，都不单独构成 unresolved；写入 scope/exclusion、风险 `confidence`、测试前置条件，或直接省略。相同事项不得在首轮、finding decision 和顶层 unresolved 重复登记。
 
-三个决策数组只处理 selected inputs 中真实存在的编号，而且必须逐项且不重复：`input_decisions` 对应 `asset_items` 的键，`coverage_decisions` 对应 `coverage_gaps[].coverage_id`，`mechanism_decisions` 对应 `defect_mechanisms` 的键。某类输入为空时，对应决策数组必须是 `[]`。不得把代码变量、函数、分支、风险或自行命名的编号塞进这三个数组；代码语义写入 flows、risks 和 test_cases。
+三个决策数组只处理 selected inputs 中真实存在的编号，而且必须逐项且不重复：`input_decisions` 对应 `asset_items` 的键，`coverage_decisions` 对应 `coverage_gaps[].coverage_id`，`mechanism_decisions` 对应 `defect_mechanisms` 的键。某类输入为空时，对应决策数组必须是 `[]`。不得把代码变量、函数、分支、风险或自行命名的编号塞进这三个数组；代码语义写入 flows、risks 和 test_cases。Coverage 和缺陷机理与用例的关联只写在用例 `linked_input_ids` 中。
 
 对相关 `count=0` 函数尽量生成用例；无法触达时如实写原因。用例以 Coverage 与代码流程为基础，需求/设计次之，缺陷机理和风险补充；黑盒优先，允许必要灰盒。已有用例仅作表达示例。
 
@@ -38,10 +38,10 @@ closure 写入新风险前，必须按“触发条件、缺陷机理、系统结
 
 每个 `flow.steps[]` 都必须至少有一条直接源码 `evidence`。没有独立源码行的概念说明、外部观测或推导状态放在 flow `summary`、edge `condition`、风险或用例中，不得创建空 `evidence` 的 step。每条 `flow.edges[]` 的 `source_step_key` 和 `target_step_key` 必须引用同一个 flow 的 `steps[].step_key` 中已经定义的键；不得在 edge 中首次创造 step_key，也不得跨 flow 引用。
 
-所有 flow、input/mechanism decision 和 risk 的 `SourceEvidence.path` 必须从当前 task 的 `evidence_scope.allowed_paths` 中原样选择；历史 task 没有该字段时，才使用 analysis task，或 closure task 的 `original_task_path` 所指 task 的 `unit.source_scope` / `unit.context_scope`。跨单元源码只能作为理解背景，不得写进这些本单元正式 evidence。closure 的 `review_finding_decisions[].evidence` 可额外原样复用同一个 `finding_key` 对应 `review_findings[].evidence` 中已冻结的路径，但不得把这些跨单元证据复制到 flow、risk 或其他 decision，也不得引用其他 finding 的证据。不得根据函数、协议或模块语义自行补目录层级。源码证据直接使用 `repo_id`、相对路径和行号。
+所有 flow、input/mechanism decision 和 risk 的 `SourceEvidence.path` 必须从当前 task 的 `evidence_scope.allowed_paths` 中原样选择；历史 task 没有该字段时，才使用 analysis task，或 closure task 的 `original_task_path` 所指 task 的 `unit.source_scope` / `unit.context_scope`。跨单元源码只能作为理解背景，不得写进这些本单元正式 evidence。closure 的 `review_finding_decisions[].evidence` 可额外原样复用同一个 `finding_key` 对应 `review_findings[].evidence` 中已冻结的路径，但不得把这些跨单元证据复制到 flow、risk 或其他 decision，也不得引用其他 finding 的证据。不得根据函数、协议或模块语义自行补目录层级。源码证据直接使用相对路径和行号，`repo_id` 由 Workflow 使用当前 unit 自动补充。
 
 校验返修时保留已有有效语义内容，编辑方法自行选择，但不得把流程、风险、用例或取舍判断交给 Python 或脚本。
 
-写入前逐项自检：每个 step evidence 非空、每条 edge 的两端都存在、所有 `covered_flow_keys` / `linked_risk_keys` / `test_case_keys` 都有真实定义、evidence path 属于当前 unit；反向枚举每个 `risk_key`，确认它已被用例关联，或已经写明有源码证据的不可达处置；closure 还要保证 `review_finding_decisions` 与 task findings 一一对应，并完成全部 `risk_test_obligations`。随后逐条检查顶层 `unresolved`：每项必须逐字包含当前 task 中真实存在的 selected input ID、Coverage ID 或 confirmed finding_key；没有这些真实编号，或只是外部资料/范围外实现/后续研究的问题，直接删除。将完整语义 JSON 写到当前 task 的 `result_path`。不填写 unit ID、Agent ID、路径或运行状态。若校验器返回错误，只修正同一文件后重新提交。
+写入前逐项自检：每个 step evidence 非空、每条 edge 的两端都存在、所有 `covered_flow_keys` / `linked_risk_keys` 都有真实定义、evidence path 属于当前 unit；反向枚举每个 `risk_key`，确认它已被用例关联，或已经写明有源码证据的不可达处置；closure 还要保证 `review_finding_decisions` 与 task findings 一一对应，并完成全部 `risk_test_obligations`。随后逐条检查顶层 `unresolved`：每项必须逐字包含当前 task 中真实存在的 selected input ID、Coverage ID 或 confirmed finding_key；没有这些真实编号，或只是外部资料/范围外实现/后续研究的问题，直接删除。将完整语义 JSON 写到当前 task 的 `result_path`。不填写 unit ID、Agent ID、路径或运行状态。若校验器返回错误，只修正同一文件后重新提交。
 
 结束前运行 `.venv/bin/python -m pangea_agent.cli.main check-result-json --task '<当前 task JSON 路径>'`；Windows 工作区对应使用 `.venv\Scripts\python.exe`。不要改用 `PYTHONPATH`、系统 `python3` 或只检查 JSON 语法的临时代码。该命令只读 JSON，并会列出 schema、编号引用、`basis` 链接和证据路径的 `advisories`；它不修改结果、不改变 Run 状态，也不判断风险、流程或用例语义。`submission_ready=false` 表示 JSON 无法被下游读取，必须修正后重跑；`submission_ready=true` 时可以结束当前回合，`status=WARN` 的确定性提示由 settle 保留为降级，不要求为迎合 Python 改写语义。最终回复一行 `完成 action_id=<task.action_id>`；不得省略或改写当前 task 中的 `action_id`，也不复述 JSON 或分析内容。历史 task 没有 `action_id` 时才只回复“完成”。

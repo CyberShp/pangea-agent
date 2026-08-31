@@ -14,7 +14,6 @@
           "kind": "entry",
           "evidence": [
             {
-              "repo_id": "<repo_id>",
               "path": "<从 unit.source_scope/context_scope 原样选择>",
               "line_start": 1,
               "line_end": 1,

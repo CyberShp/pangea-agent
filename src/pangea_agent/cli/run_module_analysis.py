@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 from datetime import date
 from pathlib import Path
 
@@ -31,8 +32,10 @@ def run_module_analysis(contract_path: str) -> dict:
     path = Path(contract_path)
     contract = json.loads(path.read_text(encoding="utf-8"))
     run_id = contract.get("run_id")
+    allocated_run = False
     if not run_id:
         run_id = _default_run_id(contract)
+        allocated_run = True
         contract["run_id"] = run_id
         write_json(path, contract)
     state = {
@@ -40,7 +43,13 @@ def run_module_analysis(contract_path: str) -> dict:
         "data_root": contract.get("data_root", "pangea-data"),
         "task_contract": contract,
     }
-    return graph.invoke(state)
+    try:
+        return graph.invoke(state)
+    except Exception:
+        run_dir = Path(state["data_root"]) / "runs" / run_id
+        if allocated_run and not (run_dir / "progress.json").is_file():
+            shutil.rmtree(run_dir, ignore_errors=True)
+        raise
 
 
 def resume_module_analysis(run_id: str, data_root: str = "pangea-data") -> dict:
