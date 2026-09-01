@@ -119,15 +119,6 @@
       "default": null,
       "title": "Methodology Catalog Path"
     },
-    "result_contract_version": {
-      "default": "1.0",
-      "enum": [
-        "1.0",
-        "2.0"
-      ],
-      "title": "Result Contract Version",
-      "type": "string"
-    },
     "result_schema_path": {
       "default": "schemas/planning_result.schema.json",
       "minLength": 1,
