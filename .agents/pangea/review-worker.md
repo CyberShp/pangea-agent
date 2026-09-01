@@ -6,7 +6,7 @@
 
 开始前读取 task、`result_schema_path`、`result_skeleton_path` 和 task 明确列出的冻结输入。Graph 已把骨架写入唯一 `result_path`；只修改该文件，不保留占位符、不另建结果文件。Review 结果由 settle 做正式校验；不要运行 `check-result-json` 作为 Review 自检，因为该命令不是 Review JSON 的校验入口。
 
-Review finding 的 `category` 只能使用当前 schema 固定枚举。资源泄漏、竞态、越界、崩溃等属于风险机理，不是 category；具体机理写入 `summary` / `required_check`。`incorrect_conclusion` 用于 Analysis 对源码事实或 disposition 本身作出相反、无证据或与冻结边界不一致的结论；`test_oracle` 用于一个应验证的流程/风险缺少必要外部验证点；`blackbox_translation` 用于源码事实或风险可能成立，但已有 Scenario/TestCase 翻译出的业务入口、测试动作、可达路径或外部 Oracle 不受冻结证据支持。新 finding 必须有 `affected_unit_ids`、`summary`、`required_check` 和非空 `evidence`。Evidence 使用标准 `SourceEvidence` 对象，`repo_id/path` 必须来自 `evidence_scope_by_unit` 的冻结范围。Requirement/Design/Coverage/Defect 等结构化输入通过 `linked_input_ids` 和 finding 结论引用；不得把 `pangea-data/inbox`、Coverage 文件、task 文件或其他资料路径伪装成仓库源码 `SourceEvidence.path`。
+Review finding 的 `category` 只能使用当前 schema 固定枚举。资源泄漏、竞态、越界、崩溃等属于风险机理，不是 category；具体机理写入 `summary` / `required_check`。`incorrect_conclusion` 用于 Analysis 对源码事实或 disposition 本身作出相反、无证据或与冻结边界不一致的结论；`test_oracle` 用于一个应验证的流程/风险缺少必要外部验证点；`blackbox_translation` 用于源码事实或风险可能成立，但已有 Scenario/TestCase 翻译出的业务入口、测试动作、可达路径或外部 Oracle 不受冻结证据支持。新 finding 必须有 `affected_unit_ids`、`summary`、`required_check` 和非空 `evidence`。Evidence 使用标准 `SourceEvidence` 对象，`repo_id/path` 必须来自 `evidence_scope_by_unit` 的冻结范围。Requirement/Design/Coverage/Defect 等结构化输入通过 `linked_input_ids` 和 finding 结论引用；结论依赖哪一条结构化输入，就必须链接该条目的真实 ID，不得拿其他合法 ID 代替。不得把 `pangea-data/inbox`、Coverage 文件、task 文件或其他资料路径伪装成仓库源码 `SourceEvidence.path`。
 
 ## independent_review：真正盲审
 
@@ -55,6 +55,6 @@ Review finding 的 `category` 只能使用当前 schema 固定枚举。资源泄
 
 Comparison 新 finding 只用于首轮 Analysis 的真实错误或盲审未发现的实质遗漏，不复制 Independent finding。`linked_input_ids` 只引用 selected inputs 的真实编号。顶层 `unresolved`：Independent 只有冻结输入本身缺失时填写；Comparison 必须为 `[]`。
 
-写入前检查：finding_key 不重复；affected_unit_ids 来自 unit plan；新 finding evidence 非空且每个 path 都从对应 unit 的 `allowed_paths` 原样选择，结构化资料只用真实 `linked_input_ids`；Comparison decision 集合与 Independent finding 集合完全相等；dismissed 有反证；confirmed/unresolved 不重复抄 evidence；存在 caller truncation 时已复核所有 disposition，以及所有 ready Scenario/TestCase 的业务入口是否真的有公开/受支持证据；没有把证据缺口包装成 Risk，也没有把 C/C++ 未定义行为写成确定结果。若 settle 返回错误，只修正同一 `result_path`，不把 Review 裁决交给 Python 或其他 Agent。
+写入前检查：finding_key 不重复；affected_unit_ids 来自 unit plan；新 finding evidence 非空且每个 path 都从对应 unit 的 `allowed_paths` 原样选择，结构化资料只用真实 `linked_input_ids`，且每个结论链接的是实际依赖条目的 exact ID；Comparison decision 集合与 Independent finding 集合完全相等；dismissed 有反证；confirmed/unresolved 不重复抄 evidence；存在 caller truncation 时已复核所有 disposition，以及所有 ready Scenario/TestCase 的业务入口是否真的有公开/受支持证据；没有把证据缺口包装成 Risk，也没有把 C/C++ 未定义行为写成确定结果。若 settle 返回错误，只修正同一 `result_path`，不把 Review 裁决交给 Python 或其他 Agent。
 
 最终回复只用一行 `完成 action_id=<task.action_id>`；历史 task 没有 action_id 时才只回复“完成”。
