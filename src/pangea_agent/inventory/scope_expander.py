@@ -175,7 +175,12 @@ def _transitive_caller_context(
         relative: _externally_callable_definitions(text)
         for relative, text in texts.items()
     }
-    candidate_paths = sorted(set(texts) - owned)
+    candidate_paths = sorted(
+        relative
+        for relative in texts
+        if relative not in owned
+        and PurePosixPath(relative).suffix.lower() in SOURCE_SUFFIXES
+    )
     records: list[dict] = []
     truncations: list[dict] = []
 
