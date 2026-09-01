@@ -24,20 +24,8 @@ class SourceEvidence(StrictModel):
     line_end: int | None = Field(default=None, gt=0)
     observation: str = Field(min_length=1)
 
+
 class ProposedUnit(StrictModel):
-    repo_id: str = Field(min_length=1)
-    title: str = Field(min_length=1)
-    source_scope: list[str] = Field(min_length=1)
-    context_scope: list[str] = Field(default_factory=list)
-    rationale: str = Field(min_length=1)
-    asset_item_ids: list[str] = Field(default_factory=list)
-    coverage_ids: list[str] = Field(default_factory=list)
-    mechanism_ids: list[str] = Field(default_factory=list)
-    methodology_ids: list[str] = Field(default_factory=list)
-    methodology_selection_reasons: dict[str, str] = Field(default_factory=dict)
-
-
-class ProposedUnitV2(StrictModel):
     unit_key: str = Field(min_length=1)
     repo_id: str = Field(min_length=1)
     title: str = Field(min_length=1)
@@ -50,7 +38,17 @@ class ProposedUnitV2(StrictModel):
     methodology_selection_reasons: dict[str, str] = Field(default_factory=dict)
 
 
-class AnalysisUnit(ProposedUnit):
+class AnalysisUnit(StrictModel):
+    repo_id: str = Field(min_length=1)
+    title: str = Field(min_length=1)
+    source_scope: list[str] = Field(min_length=1)
+    context_scope: list[str] = Field(default_factory=list)
+    rationale: str = Field(min_length=1)
+    asset_item_ids: list[str] = Field(default_factory=list)
+    coverage_ids: list[str] = Field(default_factory=list)
+    mechanism_ids: list[str] = Field(default_factory=list)
+    methodology_ids: list[str] = Field(default_factory=list)
+    methodology_selection_reasons: dict[str, str] = Field(default_factory=dict)
     unit_id: str = Field(min_length=1)
     line_count: int = Field(ge=0)
     function_count: int = Field(ge=0)
@@ -69,7 +67,6 @@ class PlanningTask(StrictModel):
     asset_candidates_path: str = Field(min_length=1)
     methodology_paths: list[str] = Field(default_factory=list)
     methodology_catalog_path: str | None = Field(default=None, min_length=1)
-    result_contract_version: Literal["1.0", "2.0"] = "1.0"
     result_schema_path: str = Field(default="schemas/planning_result.schema.json", min_length=1)
     result_skeleton_path: str | None = Field(default=None, min_length=1)
     result_example_path: str = Field(
@@ -88,25 +85,16 @@ class PlanningTask(StrictModel):
     merge_direct_call_chain_max_lines: int = Field(default=800, gt=0)
     merge_direct_call_chain_max_functions: int = Field(default=30, gt=0)
 
+    @property
+    def result_contract_version(self) -> Literal["2.0"]:
+        """Internal compatibility for callers; Planning no longer accepts version selection."""
+        return "2.0"
+
 
 class PlanningResult(StrictModel):
-    schema_version: Literal["1.0"] = "1.0"
-    summary: str = Field(min_length=1)
-    units: list[ProposedUnit] = Field(min_length=1)
-    unresolved: list[str] = Field(
-        default_factory=list,
-        description=(
-            "通常必须为空。只有请求源码无法唯一归属或真实输入无法分配，因而无法生成有效 unit plan 时才填写；"
-            "范围外文件、context_scope 依赖、后续研究、设计动机和共享状态说明不得写入。"
-            "声称请求文件元数据缺失前，必须同时核对 planning metadata 的 owned_source_paths 和 files[].path。"
-        ),
-    )
-
-
-class PlanningResultV2(StrictModel):
     schema_version: Literal["2.0"] = "2.0"
     summary: str = Field(min_length=1)
-    units: list[ProposedUnitV2] = Field(min_length=1)
+    units: list[ProposedUnit] = Field(min_length=1)
     source_ownership: dict[str, str] = Field(
         min_length=1,
         description=(
@@ -115,6 +103,11 @@ class PlanningResultV2(StrictModel):
         ),
     )
     unresolved: list[str] = Field(default_factory=list)
+
+
+# These names are aliases only; there is no second Planning result format.
+ProposedUnitV2 = ProposedUnit
+PlanningResultV2 = PlanningResult
 
 
 class FlowStep(StrictModel):
@@ -143,6 +136,7 @@ class CodeFlow(StrictModel):
     summary: str = Field(min_length=1)
     steps: list[FlowStep] = Field(min_length=1)
     edges: list[FlowEdge] = Field(min_length=1)
+
 
 class InputDecision(StrictModel):
     item_id: str = Field(min_length=1)
