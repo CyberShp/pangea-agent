@@ -2,6 +2,18 @@
   "$defs": {
     "IndependentFindingDecision": {
       "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {"disposition": {"const": "dismissed"}},
+            "required": ["disposition"]
+          },
+          "then": {
+            "properties": {"evidence": {"minItems": 1}},
+            "required": ["evidence"]
+          }
+        }
+      ],
       "properties": {
         "finding_key": {
           "description": "必须且只能引用 independent_review_result_path 顶层 findings[] 中已有的 finding_key；不得引用 Worker risk、flow、test case 或 Coverage 编号",
@@ -17,7 +29,7 @@
         },
         "conclusion": {"minLength": 1, "title": "Conclusion", "type": "string"},
         "evidence": {
-          "description": "confirmed/unresolved 可省略并复用原 independent finding evidence；dismissed 必须提供反证，运行时契约会校验",
+          "description": "confirmed/unresolved 可省略并复用原 independent finding evidence；dismissed 必须提供用于核对 Analysis 等价覆盖或推翻 finding 的非空源码/契约 evidence，Analysis 字段只写 conclusion",
           "items": {"$ref": "#/$defs/SourceEvidence"},
           "title": "Evidence",
           "type": "array"

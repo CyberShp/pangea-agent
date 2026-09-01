@@ -28,13 +28,15 @@ Review finding 的 `category` 只能使用当前 schema 固定枚举。资源泄
 
 supported-entry 缺口本身不建立独立 `category=risk` finding；它没有产品运行时 system result。若它只影响一条真实 Risk 的测试处置，就写进该 Risk finding 的 `required_check`；若没有独立的产品 Risk、流程遗漏或 Oracle 缺陷，则不为这项证据缺口单独建 finding。SourceEvidence observation 只描述对应源码行能证明的事实，不能把 source manifest、Analysis 字段或 task 范围伪装成源码 observation。
 
-同一条 source-proven Risk 的 supported-entry、制造方式和 Oracle 缺口只合并进这一条 Risk finding 的 `required_check`，不再拆成第二条 `risk` 或 `test_oracle` finding。只有存在与该 Risk 不同的独立产品流程或外部验证点缺陷时，才另建 finding。
+Independent 写入前先按“产品失败机理”归并候选：先建立 source-proven Risk finding，再把同一 Risk 的 supported-entry、制造方式和 Oracle 缺口合并进它的 `required_check`。将 Risk 名称、trigger 和 system result 从一个 `test_oracle` 候选中移除后，如果不再剩独立的产品验证点缺陷，就不得另建 `test_oracle` finding。只有存在与该 Risk 不同的独立产品流程或外部验证点缺陷时才另建 finding。
 
 风险 finding 至少满足一种根基：结构化输入中的明确契约；冻结源码中的真实调用方已观察到错误结果；或源码自身即可证明的崩溃、未定义行为、越界、数据破坏/丢失、资源泄漏、竞态或安全边界破坏。都不满足时不建立 risk finding。
 
 一旦盲审已经识别出冻结源码可直接证明的未定义行为、越界、数据破坏、资源泄漏或竞态，且没有正向不可达证据，就必须输出 `category=risk` finding；缺少受支持入口只表示最终 Risk 应为 `developer_confirm`，不能在结论中写“看到了 UB 但无风险/六维无信号”。算术溢出等未定义行为至少属于“功能与状态”风险信号。
 
 ## comparison_review：轻量对照裁决
+
+Comparison 必须按顺序工作：先独立审计 Analysis 的 Flow/Branch/Coverage/Scenario/Risk/TestCase 关系并形成候选清单，再裁决 Independent findings，最后按产品失败机理合并重复候选后写 `findings[]`。某条 Independent finding 因 Analysis 已有等价 Risk 而 `dismissed`，不代表关联 Scenario、Flow 或 TestCase 正确；允许同时 dismiss 该 finding 并新增一条精确 `incorrect_conclusion`，但不得重复新增同一 Risk。
 
 `comparison_review` 由独立于盲审 Reviewer 的 Adjudicator Session 执行，只做两件事：
 
@@ -52,18 +54,20 @@ Comparison 不是第二次从头分析整个模块，也不重新复制一份盲
 逐条裁决：
 
 - `confirmed`：Independent finding 的原 evidence 仍成立，而且 Analysis 没有覆盖或正确处理。`evidence` 保持 `[]` 即可复用原 finding 已冻结证据；`conclusion` 说明具体遗漏。
-- `dismissed`：Analysis 已正确覆盖同一事实，或真实控制流/契约反证 finding。必须填写非空反证 `evidence`，不能只写“已覆盖”或“判断错误”。
+- `dismissed`：Analysis 已正确覆盖同一事实，或真实控制流/契约推翻 finding。必须填写非空源码/契约核对 `evidence`；Analysis exact object/key/字段只写在 `conclusion`。只有 finding 本身被源码/契约推翻时才把 evidence 称作反证。
 - `unresolved`：冻结输入确实不足以裁决。`evidence=[]`；`conclusion` 精确说明缺少什么，不再复制到 Comparison 顶层 `unresolved`。
 
 `confirmed` 必须对应首轮结果中仍需 Closure 实际修改的具体错误。若 Analysis 已经正确处理 finding，剩余分歧只是措辞偏好、无证据的额外要求，或 finding 自身把“可能结果”误读为确定结果，应使用 `dismissed` 并提供反证；不得一边写“Analysis 已正确处理”，一边仍把 finding 判为 confirmed。
 
 裁决对象是“Analysis 是否遗漏/误处置”，不是“Independent 描述的源码事实是否为真”。源码事实为真、但 Analysis 已有等价 Risk/Flow/Scenario/decision 且处置正确时，必须 `dismissed`；不能因为 finding 的源码证据成立就 `confirmed`。每个 `confirmed` conclusion 必须明确指出 Analysis 中哪个 Agent-owned 字段当前错误、Closure 要把它改成什么；无法指出具体字段变化时不得 confirmed。
 
-`dismissed.conclusion` 可以引用 Analysis 的 exact object/key/字段说明“已经覆盖”；`evidence[].observation` 只记录用于核对等价覆盖的对应源码事实。只有源码或冻结契约真正推翻 finding 时才称为反证；不能把 Analysis 字段、source manifest 或 task 范围写进源码 observation。
+`dismissed.conclusion` 可以引用 Analysis 的 exact object/key/字段说明“已经覆盖”。逐条写 `evidence[].observation` 前做隔离检查：只看 cited line range 是否能证明整句；不能证明的 Analysis 字段、source manifest、inventory、rubric 或 task 范围从 observation 移到 conclusion。只有源码或冻结契约真正推翻 finding 时才称为反证。
 
 裁决按“入口/触发条件 → 内部机制 → 外部结果 → 证据区间”与首轮结果比对。只是名称或措辞不同，但实际仍是同一状态/资源、同一触发和同一结果时，不确认成第二条遗漏。
 
 ### 处置逃生口必须复核
+
+逐个 BranchDecision 核对其 Flow 是否同时保留条件节点和每个改变返回、状态或输出的源码可见 successor。`developer_confirm` 不允许省略内部控制流；缺少真实 return/state edge 时新增 `missed_flow`。
 
 - `not_test_relevant` 只能在冻结证据已经足以正向证明“该 Branch 不形成独立测试义务”时成立。若 Analysis 的理由实质是“更上层 caller 没看到”“业务入口没确认”“当前上下文不足”“Oracle 不知道”，尤其 source manifest 已记录相关 caller truncation 时，`not_test_relevant` 是错误处置，新增 `incorrect_conclusion` 要求改为 `developer_confirm` 或基于已有证据形成真实 Scenario。
 - `unreachable` 也不能由 caller 截断或“没继续看到 caller”推出；没有正向不可达证据时必须纠正。
@@ -104,6 +108,6 @@ Comparison 新建 `coverage_gap` finding 时必须链接 affected unit 拥有的
 
 顶层 `unresolved`：Independent 只有冻结输入本身缺失、导致盲审无法完成时才填写；Comparison 必须为 `[]`，无法裁决的 Independent finding 只写 decision=`unresolved`。
 
-写入前检查：finding_key 不重复；同一 Risk 的入口/制造/Oracle 缺口没有拆成重复 findings；`affected_unit_ids` 来自 unit plan；Independent 没有 `blackbox_translation`；每条 `coverage_gap` finding 都直连 affected unit 的真实 Coverage ID；新 finding evidence 非空且在冻结范围，observation 只写该源码行事实；Comparison decision 集合与 Independent finding 集合完全相等；dismissed 每项都有反证 evidence；confirmed/unresolved 不为了格式重复抄 evidence；dismiss UB 前已检查所有关联 Scenario 的精确 trigger/oracle/Branch 动作以及顶层 unresolved；私有函数冒充 ready business entry 的主要修改对象是 Scenario/TestCase 时使用一条 `blackbox_translation`，不再建同根因 `incorrect_conclusion`；存在 caller truncation 时已复核相关 disposition 和所有 ready Scenario/TestCase。若 settle 返回错误，只修正同一 `result_path`，不把 Review 裁决交给 Python 或其他 Agent。
+写入前检查：finding_key 不重复；同一 Risk 的入口/制造/Oracle 缺口没有拆成重复 findings；`affected_unit_ids` 来自 unit plan；Independent 没有 `blackbox_translation`；每条 `coverage_gap` finding 都直连 affected unit 的真实 Coverage ID；新 finding evidence 非空且在冻结范围，observation 只写该源码行事实；Comparison decision 集合与 Independent finding 集合完全相等；dismissed 有非空源码/契约核对 evidence，Analysis 字段只写 conclusion；confirmed/unresolved 不为了格式重复抄 evidence；dismiss source-proven Risk 前已检查所有关联 Scenario 的精确 trigger/oracle/Branch 动作以及顶层 unresolved；私有函数冒充 ready business entry 的主要修改对象是 Scenario/TestCase 时使用一条 `blackbox_translation`，不再建同根因 `incorrect_conclusion`；存在 caller truncation 时已复核相关 disposition 和所有 ready Scenario/TestCase。若 settle 返回错误，只修正同一 `result_path`，不把 Review 裁决交给 Python 或其他 Agent。
 
 最终回复只用一行 `完成 action_id=<task.action_id>`；历史 task 没有 action_id 时才只回复“完成”。

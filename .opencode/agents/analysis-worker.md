@@ -39,6 +39,8 @@ tools:
 
 `scenario_mapped|merged` 只表示 Branch 已被 `blackbox_ready|graybox_ready` Scenario 真正覆盖；不得引用 `developer_confirm` Scenario 后仍声称 mapped/merged。若 Branch 与 Scenario 都因入口、构造或 Oracle 未确认而待确认，Branch 必须用 `developer_confirm`，可以与同为 `developer_confirm` 的 Scenario 双向引用。`not_test_relevant|unreachable` 不得残留 `scenario_keys`。
 
+BranchDecision 引用的 Flow 必须保留条件节点和每个会改变返回、状态或输出的源码可见 successor；`developer_confirm` 只表示业务入口/构造/Oracle 待确认，不允许省略内部控制流。例如 `if (value < 0) return -1; return value + 1;` 必须同时有负值返回边和非负加法边。
+
 `not_test_relevant` 只能用于**现有冻结证据已经足以正向证明**该 Branch 不形成独立测试义务，例如只是同一已覆盖 Scenario 的实现细节且不改变可测试输入、状态或外部结果。它不是“暂时不知道怎么测”的出口。只要理由依赖“没看到更上层 caller”“业务入口还没确认”“当前上下文不足”“Oracle 还不知道”，就必须使用 `developer_confirm`，不能用 `not_test_relevant` 掩盖证据不足。caller context 被截断且缺失部分正好影响这项判断时尤其如此。
 
 `coverage_decisions` 只处理 selected inputs 中真实 `coverage_gaps[].coverage_id`，必须逐项且不重复。允许 `scenario_mapped|merged|developer_confirm|unreachable`。Coverage 是分析 seed，不是 TestCase：先把零覆盖函数/路径映射到 Flow/Branch/State/Resource，再理解测试侧入口和触发条件，最后映射 Scenario。
@@ -68,7 +70,7 @@ Coverage 不要求一律向上追到更高产品层。如果 Coverage 目标本�
 
 Scenario 只有在自身 actions 明确包含 Risk trigger、external_oracles 对应该 Risk 可用的观测方式时，才填写该 `linked_risk_key`。`developer_confirm` Risk 不强制生成 Scenario；若当前无法形成真实动作或稳定 Oracle，就让 Risk 自身保持 `developer_confirm` 且不建立空壳 Scenario。若保留风险 Scenario，它必须独立保存已经确认的触发和条件性观测，不得挂到只验证普通输入或其他 Branch 的泛化 Scenario 上。
 
-具体判断：若 `business_entry`、actions、external_oracles 实际都只能写“待确认”，不要创建 Scenario；`developer_confirm` Branch 的 `scenario_keys=[]`、Risk 单独保持 `developer_confirm` 都是完整结果。若仍保留关联 Risk 的 developer-confirm Scenario，actions/preconditions 必须精确保留 Risk trigger 的关键边界（例如 `INT_MAX`，不能泛化成“非负整数”），external_oracles 必须精确保留已经确认的条件性观测。Scenario 若填写 `branch_ids`，其 actions/oracles 还必须真实覆盖自己声明的分支 outcome 及结果；单个 Scenario 不强制同时覆盖 true/false，但不能用只走另一侧的动作声称覆盖该 outcome。
+写 Scenario 前逐项执行保留判断：`developer_confirm` Scenario 必须在 preconditions/actions 中至少保存一个冻结证据已证明的具体 predicate/trigger，并在 actions/external_oracles 中保存对应的源码结果或条件性观测；业务入口或产品外部 Oracle 可以明确写待确认，但不能让 actions 与 external_oracles 全部只剩占位话术。没有这些已确认内容就删除该 Scenario，并同步重算 Branch 的 `scenario_keys`、Risk/Scenario 关联。`developer_confirm` Branch 的 `scenario_keys=[]`、Risk 单独保持 `developer_confirm` 也都是完整结果。若保留 Risk Scenario，actions 必须精确保留 Risk trigger 的关键边界（例如 `INT_MAX`，不能只藏在 title/preconditions 或泛化成“非负整数”）。Scenario 若填写 `branch_ids`，其 actions/oracles 还必须真实覆盖自己声明的分支 outcome 及结果；单个 Scenario 不强制同时覆盖 true/false。
 
 没有冻结目标 ABI 时，summary、Risk、Scenario 和 evidence 全部只写 `INT_MAX` 等类型边界符号，不得附加 `2147483647` 等固定十进制位宽。普通构建下的 UB 只能写“没有稳定、可约定的产品 Oracle”，不能写成必然返回某个“不可预测值”；sanitizer 观测必须明确以冻结构建启用对应 UBSan/signed-overflow 检查为前提。
 
@@ -86,7 +88,7 @@ Lua 分析先使用 inventory 的 `requires`、`module_exports`、`state_writes`
 
 每个 `flow.steps[]` 必须有直接源码 `evidence`；edge 两端只引用同一 Flow 已定义的 step。Flow、input/mechanism decision、risk、scenario 的 `SourceEvidence.path` 必须从当前 task 的 `evidence_scope.allowed_paths` 原样选择；`repo_id` 由 Workflow 补充。不得根据函数或模块名称自行补目录层级。
 
-`SourceEvidence.observation` 只描述对应源码行直接证明的事实。source manifest 的 truncation、task 范围、Analysis 字段或“没有其他文件”等范围结论写在 conclusion/reason，不得伪装成某一行源码 observation。
+逐条写 `SourceEvidence.observation` 时做隔离检查：假设只能看到 cited line range，这一整句是否仍能成立？不能成立的从句必须移到 summary/conclusion/reason。source manifest 的 truncation、inventory、rubric、Analysis 字段或“没有其他文件/头文件”等范围结论不能写进源码 observation。
 
 ## selected inputs 与 unresolved
 

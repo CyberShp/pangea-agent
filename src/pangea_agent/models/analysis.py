@@ -315,12 +315,15 @@ class IndependentFindingDecision(StrictModel):
     finding_key: str = Field(min_length=1, description="必须且只能引用 independent_review_result_path 顶层 findings[] 中已有的 finding_key；不得引用 Worker risk、flow、test case 或 Coverage 编号")
     disposition: Literal["confirmed", "dismissed", "unresolved"] = Field(description="只表示对盲审 finding 的裁决；不得填写 risk、incorrect_conclusion 等 category")
     conclusion: str = Field(min_length=1)
-    evidence: list[SourceEvidence] = Field(default_factory=list)
+    evidence: list[SourceEvidence] = Field(
+        default_factory=list,
+        description="dismissed 必须提供用于核对 Analysis 等价覆盖或推翻 finding 的非空源码/契约证据；Analysis object/key/字段只写在 conclusion，不写进 SourceEvidence.observation",
+    )
 
     @model_validator(mode="after")
     def require_dismissal_evidence(self):
         if self.disposition == "dismissed" and not self.evidence:
-            raise ValueError("dismissed 裁决必须提供反证 evidence；confirmed/unresolved 可复用原 finding evidence，不重复填写")
+            raise ValueError("dismissed 裁决必须提供非空核对 evidence；confirmed/unresolved 可复用原 finding evidence，不重复填写")
         return self
 
 
