@@ -8,6 +8,12 @@ _FUNCTION_RE = re.compile(
     r"^\s*(?P<static>static\s+)?(?:inline\s+)?[A-Za-z_][\w\s\*]+\s+"
     r"(?P<name>[A-Za-z_]\w*)\s*\([^;]*\)\s*\{"
 )
+_CALLABLE_FALLBACK_RE = re.compile(
+    r"(?m)^[ \t]*(?P<static>static[ \t]+)?(?:inline[ \t]+)?"
+    r"(?P<ret>[A-Za-z_][A-Za-z0-9_]*(?:[ \t*]+[A-Za-z_][A-Za-z0-9_]*)*[ \t*]*)"
+    r"(?:\n[ \t]*|[ \t]+)"
+    r"(?P<name>[A-Za-z_]\w*)[ \t]*\([^;{}]*\)[ \t\n]*\{"
+)
 _CPP_SUFFIXES = {".cc", ".cpp", ".cxx", ".hpp", ".hh"}
 
 
@@ -38,16 +44,19 @@ def externally_callable_definitions(path: Path) -> set[str]:
     """Return non-static function definitions using the same parser as inventory."""
     try:
         functions = parse_cpp_file(path)["functions"]
+        return {
+            str(item["symbol"])
+            for item in functions
+            if item.get("symbol") and item.get("symbol") != "<unknown>"
+            and not item.get("is_static", False)
+        }
     except TreeSitterUnavailableError:
-        functions = extract_functions(
-            path.read_text(encoding="utf-8", errors="replace").splitlines()
-        )
-    return {
-        str(item["symbol"])
-        for item in functions
-        if item.get("symbol") and item.get("symbol") != "<unknown>"
-        and not item.get("is_static", False)
-    }
+        text = path.read_text(encoding="utf-8", errors="replace")
+        return {
+            match.group("name")
+            for match in _CALLABLE_FALLBACK_RE.finditer(text)
+            if not match.group("static")
+        }
 
 
 def _load_parser(path: Path):
