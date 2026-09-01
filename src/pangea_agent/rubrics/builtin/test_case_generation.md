@@ -1,10 +1,33 @@
 # 测试用例生成规则
 
-用例必须包含：用例描述、用例类型、前置条件、测试步骤、预期结果、观测方式、清理/恢复和关联风险。用例不分优先级。
+源码分析不是直接填 TestCase。一个单元必须先建立实现语义，再处置 Branch/Coverage，形成 Scenario，最后才生成正式用例。结果 Schema 只是 Graph 通信协议，不是分析步骤。
+
+## Analysis 五 Pass
+
+首轮 Analysis 在同一个 Agent 会话内按下面顺序完成；可以反复回看源码，但不要边读一个 `if` 边立即生成一条用例。
+
+```text
+Pass 1  Developer Understanding
+        External Entry → Flow → Branch / State / Resource → Error Propagation → External Consequence
+
+Pass 2  Obligation Disposition
+        Branch / Coverage / Requirement / Design / Defect Mechanism 逐项裁决
+
+Pass 3  Scenario Expansion
+        把具有相同业务入口、触发条件、状态变化或外部结果的来源合并成测试场景
+
+Pass 4  Black-box Translation
+        内部机制 → 产品条件 → 测试人员动作 → 外部 Oracle → 恢复
+
+Pass 5  Structured Result
+        最后一次性整理 flows / decisions / risks / scenarios / test_cases
+```
+
+若当前冻结源码只能证明内部条件，却不能可靠证明如何从产品支持入口制造该条件，不得用模板补齐。Branch/Coverage 使用 `developer_confirm`；Risk 使用 `test_disposition=developer_confirm`；Scenario 可以使用 `readiness=developer_confirm`，且此时不强制生成正式 TestCase。
 
 ## 从源码发现转换为测试语义
 
-源码实现细节只用于发现风险和解释原因。生成测试用例前，必须先完成以下转换，不得直接把源码条件改写成测试步骤：
+源码实现细节只用于发现风险和解释原因。生成测试场景或用例前，必须先完成以下转换，不得直接把源码条件改写成测试步骤：
 
 ```text
 源码条件
@@ -12,22 +35,81 @@
 → 可到达该条件的业务入口
 → 测试人员可构造的业务条件
 → 测试人员可观察的系统结果
+→ Scenario
 → TestCase
 ```
 
-优先使用风险中的 `trigger`、`system_result`、`external_observation`、`exclusion_condition` 和 `test_disposition` 完成转换。可达性尚未确认时保留为灰盒前置条件，不新增结果 Schema 之外的字段。
+优先使用风险中的 `trigger`、`system_result`、`external_observation`、`exclusion_condition` 和 `test_disposition` 完成转换。
 
-转换完成后先列测试变体，再写用例正文。每个变体固定四项：关联风险、构建类型、运行模式、唯一终态。一条风险同时包含 Debug 崩溃与 Release 状态破坏时，先拆成两个变体，再分别生成 TestCase，不要写完一条混合用例后再修改。若唯一终态是进程或服务崩溃、退出、停止，且该变体还要验证恢复，后续动作的第一步固定为“重启并等待服务恢复”。
+- `blackbox_ready`：从业务入口直接形成场景和用例，测试步骤和预期结果只使用业务操作与外部现象描述，不依赖源码实现细节。
+- `graybox_ready`：允许在场景/用例前置条件中说明需要开发协助制造内部条件，但实际测试步骤和主要观测仍从业务入口执行。
+- `developer_confirm`：业务可达性或独立 Oracle 尚未确认，不强行生成可执行用例；保留已经确认的源码事实、缺口和所需确认点。
 
-- `Blackbox-ready`：从业务入口直接生成用例，测试步骤和预期结果只使用业务操作与外部现象描述，不依赖源码实现细节。
-- `Graybox-ready`：允许在前置条件中说明需要开发协助制造内部条件，但实际测试步骤和主要观测仍从业务入口执行。
-- `Developer-confirm`：业务可达性尚未确认时，不强行生成可执行用例；保留风险及需要确认的可达性缺口。
+## Branch 处置
 
-Coverage 只指出需要补覆盖的函数或路径。对于低覆盖或未覆盖函数，必须继续向上找到调用入口和业务触发条件，再生成用例；不得以直接执行目标函数作为补覆盖方式。
+Inventory 中属于当前 `source_scope` 的每个 `branch_id` 都必须有且只有一个 `branch_decisions[]`。Graph 只检查编号完整性，具体 disposition 由你判断。
+
+允许的处置：
+
+- `scenario_mapped`：该分支形成或加强一个明确 Scenario，填写真实 `scenario_keys`。
+- `merged`：该分支已经被其他高信息量 Scenario 一并覆盖，填写被合并到的 `scenario_keys`，不要再造重复用例。
+- `not_test_relevant`：已理解该分支，但它不形成独立测试义务；在 `reason` 中说明为什么。
+- `developer_confirm`：源码分支真实存在，但当前冻结上下文不足以建立稳定业务制造方式或独立 Oracle。
+- `unreachable`：已根据冻结源码确认当前产品支持入口无法到达；在 `reason` 中记录直接依据。
+
+一个 Branch 不等于一个 TestCase。多个 Branch 可以汇聚到同一 Scenario；禁止为满足数量而“一条 if 一条模板用例”。
+
+## Coverage 处置
+
+Coverage 只指出需要补覆盖的函数或路径，不等于测试步骤。对于低覆盖或未覆盖函数，必须继续向上寻找调用入口和业务触发条件，再决定如何处置；不得以直接执行目标函数作为补覆盖方式。
+
+每个当前任务的 `coverage_id` 必须有且只有一个 `coverage_decisions[]`：
+
+- `scenario_mapped`：已经映射到真实 Scenario。
+- `merged`：由已有 Scenario 一并覆盖，不新增重复场景。
+- `developer_confirm`：当前冻结上下文不足以确认业务入口、制造条件或独立 Oracle。
+- `unreachable`：冻结源码证明从受支持入口不可达。
+
+`scenario_mapped` / `merged` 必须填写真实 `scenario_keys`。不得把 Coverage 直接映射成“通过受支持入口触发 xxx 函数”之类的占位用例。
+
+Coverage 的正确链路是：
+
+```text
+Coverage Gap
+→ Flow / Branch / State / Resource
+→ Scenario Candidate
+→ 与 Branch / Risk / Requirement / Defect 候选去重或合并
+→ Black-box Translation
+→ TestCase
+```
+
+## Scenario Expansion
+
+`scenarios[]` 是源码发现与正式用例之间的语义层。场景候选至少可以来自：Branch、状态迁移、资源生命周期、边界/容量、并发交错、错误传播、Requirement/Design、Coverage Gap、历史缺陷机理和已确认 Risk。
+
+不要机械地为每个来源创建 Scenario。若多个来源满足相同业务入口和制造条件，并通过同一组外部 Oracle 验证，应合并为一个高信息量 Scenario，并通过 `branch_ids`、`coverage_ids`、`linked_risk_keys`、`linked_input_ids` 建立追溯。
+
+`blackbox_ready` / `graybox_ready` Scenario 应尽量明确：
+
+- `business_entry`：产品公开接口、协议入口、配置入口或稳定业务动作。
+- `preconditions`：测试前可真实准备的业务/环境状态。
+- `actions`：测试人员实际执行的业务动作。
+- `external_oracles`：不读内部对象也能判定的结果。
+- `recovery`：恢复到可继续测试状态的方法。
+
+若这些信息无法可靠建立，使用 `developer_confirm`，不要用“已准备能够到达目标函数的环境”“通过受支持入口触发目标项”等话术伪装成 ready。
+
+## TestCase 生成
+
+正式 `test_cases[]` 只能来自 `blackbox_ready` 或 `graybox_ready` Scenario，并必须填写对应 `scenario_keys`。一个 Scenario 可以生成一个或多个用例；一个用例也可以关联多个共享业务条件的 Scenario，但不得脱离 Scenario 直接由 Branch/Coverage/Risk 生成模板用例。
+
+用例必须包含：用例描述、用例类型、前置条件、测试步骤、预期结果、观测方式、清理/恢复。用例不分优先级。
+
+生成用例时先列必要测试变体，再写正文。每个变体固定考虑关联风险、构建类型、运行模式、唯一终态。一条风险同时包含 Debug 崩溃与 Release 状态破坏时，先拆成两个变体，再分别生成 TestCase，不要写完一条混合用例后再修改。若唯一终态是进程或服务崩溃、退出、停止，且该变体还要验证恢复，后续动作的第一步固定为“重启并等待服务恢复”。
 
 ## 表达方式
 
-- 生成用例时先把源码或协议触发条件提升为产品正常入口和外部结果；客户端可以调用自己的黑盒用例辅助能力，但它不参与完成状态或流程判断。
+- 生成场景和用例时先把源码或协议触发条件提升为产品正常入口和外部结果；客户端可以调用自己的黑盒用例辅助能力，但它不参与完成状态或流程判断。
 - 操作步骤使用测试人员能理解的业务动作描述目标，不要求写具体命令。
 - 函数、字段、调用点和行号只作为证据，不替代业务步骤。
 - 业务级用例不得把源码函数调用、实现字段赋值、内部对象构造、函数返回值或内部状态检查作为测试步骤和主要预期。
@@ -42,22 +124,24 @@ Coverage 只指出需要补覆盖的函数或路径。对于低覆盖或未覆�
 - 错误码隐含对象已不存在、句柄已失效或注册已解除时，故障环境必须真实制造该前置状态。只让桩函数返回 `ENOENT`/`EBADF`，却保留对象或注册，不能据此期待“不再收到事件”等后果。
 - 真实制造对象未注册或句柄失效后，不能预期依靠原注册继续收到事件或完成新 IO；后续操作必须先显式重新注册或重建资源。
 - 产品已经报告对象、连接或资源释放后，不得继续使用旧指针、旧句柄或已失效连接观测结果。改用新的业务操作、资源计数、日志、管理接口或新连接判断系统状态。
-- 每个预期结果必须唯一、可判定，不得写成“A 或 B”。没有安全、稳定的外部观测方式时，将风险标记为 `Developer-confirm`，不要伪造可执行用例。
+- 每个预期结果必须唯一、可判定，不得写成“A 或 B”。没有安全、稳定的外部观测方式时，Scenario/Risk 使用 `developer_confirm`，不要伪造可执行用例。
 - 前置条件限定 Debug 或 Release 构建后，预期只描述该构建下的唯一结果，不得混入另一构建或使用“可能”。
 - 同一条 TestCase 只能使用一种构建类型和一种运行模式。Debug 与 Release、epoll 与 kevent 等对照场景必须拆成不同用例，不能在同一用例的后续步骤中切换。
 - 部分副作用已经释放引用或资源后，清理步骤不得再次执行同一释放操作；应重建或重启拥有该状态的进程。
 
-## 生成范围
+## 风险测试处置
 
-- 每条正式风险必须完成一次测试处置：默认 `test_disposition=test_required`，并至少由一个用例的 `linked_risk_keys` 关联；只有确认无法从当前产品支持的业务入口到达时，才可改为 `unreachable_from_supported_entry`，同时填写 `unreachable_reason` 和直接源码 `unreachable_evidence`。
-- 分支、边界、正常流程和 Coverage 补齐用例可以不关联风险；不得为了满足风险映射而给这类用例强加无关风险。
-- “难以构造”“需要故障注入”“暂时缺少环境”不等于不可达。只要受支持入口能够到达，就保留 `test_required`，根据实际情况生成黑盒或灰盒用例。
+- `test_required`：风险已经具备测试侧可执行路径，必须由至少一个 ready Scenario 关联，并最终由正式 TestCase 的 `linked_risk_keys` 覆盖。
+- `developer_confirm`：风险本身有源码依据，但当前冻结上下文不足以确认稳定业务入口、制造方法或独立 Oracle；不得强行生成正式 TestCase。
+- `unreachable_from_supported_entry`：只有确认无法从当前产品支持的业务入口到达时使用，同时填写 `unreachable_reason` 和直接源码 `unreachable_evidence`。
+- “难以构造”“需要故障注入”“暂时缺少环境”本身不等于不可达；如果只是无法在当前冻结证据中确认业务制造方式，使用 `developer_confirm`。
+- 分支、边界、正常流程和 Coverage 场景可以不关联风险；不得为了满足风险映射而给它们强加无关风险。
 - 不得只生成正常流程。结合源码覆盖异常、分支、初始化、运行、停止、恢复和卸载。
 - 参数维度、值域、默认值和代表性组合必须来自源码或当前实现规格；已有测试用例只作为表达和环境参考，不能证明风险已覆盖。
-- 一个风险允许对应多个用例；一个用例也可以关联多个有共同触发条件的风险。
-- 低置信度风险仍可生成验证用例，但必须保留置信度和证据缺口。
+- 低置信度风险仍可形成验证候选，但没有可靠可达性或 Oracle 时保持 `developer_confirm`。
 
 ## 禁止内容
 
 - 不生成安全专项、SFMEA、代码改进建议或实现质量评价。
 - 不因为已有用例名称声称覆盖某风险，不根据测试人员主观分类推断代码分支已覆盖。
+- 不把“Schema 字段齐全”视为分析完成；Branch/Coverage 必须逐项有真实处置，Scenario/TestCase 引用必须来自实际分析结论。
