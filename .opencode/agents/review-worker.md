@@ -20,6 +20,8 @@ Review finding 的 `category` 只能使用当前 schema 固定枚举。资源泄
 
 按 `analysis_language` 使用真实语言语义。C/C++ 检查短路求值、整数真假值、前置返回和资源生命周期；Lua 检查 truthiness、`and` / `or` 操作数返回、`nil`、module 缓存、`pcall` / `xpcall` 和 coroutine 生命周期。提出 finding 前必须从入口追到目标语句，确认路径真实可达。
 
+盲审可用 `.c` wrapper 链证明内部路径可达，但没有公开头文件、契约、受支持客户端/测试或其他正向冻结证据时，只能写“supported entry 未确认”，不得把 non-static、`extern` 或跨文件调用称为业务入口或 entry point。这不影响把源码自身已证明的 UB、越界等问题输出为 Risk finding。
+
 风险 finding 至少满足一种根基：结构化输入中的明确契约；冻结源码中的真实调用方已观察到错误结果；或源码自身即可证明的崩溃、未定义行为、越界、数据破坏/丢失、资源泄漏、竞态或安全边界破坏。都不满足时不建立 risk finding。
 
 一旦盲审已经识别出冻结源码可直接证明的未定义行为、越界、数据破坏、资源泄漏或竞态，且没有正向不可达证据，就必须输出 `category=risk` finding；缺少受支持入口只表示最终 Risk 应为 `developer_confirm`，不能在结论中写“看到了 UB 但无风险/六维无信号”。算术溢出等未定义行为至少属于“功能与状态”风险信号。
@@ -35,7 +37,7 @@ Comparison 不是第二次从头分析整个模块，也不重新复制一份盲
 
 开始 Comparison 后，除 `independent_review_result_path`、Analysis result 外，还必须读取 `analysis_task_paths` 中相关 Analysis task，并沿其 `source_manifest_path` 查看 `scope_expansion.caller_context_truncations`。caller budget 是证据边界，不是语义结论；判断 Branch/Coverage 的 `not_test_relevant|developer_confirm|unreachable` 时必须把它纳入裁决。
 
-在裁决前，逐条建立 ready 翻译核对表：每个 `blackbox_ready|graybox_ready` Scenario 的 `scenario_key`、`business_entry`、关联 TestCase、具体动作/Oracle，以及证明入口受支持的公开头文件、契约或受支持客户端/测试证据。不得把这一检查藏在总体摘要里。若证据只有私有 `.c` 的 `extern`、non-static 或 wrapper 调用链，尤其 source manifest 同时记录 caller truncation，必须新增 `blackbox_translation` finding，要求 Scenario 改为 `developer_confirm` 并移除正式 TestCase；若 Branch 因此错误写成 `scenario_mapped|merged`，再新增 `incorrect_conclusion` finding 要求同步改为 `developer_confirm`。同一私有入口链不能仅因输入值不同而一条 Scenario 判 ready、另一条判入口未知。
+在裁决前，内部逐项核对每个 `blackbox_ready|graybox_ready` Scenario 的 `scenario_key`、`business_entry`、关联 TestCase、具体动作/Oracle，以及 Scenario `evidence|linked_input_ids` 中证明入口受支持的正向冻结证据。若证据只有私有 `.c` 的 `extern`、non-static 或 wrapper 调用链，尤其 source manifest 同时记录 caller truncation，必须新增一条 `blackbox_translation` finding，其 `required_check` 同步要求 Branch `scenario_mapped|merged` 改为 `developer_confirm`、Scenario 改为 `developer_confirm` 并移除正式 TestCase；不要为这个同一根因再建重复的 `incorrect_conclusion`。只有另有独立的源码事实或 disposition 错误时才单独使用 `incorrect_conclusion`。除非冻结契约明确限定了支持参数域、构造方式或 Oracle，同一私有入口链不能仅因输入值不同而一条 Scenario 判 ready、另一条判入口未知。
 
 先读取 `independent_review_result_path`。`independent_finding_decisions[].finding_key` 必须与其 `findings[].finding_key` 一一对应且集合完全相等；不得填 risk key、flow key、case key、scenario key 或 Coverage ID。
 

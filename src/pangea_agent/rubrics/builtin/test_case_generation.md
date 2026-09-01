@@ -51,7 +51,7 @@ Pass 5  Structured Result
 
 `non-static` 本身不自动证明公开性；私有 `.c` 文件中的 `extern` 声明、跨 `.c` 文件直接调用或可被链接，也只证明 C 链接/调用关系。仍需公开头文件、契约、真实受支持调用方/测试等证据。caller context 已截断且当前入口只有上述链接性证据时，不得把该实现函数直接包装成 ready Scenario；接口支持性、测试侧构造方式或独立 Oracle 缺证据时，应使用 `developer_confirm`。
 
-ready 是逐 Scenario 的正向证明，不是默认值。每个 `blackbox_ready|graybox_ready` Scenario 都要能指出证明其 `business_entry` 受支持的具体冻结证据；如果只有私有 `.c` wrapper 链或链接性证据，就必须保持 `developer_confirm` 并且不生成正式 TestCase。入口支持性不会随输入值改变：同一私有入口链不能对一个 Branch/输入声称 ready，同时对另一个 Branch/输入又承认入口未知。
+ready 是逐 Scenario 的正向证明，不是默认值。每个 `blackbox_ready|graybox_ready` Scenario 都要在 `evidence` 中保留证明其 `business_entry` 受支持的源码证据，或在 `linked_input_ids` 中精确关联提供该证明的 Requirement/Design/task contract 等结构化输入；正式 TestCase 通过 `scenario_keys` 继承这份入口证据。如果只有私有 `.c` wrapper 链或链接性证据，就必须保持 `developer_confirm` 并且不生成正式 TestCase。除非冻结契约明确限定了支持参数域、构造方式或 Oracle，同一私有入口链不能对一个 Branch/输入声称 ready，同时对另一个 Branch/输入又承认入口未知。
 
 ## Branch 处置
 

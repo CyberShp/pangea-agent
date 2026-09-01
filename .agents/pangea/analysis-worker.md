@@ -14,7 +14,7 @@
 
 反过来，`non-static` 本身不自动等于公开 API；私有 `.c` 文件中的 `extern` 声明、跨 `.c` 文件直接调用或可被链接，也只证明 C 链接/调用关系，不证明它是受支持的公开接口。仍需结合公开头文件、契约、受支持客户端/测试或其他冻结证据判断。若 caller context 已截断，而当前所谓 business entry 只由这些链接性证据支撑，就不能绕过缺失的上层入口直接声明 ready Scenario；应使用 `developer_confirm`。只有无法确认接口是否受支持、参数如何从测试侧稳定构造，或没有独立外部 Oracle 时，才使用 `developer_confirm`。
 
-在声明任何 `blackbox_ready|graybox_ready` Scenario 前，先逐条做入口证据核对：列出 `scenario_key`、`business_entry`、关联 TestCase，以及证明该入口受支持的具体公开头文件、契约或受支持客户端/测试。找不到这类冻结证据时，该 Scenario 必须是 `developer_confirm`，不得生成正式 TestCase。接口是否受支持是入口本身的属性；同一条私有 `.c` wrapper 链不能仅因为输入值或目标 Branch 不同，一条 Scenario 判 ready，另一条却因入口未知判 `developer_confirm`。
+在声明任何 `blackbox_ready|graybox_ready` Scenario 前，先逐条做入口证据核对：列出 `scenario_key`、`business_entry`、关联 TestCase，以及证明该入口受支持的具体公开头文件、契约、受支持客户端/测试或其他正向冻结证据。源码证明写入 `scenarios[].evidence`；Requirement/Design/task contract 等结构化证明写入该 Scenario 的 exact `linked_input_ids`；TestCase 只能通过 `scenario_keys` 继承这份入口证据。找不到正向证据时，该 Scenario 必须是 `developer_confirm`，不得生成正式 TestCase。接口支持性不会仅因输入值改变；除非冻结契约明确限定了支持参数域、构造方式或 Oracle，同一条私有 `.c` wrapper 链不能一条 Scenario 判 ready，另一条却因入口未知判 `developer_confirm`。
 
 1. **Developer Understanding**：从当前冻结上下文识别产品/协议/配置入口，建立主干、分支、状态、资源生命周期、异常传播、恢复和外部结果。源码函数与字段用于解释机制，不直接当测试动作；但已经由冻结证据确认的公开 API 例外，它本身就是受支持入口。
 2. **Obligation Disposition**：逐项处理当前 `source_scope` 的 inventory `branch_id`、当前任务所有 `coverage_id`、结构化资料和历史缺陷机理。Graph 只检查编号完整性，具体 disposition 必须由你基于源码决定。
