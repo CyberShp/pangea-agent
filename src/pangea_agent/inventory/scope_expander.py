@@ -11,6 +11,8 @@ IGNORED_PARTS = {".git", "build", "dist", "third_party", "node_modules", "__pyca
 COMMON_FUNCTIONS = {"main", "free", "calloc", "malloc", "memcpy", "memset", "strcmp", "strlen"}
 GENERIC_TERMS = {"analysis", "feature", "include", "module", "source", "test", "功能", "模块", "分析"}
 MAX_TARGET_CONTEXT_PER_GROUP = 8
+MAX_CALLER_CONTEXT_FILES_PER_GROUP = 24
+MAX_CALLER_CONTEXT_DEPTH = 8
 _CALL_RE = re.compile(r"\b([A-Za-z_]\w{5,})\s*\(")
 _MEMBER_CALL_RE = re.compile(r"(?:->|\.)\s*([A-Za-z_]\w*)\s*\(")
 _FUNCTION_POINTER_RE = re.compile(r"\(\s*\*\s*([A-Za-z_]\w*)\s*\)\s*\(")
@@ -33,6 +35,7 @@ def expand_analysis_scope(repositories: list[dict], requested_scopes: list[str],
     groups: list[dict] = []
     context_files: list[dict] = []
     added_files: list[dict] = []
+    caller_context_truncations: list[dict] = []
 
     for repository in repositories:
         repo_id = repository["repo_id"]
@@ -95,22 +98,24 @@ def expand_analysis_scope(repositories: list[dict], requested_scopes: list[str],
 
         repo_groups = _merge_overlapping_groups(repo_groups)
         owned = {path for group in repo_groups for path in group["code_paths"]}
-        symbols_by_group = [_exported_symbols((root / path for path in group["code_paths"]), domain_terms) for group in repo_groups]
+        symbols_by_group = [
+            _exported_symbols((root / path for path in group["code_paths"]), domain_terms)
+            for group in repo_groups
+        ]
         all_symbols = set().union(*symbols_by_group) if symbols_by_group else set()
         target_context_candidates: list[list[tuple[int, str]]] = [[] for _ in repo_groups]
 
-        for path in code_files:
-            relative = code_paths[path]
-            if relative in owned:
-                continue
-            text = path.read_text(encoding="utf-8", errors="replace")
-            calls = set(_CALL_RE.findall(text)) & all_symbols
-            if not calls:
-                continue
-            group_index = _select_group(relative, calls, repo_groups, symbols_by_group)
-            record = {"repo_id": repo_id, "path": relative, "reason": f"direct_caller:{','.join(sorted(calls)[:5])}"}
-            repo_groups[group_index]["context_paths"].append(relative)
-            context_files.append(record)
+        caller_records, truncations = _transitive_caller_context(
+            repo_id,
+            root,
+            code_files,
+            code_paths,
+            repo_groups,
+            symbols_by_group,
+            owned,
+        )
+        context_files.extend(caller_records)
+        caller_context_truncations.extend(truncations)
 
         for path in _iter_files(root, CONTEXT_SUFFIXES):
             relative = _relative(path, root)
@@ -142,8 +147,112 @@ def expand_analysis_scope(repositories: list[dict], requested_scopes: list[str],
         "groups": groups,
         "context_files": _unique_records(context_files),
         "added_files": _unique_records(added_files),
-        "boundary": "source_scope = explicit scope + declared implementations; context_scope = called inline headers + direct function-pointer implementations + callers + target-related config/docs/tests",
+        "caller_context_truncations": caller_context_truncations,
+        "boundary": "source_scope = explicit scope + declared implementations; context_scope = inline/function-pointer dependencies + bounded transitive callers + target-related config/docs/tests; caller budgets are resource guards, not semantic completion",
     }
+
+
+def _transitive_caller_context(
+    repo_id: str,
+    root: Path,
+    code_files: list[Path],
+    code_paths: dict[Path, str],
+    repo_groups: list[dict],
+    symbols_by_group: list[set[str]],
+    owned: set[str],
+) -> tuple[list[dict], list[dict]]:
+    """Add bounded read-only caller context without changing source ownership."""
+
+    texts = {
+        code_paths[path]: path.read_text(encoding="utf-8", errors="replace")
+        for path in code_files
+    }
+    calls_by_path = {
+        relative: set(_CALL_RE.findall(text))
+        for relative, text in texts.items()
+    }
+    definitions_by_path = {
+        relative: _externally_callable_definitions(text)
+        for relative, text in texts.items()
+    }
+    candidate_paths = sorted(set(texts) - owned)
+    records: list[dict] = []
+    truncations: list[dict] = []
+
+    for group_index, group in enumerate(repo_groups):
+        frontier = set(symbols_by_group[group_index])
+        reachable_symbols = set(frontier)
+        selected_paths: set[str] = set()
+        depth = 1
+        budget_hit = False
+
+        while frontier and depth <= MAX_CALLER_CONTEXT_DEPTH:
+            matched: list[tuple[str, set[str]]] = []
+            for relative in candidate_paths:
+                if relative in selected_paths:
+                    continue
+                calls = calls_by_path.get(relative, set()) & frontier
+                if calls:
+                    matched.append((relative, calls))
+            if not matched:
+                break
+
+            remaining = MAX_CALLER_CONTEXT_FILES_PER_GROUP - len(selected_paths)
+            if remaining <= 0:
+                budget_hit = True
+                break
+            if len(matched) > remaining:
+                matched = matched[:remaining]
+                budget_hit = True
+
+            next_frontier: set[str] = set()
+            for relative, calls in matched:
+                selected_paths.add(relative)
+                group["context_paths"].append(relative)
+                records.append({
+                    "repo_id": repo_id,
+                    "path": relative,
+                    "reason": f"caller_depth_{depth}:{','.join(sorted(calls)[:5])}",
+                })
+                new_symbols = definitions_by_path.get(relative, set()) - reachable_symbols
+                next_frontier.update(new_symbols)
+                reachable_symbols.update(new_symbols)
+
+            if budget_hit:
+                break
+            frontier = next_frontier
+            depth += 1
+
+        if budget_hit:
+            truncations.append({
+                "repo_id": repo_id,
+                "requested_scope": list(group.get("requested_scope", [])),
+                "reason": "caller_file_budget",
+                "limit": MAX_CALLER_CONTEXT_FILES_PER_GROUP,
+                "selected_count": len(selected_paths),
+                "depth_reached": depth,
+            })
+        elif frontier and depth > MAX_CALLER_CONTEXT_DEPTH:
+            truncations.append({
+                "repo_id": repo_id,
+                "requested_scope": list(group.get("requested_scope", [])),
+                "reason": "caller_depth_budget",
+                "limit": MAX_CALLER_CONTEXT_DEPTH,
+                "selected_count": len(selected_paths),
+                "depth_reached": MAX_CALLER_CONTEXT_DEPTH,
+            })
+
+    return records, truncations
+
+
+def _externally_callable_definitions(text: str) -> set[str]:
+    symbols: set[str] = set()
+    for match in _DEF_RE.finditer(text):
+        name = match.group(1)
+        declaration = match.group(0).split("(", 1)[0]
+        if name not in COMMON_FUNCTIONS and not re.search(r"\bstatic\b", declaration):
+            symbols.add(name)
+    return symbols
 
 
 def _iter_files(root: Path, suffixes: set[str]):
