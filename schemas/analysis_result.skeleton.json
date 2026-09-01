@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.0",
+  "schema_version": "2.0",
   "summary": "<非空分析摘要>",
   "flows": [
     {
@@ -32,9 +32,11 @@
     }
   ],
   "input_decisions": [],
+  "branch_decisions": [],
   "coverage_decisions": [],
   "mechanism_decisions": [],
   "risks": [],
+  "scenarios": [],
   "test_cases": [],
   "review_finding_decisions": [],
   "unresolved": []

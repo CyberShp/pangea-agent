@@ -105,7 +105,6 @@ class PlanningResult(StrictModel):
     unresolved: list[str] = Field(default_factory=list)
 
 
-# These names are aliases only; there is no second Planning result format.
 ProposedUnitV2 = ProposedUnit
 PlanningResultV2 = PlanningResult
 
@@ -152,9 +151,29 @@ class InputDecision(StrictModel):
     evidence: list[SourceEvidence] = Field(default_factory=list)
 
 
+class BranchDecision(StrictModel):
+    branch_id: str = Field(min_length=1)
+    flow_key: str = Field(min_length=1)
+    disposition: Literal[
+        "scenario_mapped",
+        "merged",
+        "not_test_relevant",
+        "developer_confirm",
+        "unreachable",
+    ]
+    scenario_keys: list[str] = Field(default_factory=list)
+    reason: str = Field(min_length=1)
+
+
 class CoverageDecision(StrictModel):
     coverage_id: str = Field(min_length=1)
-    disposition: Literal["test_generated", "covered_by_generated_case", "unreachable", "unresolved"]
+    disposition: Literal[
+        "scenario_mapped",
+        "merged",
+        "developer_confirm",
+        "unreachable",
+    ]
+    scenario_keys: list[str] = Field(default_factory=list)
     test_case_keys: list[str] = Field(default_factory=list)
     reason: str = Field(min_length=1)
 
@@ -181,10 +200,28 @@ class RiskFinding(StrictModel):
     evidence: list[SourceEvidence] = Field(min_length=1)
     test_disposition: Literal[
         "test_required",
+        "developer_confirm",
         "unreachable_from_supported_entry",
     ] = "test_required"
     unreachable_reason: str | None = Field(default=None, min_length=1)
     unreachable_evidence: list[SourceEvidence] = Field(default_factory=list)
+
+
+class TestScenario(StrictModel):
+    scenario_key: str = Field(min_length=1)
+    title: str = Field(min_length=1)
+    readiness: Literal["blackbox_ready", "graybox_ready", "developer_confirm"]
+    business_entry: str | None = Field(default=None, min_length=1)
+    preconditions: list[str] = Field(default_factory=list)
+    actions: list[str] = Field(default_factory=list)
+    external_oracles: list[str] = Field(default_factory=list)
+    recovery: list[str] = Field(default_factory=list)
+    covered_flow_keys: list[str] = Field(default_factory=list)
+    branch_ids: list[str] = Field(default_factory=list)
+    coverage_ids: list[str] = Field(default_factory=list)
+    linked_risk_keys: list[str] = Field(default_factory=list)
+    linked_input_ids: list[str] = Field(default_factory=list)
+    evidence: list[SourceEvidence] = Field(default_factory=list)
 
 
 class TestStep(StrictModel):
@@ -198,6 +235,7 @@ class GeneratedTestCase(StrictModel):
     basis: list[Literal[
         "code_flow", "coverage", "requirement", "design", "defect_mechanism", "risk"
     ]] = Field(min_length=1)
+    scenario_keys: list[str] = Field(min_length=1)
     covered_flow_keys: list[str] = Field(min_length=1)
     linked_input_ids: list[str] = Field(default_factory=list)
     linked_risk_keys: list[str] = Field(default_factory=list)
@@ -216,13 +254,15 @@ class ReviewFindingDecision(StrictModel):
 
 
 class UnitSemanticResult(StrictModel):
-    schema_version: Literal["1.0"] = "1.0"
+    schema_version: Literal["2.0"] = "2.0"
     summary: str = Field(min_length=1)
     flows: list[CodeFlow] = Field(min_length=1)
     input_decisions: list[InputDecision] = Field(default_factory=list)
+    branch_decisions: list[BranchDecision] = Field(default_factory=list)
     coverage_decisions: list[CoverageDecision] = Field(default_factory=list)
     mechanism_decisions: list[MechanismDecision] = Field(default_factory=list)
     risks: list[RiskFinding] = Field(default_factory=list)
+    scenarios: list[TestScenario] = Field(default_factory=list)
     test_cases: list[GeneratedTestCase] = Field(default_factory=list)
     review_finding_decisions: list[ReviewFindingDecision] = Field(default_factory=list)
     unresolved: list[str] = Field(

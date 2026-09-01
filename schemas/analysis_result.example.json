@@ -1,101 +1,49 @@
 {
-  "schema_version": "1.0",
-  "summary": "示例单元的流程、输入裁决、风险与测试分析",
+  "schema_version": "2.0",
+  "summary": "示例单元先解释入口与分支，再把 Branch、Coverage 和 Risk 汇聚为业务场景并生成黑盒用例",
   "flows": [
     {
-      "flow_key": "FLOW-EXAMPLE",
-      "title": "示例主流程",
-      "entry": "example_entry",
-      "summary": "入口检查参数后调用核心实现并返回结果",
+      "flow_key": "FLOW-CONNECT",
+      "title": "建立受保护连接",
+      "entry": "公开连接入口",
+      "summary": "公开入口读取认证配置并建立连接；认证材料不匹配时拒绝建链。",
       "steps": [
         {
           "step_key": "STEP-ENTRY",
-          "label": "进入公开入口",
+          "label": "接收连接请求",
           "kind": "entry",
           "evidence": [
             {
               "path": "src/example.c",
               "line_start": 10,
               "line_end": 12,
-              "observation": "公开入口接收参数并开始处理"
+              "observation": "公开连接入口开始处理请求"
             }
           ]
         },
         {
-          "step_key": "STEP-MAIN",
-          "label": "执行核心处理",
-          "kind": "main",
-          "evidence": [
-            {
-              "path": "src/example.c",
-              "line_start": 13,
-              "line_end": 13,
-              "observation": "核心实现开始处理输入"
-            }
-          ]
-        },
-        {
-          "step_key": "STEP-BRANCH",
-          "label": "检查处理结果",
+          "step_key": "STEP-AUTH",
+          "label": "校验认证材料",
           "kind": "branch",
           "evidence": [
             {
               "path": "src/example.c",
-              "line_start": 14,
-              "line_end": 14,
-              "observation": "返回值决定成功或失败分支"
-            }
-          ]
-        },
-        {
-          "step_key": "STEP-ERROR",
-          "label": "记录失败状态",
-          "kind": "error",
-          "evidence": [
-            {
-              "path": "src/example.c",
-              "line_start": 15,
-              "line_end": 15,
-              "observation": "失败分支保存错误状态"
-            }
-          ]
-        },
-        {
-          "step_key": "STEP-PROPAGATION",
-          "label": "向调用方传播错误",
-          "kind": "propagation",
-          "evidence": [
-            {
-              "path": "src/example.c",
-              "line_start": 16,
-              "line_end": 16,
-              "observation": "错误码沿调用链返回"
-            }
-          ]
-        },
-        {
-          "step_key": "STEP-RECOVERY",
-          "label": "恢复临时状态",
-          "kind": "recovery",
-          "evidence": [
-            {
-              "path": "src/example.c",
-              "line_start": 17,
-              "line_end": 19,
-              "observation": "退出前恢复临时状态"
+              "line_start": 20,
+              "line_end": 24,
+              "observation": "认证材料是否匹配决定继续建链或返回失败"
             }
           ]
         },
         {
           "step_key": "STEP-EXIT",
-          "label": "返回处理结果",
+          "label": "返回建链结果",
           "kind": "exit",
           "evidence": [
             {
               "path": "src/example.c",
-              "line_start": 20,
-              "line_end": 20,
-              "observation": "入口把核心实现结果返回给调用方"
+              "line_start": 30,
+              "line_end": 31,
+              "observation": "入口向调用方返回连接结果"
             }
           ]
         }
@@ -103,154 +51,125 @@
       "edges": [
         {
           "source_step_key": "STEP-ENTRY",
-          "target_step_key": "STEP-MAIN",
-          "condition": "参数有效"
-        },
-        {
-          "source_step_key": "STEP-MAIN",
-          "target_step_key": "STEP-BRANCH",
+          "target_step_key": "STEP-AUTH",
           "condition": null
         },
         {
-          "source_step_key": "STEP-BRANCH",
-          "target_step_key": "STEP-ERROR",
-          "condition": "处理失败"
-        },
-        {
-          "source_step_key": "STEP-ERROR",
-          "target_step_key": "STEP-PROPAGATION",
-          "condition": null
-        },
-        {
-          "source_step_key": "STEP-PROPAGATION",
-          "target_step_key": "STEP-RECOVERY",
-          "condition": null
-        },
-        {
-          "source_step_key": "STEP-RECOVERY",
+          "source_step_key": "STEP-AUTH",
           "target_step_key": "STEP-EXIT",
-          "condition": null
+          "condition": "认证成功或失败后返回对应结果"
         }
       ]
     }
   ],
-  "input_decisions": [
+  "input_decisions": [],
+  "branch_decisions": [
     {
-      "item_id": "REQ-EXAMPLE",
-      "disposition": "confirmed",
-      "conclusion": "源码行为与示例要求一致",
-      "evidence": [
-        {
-          "path": "src/example.c",
-          "line_start": 10,
-          "line_end": 20,
-          "observation": "入口到返回路径实现了要求描述的行为"
-        }
-      ]
+      "branch_id": "root:src/example.c:20:if:1",
+      "flow_key": "FLOW-CONNECT",
+      "disposition": "scenario_mapped",
+      "scenario_keys": ["SCN-AUTH-MISMATCH"],
+      "reason": "该分支可通过公开配置制造认证材料不匹配并从连接结果直接观察"
     }
   ],
   "coverage_decisions": [
     {
-      "coverage_id": "COV-EXAMPLE",
-      "disposition": "test_generated",
-      "reason": "该零覆盖入口可从受支持接口触达"
+      "coverage_id": "COV-AUTH-LOOKUP",
+      "disposition": "scenario_mapped",
+      "scenario_keys": ["SCN-AUTH-MISMATCH"],
+      "reason": "零覆盖认证查找路径属于连接流程，并可由认证材料不匹配场景触发"
     }
   ],
-  "mechanism_decisions": [
-    {
-      "mechanism_id": "MECH-EXAMPLE",
-      "disposition": "equivalent_present",
-      "current_causal_chain": [
-        "无效输入进入入口",
-        "核心实现未拒绝输入",
-        "调用方观察到错误状态"
-      ],
-      "conclusion": "当前源码存在与历史机理等价的触发链",
-      "evidence": [
-        {
-          "path": "src/example.c",
-          "line_start": 10,
-          "line_end": 20,
-          "observation": "入口未在调用核心实现前拒绝该输入"
-        }
-      ]
-    }
-  ],
+  "mechanism_decisions": [],
   "risks": [
     {
-      "risk_key": "RISK-EXAMPLE",
-      "title": "无效输入导致错误状态外泄",
-      "dfx": [
-        "reliability"
-      ],
+      "risk_key": "RISK-AUTH-STATE",
+      "title": "认证失败后连接状态未正确收敛",
+      "dfx": ["可靠性与一致性"],
       "severity": "Medium",
       "confidence": "high",
-      "trigger": "调用方通过公开入口传入受支持格式但语义无效的参数",
-      "system_result": "核心状态被更新为错误值",
-      "external_observation": "公开接口返回成功但后续查询得到错误状态",
-      "exclusion_condition": "入口在更新状态前明确拒绝该参数",
+      "trigger": "通过公开配置使发起端和目标端使用不同认证材料后重新连接",
+      "system_result": "连接失败后仍残留可被后续请求误用的连接状态",
+      "external_observation": "首次连接失败后，修正认证材料仍无法立即正常重新连接",
+      "exclusion_condition": "失败路径完整释放连接状态并允许修正配置后立即重连",
+      "evidence": [
+        {
+          "path": "src/example.c",
+          "line_start": 20,
+          "line_end": 31,
+          "observation": "认证失败路径与连接状态清理发生在该区间"
+        }
+      ],
       "test_disposition": "test_required",
       "unreachable_reason": null,
-      "unreachable_evidence": [],
+      "unreachable_evidence": []
+    }
+  ],
+  "scenarios": [
+    {
+      "scenario_key": "SCN-AUTH-MISMATCH",
+      "title": "认证材料不匹配后的连接失败与恢复",
+      "readiness": "blackbox_ready",
+      "business_entry": "公开连接接口",
+      "preconditions": [
+        "目标端配置认证材料 key-B，发起端仍配置 key-A"
+      ],
+      "actions": [
+        "通过公开连接接口发起连接",
+        "确认失败后把发起端认证材料修正为 key-B 并重新连接"
+      ],
+      "external_oracles": [
+        "第一次连接明确失败且控制器/会话不建立",
+        "修正配置后重新连接成功且业务 I/O 恢复"
+      ],
+      "recovery": [
+        "恢复测试前认证配置"
+      ],
+      "covered_flow_keys": ["FLOW-CONNECT"],
+      "branch_ids": ["root:src/example.c:20:if:1"],
+      "coverage_ids": ["COV-AUTH-LOOKUP"],
+      "linked_risk_keys": ["RISK-AUTH-STATE"],
+      "linked_input_ids": [],
       "evidence": [
         {
           "path": "src/example.c",
           "line_start": 10,
-          "line_end": 20,
-          "observation": "该路径在缺少语义校验时更新并返回状态"
+          "line_end": 31,
+          "observation": "公开连接入口、认证分支和失败返回共同支持该业务场景"
         }
       ]
     }
   ],
   "test_cases": [
     {
-      "title": "公开入口拒绝语义无效输入",
-      "basis": [
-        "code_flow",
-        "coverage",
-        "risk"
-      ],
-      "covered_flow_keys": [
-        "FLOW-EXAMPLE"
-      ],
-      "linked_input_ids": [
-        "COV-EXAMPLE"
-      ],
-      "linked_risk_keys": [
-        "RISK-EXAMPLE"
-      ],
+      "title": "认证材料不匹配后可通过修正配置恢复连接",
+      "basis": ["code_flow", "coverage", "risk"],
+      "scenario_keys": ["SCN-AUTH-MISMATCH"],
+      "covered_flow_keys": ["FLOW-CONNECT"],
+      "linked_input_ids": ["COV-AUTH-LOOKUP"],
+      "linked_risk_keys": ["RISK-AUTH-STATE"],
       "level": "blackbox",
       "preconditions": [
-        "系统已通过正式入口初始化"
+        "目标端与发起端使用不同认证材料"
       ],
       "steps": [
         {
-          "action": "通过公开接口提交语义无效参数",
-          "expected_result": "接口拒绝请求且原状态保持不变"
+          "action": "通过公开连接接口发起连接",
+          "expected_result": "连接失败且设备/会话不进入可用状态"
+        },
+        {
+          "action": "把发起端认证材料改为与目标端一致后重新连接",
+          "expected_result": "连接成功并恢复正常业务 I/O"
         }
       ],
       "observability": [
-        "检查公开接口返回值并再次查询状态"
+        "检查公开连接结果、设备/会话状态和业务 I/O"
       ],
       "cleanup": [
-        "无额外清理"
+        "恢复测试前认证配置"
       ]
     }
   ],
-  "review_finding_decisions": [
-    {
-      "finding_key": "FINDING-EXAMPLE",
-      "disposition": "incorporated",
-      "conclusion": "已补充复核指出的异常路径和对应测试",
-      "evidence": [
-        {
-          "path": "src/example.c",
-          "line_start": 10,
-          "line_end": 20,
-          "observation": "异常路径由该入口与返回逻辑直接支持"
-        }
-      ]
-    }
-  ],
+  "review_finding_decisions": [],
   "unresolved": []
 }
