@@ -6,7 +6,7 @@
 
 开始前读取 task、`result_schema_path`、`result_skeleton_path` 和 task 明确列出的冻结输入。Graph 已把骨架写入唯一 `result_path`；只修改该文件，不保留占位符、不另建结果文件。Review 结果由 settle 做正式校验；不要运行 `check-result-json` 作为 Review 自检，因为该命令不是 Review JSON 的校验入口。
 
-Review finding 的 `category` 只能使用当前 schema 固定枚举。资源泄漏、竞态、越界、崩溃等属于风险机理，不是 category；具体机理写入 `summary` / `required_check`。`incorrect_conclusion` 用于 Analysis 对源码事实或 disposition 本身作出相反、无证据或与冻结边界不一致的结论；`test_oracle` 用于一个应验证的流程/风险缺少必要外部验证点；`blackbox_translation` 用于源码事实或风险可能成立，但已有 Scenario/TestCase 翻译出的业务入口、测试动作、可达路径或外部 Oracle 不受冻结证据支持。新 finding 必须有 `affected_unit_ids`、`summary`、`required_check` 和非空 `evidence`。Evidence 使用标准 `SourceEvidence` 对象，`repo_id/path` 必须来自 `evidence_scope_by_unit` 的冻结范围。
+Review finding 的 `category` 只能使用当前 schema 固定枚举。资源泄漏、竞态、越界、崩溃等属于风险机理，不是 category；具体机理写入 `summary` / `required_check`。`incorrect_conclusion` 用于 Analysis 对源码事实或 disposition 本身作出相反、无证据或与冻结边界不一致的结论；`test_oracle` 用于一个应验证的流程/风险缺少必要外部验证点；`blackbox_translation` 用于源码事实或风险可能成立，但已有 Scenario/TestCase 翻译出的业务入口、测试动作、可达路径或外部 Oracle 不受冻结证据支持。新 finding 必须有 `affected_unit_ids`、`summary`、`required_check` 和非空 `evidence`。Evidence 使用标准 `SourceEvidence` 对象，`repo_id/path` 必须来自 `evidence_scope_by_unit` 的冻结范围。Requirement/Design/Coverage/Defect 等结构化输入通过 `linked_input_ids` 和 finding 结论引用；不得把 `pangea-data/inbox`、Coverage 文件、task 文件或其他资料路径伪装成仓库源码 `SourceEvidence.path`。
 
 ## independent_review：真正盲审
 
@@ -15,6 +15,8 @@ Review finding 的 `category` 只能使用当前 schema 固定枚举。资源泄
 按 `analysis_language` 使用真实语言语义。C/C++ 检查短路求值、整数真假值、前置返回和资源生命周期；Lua 检查 truthiness、`and` / `or` 操作数返回、`nil`、module 缓存、`pcall` / `xpcall` 和 coroutine 生命周期。提出 finding 前必须从入口追到目标语句，确认路径真实可达。
 
 风险 finding 至少满足一种根基：结构化输入中的明确契约；冻结源码中的真实调用方已观察到错误结果；或源码自身即可证明的崩溃、未定义行为、越界、数据破坏/丢失、资源泄漏、竞态或安全边界破坏。都不满足时不建立 risk finding。
+
+缺少稳定业务入口、制造方式或外部 Oracle 是证据缺口，不是产品运行时 Risk。不得要求 Analysis 创建 `system_result` / `external_observation` 只描述“测试无法触发、无法观测、需要开发确认”的 Risk。C/C++ undefined behavior 也不得被裁决成固定环绕值、`INT_MIN`、返回码、日志或状态，除非冻结的构建/运行时契约明确规定该结果。
 
 ## comparison_review：轻量对照裁决
 
@@ -39,7 +41,7 @@ Review finding 的 `category` 只能使用当前 schema 固定枚举。资源泄
 - C/C++ 公开 API 函数本身可以是业务入口。公开头文件声明、任务/设计契约、受支持客户端/测试直接调用等冻结证据可以证明它是公开接口；`non-static`、私有 `.c` 文件中的 `extern` 声明、跨 `.c` 文件调用或可链接性都不够。对已经确认的公开 API，直接调用该 API 不属于“调用内部函数”的违规黑盒翻译。
 - 若 Analysis 在 caller truncation 存在时，把只有 `.c` 内声明/调用证据的实现函数写成公开 business entry，并据此给出 `scenario_mapped|merged`、ready Scenario 或 TestCase，应新增 `incorrect_conclusion`：错误点是“公开/受支持接口”的源码与证据结论不成立。除非冻结范围内还有其他受支持入口证据，否则要求 Closure 改为 `developer_confirm`，并移除不受支持的正式 Scenario/TestCase。
 
-随后审核首轮：Branch disposition 是否与源码可达性及 caller 边界相符；Coverage→Scenario 是否真的能到达目标函数/分支，目标本身若是公开 API 是否被错误降成 `developer_confirm`；Scenario 的 `business_entry/actions/external_oracles` 是否有真实产品、协议或公开 API 支撑；Risk→Scenario 是否一致；TestCase 是否从真实 Scenario 转换。
+随后审核首轮：Branch disposition 是否与源码可达性及 caller 边界相符；Coverage→Scenario 是否真的能到达目标函数/分支，目标本身若是公开 API 是否被错误降成 `developer_confirm`；Scenario 的 `business_entry/actions/external_oracles` 是否有真实产品、协议或公开 API 支撑；Risk 的 `system_result/external_observation` 是否真是产品结果而非测试证据缺口；Risk→Scenario 是否一致；TestCase 是否从真实 Scenario 转换。
 
 出现下面这类“源码事实可能成立，但测试翻译错了”的情况，新增 `category=blackbox_translation`，不要混成普通 `incorrect_conclusion`：
 
@@ -53,6 +55,6 @@ Review finding 的 `category` 只能使用当前 schema 固定枚举。资源泄
 
 Comparison 新 finding 只用于首轮 Analysis 的真实错误或盲审未发现的实质遗漏，不复制 Independent finding。`linked_input_ids` 只引用 selected inputs 的真实编号。顶层 `unresolved`：Independent 只有冻结输入本身缺失时填写；Comparison 必须为 `[]`。
 
-写入前检查：finding_key 不重复；affected_unit_ids 来自 unit plan；新 finding evidence 非空且在冻结范围；Comparison decision 集合与 Independent finding 集合完全相等；dismissed 有反证；confirmed/unresolved 不重复抄 evidence；存在 caller truncation 时已复核所有 disposition，以及所有 ready Scenario/TestCase 的业务入口是否真的有公开/受支持证据。若 settle 返回错误，只修正同一 `result_path`，不把 Review 裁决交给 Python 或其他 Agent。
+写入前检查：finding_key 不重复；affected_unit_ids 来自 unit plan；新 finding evidence 非空且每个 path 都从对应 unit 的 `allowed_paths` 原样选择，结构化资料只用真实 `linked_input_ids`；Comparison decision 集合与 Independent finding 集合完全相等；dismissed 有反证；confirmed/unresolved 不重复抄 evidence；存在 caller truncation 时已复核所有 disposition，以及所有 ready Scenario/TestCase 的业务入口是否真的有公开/受支持证据；没有把证据缺口包装成 Risk，也没有把 C/C++ 未定义行为写成确定结果。若 settle 返回错误，只修正同一 `result_path`，不把 Review 裁决交给 Python 或其他 Agent。
 
 最终回复只用一行 `完成 action_id=<task.action_id>`；历史 task 没有 action_id 时才只回复“完成”。

@@ -145,6 +145,8 @@ Coverage Gap
 
 ## 风险测试处置
 
+- 缺少稳定业务入口、制造方法或独立 Oracle 是证据缺口，不是产品运行时 Risk。不得创建 `system_result` / `external_observation` 只描述“测试无法触发、无法观测、需要开发确认”的 Risk；把对应 Branch/Coverage/Scenario 保持为 `developer_confirm`。
+- C/C++ undefined behavior（未定义行为）只说明结果不可依赖，不能在没有冻结构建/运行时契约时写成固定环绕值、`INT_MIN`、返回码、日志或状态。需要受控 sanitizer/构建方式但当前证据不足时保持 `developer_confirm`。
 - `test_required`：风险已经具备测试侧可执行路径，必须由至少一个 ready Scenario 关联，并最终由正式 TestCase 的 `linked_risk_keys` 覆盖。
 - `developer_confirm`：风险本身有源码依据，但当前冻结上下文不足以确认稳定业务入口、制造方法或独立 Oracle；不得强行生成正式 TestCase。
 - `unreachable_from_supported_entry`：只有确认无法从当前产品支持的业务入口到达时使用，同时填写 `unreachable_reason` 和直接源码 `unreachable_evidence`。
@@ -153,6 +155,7 @@ Coverage Gap
 - 不得只生成正常流程。结合源码覆盖异常、分支、初始化、运行、停止、恢复和卸载。
 - 参数维度、值域、默认值和代表性组合必须来自源码或当前实现规格；已有测试用例只作为表达和环境参考，不能证明风险已覆盖。
 - 低置信度风险仍可形成验证候选，但没有可靠可达性或 Oracle 时保持 `developer_confirm`。
+- 顶层 `unresolved` 不重复 Branch/Coverage/Risk/Scenario 已用 `developer_confirm` 表达的同源证据缺口。
 
 ## 禁止内容
 

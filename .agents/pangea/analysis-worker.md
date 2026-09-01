@@ -42,6 +42,8 @@ Coverage 不要求一律向上追到更高产品层。如果 Coverage 目标本�
 
 每条风险必须至少有一种证据根基：结构化输入的明确契约；冻结源码中真实调用方已经观察到的错误结果；或源码自身即可证明的崩溃、未定义行为、越界、数据破坏/丢失、资源泄漏、竞态或安全边界破坏。都不满足时只作为 Flow/Scenario 候选，不收入 `risks`。
 
+“当前冻结范围没有证明稳定业务入口、制造方式或外部 Oracle”“测试人员暂时无法触发/观测”描述的是证据缺口，不是产品运行时 Risk。不得创建 `system_result` / `external_observation` 只描述“无法设计测试、无法触发函数、需要开发确认”的 Risk；把真实源码事实保留在 Branch/Coverage/Scenario 的 `developer_confirm` 即可。只有产品在真实触发后会产生可说明的系统结果时才建立 Risk。
+
 风险 `test_disposition`：
 - `test_required`：已有测试侧可执行路径，必须被至少一个 Scenario 的 `linked_risk_keys` 关联，并最终由正式 TestCase 验证。
 - `developer_confirm`：风险有源码依据，但当前冻结上下文不足以确认稳定业务入口、制造方式或独立 Oracle；不生成假用例。
@@ -56,6 +58,8 @@ Coverage 不要求一律向上追到更高产品层。如果 Coverage 目标本�
 ## 语言语义与证据
 
 冻结风险前按 `analysis_language` 校验真实求值和错误传播。C/C++ 遵守短路求值、整数真假值、前置返回和入口边界；Lua 遵守只有 `false`/`nil` 为假、`and`/`or` 返回操作数、缺失字段得到 `nil`、`pcall`/`xpcall` 传播。没有契约或可证外部错误结果时，实现策略差异不是缺陷。
+
+C/C++ 的 undefined behavior（未定义行为）只证明程序结果不可依赖，不能自行翻译成环绕值、`INT_MIN`、固定返回码、固定日志或固定状态。除非冻结的构建参数、运行时检查器或产品契约明确规定了可观测结果，否则 Risk/Scenario/TestCase 应保留为不可依赖行为或 `developer_confirm`，不得声称“实际返回某个确定值”。
 
 Lua 分析先使用 inventory 的 `requires`、`module_exports`、`state_writes`、`protected_calls`、`coroutine_calls` 建立 module/状态/错误/协程检查清单，再回冻结源码核实。external/dynamic/ambiguous require 只有确实阻断当前判断时才形成待确认项。
 
@@ -73,6 +77,8 @@ Lua 分析先使用 inventory 的 `requires`、`module_exports`、`state_writes`
 
 finding 只是补充或纠正同一个风险/场景时，保留原 key 原位修改，不追加重复对象。finding 改变源码事实时同步检查并修正 `summary`、flows、branch/coverage decisions、risks、scenarios、test_cases 和 review decision，不能只改一处留下矛盾。逐条完成 `risk_test_obligations`：可执行则补/关联真实 Scenario 与 TestCase；当前冻结证据不足可使用 `developer_confirm`；只有源码证明不可达才使用 unreachable。
 
+Closure 不得为了“吸收 finding”而把证据缺口新建成产品 Risk。Reviewer finding 若只要求确认入口、制造方式或 Oracle，应修正相应 Branch/Coverage/Scenario disposition；若原 Risk 的系统结果本身不成立，应删除该 Risk，并同步清理 Scenario/TestCase 引用和 finding decision，而不是改写成“测试无法执行”的 Risk。
+
 ## 写入前自检与返修
 
 写入前逐项检查：
@@ -84,7 +90,9 @@ finding 只是补充或纠正同一个风险/场景时，保留原 key 原位修
 - Scenario 引用的 Flow/Branch/Coverage/Risk/input 全部真实；
 - 每条 TestCase 至少引用一个真实 ready Scenario；
 - `test_required` Risk 有 Scenario/TestCase，`developer_confirm` 不伪造正式 Case，不可达有原因和证据；
+- 每条 Risk 的 `system_result` / `external_observation` 描述产品行为，而不是测试证据缺口；C/C++ 未定义行为没有被写成固定返回值或固定状态；
 - 任何 `not_test_relevant` 都有正向充分理由而不是“入口/Oracle 未确认”；
+- 顶层 `unresolved` 没有重复任何已经由 Branch/Coverage/Risk/Scenario `developer_confirm` 表达的同源缺口；
 - evidence path 属于当前冻结范围；closure 的 finding decision 与 findings 一一对应。
 
 校验失败时只修正同一 `result_path`，读取返回的具体 validation error，保留已有有效语义；不得让 Python/脚本替你决定 disposition、Scenario、Risk 或 TestCase。错误多时按当前 2.0 skeleton/example 重新整理完整 JSON，而不是在旧 1.0 结构上追加字段。
