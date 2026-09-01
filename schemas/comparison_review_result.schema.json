@@ -15,11 +15,7 @@
           "title": "Disposition",
           "type": "string"
         },
-        "conclusion": {
-          "minLength": 1,
-          "title": "Conclusion",
-          "type": "string"
-        },
+        "conclusion": {"minLength": 1, "title": "Conclusion", "type": "string"},
         "evidence": {
           "description": "confirmed/unresolved 可省略并复用原 independent finding evidence；dismissed 必须提供反证，运行时契约会校验",
           "items": {"$ref": "#/$defs/SourceEvidence"},
@@ -36,8 +32,8 @@
       "properties": {
         "finding_key": {"minLength": 1, "title": "Finding Key", "type": "string"},
         "category": {
-          "description": "新增 finding 的类别；不得写入 independent_finding_decisions.disposition",
-          "enum": ["missed_flow", "document_delta", "coverage_gap", "defect_mechanism", "risk", "test_oracle", "incorrect_conclusion"],
+          "description": "新增 finding 的类别；blackbox_translation 表示源码事实/风险可能成立，但 Scenario/TestCase 翻译出的业务入口、测试动作或外部 Oracle 不受冻结证据支持；不得写入 independent_finding_decisions.disposition",
+          "enum": ["missed_flow", "document_delta", "coverage_gap", "defect_mechanism", "risk", "test_oracle", "incorrect_conclusion", "blackbox_translation"],
           "title": "Category",
           "type": "string"
         },
