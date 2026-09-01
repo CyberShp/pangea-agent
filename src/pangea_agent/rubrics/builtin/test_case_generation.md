@@ -49,7 +49,7 @@ Pass 5  Structured Result
 
 “不要直接调用源码函数”只针对实现 helper、私有函数、内部状态机和其他非支持接口，不针对已经由冻结证据确认的公开 API。若公开头文件、需求/设计/任务契约、受支持客户端/测试或其他冻结证据表明某个 C/C++ 函数本身就是稳定公开接口，那么直接调用该 API 就是合法业务入口和测试动作；其公开返回值、输出参数、错误码或对外状态可以作为 Oracle。不要强迫公开 API 必须再向上追到 CLI/RPC/GUI 才算业务入口。
 
-`non-static` 本身不自动证明公开性；仍需公开声明、契约、真实受支持调用方/测试等证据。只有接口支持性、测试侧构造方式或独立 Oracle 真正缺证据时，才使用 `developer_confirm`。
+`non-static` 本身不自动证明公开性；私有 `.c` 文件中的 `extern` 声明、跨 `.c` 文件直接调用或可被链接，也只证明 C 链接/调用关系。仍需公开头文件、契约、真实受支持调用方/测试等证据。caller context 已截断且当前入口只有上述链接性证据时，不得把该实现函数直接包装成 ready Scenario；接口支持性、测试侧构造方式或独立 Oracle 缺证据时，应使用 `developer_confirm`。
 
 ## Branch 处置
 
@@ -64,6 +64,10 @@ Inventory 中属于当前 `source_scope` 的每个 `branch_id` 都必须有且�
 - `unreachable`：已根据冻结源码确认当前产品支持入口无法到达；在 `reason` 中记录直接依据。
 
 只要 `not_test_relevant` 的理由依赖“没看到更上层 caller”“业务入口没确认”“当前上下文不足”“Oracle 不知道”，就应使用 `developer_confirm`。若 source manifest 已记录与当前分析相关的 `caller_context_truncations`，且缺失的上层 caller 会影响该判断，更不能用 `not_test_relevant` 或 `unreachable` 代替证据不足。
+
+“正常防御性分支”“返回设计内错误码”“没有形成缺陷/Risk”都不自动等于 `not_test_relevant`。Branch 是否形成测试义务，要看它是否带来可构造的不同输入/状态或不同外部结果；这与是否建立 Risk 是两项独立判断。
+
+caller truncation 不只约束 `not_test_relevant|developer_confirm|unreachable`，也约束乐观的 `scenario_mapped|merged` 和 ready Scenario/TestCase。若所谓业务入口只由私有 `.c` 的声明、跨文件调用或可链接性支撑，而缺失 caller 可能包含真正产品入口，就不能直接声明 ready；冻结证据不足时使用 `developer_confirm`。
 
 一个 Branch 不等于一个 TestCase。多个 Branch 可以汇聚到同一 Scenario；禁止为满足数量而“一条 if 一条模板用例”。
 

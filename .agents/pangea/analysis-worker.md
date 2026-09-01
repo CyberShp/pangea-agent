@@ -12,7 +12,7 @@
 
 “不得把内部函数调用当业务动作”只针对实现 helper、内部状态机、私有回调和其他非支持接口。若冻结证据已经表明某个 C/C++ 函数本身就是稳定公开 API，例如公开头文件声明、任务/设计契约明确列为 API、仓内受支持客户端或测试直接调用，或其他冻结证据证明它就是对外接口，那么**直接调用该公开 API 本身就是合法 business entry / 测试动作**；其公开返回值、输出参数、错误码或对外状态也可以作为 Oracle。不要仅因为入口在源码中表现为“函数调用”就把它降为 `developer_confirm`，也不要强迫所有公开 API 再向上追到 CLI/RPC/GUI 才算业务入口。
 
-反过来，`non-static` 本身不自动等于公开 API；仍需结合头文件、契约、真实调用方/测试或其他冻结证据判断。只有无法确认接口是否受支持、参数如何从测试侧稳定构造，或没有独立外部 Oracle 时，才使用 `developer_confirm`。
+反过来，`non-static` 本身不自动等于公开 API；私有 `.c` 文件中的 `extern` 声明、跨 `.c` 文件直接调用或可被链接，也只证明 C 链接/调用关系，不证明它是受支持的公开接口。仍需结合公开头文件、契约、受支持客户端/测试或其他冻结证据判断。若 caller context 已截断，而当前所谓 business entry 只由这些链接性证据支撑，就不能绕过缺失的上层入口直接声明 ready Scenario；应使用 `developer_confirm`。只有无法确认接口是否受支持、参数如何从测试侧稳定构造，或没有独立外部 Oracle 时，才使用 `developer_confirm`。
 
 1. **Developer Understanding**：从当前冻结上下文识别产品/协议/配置入口，建立主干、分支、状态、资源生命周期、异常传播、恢复和外部结果。源码函数与字段用于解释机制，不直接当测试动作；但已经由冻结证据确认的公开 API 例外，它本身就是受支持入口。
 2. **Obligation Disposition**：逐项处理当前 `source_scope` 的 inventory `branch_id`、当前任务所有 `coverage_id`、结构化资料和历史缺陷机理。Graph 只检查编号完整性，具体 disposition 必须由你基于源码决定。
@@ -27,6 +27,8 @@
 `branch_decisions` 只处理 inventory 中当前 `unit.source_scope` 的真实 `branch_id`，必须逐项且不重复。允许 `scenario_mapped|merged|not_test_relevant|developer_confirm|unreachable`。`scenario_mapped` 或 `merged` 必须引用本结果真实 `scenario_keys`；`not_test_relevant`、`developer_confirm`、`unreachable` 必须在 `reason` 写清源码依据或当前证据边界。不要为满足 Branch 数量制造模板 TestCase。
 
 `not_test_relevant` 只能用于**现有冻结证据已经足以正向证明**该 Branch 不形成独立测试义务，例如只是同一已覆盖 Scenario 的实现细节且不改变可测试输入、状态或外部结果。它不是“暂时不知道怎么测”的出口。只要理由依赖“没看到更上层 caller”“业务入口还没确认”“当前上下文不足”“Oracle 还不知道”，就必须使用 `developer_confirm`，不能用 `not_test_relevant` 掩盖证据不足。caller context 被截断且缺失部分正好影响这项判断时尤其如此。
+
+“正常防御性分支”“返回设计内错误码”“没有形成缺陷/Risk”都不等于 `not_test_relevant`。Branch 是否形成测试义务，要看它是否对应可构造的不同输入/状态或不同外部结果；Risk 是否成立是另一项判断。
 
 `coverage_decisions` 只处理 selected inputs 中真实 `coverage_gaps[].coverage_id`，必须逐项且不重复。允许 `scenario_mapped|merged|developer_confirm|unreachable`。Coverage 是分析 seed，不是 TestCase：先把零覆盖函数/路径映射到 Flow/Branch/State/Resource，再理解测试侧入口和触发条件，最后映射 Scenario。
 
@@ -76,6 +78,7 @@ finding 只是补充或纠正同一个风险/场景时，保留原 key 原位修
 写入前逐项检查：
 - 每个 Flow step 有 evidence，edge 两端真实存在；
 - 当前 source_scope 的每个 inventory `branch_id` 恰好一个 BranchDecision；
+- 存在 caller truncation 时，已复核所有 `scenario_mapped|merged` 及其 ready Scenario/TestCase；每个业务入口都有独立于 `.c` 链接性和缺失 caller 的公开/受支持证据，否则改为 `developer_confirm`；
 - 当前任务每个 `coverage_id` 恰好一个 CoverageDecision；
 - `scenario_mapped/merged` 都引用真实 Scenario；
 - Scenario 引用的 Flow/Branch/Coverage/Risk/input 全部真实；

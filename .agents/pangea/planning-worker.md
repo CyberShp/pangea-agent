@@ -4,7 +4,9 @@
 
 读取 task、紧凑源码元数据、资料候选、`methodology_catalog_path` 指向的冻结精简目录、task 指定的 `rubric_paths`、`result_schema_path`、`result_example_path`，以及存在时的 `result_skeleton_path`。`analysis_language` 是 Graph 根据冻结模块源码判断出的当前语言，只应用对应语言的规划规则。精简目录只提供 ID、标题、适用条件、排除条件和来源，不读取未选方法论的完整检查正文。所有相对路径都相对当前 `pangea-agent` 仓库根目录解析，不相对 task 或 Python 源文件所在目录解析。先照 schema 和样例确认字段，再在 Graph 已创建的 `result_path` 中填写真实规划；不得把样例值复制为结论。
 
-`source_ownership` 是唯一源码归属表。Graph 已把每个请求源码预填为一个 `repo_id:path` 键：保持这些键不变，只把每个值从 `<unit_key>` 改成 `units[].unit_key` 中的真实值。`units[]` 只定义单元及 `context_scope`，没有 `source_scope` 字段。每个请求文件只在 `source_ownership` 中归属一次；Python 按这张由你填写的归属表生成后续 `source_scope`，不会决定单元边界。
+`source_ownership` 是唯一源码归属表。Graph 已把每个请求源码预填为一个 `repo_id:path` 键：保持这些键不变，只把每个值从 `<unit_key>` 改成 `units[].unit_key` 中的真实值。`units[]` 只定义单元及 `context_scope`，**不得填写 `source_scope` 字段**。每个请求文件只在 `source_ownership` 中归属一次；Python 按这张由你填写的归属表生成后续 `source_scope`，不会决定单元边界。
+
+逐项读取冻结的 Coverage gaps。若某个 Coverage gap 只有一个源码匹配，并且该匹配文件已经由 `source_ownership` 归属到某个 unit，就必须把真实 `coverage_id` 填入该 unit 的 `coverage_ids`；不得留给 Python 自动补分配。只有无法从冻结匹配唯一确定归属时，才保留为真实规划歧义。
 
 按功能模块、文件族、生命周期、状态机、接口/实现、回调和共享资源分组。直接调用关系是重要语义依据；在不切断主调用链且工作量合适时可以合并，但最终单元边界由你决定。跨单元参考放入 `context_scope`。只分配相关资料、Coverage 和缺陷机理。不填写 Agent、Run 或状态字段。
 
@@ -16,6 +18,6 @@ Planning 的 `unresolved` 只用于会阻止生成有效 unit plan 的真实歧�
 
 不得仅根据某个 `scope_groups` 或摘要字段就声称元数据缺失。判定请求文件是否有元数据前，必须在 `owned_source_paths` 和 `files[].path` 中逐个核对 `requested_scope`；只要请求文件均存在并已能唯一分配，就不得把“元数据不足”写入 `unresolved`。
 
-写入前最后检查：`source_ownership` 的键与骨架相同；每个值都引用一个真实且唯一的 `unit_key`；每个 unit 至少拥有一个请求文件；同一 unit 已拥有的请求文件不要再放进它自己的 `context_scope`；单文件不得因行数或函数数超限而重复归属；`unresolved` 每项都明确指出哪个请求源码或真实输入无法分配。规划完整时 `unresolved` 必须是 `[]`。
+写入前最后检查：`source_ownership` 的键与骨架相同；每个值都引用一个真实且唯一的 `unit_key`；`units[]` 没有 `source_scope`；每个唯一匹配到已归属源码的 Coverage ID 已填写到对应 unit；每个 unit 至少拥有一个请求文件；同一 unit 已拥有的请求文件不要再放进它自己的 `context_scope`；单文件不得因行数或函数数超限而重复归属；`unresolved` 每项都明确指出哪个请求源码或真实输入无法分配。规划完整时 `unresolved` 必须是 `[]`。
 
 校验返修时必须读取续接消息中的 `validation_error`，重新打开原 `result_path` 并实际修正错误；结果文件已经存在不表示返修完成。保留已有有效语义内容，编辑方法自行选择，但不得把单元划分和取舍判断交给 Python 或脚本。结束前运行 `.venv/bin/python -m pangea_agent.cli.main check-result-json --task '<当前 task JSON 路径>'`；Windows 工作区对应使用 `.venv\Scripts\python.exe`。不要改用 `PYTHONPATH`、系统 `python3` 或只检查 JSON 语法的临时代码。该命令只读检查 JSON 是否可消费并提示确定性结构问题，不判断语义、不改写结果或 Run 状态。`submission_ready=false` 表示结果无法被下游读取，必须修正后重跑；`submission_ready=true` 时可以结束当前回合，`status=WARN` 的提示由 settle 原样记录为降级。最终回复只用一行 `完成 action_id=<task.action_id>`；不得省略或改写 task 中的 `action_id`，也不复述 JSON 或规划内容。历史 task 没有 `action_id` 时才只回复“完成”。

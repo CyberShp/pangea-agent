@@ -20,7 +20,7 @@ Review finding 的 `category` 只能使用当前 schema 固定枚举。资源泄
 
 `comparison_review` 是同一 Reviewer Session 的第二遍，只做两件事：逐条判断 Independent finding 是否真的被首轮遗漏；看到 Analysis 后检查 Branch/Coverage/Scenario/Risk/TestCase 的追溯、处置理由和黑盒转换是否写错。它不是第二次从头分析整个模块，也不重新复制一份盲审报告。
 
-开始 Comparison 后，除 `independent_review_result_path`、Analysis result 外，还必须读取 `analysis_task_paths` 中相关 Analysis task，并沿其 `source_manifest_path` 查看 `scope_expansion.caller_context_truncations`。caller budget 是证据边界，不是语义结论；判断 Branch/Coverage 的 `not_test_relevant|developer_confirm|unreachable` 时必须把它纳入裁决。
+开始 Comparison 后，除 `independent_review_result_path`、Analysis result 外，还必须读取 `analysis_task_paths` 中相关 Analysis task，并沿其 `source_manifest_path` 查看 `scope_expansion.caller_context_truncations`。caller budget 是证据边界，不是语义结论；复核 Branch/Coverage 的所有 disposition 时都必须把它纳入裁决，不只检查 `not_test_relevant|developer_confirm|unreachable`，还要检查 `scenario_mapped|merged` 是否借一个未证实为公开 API 的内部函数绕过了截断边界。
 
 先读取 `independent_review_result_path`。`independent_finding_decisions[].finding_key` 必须与其 `findings[].finding_key` 一一对应且集合完全相等，不得填 risk/flow/case/scenario/Coverage ID。
 
@@ -33,9 +33,11 @@ Review finding 的 `category` 只能使用当前 schema 固定枚举。资源泄
 ### 处置逃生口必须复核
 
 - `not_test_relevant` 只能在冻结证据已经足以正向证明该 Branch 不形成独立测试义务时成立。若理由实质是“更上层 caller 没看到”“业务入口没确认”“当前上下文不足”“Oracle 不知道”，尤其 source manifest 已记录相关 caller truncation 时，新增 `incorrect_conclusion` 要求改为 `developer_confirm` 或形成真实 Scenario。
+- “正常防御性分支”“返回设计内错误码”“没有形成缺陷/Risk”不能单独证明 `not_test_relevant`；仍要检查它是否对应可构造的不同输入/状态或不同外部结果。Branch 测试义务与 Risk/缺陷判断不是同一件事。
 - `unreachable` 不能由 caller 截断或“没继续看到 caller”推出；没有正向不可达证据时必须纠正。
 - `developer_confirm` 是合法处置，但不是默认逃生口。如果冻结证据已经证明目标是稳定公开 API，参数/状态可由测试侧构造，且公开返回值、输出参数、错误码或对外状态能够判定，那么不能仅因为测试动作表现为“直接调用函数”就使用 `developer_confirm`。
-- C/C++ 公开 API 函数本身可以是业务入口。公开头文件声明、任务/设计契约、受支持客户端/测试直接调用等冻结证据可以证明它是公开接口；`non-static` 本身不够。对已经确认的公开 API，直接调用该 API 不属于“调用内部函数”的违规黑盒翻译。
+- C/C++ 公开 API 函数本身可以是业务入口。公开头文件声明、任务/设计契约、受支持客户端/测试直接调用等冻结证据可以证明它是公开接口；`non-static`、私有 `.c` 文件中的 `extern` 声明、跨 `.c` 文件调用或可链接性都不够。对已经确认的公开 API，直接调用该 API 不属于“调用内部函数”的违规黑盒翻译。
+- 若 Analysis 在 caller truncation 存在时，把只有 `.c` 内声明/调用证据的实现函数写成公开 business entry，并据此给出 `scenario_mapped|merged`、ready Scenario 或 TestCase，应新增 `incorrect_conclusion`：错误点是“公开/受支持接口”的源码与证据结论不成立。除非冻结范围内还有其他受支持入口证据，否则要求 Closure 改为 `developer_confirm`，并移除不受支持的正式 Scenario/TestCase。
 
 随后审核首轮：Branch disposition 是否与源码可达性及 caller 边界相符；Coverage→Scenario 是否真的能到达目标函数/分支，目标本身若是公开 API 是否被错误降成 `developer_confirm`；Scenario 的 `business_entry/actions/external_oracles` 是否有真实产品、协议或公开 API 支撑；Risk→Scenario 是否一致；TestCase 是否从真实 Scenario 转换。
 
@@ -51,6 +53,6 @@ Review finding 的 `category` 只能使用当前 schema 固定枚举。资源泄
 
 Comparison 新 finding 只用于首轮 Analysis 的真实错误或盲审未发现的实质遗漏，不复制 Independent finding。`linked_input_ids` 只引用 selected inputs 的真实编号。顶层 `unresolved`：Independent 只有冻结输入本身缺失时填写；Comparison 必须为 `[]`。
 
-写入前检查：finding_key 不重复；affected_unit_ids 来自 unit plan；新 finding evidence 非空且在冻结范围；Comparison decision 集合与 Independent finding 集合完全相等；dismissed 有反证；confirmed/unresolved 不重复抄 evidence；存在 caller truncation 时已复核相关 `not_test_relevant/unreachable/developer_confirm`。若 settle 返回错误，只修正同一 `result_path`，不把 Review 裁决交给 Python 或其他 Agent。
+写入前检查：finding_key 不重复；affected_unit_ids 来自 unit plan；新 finding evidence 非空且在冻结范围；Comparison decision 集合与 Independent finding 集合完全相等；dismissed 有反证；confirmed/unresolved 不重复抄 evidence；存在 caller truncation 时已复核所有 disposition，以及所有 ready Scenario/TestCase 的业务入口是否真的有公开/受支持证据。若 settle 返回错误，只修正同一 `result_path`，不把 Review 裁决交给 Python 或其他 Agent。
 
 最终回复只用一行 `完成 action_id=<task.action_id>`；历史 task 没有 action_id 时才只回复“完成”。
