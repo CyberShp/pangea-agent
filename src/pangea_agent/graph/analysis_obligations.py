@@ -6,18 +6,22 @@ from typing import Any
 from pangea_agent.models.analysis import AnalysisTask, UnitSemanticResult
 
 
+READY_SCENARIO_STATES = {"blackbox_ready", "graybox_ready"}
+
+
 def analysis_obligations(
     task: AnalysisTask,
     result: UnitSemanticResult,
     inventory: Mapping[str, Any],
     selected_inputs: Mapping[str, Any],
 ) -> list[dict[str, str]]:
-    """Return deterministic missing/invalid semantic references for one Analysis unit."""
+    """Return deterministic missing/invalid references and declared-state conflicts."""
 
     issues: list[dict[str, str]] = []
     known_flows = {item.flow_key for item in result.flows}
     known_risks = {item.risk_key for item in result.risks}
-    known_scenarios = {item.scenario_key for item in result.scenarios}
+    scenarios_by_key = {item.scenario_key: item for item in result.scenarios}
+    known_scenarios = set(scenarios_by_key)
     expected_branches = _expected_branch_ids(task, inventory)
     expected_coverage = {
         str(item["coverage_id"])
@@ -76,40 +80,172 @@ def analysis_obligations(
         )
 
     for scenario in result.scenarios:
+        if scenario.readiness in READY_SCENARIO_STATES:
+            missing_fields = [
+                name
+                for name, value in (
+                    ("business_entry", scenario.business_entry),
+                    ("actions", scenario.actions),
+                    ("external_oracles", scenario.external_oracles),
+                )
+                if not value
+            ]
+            if missing_fields:
+                _add(
+                    issues,
+                    "incomplete_ready_scenario",
+                    scenario.scenario_key,
+                    "Scenario 声明为可执行，但缺少必需业务字段："
+                    f"{','.join(missing_fields)}",
+                )
         for flow_key in scenario.covered_flow_keys:
             if flow_key not in known_flows:
-                _add(issues, "unknown_flow", scenario.scenario_key, f"Scenario {scenario.scenario_key} 引用了不存在的 flow_key={flow_key}")
+                _add(
+                    issues,
+                    "unknown_flow",
+                    scenario.scenario_key,
+                    f"Scenario {scenario.scenario_key} 引用了不存在的 flow_key={flow_key}",
+                )
         for branch_id in scenario.branch_ids:
             if branch_id not in expected_branches:
-                _add(issues, "unknown_branch", scenario.scenario_key, f"Scenario {scenario.scenario_key} 引用了当前单元不存在的 branch_id={branch_id}")
+                _add(
+                    issues,
+                    "unknown_branch",
+                    scenario.scenario_key,
+                    f"Scenario {scenario.scenario_key} 引用了当前单元不存在的 branch_id={branch_id}",
+                )
         for coverage_id in scenario.coverage_ids:
             if coverage_id not in expected_coverage:
-                _add(issues, "unknown_coverage", scenario.scenario_key, f"Scenario {scenario.scenario_key} 引用了当前单元不存在的 coverage_id={coverage_id}")
+                _add(
+                    issues,
+                    "unknown_coverage",
+                    scenario.scenario_key,
+                    f"Scenario {scenario.scenario_key} 引用了当前单元不存在的 coverage_id={coverage_id}",
+                )
         for risk_key in scenario.linked_risk_keys:
             if risk_key not in known_risks:
-                _add(issues, "unknown_risk", scenario.scenario_key, f"Scenario {scenario.scenario_key} 引用了不存在的 risk_key={risk_key}")
+                _add(
+                    issues,
+                    "unknown_risk",
+                    scenario.scenario_key,
+                    f"Scenario {scenario.scenario_key} 引用了不存在的 risk_key={risk_key}",
+                )
         for item_id in scenario.linked_input_ids:
             if item_id not in known_inputs:
-                _add(issues, "unknown_input", scenario.scenario_key, f"Scenario {scenario.scenario_key} 引用了当前任务不存在的 input_id={item_id}")
+                _add(
+                    issues,
+                    "unknown_input",
+                    scenario.scenario_key,
+                    f"Scenario {scenario.scenario_key} 引用了当前任务不存在的 input_id={item_id}",
+                )
 
-    risks_with_scenario = {
-        risk_key
-        for scenario in result.scenarios
-        for risk_key in scenario.linked_risk_keys
+    scenarios_by_risk: dict[str, set[str]] = {}
+    for scenario in result.scenarios:
+        for risk_key in scenario.linked_risk_keys:
+            scenarios_by_risk.setdefault(risk_key, set()).add(scenario.scenario_key)
+
+    ready_scenarios_by_risk = {
+        risk_key: {
+            scenario_key
+            for scenario_key in scenario_keys
+            if scenarios_by_key.get(scenario_key)
+            and scenarios_by_key[scenario_key].readiness in READY_SCENARIO_STATES
+        }
+        for risk_key, scenario_keys in scenarios_by_risk.items()
     }
-    for risk in result.risks:
-        if risk.test_disposition == "test_required" and risk.risk_key not in risks_with_scenario:
-            _add(
-                issues,
-                "missing_risk_scenario",
-                risk.risk_key,
-                f"Risk {risk.risk_key} 标记为 test_required，但没有 Scenario 关联该 risk_key",
-            )
 
+    cases_by_risk: dict[str, list] = {}
     for case in result.test_cases:
         for scenario_key in case.scenario_keys:
             if scenario_key not in known_scenarios:
-                _add(issues, "unknown_scenario", case.case_key, f"TestCase {case.case_key} 引用了不存在的 scenario_key={scenario_key}")
+                _add(
+                    issues,
+                    "unknown_scenario",
+                    case.case_key,
+                    f"TestCase {case.case_key} 引用了不存在的 scenario_key={scenario_key}",
+                )
+            elif scenarios_by_key[scenario_key].readiness == "developer_confirm":
+                _add(
+                    issues,
+                    "case_uses_unready_scenario",
+                    case.case_key,
+                    f"TestCase {case.case_key} 引用了 readiness=developer_confirm 的 Scenario {scenario_key}",
+                )
+        for risk_key in case.linked_risk_keys:
+            cases_by_risk.setdefault(risk_key, []).append(case)
+
+    for risk in result.risks:
+        scenario_keys = scenarios_by_risk.get(risk.risk_key, set())
+        ready_scenario_keys = ready_scenarios_by_risk.get(risk.risk_key, set())
+        linked_cases = cases_by_risk.get(risk.risk_key, [])
+        ready_cases = [
+            case
+            for case in linked_cases
+            if set(case.scenario_keys) & ready_scenario_keys
+        ]
+
+        if risk.test_disposition == "test_required":
+            if not scenario_keys:
+                _add(
+                    issues,
+                    "missing_risk_scenario",
+                    risk.risk_key,
+                    f"Risk {risk.risk_key} 标记为 test_required，但没有 Scenario 关联该 risk_key",
+                )
+            elif not ready_scenario_keys:
+                _add(
+                    issues,
+                    "missing_ready_risk_scenario",
+                    risk.risk_key,
+                    f"Risk {risk.risk_key} 标记为 test_required，但关联 Scenario 均未达到 blackbox_ready/graybox_ready",
+                )
+            elif not ready_cases:
+                _add(
+                    issues,
+                    "missing_risk_case",
+                    risk.risk_key,
+                    f"Risk {risk.risk_key} 标记为 test_required，但没有 TestCase 同时关联该 Risk 和 ready Scenario",
+                )
+            continue
+
+        if risk.test_disposition == "developer_confirm":
+            if ready_scenario_keys:
+                _add(
+                    issues,
+                    "developer_confirm_has_ready_scenario",
+                    risk.risk_key,
+                    f"Risk {risk.risk_key} 声明 developer_confirm，但已关联 ready Scenario={sorted(ready_scenario_keys)}",
+                )
+            if linked_cases:
+                _add(
+                    issues,
+                    "developer_confirm_has_case",
+                    risk.risk_key,
+                    f"Risk {risk.risk_key} 声明 developer_confirm，但已有正式 TestCase 关联",
+                )
+            continue
+
+        if scenario_keys:
+            _add(
+                issues,
+                "unreachable_has_scenario",
+                risk.risk_key,
+                f"Risk {risk.risk_key} 声明不可达，但仍关联 Scenario={sorted(scenario_keys)}",
+            )
+        if linked_cases:
+            _add(
+                issues,
+                "unreachable_has_case",
+                risk.risk_key,
+                f"Risk {risk.risk_key} 声明不可达，但仍关联正式 TestCase",
+            )
+        if not risk.unreachable_reason or not risk.unreachable_evidence:
+            _add(
+                issues,
+                "incomplete_unreachable_risk",
+                risk.risk_key,
+                f"Risk {risk.risk_key} 的不可达决定必须包含原因和源码证据",
+            )
 
     return issues
 
@@ -165,10 +301,20 @@ def _scenario_reference_issues(
     known_scenarios: set[str],
 ) -> None:
     if disposition in {"scenario_mapped", "merged"} and not scenario_keys:
-        _add(issues, "missing_scenario_link", item_id, f"{kind} {item_id} 的 disposition={disposition}，但 scenario_keys 为空")
+        _add(
+            issues,
+            "missing_scenario_link",
+            item_id,
+            f"{kind} {item_id} 的 disposition={disposition}，但 scenario_keys 为空",
+        )
     for scenario_key in scenario_keys:
         if scenario_key not in known_scenarios:
-            _add(issues, "unknown_scenario", item_id, f"{kind} {item_id} 引用了不存在的 scenario_key={scenario_key}")
+            _add(
+                issues,
+                "unknown_scenario",
+                item_id,
+                f"{kind} {item_id} 引用了不存在的 scenario_key={scenario_key}",
+            )
 
 
 def _add(issues: list[dict[str, str]], code: str, item_id: str, message: str) -> None:
