@@ -22,6 +22,8 @@ Review finding 的 `category` 只能使用当前 schema 固定枚举。资源泄
 
 风险 finding 至少满足一种根基：结构化输入中的明确契约；冻结源码中的真实调用方已观察到错误结果；或源码自身即可证明的崩溃、未定义行为、越界、数据破坏/丢失、资源泄漏、竞态或安全边界破坏。都不满足时不建立 risk finding。
 
+一旦盲审已经识别出冻结源码可直接证明的未定义行为、越界、数据破坏、资源泄漏或竞态，且没有正向不可达证据，就必须输出 `category=risk` finding；缺少受支持入口只表示最终 Risk 应为 `developer_confirm`，不能在结论中写“看到了 UB 但无风险/六维无信号”。算术溢出等未定义行为至少属于“功能与状态”风险信号。
+
 ## comparison_review：轻量对照裁决
 
 `comparison_review` 由独立于盲审 Reviewer 的 Adjudicator Session 执行，只做两件事：
@@ -59,6 +61,8 @@ Comparison 不是第二次从头分析整个模块，也不重新复制一份盲
 - `scenarios`：`business_entry` 是否真实；actions 是否能由产品/协议/公开 API 支持入口构造；`external_oracles` 是否由错误传播或公开接口行为支持；多个 Branch/Coverage/Risk 合并是否具有共同触发与 oracle。
 - `risks`：成立依据、排除条件、`test_disposition` 与 Scenario 是否一致。`developer_confirm` 是合法处置；证据不足时不能因为无 TestCase 就创建缺失用例 finding。
 - `test_cases`：必须追到真实 Scenario，并逐步核对动作能否到达目标路径、预期结果是否由冻结源码/契约支持。
+
+Comparison 还必须独立核对冻结源码中显式可见的 C/C++ 未定义行为、越界、数据破坏、资源泄漏和竞态是否被 Analysis 记录为 Risk。源码已直接证明且无正向不可达证据、Analysis 却漏 Risk 时，新增 `category=risk` finding；不得因为 Independent findings 为空或入口仍待确认就跳过。
 
 逐条核对 TestCase 直接填写的 Coverage ID：该 Case 的实际动作和预期必须真的执行并判定对应函数或分支，且 `basis` 包含 `coverage`。多个 Case 共用一个 Scenario 时，不得据此把 Scenario 的全部 Coverage gap 视为每条 Case 都已覆盖。
 
