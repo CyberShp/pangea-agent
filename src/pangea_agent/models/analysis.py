@@ -135,7 +135,10 @@ class CoverageDecision(StrictModel):
     coverage_id: str = Field(min_length=1)
     disposition: Literal["scenario_mapped", "merged", "developer_confirm", "unreachable"]
     scenario_keys: list[str] = Field(default_factory=list)
-    test_case_keys: list[str] = Field(default_factory=list)
+    test_case_keys: list[str] = Field(
+        default_factory=list,
+        description="Workflow 从 test_cases[].linked_input_ids 直接派生；不按共享 Scenario 扩大关联",
+    )
     reason: str = Field(min_length=1)
 
 
@@ -192,7 +195,10 @@ class GeneratedTestCase(StrictModel):
     basis: list[Literal["code_flow", "coverage", "requirement", "design", "defect_mechanism", "risk"]] = Field(min_length=1)
     scenario_keys: list[str] = Field(min_length=1)
     covered_flow_keys: list[str] = Field(min_length=1)
-    linked_input_ids: list[str] = Field(default_factory=list)
+    linked_input_ids: list[str] = Field(
+        default_factory=list,
+        description="仅列此 TestCase 的实际步骤和断言直接覆盖的输入 ID；共享 Scenario 不自动继承其全部输入",
+    )
     linked_risk_keys: list[str] = Field(default_factory=list)
     level: Literal["blackbox", "graybox"]
     preconditions: list[str] = Field(min_length=1)

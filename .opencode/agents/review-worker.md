@@ -58,6 +58,8 @@ Comparison 不是第二次从头分析整个模块，也不重新复制一份盲
 - `risks`：成立依据、排除条件、`test_disposition` 与 Scenario 是否一致。`developer_confirm` 是合法处置；证据不足时不能因为无 TestCase 就创建缺失用例 finding。
 - `test_cases`：必须追到真实 Scenario，并逐步核对动作能否到达目标路径、预期结果是否由冻结源码/契约支持。
 
+逐条核对 TestCase 直接填写的 Coverage ID：该 Case 的实际动作和预期必须真的执行并判定对应函数或分支，且 `basis` 包含 `coverage`。多个 Case 共用一个 Scenario 时，不得据此把 Scenario 的全部 Coverage gap 视为每条 Case 都已覆盖。
+
 出现下面这类“源码事实可能成立，但测试翻译错了”的情况，新增 `category=blackbox_translation`：
 
 - Scenario/TestCase 声称的业务入口实际不能沿冻结控制流到达目标 Branch/风险路径；

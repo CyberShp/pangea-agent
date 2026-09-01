@@ -95,21 +95,11 @@ def _discard_submitted_derived_links(payload: dict[str, Any]) -> None:
 
 
 def _derive_test_case_links(result: UnitSemanticResult) -> UnitSemanticResult:
-    cases_by_input: dict[str, list[str]] = defaultdict(list)
-    cases_by_scenario: dict[str, list[str]] = defaultdict(list)
-    for case in result.test_cases:
-        for item_id in case.linked_input_ids:
-            cases_by_input[item_id].append(case.case_key)
-        for scenario_key in case.scenario_keys:
-            cases_by_scenario[scenario_key].append(case.case_key)
+    cases_by_input = test_case_keys_by_input(result)
 
     coverage_decisions = []
     for decision in result.coverage_decisions:
         linked = list(cases_by_input.get(decision.coverage_id, []))
-        for scenario_key in decision.scenario_keys:
-            for case_key in cases_by_scenario.get(scenario_key, []):
-                if case_key not in linked:
-                    linked.append(case_key)
         coverage_decisions.append(
             decision.model_copy(update={"test_case_keys": linked})
         )
@@ -126,6 +116,17 @@ def _derive_test_case_links(result: UnitSemanticResult) -> UnitSemanticResult:
         },
         deep=True,
     )
+
+
+def test_case_keys_by_input(result: UnitSemanticResult) -> dict[str, list[str]]:
+    """Return direct input-to-case links without inferring through shared Scenarios."""
+
+    cases_by_input: dict[str, list[str]] = defaultdict(list)
+    for case in result.test_cases:
+        for item_id in case.linked_input_ids:
+            if case.case_key not in cases_by_input[item_id]:
+                cases_by_input[item_id].append(case.case_key)
+    return dict(cases_by_input)
 
 
 def _mapping_items(value: Any) -> list[dict[str, Any]]:

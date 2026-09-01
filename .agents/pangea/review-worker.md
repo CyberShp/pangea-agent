@@ -47,6 +47,8 @@ Review finding 的 `category` 只能使用当前 schema 固定枚举。资源泄
 
 随后审核首轮：Branch disposition 是否与源码可达性及 caller 边界相符；Coverage→Scenario 是否真的能到达目标函数/分支，目标本身若是公开 API 是否被错误降成 `developer_confirm`；Scenario 的 `business_entry/actions/external_oracles` 是否有真实产品、协议或公开 API 支撑；Risk 的 `system_result/external_observation` 是否真是产品结果而非测试证据缺口；Risk→Scenario 是否一致；TestCase 是否从真实 Scenario 转换。
 
+逐条核对 TestCase 直接填写的 Coverage ID：该 Case 的实际动作和预期必须真的执行并判定对应函数或分支，且 `basis` 包含 `coverage`。多个 Case 共用一个 Scenario 时，不得据此把 Scenario 的全部 Coverage gap 视为每条 Case 都已覆盖；若 false 分支 gap 只由零值 Case 触发，非零值 Case 不能关联该 gap。
+
 出现下面这类“源码事实可能成立，但测试翻译错了”的情况，新增 `category=blackbox_translation`，不要混成普通 `incorrect_conclusion`：
 
 - Scenario/TestCase 声称的业务入口实际不能沿冻结控制流到达目标 Branch/风险路径；

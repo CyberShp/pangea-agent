@@ -54,6 +54,8 @@ Coverage 不要求一律向上追到更高产品层。如果 Coverage 目标本�
 
 正式 `test_cases[]` 只能来自 `blackbox_ready` 或 `graybox_ready` Scenario，并必须填写真实 `scenario_keys`。每个步骤有同位置 `expected_result`，并包含前置、观测、清理/恢复。黑盒优先；开发协助或内部故障注入只能用于制造前置条件，测试执行和主要 Oracle 仍尽量使用产品正常配置、连接、IO、设备状态、日志等外部行为。**已确认的公开 API 调用不属于这里禁止的“内部函数调用”**；实现 helper、私有函数、内部字段赋值、内部对象构造、内部返回值或内部状态检查不得冒充产品级测试步骤。
 
+每条 TestCase 的 `linked_input_ids` 只填写这条用例自身通过实际步骤和断言直接覆盖的输入 ID。`scenario_mapped|merged` Coverage 必须至少有一条 TestCase 包含对应 `coverage_id`、引用该 decision 的 ready Scenario，且 `basis` 包含 `coverage`；多个 TestCase 共用同一 Scenario，不代表它们自动继承该 Scenario 的全部 `coverage_ids`。
+
 `basis` 必须与真实来源一致：`coverage|requirement|design|defect_mechanism` 需要相应 `linked_input_ids`；`risk` 需要真实 `linked_risk_keys`；执行路径可使用 `code_flow`。`covered_flow_keys` 和 `scenario_keys` 必须引用本结果真实对象。
 
 ## 语言语义与证据

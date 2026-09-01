@@ -21,7 +21,7 @@ Review finding 的 `category` 只能使用当前 schema 固定枚举。资源泄
 
 ## comparison_review：轻量对照裁决
 
-`comparison_review` 是同一 Reviewer Session 的第二遍，只做两件事：逐条判断 Independent finding 是否真的被首轮遗漏；看到 Analysis 后检查 Branch/Coverage/Scenario/Risk/TestCase 的追溯、处置理由和黑盒转换是否写错。它不是第二次从头分析整个模块，也不重新复制一份盲审报告。
+`comparison_review` 由独立于盲审 Reviewer 的 Adjudicator Session 执行，只做两件事：逐条判断 Independent finding 是否真的被首轮遗漏；看到 Analysis 后检查 Branch/Coverage/Scenario/Risk/TestCase 的追溯、处置理由和黑盒转换是否写错。新 Session 用于避免盲审 Reviewer 自我确认，但它不是第二次从头分析整个模块，也不重新复制一份盲审报告。
 
 开始 Comparison 后，除 `independent_review_result_path`、Analysis result 外，还必须读取 `analysis_task_paths` 中相关 Analysis task，并沿其 `source_manifest_path` 查看 `scope_expansion.caller_context_truncations`。caller budget 是证据边界，不是语义结论；判断 Branch/Coverage 的 `not_test_relevant|developer_confirm|unreachable` 时必须把它纳入裁决。
 
@@ -41,6 +41,8 @@ Review finding 的 `category` 只能使用当前 schema 固定枚举。资源泄
 - C/C++ 公开 API 函数本身可以是业务入口。公开头文件声明、任务/设计契约、受支持客户端/测试直接调用等冻结证据可以证明它是公开接口；`non-static` 本身不够。对已经确认的公开 API，直接调用该 API 不属于“调用内部函数”的违规黑盒翻译。
 
 随后审核首轮：Branch disposition 是否与源码可达性及 caller 边界相符；Coverage→Scenario 是否真的能到达目标函数/分支，目标本身若是公开 API 是否被错误降成 `developer_confirm`；Scenario 的 `business_entry/actions/external_oracles` 是否有真实产品、协议或公开 API 支撑；Risk→Scenario 是否一致；TestCase 是否从真实 Scenario 转换。
+
+逐条核对 TestCase 直接填写的 Coverage ID：该 Case 的实际动作和预期必须真的执行并判定对应函数或分支，且 `basis` 包含 `coverage`。多个 Case 共用一个 Scenario 时，不得据此把 Scenario 的全部 Coverage gap 视为每条 Case 都已覆盖。
 
 出现下面这类“源码事实可能成立，但测试翻译错了”的情况，新增 `category=blackbox_translation`：
 

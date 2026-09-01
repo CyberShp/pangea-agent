@@ -4,6 +4,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from pangea_agent.agent_io import read_json, write_json
+from pangea_agent.graph.analysis_normalizer import test_case_keys_by_input
 from pangea_agent.graph.analysis_obligations import analysis_obligations
 from pangea_agent.graph.state import PangeaState
 from pangea_agent.graph.result_contract import risk_test_obligations, validate_unit_result
@@ -343,6 +344,7 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
             {"unit_id": unit.unit_id, **item.model_dump(mode="json")}
             for item in result.input_decisions
         )
+        direct_case_keys = test_case_keys_by_input(result)
 
         branch_decisions.extend(
             {
@@ -370,11 +372,15 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
                     if (unit.unit_id, key) in scenario_ids
                 ],
                 "test_case_ids": [
-                    case_ids[(unit.unit_id, case.case_key)]
-                    for case in result.test_cases
-                    if set(case.scenario_keys) & set(item.scenario_keys)
+                    case_ids[(unit.unit_id, case_key)]
+                    for case_key in direct_case_keys.get(item.coverage_id, [])
+                    if (unit.unit_id, case_key) in case_ids
                 ],
-                "unresolved_test_case_keys": [],
+                "unresolved_test_case_keys": [
+                    case_key
+                    for case_key in direct_case_keys.get(item.coverage_id, [])
+                    if (unit.unit_id, case_key) not in case_ids
+                ],
             }
             for item in result.coverage_decisions
         )
@@ -387,11 +393,15 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
                     exclude={"test_case_keys", "evidence"},
                 ),
                 "test_case_ids": [
-                    case_ids[(unit.unit_id, case.case_key)]
-                    for case in result.test_cases
-                    if item.mechanism_id in case.linked_input_ids
+                    case_ids[(unit.unit_id, case_key)]
+                    for case_key in direct_case_keys.get(item.mechanism_id, [])
+                    if (unit.unit_id, case_key) in case_ids
                 ],
-                "unresolved_test_case_keys": [],
+                "unresolved_test_case_keys": [
+                    case_key
+                    for case_key in direct_case_keys.get(item.mechanism_id, [])
+                    if (unit.unit_id, case_key) not in case_ids
+                ],
                 "evidence": [
                     _evidence(evidence)
                     for evidence in item.evidence

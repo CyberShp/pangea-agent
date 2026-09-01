@@ -40,6 +40,14 @@ def analysis_obligations(
         *selected_inputs.get("defect_mechanisms", {}),
         *expected_coverage,
     }
+    cases_by_coverage = {
+        coverage_id: [
+            case
+            for case in result.test_cases
+            if coverage_id in case.linked_input_ids
+        ]
+        for coverage_id in expected_coverage
+    }
 
     _decision_set_issues(
         issues,
@@ -96,6 +104,31 @@ def analysis_obligations(
             known_scenarios,
         )
         if decision.disposition in SCENARIO_MAPPED_DISPOSITIONS:
+            ready_scenario_keys = {
+                scenario_key
+                for scenario_key in decision.scenario_keys
+                if scenarios_by_key.get(scenario_key)
+                and scenarios_by_key[scenario_key].readiness in READY_SCENARIO_STATES
+            }
+            if not ready_scenario_keys:
+                _add(
+                    issues,
+                    "missing_ready_coverage_scenario",
+                    decision.coverage_id,
+                    f"CoverageDecision {decision.coverage_id} 的 disposition={decision.disposition}，但没有 ready Scenario",
+                )
+            ready_cases = [
+                case
+                for case in cases_by_coverage.get(decision.coverage_id, [])
+                if set(case.scenario_keys) & ready_scenario_keys
+            ]
+            if not ready_cases:
+                _add(
+                    issues,
+                    "missing_coverage_case",
+                    decision.coverage_id,
+                    f"CoverageDecision {decision.coverage_id} 的 disposition={decision.disposition}，但没有 TestCase 通过 linked_input_ids 直接关联该 Coverage 并引用其 ready Scenario",
+                )
             for scenario_key in decision.scenario_keys:
                 scenario = scenarios_by_key.get(scenario_key)
                 if scenario is not None and decision.coverage_id not in scenario.coverage_ids:
@@ -227,6 +260,34 @@ def analysis_obligations(
                     "case_uses_unready_scenario",
                     case.case_key,
                     f"TestCase {case.case_key} 引用了 readiness=developer_confirm 的 Scenario {scenario_key}",
+                )
+        for item_id in case.linked_input_ids:
+            if item_id not in expected_coverage:
+                continue
+            decision = coverage_decisions_by_id.get(item_id)
+            if decision is None:
+                continue
+            if decision.disposition not in SCENARIO_MAPPED_DISPOSITIONS:
+                _add(
+                    issues,
+                    "coverage_case_disposition_conflict",
+                    case.case_key,
+                    f"TestCase {case.case_key} 直接关联 coverage_id={item_id}，但对应 CoverageDecision.disposition={decision.disposition}",
+                )
+                continue
+            if not set(case.scenario_keys) & set(decision.scenario_keys):
+                _add(
+                    issues,
+                    "coverage_case_scenario_mismatch",
+                    case.case_key,
+                    f"TestCase {case.case_key} 直接关联 coverage_id={item_id}，但它与对应 CoverageDecision 没有共享 Scenario",
+                )
+            if "coverage" not in case.basis:
+                _add(
+                    issues,
+                    "coverage_case_missing_basis",
+                    case.case_key,
+                    f"TestCase {case.case_key} 直接关联 coverage_id={item_id}，但 basis 未包含 coverage",
                 )
         for risk_key in case.linked_risk_keys:
             cases_by_risk.setdefault(risk_key, []).append(case)

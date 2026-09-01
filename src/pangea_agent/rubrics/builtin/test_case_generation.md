@@ -121,6 +121,8 @@ Coverage Gap
 
 正式 `test_cases[]` 只能来自 `blackbox_ready` 或 `graybox_ready` Scenario，并必须填写对应 `scenario_keys`。一个 Scenario 可以生成一个或多个用例；一个用例也可以关联多个共享业务条件的 Scenario，但不得脱离 Scenario 直接由 Branch/Coverage/Risk 生成模板用例。
 
+`test_cases[].linked_input_ids` 只记录该 TestCase 自身通过实际步骤和断言直接覆盖的输入。`scenario_mapped|merged` Coverage 必须至少有一条 TestCase 直接填写真实 `coverage_id`、引用该 decision 的 ready Scenario，并在 `basis` 中包含 `coverage`。共享 Scenario 只表示业务条件相同，不会让其中每条 Case 自动继承 Scenario 的全部 `coverage_ids`；只执行 true 分支的 Case 不得关联 false 分支 Coverage gap，反之亦然。
+
 用例必须包含：用例描述、用例类型、前置条件、测试步骤、预期结果、观测方式、清理/恢复。用例不分优先级。
 
 生成用例时先列必要测试变体，再写正文。每个变体固定考虑关联风险、构建类型、运行模式、唯一终态。一条风险同时包含 Debug 崩溃与 Release 状态破坏时，先拆成两个变体，再分别生成 TestCase，不要写完一条混合用例后再修改。若唯一终态是进程或服务崩溃、退出、停止，且该变体还要验证恢复，后续动作的第一步固定为“重启并等待服务恢复”。
