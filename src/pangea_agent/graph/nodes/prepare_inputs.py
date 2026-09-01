@@ -222,6 +222,7 @@ def prepare_inputs(state: PangeaState) -> PangeaState:
         "requested_scope": requested_scope,
         "source_scope": module_scope,
         "scope_expansion": expansion,
+        "coverage_records": zero_coverage,
         "coverage_diagnostics": {
             "ambiguous": len(coverage_match["ambiguous"]),
             "unmatched": len(coverage_match["unmatched"]),
