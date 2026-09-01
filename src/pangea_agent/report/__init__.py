@@ -1,6 +1,15 @@
-"""V1 Markdown and offline HTML report generation."""
+"""Markdown and offline HTML report generation."""
 
-from .html import render_html_report, reports_are_complete, write_reports
-from .markdown import render_report
+from .semantic_report import (
+    render_html_report,
+    render_report,
+    reports_are_complete,
+    write_reports,
+)
 
-__all__ = ["render_html_report", "render_report", "reports_are_complete", "write_reports"]
+__all__ = [
+    "render_html_report",
+    "render_report",
+    "reports_are_complete",
+    "write_reports",
+]
