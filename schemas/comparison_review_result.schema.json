@@ -11,11 +11,7 @@
         },
         "disposition": {
           "description": "只表示对盲审 finding 的裁决；不得填写 risk、incorrect_conclusion 等 category",
-          "enum": [
-            "confirmed",
-            "dismissed",
-            "unresolved"
-          ],
+          "enum": ["confirmed", "dismissed", "unresolved"],
           "title": "Disposition",
           "type": "string"
         },
@@ -25,177 +21,69 @@
           "type": "string"
         },
         "evidence": {
-          "items": {
-            "$ref": "#/$defs/SourceEvidence"
-          },
-          "minItems": 1,
+          "description": "confirmed/unresolved 可省略并复用原 independent finding evidence；dismissed 必须提供反证，运行时契约会校验",
+          "items": {"$ref": "#/$defs/SourceEvidence"},
           "title": "Evidence",
           "type": "array"
         }
       },
-      "required": [
-        "finding_key",
-        "disposition",
-        "conclusion",
-        "evidence"
-      ],
+      "required": ["finding_key", "disposition", "conclusion"],
       "title": "IndependentFindingDecision",
       "type": "object"
     },
     "ReviewFinding": {
       "additionalProperties": false,
       "properties": {
-        "finding_key": {
-          "minLength": 1,
-          "title": "Finding Key",
-          "type": "string"
-        },
+        "finding_key": {"minLength": 1, "title": "Finding Key", "type": "string"},
         "category": {
           "description": "新增 finding 的类别；不得写入 independent_finding_decisions.disposition",
-          "enum": [
-            "missed_flow",
-            "document_delta",
-            "coverage_gap",
-            "defect_mechanism",
-            "risk",
-            "test_oracle",
-            "incorrect_conclusion"
-          ],
+          "enum": ["missed_flow", "document_delta", "coverage_gap", "defect_mechanism", "risk", "test_oracle", "incorrect_conclusion"],
           "title": "Category",
           "type": "string"
         },
-        "affected_unit_ids": {
-          "items": {
-            "type": "string"
-          },
-          "minItems": 1,
-          "title": "Affected Unit Ids",
-          "type": "array"
-        },
-        "linked_input_ids": {
-          "items": {
-            "type": "string"
-          },
-          "title": "Linked Input Ids",
-          "type": "array"
-        },
-        "summary": {
-          "minLength": 1,
-          "title": "Summary",
-          "type": "string"
-        },
-        "required_check": {
-          "minLength": 1,
-          "title": "Required Check",
-          "type": "string"
-        },
-        "evidence": {
-          "items": {
-            "$ref": "#/$defs/SourceEvidence"
-          },
-          "minItems": 1,
-          "title": "Evidence",
-          "type": "array"
-        }
+        "affected_unit_ids": {"items": {"type": "string"}, "minItems": 1, "title": "Affected Unit Ids", "type": "array"},
+        "linked_input_ids": {"items": {"type": "string"}, "title": "Linked Input Ids", "type": "array"},
+        "summary": {"minLength": 1, "title": "Summary", "type": "string"},
+        "required_check": {"minLength": 1, "title": "Required Check", "type": "string"},
+        "evidence": {"items": {"$ref": "#/$defs/SourceEvidence"}, "minItems": 1, "title": "Evidence", "type": "array"}
       },
-      "required": [
-        "finding_key",
-        "category",
-        "affected_unit_ids",
-        "summary",
-        "required_check",
-        "evidence"
-      ],
+      "required": ["finding_key", "category", "affected_unit_ids", "summary", "required_check", "evidence"],
       "title": "ReviewFinding",
       "type": "object"
     },
     "SourceEvidence": {
       "additionalProperties": false,
       "properties": {
-        "repo_id": {
-          "minLength": 1,
-          "title": "Repo Id",
-          "type": "string"
-        },
-        "path": {
-          "minLength": 1,
-          "title": "Path",
-          "type": "string"
-        },
-        "line_start": {
-          "exclusiveMinimum": 0,
-          "title": "Line Start",
-          "type": "integer"
-        },
-        "line_end": {
-          "anyOf": [
-            {
-              "exclusiveMinimum": 0,
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Line End"
-        },
-        "observation": {
-          "minLength": 1,
-          "title": "Observation",
-          "type": "string"
-        }
+        "repo_id": {"minLength": 1, "title": "Repo Id", "type": "string"},
+        "path": {"minLength": 1, "title": "Path", "type": "string"},
+        "line_start": {"exclusiveMinimum": 0, "title": "Line Start", "type": "integer"},
+        "line_end": {"anyOf": [{"exclusiveMinimum": 0, "type": "integer"}, {"type": "null"}], "default": null, "title": "Line End"},
+        "observation": {"minLength": 1, "title": "Observation", "type": "string"}
       },
-      "required": [
-        "repo_id",
-        "path",
-        "line_start",
-        "observation"
-      ],
+      "required": ["repo_id", "path", "line_start", "observation"],
       "title": "SourceEvidence",
       "type": "object"
     }
   },
   "additionalProperties": false,
   "properties": {
-    "schema_version": {
-      "const": "1.0",
-      "default": "1.0",
-      "title": "Schema Version",
-      "type": "string"
-    },
-    "summary": {
-      "minLength": 1,
-      "title": "Summary",
-      "type": "string"
-    },
+    "schema_version": {"const": "1.0", "default": "1.0", "title": "Schema Version", "type": "string"},
+    "summary": {"minLength": 1, "title": "Summary", "type": "string"},
     "independent_finding_decisions": {
       "description": "编号集合必须与 independent review 顶层 findings[].finding_key 完全相等；盲审 findings 为空时本列表也必须为空",
-      "items": {
-        "$ref": "#/$defs/IndependentFindingDecision"
-      },
+      "items": {"$ref": "#/$defs/IndependentFindingDecision"},
       "title": "Independent Finding Decisions",
       "type": "array"
     },
-    "findings": {
-      "items": {
-        "$ref": "#/$defs/ReviewFinding"
-      },
-      "title": "Findings",
-      "type": "array"
-    },
+    "findings": {"items": {"$ref": "#/$defs/ReviewFinding"}, "title": "Findings", "type": "array"},
     "unresolved": {
       "description": "通常必须为空。盲审 finding 无法裁决时只写对应 independent_finding_decisions 的 unresolved；范围外实现、外部文档、后续研究、低置信度和已交给 closure 的事项不得写入顶层。",
-      "items": {
-        "type": "string"
-      },
+      "items": {"type": "string"},
       "title": "Unresolved",
       "type": "array"
     }
   },
-  "required": [
-    "summary"
-  ],
+  "required": ["summary"],
   "title": "ComparisonReviewResult",
   "type": "object"
 }

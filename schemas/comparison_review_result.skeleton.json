@@ -3,24 +3,16 @@
   "summary": "<非空对照复核摘要>",
   "independent_finding_decisions": [
     {
-      "finding_key": "<只能从 independent_review_result_path 顶层 findings[].finding_key 原样选择；不得填 Worker risk/flow/test case/Coverage ID>",
-      "disposition": "<裁决字段，只能 confirmed|dismissed|unresolved；不要填写 finding category>",
+      "finding_key": "<只能从 independent_review_result_path 顶层 findings[].finding_key 原样选择>",
+      "disposition": "<只能 confirmed|dismissed|unresolved>",
       "conclusion": "<逐条裁决结论>",
-      "evidence": [
-        {
-          "repo_id": "<repo_id>",
-          "path": "<从该 finding affected_unit_ids 对应 unit 的 source_scope/context_scope 原样选择>",
-          "line_start": 1,
-          "line_end": 1,
-          "observation": "<裁决所依据的源码事实>"
-        }
-      ]
+      "evidence": []
     }
   ],
   "findings": [
     {
       "finding_key": "<不得与盲审 finding_key 重复>",
-      "category": "<新增 finding 类别，只能 missed_flow|document_delta|coverage_gap|defect_mechanism|risk|test_oracle|incorrect_conclusion；不要填写 disposition>",
+      "category": "<只能 missed_flow|document_delta|coverage_gap|defect_mechanism|risk|test_oracle|incorrect_conclusion>",
       "affected_unit_ids": ["<unit_id>"],
       "linked_input_ids": [],
       "summary": "<新增发现摘要>",
@@ -28,7 +20,7 @@
       "evidence": [
         {
           "repo_id": "<repo_id>",
-          "path": "<从 affected unit 的 source_scope/context_scope 原样选择的相对路径>",
+          "path": "<affected unit 冻结范围内相对路径>",
           "line_start": 1,
           "line_end": 1,
           "observation": "<该源码区间直接支持的事实>"

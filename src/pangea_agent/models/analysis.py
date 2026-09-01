@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 AnalysisLanguage = Literal["c_cpp", "lua"]
 
@@ -69,17 +69,9 @@ class PlanningTask(StrictModel):
     methodology_catalog_path: str | None = Field(default=None, min_length=1)
     result_schema_path: str = Field(default="schemas/planning_result.schema.json", min_length=1)
     result_skeleton_path: str | None = Field(default=None, min_length=1)
-    result_example_path: str = Field(
-        default="schemas/planning_result.example.json",
-        min_length=1,
-    )
+    result_example_path: str = Field(default="schemas/planning_result.example.json", min_length=1)
     result_path: str = Field(min_length=1)
-    rubric_paths: list[str] = Field(
-        default_factory=lambda: [
-            "src/pangea_agent/rubrics/builtin/c_cpp_unit_planning.md"
-        ],
-        min_length=1,
-    )
+    rubric_paths: list[str] = Field(default_factory=lambda: ["src/pangea_agent/rubrics/builtin/c_cpp_unit_planning.md"], min_length=1)
     max_unit_lines: int = Field(default=5000, gt=0)
     max_unit_functions: int = Field(default=140, gt=0)
     merge_direct_call_chain_max_lines: int = Field(default=800, gt=0)
@@ -87,7 +79,6 @@ class PlanningTask(StrictModel):
 
     @property
     def result_contract_version(self) -> Literal["2.0"]:
-        """Internal compatibility for callers; Planning no longer accepts version selection."""
         return "2.0"
 
 
@@ -95,13 +86,7 @@ class PlanningResult(StrictModel):
     schema_version: Literal["2.0"] = "2.0"
     summary: str = Field(min_length=1)
     units: list[ProposedUnit] = Field(min_length=1)
-    source_ownership: dict[str, str] = Field(
-        min_length=1,
-        description=(
-            "键必须与 Planning task 骨架中预填的 repo_id:path 完全一致；"
-            "值必须引用 units[].unit_key。每个键在 JSON 对象中只能出现一次。"
-        ),
-    )
+    source_ownership: dict[str, str] = Field(min_length=1, description="键必须与 Planning task 骨架中预填的 repo_id:path 完全一致；值必须引用 units[].unit_key。每个键在 JSON 对象中只能出现一次。")
     unresolved: list[str] = Field(default_factory=list)
 
 
@@ -117,14 +102,8 @@ class FlowStep(StrictModel):
 
 
 class FlowEdge(StrictModel):
-    source_step_key: str = Field(
-        min_length=1,
-        description="必须引用同一 CodeFlow.steps 中已定义的 step_key",
-    )
-    target_step_key: str = Field(
-        min_length=1,
-        description="必须引用同一 CodeFlow.steps 中已定义的 step_key",
-    )
+    source_step_key: str = Field(min_length=1, description="必须引用同一 CodeFlow.steps 中已定义的 step_key")
+    target_step_key: str = Field(min_length=1, description="必须引用同一 CodeFlow.steps 中已定义的 step_key")
     condition: str | None = Field(default=None, min_length=1)
 
 
@@ -139,14 +118,7 @@ class CodeFlow(StrictModel):
 
 class InputDecision(StrictModel):
     item_id: str = Field(min_length=1)
-    disposition: Literal[
-        "confirmed",
-        "missing_in_code",
-        "extra_in_code",
-        "mismatch",
-        "irrelevant",
-        "unresolved",
-    ]
+    disposition: Literal["confirmed", "missing_in_code", "extra_in_code", "mismatch", "irrelevant", "unresolved"]
     conclusion: str = Field(min_length=1)
     evidence: list[SourceEvidence] = Field(default_factory=list)
 
@@ -154,25 +126,14 @@ class InputDecision(StrictModel):
 class BranchDecision(StrictModel):
     branch_id: str = Field(min_length=1)
     flow_key: str = Field(min_length=1)
-    disposition: Literal[
-        "scenario_mapped",
-        "merged",
-        "not_test_relevant",
-        "developer_confirm",
-        "unreachable",
-    ]
+    disposition: Literal["scenario_mapped", "merged", "not_test_relevant", "developer_confirm", "unreachable"]
     scenario_keys: list[str] = Field(default_factory=list)
     reason: str = Field(min_length=1)
 
 
 class CoverageDecision(StrictModel):
     coverage_id: str = Field(min_length=1)
-    disposition: Literal[
-        "scenario_mapped",
-        "merged",
-        "developer_confirm",
-        "unreachable",
-    ]
+    disposition: Literal["scenario_mapped", "merged", "developer_confirm", "unreachable"]
     scenario_keys: list[str] = Field(default_factory=list)
     test_case_keys: list[str] = Field(default_factory=list)
     reason: str = Field(min_length=1)
@@ -198,11 +159,7 @@ class RiskFinding(StrictModel):
     external_observation: str = Field(min_length=1)
     exclusion_condition: str = Field(min_length=1)
     evidence: list[SourceEvidence] = Field(min_length=1)
-    test_disposition: Literal[
-        "test_required",
-        "developer_confirm",
-        "unreachable_from_supported_entry",
-    ] = "test_required"
+    test_disposition: Literal["test_required", "developer_confirm", "unreachable_from_supported_entry"] = "test_required"
     unreachable_reason: str | None = Field(default=None, min_length=1)
     unreachable_evidence: list[SourceEvidence] = Field(default_factory=list)
 
@@ -232,9 +189,7 @@ class TestStep(StrictModel):
 class GeneratedTestCase(StrictModel):
     case_key: str = Field(min_length=1)
     title: str = Field(min_length=1)
-    basis: list[Literal[
-        "code_flow", "coverage", "requirement", "design", "defect_mechanism", "risk"
-    ]] = Field(min_length=1)
+    basis: list[Literal["code_flow", "coverage", "requirement", "design", "defect_mechanism", "risk"]] = Field(min_length=1)
     scenario_keys: list[str] = Field(min_length=1)
     covered_flow_keys: list[str] = Field(min_length=1)
     linked_input_ids: list[str] = Field(default_factory=list)
@@ -265,13 +220,7 @@ class UnitSemanticResult(StrictModel):
     scenarios: list[TestScenario] = Field(default_factory=list)
     test_cases: list[GeneratedTestCase] = Field(default_factory=list)
     review_finding_decisions: list[ReviewFindingDecision] = Field(default_factory=list)
-    unresolved: list[str] = Field(
-        default_factory=list,
-        description=(
-            "通常必须为空。仅记录真实 selected input ID、Coverage ID 或 confirmed finding_key "
-            "在冻结范围内无法完成规定裁决的阻断事项；范围外实现、外部文档、后续研究、低置信度和测试建议不得写入。"
-        ),
-    )
+    unresolved: list[str] = Field(default_factory=list, description="通常必须为空。仅记录真实 selected input ID、Coverage ID 或 confirmed finding_key 在冻结范围内无法完成规定裁决的阻断事项；范围外实现、外部文档、后续研究、低置信度和测试建议不得写入。")
 
 
 class EvidenceScopeContract(StrictModel):
@@ -294,33 +243,15 @@ class AnalysisTask(StrictModel):
     selected_inputs_path: str = Field(min_length=1)
     coverage_context: list[dict] = Field(default_factory=list)
     result_schema_path: str = Field(default="schemas/analysis_result.schema.json", min_length=1)
-    result_skeleton_path: str = Field(
-        default="schemas/analysis_result.skeleton.json",
-        min_length=1,
-    )
-    result_example_path: str = Field(
-        default="schemas/analysis_result.example.json",
-        min_length=1,
-    )
+    result_skeleton_path: str = Field(default="schemas/analysis_result.skeleton.json", min_length=1)
+    result_example_path: str = Field(default="schemas/analysis_result.example.json", min_length=1)
     result_path: str = Field(min_length=1)
     rubric_paths: list[str] = Field(min_length=1)
 
 
 class ReviewFinding(StrictModel):
     finding_key: str = Field(min_length=1)
-    category: Literal[
-        "missed_flow",
-        "document_delta",
-        "coverage_gap",
-        "defect_mechanism",
-        "risk",
-        "test_oracle",
-        "incorrect_conclusion",
-    ] = Field(
-        description=(
-            "新增 finding 的类别；不得写入 independent_finding_decisions.disposition"
-        )
-    )
+    category: Literal["missed_flow", "document_delta", "coverage_gap", "defect_mechanism", "risk", "test_oracle", "incorrect_conclusion"] = Field(description="新增 finding 的类别；不得写入 independent_finding_decisions.disposition")
     affected_unit_ids: list[str] = Field(min_length=1)
     linked_input_ids: list[str] = Field(default_factory=list)
     summary: str = Field(min_length=1)
@@ -336,19 +267,14 @@ class IndependentReviewTask(StrictModel):
     target: str = Field(min_length=1)
     analysis_language: AnalysisLanguage = "c_cpp"
     repositories: list[RepositoryRef] = Field(min_length=1)
-    evidence_scope_by_unit: dict[str, EvidenceScopeContract] = Field(
-        default_factory=dict
-    )
+    evidence_scope_by_unit: dict[str, EvidenceScopeContract] = Field(default_factory=dict)
     unit_plan_path: str = Field(min_length=1)
     inventory_path: str = Field(min_length=1)
     source_manifest_path: str = Field(min_length=1)
     selected_inputs_path: str = Field(min_length=1)
     rubric_paths: list[str] = Field(min_length=1)
     result_schema_path: str = Field(default="schemas/independent_review_result.schema.json", min_length=1)
-    result_skeleton_path: str = Field(
-        default="schemas/independent_review_result.skeleton.json",
-        min_length=1,
-    )
+    result_skeleton_path: str = Field(default="schemas/independent_review_result.skeleton.json", min_length=1)
     result_path: str = Field(min_length=1)
 
 
@@ -356,50 +282,28 @@ class IndependentReviewResult(StrictModel):
     schema_version: Literal["1.0"] = "1.0"
     summary: str = Field(min_length=1)
     findings: list[ReviewFinding] = Field(default_factory=list)
-    unresolved: list[str] = Field(
-        default_factory=list,
-        description=(
-            "通常必须为空。仅当盲审任务的真实冻结输入本身缺失、无法完成盲审时填写；"
-            "范围外实现、外部文档、研究问题和低置信度 finding 不得写入。"
-        ),
-    )
+    unresolved: list[str] = Field(default_factory=list, description="通常必须为空。仅当盲审任务的真实冻结输入本身缺失、无法完成盲审时填写；范围外实现、外部文档、研究问题和低置信度 finding 不得写入。")
 
 
 class IndependentFindingDecision(StrictModel):
-    finding_key: str = Field(
-        min_length=1,
-        description=(
-            "必须且只能引用 independent_review_result_path 顶层 findings[] 中已有的 finding_key；"
-            "不得引用 Worker risk、flow、test case 或 Coverage 编号"
-        ),
-    )
-    disposition: Literal["confirmed", "dismissed", "unresolved"] = Field(
-        description=(
-            "只表示对盲审 finding 的裁决；不得填写 risk、incorrect_conclusion 等 category"
-        )
-    )
+    finding_key: str = Field(min_length=1, description="必须且只能引用 independent_review_result_path 顶层 findings[] 中已有的 finding_key；不得引用 Worker risk、flow、test case 或 Coverage 编号")
+    disposition: Literal["confirmed", "dismissed", "unresolved"] = Field(description="只表示对盲审 finding 的裁决；不得填写 risk、incorrect_conclusion 等 category")
     conclusion: str = Field(min_length=1)
-    evidence: list[SourceEvidence] = Field(min_length=1)
+    evidence: list[SourceEvidence] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def require_dismissal_evidence(self):
+        if self.disposition == "dismissed" and not self.evidence:
+            raise ValueError("dismissed 裁决必须提供反证 evidence；confirmed/unresolved 可复用原 finding evidence，不重复填写")
+        return self
 
 
 class ComparisonReviewResult(StrictModel):
     schema_version: Literal["1.0"] = "1.0"
     summary: str = Field(min_length=1)
-    independent_finding_decisions: list[IndependentFindingDecision] = Field(
-        default_factory=list,
-        description=(
-            "编号集合必须与 independent review 顶层 findings[].finding_key 完全相等；"
-            "盲审 findings 为空时本列表也必须为空"
-        ),
-    )
+    independent_finding_decisions: list[IndependentFindingDecision] = Field(default_factory=list, description="编号集合必须与 independent review 顶层 findings[].finding_key 完全相等；盲审 findings 为空时本列表也必须为空")
     findings: list[ReviewFinding] = Field(default_factory=list)
-    unresolved: list[str] = Field(
-        default_factory=list,
-        description=(
-            "通常必须为空。盲审 finding 无法裁决时只写对应 independent_finding_decisions 的 unresolved；"
-            "范围外实现、外部文档、后续研究、低置信度和已交给 closure 的事项不得写入顶层。"
-        ),
-    )
+    unresolved: list[str] = Field(default_factory=list, description="通常必须为空。盲审 finding 无法裁决时只写对应 independent_finding_decisions 的 unresolved；范围外实现、外部文档、后续研究、低置信度和已交给 closure 的事项不得写入顶层。")
 
 
 class ComparisonReviewTask(StrictModel):
@@ -409,22 +313,15 @@ class ComparisonReviewTask(StrictModel):
     run_id: str = Field(min_length=1)
     target: str = Field(min_length=1)
     analysis_language: AnalysisLanguage = "c_cpp"
-    evidence_scope_by_unit: dict[str, EvidenceScopeContract] = Field(
-        default_factory=dict
-    )
+    evidence_scope_by_unit: dict[str, EvidenceScopeContract] = Field(default_factory=dict)
     unit_plan_path: str = Field(min_length=1)
     analysis_task_paths: dict[str, str] = Field(min_length=1)
     analysis_result_paths: dict[str, str] = Field(min_length=1)
     independent_review_result_path: str = Field(min_length=1)
     selected_inputs_path: str = Field(min_length=1)
     rubric_paths: list[str] = Field(min_length=1)
-    result_schema_path: str = Field(
-        default="schemas/comparison_review_result.schema.json", min_length=1
-    )
-    result_skeleton_path: str = Field(
-        default="schemas/comparison_review_result.skeleton.json",
-        min_length=1,
-    )
+    result_schema_path: str = Field(default="schemas/comparison_review_result.schema.json", min_length=1)
+    result_skeleton_path: str = Field(default="schemas/comparison_review_result.skeleton.json", min_length=1)
     result_path: str = Field(min_length=1)
 
 
@@ -443,10 +340,7 @@ class ClosureTask(StrictModel):
     review_findings: list[ReviewFinding] = Field(default_factory=list)
     risk_test_obligations: list[str] = Field(default_factory=list)
     result_schema_path: str = Field(default="schemas/analysis_result.schema.json", min_length=1)
-    result_example_path: str = Field(
-        default="schemas/analysis_result.example.json",
-        min_length=1,
-    )
+    result_example_path: str = Field(default="schemas/analysis_result.example.json", min_length=1)
     result_path: str = Field(min_length=1)
     rubric_paths: list[str] = Field(min_length=1)
 
@@ -456,14 +350,7 @@ class AgentAction(StrictModel):
     action_id: str = Field(min_length=1)
     action: Literal["dispatch_agent", "continue_agent"]
     role: Literal["asset_extraction", "planning", "analysis", "review", "closure"]
-    stage: Literal[
-        "structured_extraction",
-        "unit_planning",
-        "unit_analysis",
-        "independent_review",
-        "comparison_review",
-        "targeted_closure",
-    ]
+    stage: Literal["structured_extraction", "unit_planning", "unit_analysis", "independent_review", "comparison_review", "targeted_closure"]
     task_path: str = Field(min_length=1)
     task_id: str | None = None
 
@@ -491,15 +378,7 @@ class WorkflowProgress(StrictModel):
     schema_version: Literal["3.0"] = "3.0"
     run_id: str = Field(min_length=1)
     lifecycle_status: Literal["running", "complete", "stopped", "failed"] = "running"
-    stage: Literal[
-        "preparing",
-        "planning",
-        "analyzing",
-        "reviewing",
-        "closing",
-        "reporting",
-        "complete",
-    ] = "preparing"
+    stage: Literal["preparing", "planning", "analyzing", "reviewing", "closing", "reporting", "complete"] = "preparing"
     quality_status: Literal["PASS", "UNRESOLVED"] | None = None
     analysis_units: list[AnalysisUnit] = Field(default_factory=list)
     completed_analysis_units: list[str] = Field(default_factory=list)
