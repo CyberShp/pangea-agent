@@ -38,6 +38,8 @@
 
 `coverage_decisions` 只处理 selected inputs 中真实 `coverage_gaps[].coverage_id`，必须逐项且不重复。允许 `scenario_mapped|merged|developer_confirm|unreachable`。Coverage 是分析 seed，不是 TestCase：先把零覆盖函数/路径映射到 Flow/Branch/State/Resource，再理解测试侧入口和触发条件，最后映射 Scenario。
 
+`source_manifest.coverage_diagnostics.unmatched|ambiguous` 只是外部 Coverage 记录未匹配成功的诊断计数，不是 Coverage obligation，也不包含可引用 ID。不能据此创建 `coverage_decisions`、Scenario Coverage 引用或 TestCase Coverage 链接；只有 `selected_inputs.coverage_gaps[]` 中的真实 `coverage_id` 才能进入这些字段。
+
 Coverage 不要求一律向上追到更高产品层。如果 Coverage 目标本身已经由冻结证据确认是稳定公开 API，且参数/状态可从测试侧构造、返回值或外部状态可判定，那么该 API 本身就是有效入口，应优先形成 `scenario_mapped/merged → ready Scenario → TestCase`，不要仅因为“直接调用函数”就使用 `developer_confirm`。只有入口支持性、构造方式或独立 Oracle 真正缺证据时才使用 `developer_confirm`。不得写“通过受支持入口触发 xxx 函数”作为占位结论。
 
 `scenarios[]` 是源码发现与正式 TestCase 之间的语义层。`blackbox_ready` / `graybox_ready` 场景应明确 `business_entry`、真实前置、测试动作、外部 Oracle、恢复，并通过 `covered_flow_keys`、`branch_ids`、`coverage_ids`、`linked_risk_keys`、`linked_input_ids` 建立追溯。多个来源共享业务条件时合并场景；不要因来源编号不同重复生成。
@@ -61,7 +63,7 @@ Coverage 不要求一律向上追到更高产品层。如果 Coverage 目标本�
 
 `developer_confirm` Risk 的 `trigger` 只能描述冻结源码已经证明的内部触发条件，并明确尚缺哪一段入口/构造证据；没有公开头文件、产品契约或受支持客户端/测试时，不得写“通过受支持入口触发”“从公开 API 传入”等尚未证明的前提。
 
-Scenario 只有在自身 actions 明确包含 Risk trigger、external_oracles 对应该 Risk 可用的观测方式时，才填写该 `linked_risk_key`。`developer_confirm` Risk 仍需一个同为 `developer_confirm` 的真实风险场景保存触发条件和待确认 Oracle；不得把它挂到只验证普通输入或其他 Branch 的泛化 Scenario 上。
+Scenario 只有在自身 actions 明确包含 Risk trigger、external_oracles 对应该 Risk 可用的观测方式时，才填写该 `linked_risk_key`。`developer_confirm` Risk 不强制生成 Scenario；若当前无法形成真实动作或稳定 Oracle，就让 Risk 自身保持 `developer_confirm` 且不建立空壳 Scenario。若保留风险 Scenario，它必须独立保存已经确认的触发和条件性观测，不得挂到只验证普通输入或其他 Branch 的泛化 Scenario 上。
 
 正式 `test_cases[]` 只能来自 `blackbox_ready` 或 `graybox_ready` Scenario，并必须填写真实 `scenario_keys`。每个步骤有同位置 `expected_result`，并包含前置、观测、清理/恢复。黑盒优先；开发协助或内部故障注入只能用于制造前置条件，测试执行和主要 Oracle 仍尽量使用产品正常配置、连接、IO、设备状态、日志等外部行为。**已确认的公开 API 调用不属于这里禁止的“内部函数调用”**；实现 helper、私有函数、内部字段赋值、内部对象构造、内部返回值或内部状态检查不得冒充产品级测试步骤。
 

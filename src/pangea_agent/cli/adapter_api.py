@@ -394,7 +394,7 @@ def _validate_action(data_root: str, run_id: str, action_id: str) -> dict:
                 result = IndependentReviewResult.model_validate(
                     read_json(Path(task["result_path"]))
                 )
-                warnings = _validate_review(progress, result)
+                warnings = _validate_review(progress, result, selected_inputs)
         except (FileNotFoundError, ValueError) as exc:
             return _invalid_result(state, progress, action, exc)
     elif action.role == "closure":

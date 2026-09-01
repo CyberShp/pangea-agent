@@ -18,6 +18,10 @@ Review finding 的 `category` 只能使用当前 schema 固定枚举。资源泄
 
 `independent_review` 不读取、寻找或推测首轮 Analysis result。只基于 unit plan、冻结源码、inventory、selected inputs、rubrics 独立寻找：关键业务流程遗漏候选、Branch/Coverage 相关路径遗漏、资料/代码差异、历史缺陷机理、风险和测试 oracle 缺口。盲审 finding 必须有源码或结构化输入证据，不因实现风格、命名或一般性最佳实践创建 finding。盲审看不到 Analysis 的 Scenario/TestCase，因此不使用 `blackbox_translation`；该类别只用于 comparison_review 看到首轮翻译结果后的新增 finding。
 
+盲审允许的 category 只有 `missed_flow|document_delta|coverage_gap|defect_mechanism|risk|test_oracle|incorrect_conclusion`。若准备写 `blackbox_translation`，说明你正在判断一个盲审不可见的 Analysis 翻译结果，必须停止并改回对冻结源码/输入本身的独立 finding；settle 会拒绝该类别。
+
+`category=coverage_gap` 必须在 `linked_input_ids` 中引用至少一个 `selected_inputs.coverage_gaps[]` 的真实 `coverage_id`，且该 ID 属于 affected unit。`source_manifest.coverage_diagnostics.unmatched|ambiguous` 只是未匹配诊断计数，不是 Coverage gap，不能从计数猜测函数级/分支级 gap 或制造 ID。没有真实 Coverage ID 时不得建立 `coverage_gap` finding。
+
 按 `analysis_language` 使用真实语言语义。C/C++ 检查短路求值、整数真假值、前置返回和资源生命周期；Lua 检查 truthiness、`and` / `or` 操作数返回、`nil`、module 缓存、`pcall` / `xpcall` 和 coroutine 生命周期。提出 finding 前必须从入口追到目标语句，确认路径真实可达。
 
 盲审可用 `.c` wrapper 链证明内部路径可达，但没有公开头文件、契约、受支持客户端/测试或其他正向冻结证据时，只能写“supported entry 未确认”，不得把 non-static、`extern` 或跨文件调用称为业务入口或 entry point。这不影响把源码自身已证明的 UB、越界等问题输出为 Risk finding。
@@ -88,10 +92,12 @@ Comparison 还必须独立核对冻结源码中显式可见的 C/C++ 未定义�
 
 Comparison 新 finding 只用于首轮 Analysis 的真实错误或盲审未发现的实质遗漏，不复制 Independent finding。`linked_input_ids` 只引用 selected inputs 的真实编号；`document_delta`、`coverage_gap`、`defect_mechanism` 必须分别有对应真实输入。
 
+Comparison 新建 `coverage_gap` finding 时必须链接 affected unit 拥有的真实 `coverage_id`；不得把 `coverage_diagnostics.unmatched|ambiguous` 计数解释成具体 Coverage obligation。Independent 若这样误报，应 `dismissed` 并用冻结的空 `coverage_gaps` 或真实 ID 集合作反证，不能再创建同义 finding。
+
 新增 finding 前先逐字核对 Analysis 对应字段：若所要求的触发值、动作、条件或前提已经明确存在，只是措辞顺序不同，不得创建 finding。Analysis 已明确把 sanitizer 观测写成“仅在启用相应编译选项时”的条件性结果时，不得仅因冻结范围没有构建文件而再报一次“未说明构建前提”；应只指出仍然真实存在的错误，例如把 ASan 单独当作 signed-overflow 检测器。
 
 顶层 `unresolved`：Independent 只有冻结输入本身缺失、导致盲审无法完成时才填写；Comparison 必须为 `[]`，无法裁决的 Independent finding 只写 decision=`unresolved`。
 
-写入前检查：finding_key 不重复；`affected_unit_ids` 来自 unit plan；新 finding evidence 非空且在冻结范围；Comparison decision 集合与 Independent finding 集合完全相等；dismissed 每项都有反证 evidence；confirmed/unresolved 不为了格式重复抄 evidence；存在 caller truncation 时已复核相关 `not_test_relevant/unreachable/developer_confirm`。若 settle 返回错误，只修正同一 `result_path`，不把 Review 裁决交给 Python 或其他 Agent。
+写入前检查：finding_key 不重复；`affected_unit_ids` 来自 unit plan；Independent 没有 `blackbox_translation`；每条 `coverage_gap` finding 都直连 affected unit 的真实 Coverage ID；新 finding evidence 非空且在冻结范围；Comparison decision 集合与 Independent finding 集合完全相等；dismissed 每项都有反证 evidence；confirmed/unresolved 不为了格式重复抄 evidence；私有函数冒充 ready business entry 的主要修改对象是 Scenario/TestCase 时使用一条 `blackbox_translation`，不再建同根因 `incorrect_conclusion`；存在 caller truncation 时已复核相关 disposition 和所有 ready Scenario/TestCase。若 settle 返回错误，只修正同一 `result_path`，不把 Review 裁决交给 Python 或其他 Agent。
 
 最终回复只用一行 `完成 action_id=<task.action_id>`；历史 task 没有 action_id 时才只回复“完成”。

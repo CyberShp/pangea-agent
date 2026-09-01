@@ -9,7 +9,7 @@
           "type": "string"
         },
         "category": {
-          "description": "新增 finding 的类别；blackbox_translation 表示源码事实/风险可能成立，但 Scenario/TestCase 翻译出的业务入口、测试动作或外部 Oracle 不受冻结证据支持；不得写入 independent_finding_decisions.disposition",
+          "description": "盲审 finding 类别。independent_review 看不到 Analysis Result，因此不能使用 comparison_review 专属的 blackbox_translation",
           "enum": [
             "missed_flow",
             "document_delta",
@@ -17,8 +17,7 @@
             "defect_mechanism",
             "risk",
             "test_oracle",
-            "incorrect_conclusion",
-            "blackbox_translation"
+            "incorrect_conclusion"
           ],
           "title": "Category",
           "type": "string"

@@ -213,6 +213,12 @@ class ReviewFindingDecision(StrictModel):
     conclusion: str = Field(min_length=1)
     evidence: list[SourceEvidence] = Field(default_factory=list)
 
+    @model_validator(mode="after")
+    def require_dismissal_evidence(self):
+        if self.disposition == "dismissed" and not self.evidence:
+            raise ValueError("dismissed Closure 裁决必须提供反证 evidence")
+        return self
+
 
 class UnitSemanticResult(StrictModel):
     schema_version: Literal["2.0"] = "2.0"
@@ -289,6 +295,20 @@ class IndependentReviewResult(StrictModel):
     summary: str = Field(min_length=1)
     findings: list[ReviewFinding] = Field(default_factory=list)
     unresolved: list[str] = Field(default_factory=list, description="通常必须为空。仅当盲审任务的真实冻结输入本身缺失、无法完成盲审时填写；范围外实现、外部文档、研究问题和低置信度 finding 不得写入。")
+
+    @model_validator(mode="after")
+    def forbid_comparison_only_categories(self):
+        invalid = [
+            finding.finding_key
+            for finding in self.findings
+            if finding.category == "blackbox_translation"
+        ]
+        if invalid:
+            raise ValueError(
+                "independent_review 看不到 Analysis Result，不能使用 "
+                f"blackbox_translation：{invalid}"
+            )
+        return self
 
 
 class IndependentFindingDecision(StrictModel):

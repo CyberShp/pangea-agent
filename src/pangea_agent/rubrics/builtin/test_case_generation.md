@@ -90,6 +90,8 @@ Coverage 只指出需要补覆盖的函数或路径，不等于测试步骤。�
 - `developer_confirm`：当前冻结上下文不足以确认业务入口、制造条件或独立 Oracle。
 - `unreachable`：冻结源码证明从受支持入口不可达。
 
+`source_manifest.coverage_diagnostics.unmatched|ambiguous` 只是外部 Coverage 记录未匹配成功的计数，不是 Coverage gap，也不能派生 coverage_id。只有 `selected_inputs.coverage_gaps[]` 中的真实 `coverage_id` 才能进入 CoverageDecision、Scenario 或 TestCase 链接。
+
 如果 Coverage 目标已经确认是公开 API，且参数/状态可从测试侧构造、公开返回值或外部状态可判定，应优先形成 `scenario_mapped/merged → ready Scenario → TestCase`；不能仅因为测试动作是“调用函数”就使用 `developer_confirm`。
 
 `scenario_mapped` / `merged` 必须填写真实 `scenario_keys`。不得把 Coverage 直接映射成“通过受支持入口触发 xxx 函数”之类的占位用例。
@@ -162,7 +164,7 @@ Coverage Gap
 - `test_required`：风险已经具备测试侧可执行路径，必须由至少一个 ready Scenario 关联，并最终由正式 TestCase 的 `linked_risk_keys` 覆盖。
 - `developer_confirm`：风险本身有源码依据，但当前冻结上下文不足以确认稳定业务入口、制造方法或独立 Oracle；不得强行生成正式 TestCase。
 - `developer_confirm` Risk 的 `trigger` 只能写冻结源码已证明的内部条件，并明确尚缺的入口/构造证据；缺少公开头文件、产品契约或受支持客户端/测试时，不得声称“通过受支持入口”或“从公开 API”触发。
-- Scenario 只有在自身 actions 含该 Risk trigger、external_oracles 对应该 Risk 的观测方式时才填写 `linked_risk_keys`。developer-confirm Risk 也应保留独立、同为 developer-confirm 的风险场景；不能挂到只验证其他输入或 Branch 的泛化 Scenario。
+- Scenario 只有在自身 actions 含该 Risk trigger、external_oracles 对应该 Risk 的观测方式时才填写 `linked_risk_keys`。developer-confirm Risk 不强制生成 Scenario；无法形成真实动作或稳定 Oracle 时保留 Risk 本身即可，不建立空壳 Scenario。若保留风险 Scenario，它必须独立承载已确认触发和条件性观测，不能挂到只验证其他输入或 Branch 的泛化 Scenario。
 - `unreachable_from_supported_entry`：只有确认无法从当前产品支持的业务入口到达时使用，同时填写 `unreachable_reason` 和直接源码 `unreachable_evidence`。
 - “难以构造”“需要故障注入”“暂时缺少环境”本身不等于不可达；如果只是无法在当前冻结证据中确认业务制造方式，使用 `developer_confirm`。
 - 分支、边界、正常流程和 Coverage 场景可以不关联风险；不得为了满足风险映射而给它们强加无关风险。

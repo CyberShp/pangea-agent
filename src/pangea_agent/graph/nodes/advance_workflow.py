@@ -464,9 +464,20 @@ def _accept_analysis(state: PangeaState, progress) -> PangeaState:
     return _waiting(state, progress)
 
 
-def _validate_review(progress, result) -> list[str]:
+def _validate_review(progress, result, selected_inputs: dict) -> list[str]:
     warnings: list[str] = []
     known_units = {unit.unit_id for unit in progress.analysis_units}
+    coverage_ids = {
+        item["coverage_id"] for item in selected_inputs.get("coverage_gaps", [])
+    }
+    known_input_ids = (
+        set(selected_inputs.get("asset_items", {}))
+        | set(selected_inputs.get("defect_mechanisms", {}))
+        | coverage_ids
+    )
+    coverage_ids_by_unit = {
+        unit.unit_id: set(unit.coverage_ids) for unit in progress.analysis_units
+    }
     finding_keys = [finding.finding_key for finding in result.findings]
     if len(finding_keys) != len(set(finding_keys)):
         warnings.append("复核 finding_key 包含重复编号")
@@ -474,6 +485,31 @@ def _validate_review(progress, result) -> list[str]:
         unknown = set(finding.affected_unit_ids) - known_units
         if unknown:
             warnings.append(f"复核引用了未知单元：{sorted(unknown)}")
+        if finding.category == "coverage_gap":
+            unknown_inputs = set(finding.linked_input_ids) - known_input_ids
+            if unknown_inputs:
+                raise ValueError(
+                    f"Coverage finding {finding.finding_key} 引用了未知输入："
+                    f"{sorted(unknown_inputs)}"
+                )
+            linked_coverage_ids = set(finding.linked_input_ids) & coverage_ids
+            if not linked_coverage_ids:
+                raise ValueError(
+                    f"Coverage finding {finding.finding_key} 必须引用 "
+                    "selected_inputs.coverage_gaps 中的真实 coverage_id；"
+                    "coverage_diagnostics 计数不能代替 Coverage ID"
+                )
+            owned_coverage_ids = set().union(*(
+                coverage_ids_by_unit.get(unit_id, set())
+                for unit_id in finding.affected_unit_ids
+            ))
+            foreign_coverage_ids = linked_coverage_ids - owned_coverage_ids
+            if foreign_coverage_ids:
+                raise ValueError(
+                    f"Coverage finding {finding.finding_key} 的 coverage_id "
+                    "不属于 affected_unit_ids："
+                    f"{sorted(foreign_coverage_ids)}"
+                )
         warnings.extend(_validate_evidence_for_units(
             progress,
             finding.evidence,
@@ -489,7 +525,7 @@ def _validate_comparison_review(
     comparison: ComparisonReviewResult,
     selected_inputs: dict,
 ) -> list[str]:
-    warnings = _validate_review(progress, comparison)
+    warnings = _validate_review(progress, comparison, selected_inputs)
     independent_keys = {finding.finding_key for finding in independent.findings}
     independent_by_key = {
         finding.finding_key: finding for finding in independent.findings
@@ -555,7 +591,11 @@ def _accept_independent_review(state: PangeaState, progress, action) -> PangeaSt
     )
     if result is None:
         return _waiting(state, progress)
-    _validate_review(progress, result)
+    _validate_review(
+        progress,
+        result,
+        read_json(Path(task.selected_inputs_path)),
+    )
     action.status = "accepted"
 
     action_id = f"{state['run_id']}:comparison-review"
