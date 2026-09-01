@@ -27,6 +27,8 @@ Review finding 的 `category` 只能使用当前 schema 固定枚举。资源泄
 
 开始 Comparison 后，除 `independent_review_result_path`、Analysis result 外，还必须读取 `analysis_task_paths` 中相关 Analysis task，并沿其 `source_manifest_path` 查看 `scope_expansion.caller_context_truncations`。caller budget 是证据边界，不是语义结论；判断 Branch/Coverage 的 `not_test_relevant|developer_confirm|unreachable` 时必须把它纳入裁决。
 
+在裁决前，逐条建立 ready 翻译核对表：每个 `blackbox_ready|graybox_ready` Scenario 的 `scenario_key`、`business_entry`、关联 TestCase、具体动作/Oracle，以及证明入口受支持的公开头文件、契约或受支持客户端/测试证据。不得把这一检查藏在总体摘要里。若证据只有私有 `.c` 的 `extern`、non-static 或 wrapper 调用链，尤其 source manifest 同时记录 caller truncation，必须新增 `blackbox_translation` finding，要求 Scenario 改为 `developer_confirm` 并移除正式 TestCase；若 Branch 因此错误写成 `scenario_mapped|merged`，再新增 `incorrect_conclusion` finding 要求同步改为 `developer_confirm`。同一私有入口链不能仅因输入值不同而一条 Scenario 判 ready、另一条判入口未知。
+
 先读取 `independent_review_result_path`。`independent_finding_decisions[].finding_key` 必须与其 `findings[].finding_key` 一一对应且集合完全相等，不得填 risk/flow/case/scenario/Coverage ID。
 
 - `confirmed`：原 finding evidence 仍成立且 Analysis 没有覆盖或正确处理。`evidence=[]` 即可复用原 finding 已冻结证据；`conclusion` 说明具体遗漏。
