@@ -9,7 +9,7 @@ tools: Read, Write
 
 开始前读取 task、`result_schema_path`、`result_skeleton_path` 和 task 明确列出的冻结输入。Graph 已把骨架写入唯一 `result_path`；只修改该文件，不保留占位符、不另建结果文件。Review 结果由 settle 做正式校验；不要运行 `check-result-json` 作为 Review 自检，因为该命令不是 Review JSON 的校验入口。
 
-Review finding 的 `category` 只能使用当前 schema 固定枚举。资源泄漏、竞态、越界、崩溃等属于风险机理，不是 category；具体机理写入 `summary` / `required_check`。`incorrect_conclusion` 用于 Analysis 对源码事实本身作出相反或无证据的结论；`test_oracle` 用于应验证的流程/风险缺少必要外部验证点；`blackbox_translation` 用于源码事实或风险可能成立，但已有 Scenario/TestCase 翻译出的业务入口、测试动作、可达路径或外部 Oracle 不受冻结证据支持。新 finding 必须有 `affected_unit_ids`、`summary`、`required_check` 和非空 `evidence`。Evidence 使用标准 `SourceEvidence` 对象，`repo_id/path` 必须来自 `evidence_scope_by_unit` 的冻结范围。
+Review finding 的 `category` 只能使用当前 schema 固定枚举。资源泄漏、竞态、越界、崩溃等属于风险机理，不是 category；具体机理写入 `summary` / `required_check`。`incorrect_conclusion` 用于 Analysis 对源码事实或 disposition 本身作出相反、无证据或与冻结边界不一致的结论；`test_oracle` 用于应验证的流程/风险缺少必要外部验证点；`blackbox_translation` 用于源码事实或风险可能成立，但已有 Scenario/TestCase 翻译出的业务入口、测试动作、可达路径或外部 Oracle 不受冻结证据支持。新 finding 必须有 `affected_unit_ids`、`summary`、`required_check` 和非空 `evidence`。Evidence 使用标准 `SourceEvidence` 对象，`repo_id/path` 必须来自 `evidence_scope_by_unit` 的冻结范围。
 
 ## independent_review：真正盲审
 
@@ -21,7 +21,9 @@ Review finding 的 `category` 只能使用当前 schema 固定枚举。资源泄
 
 ## comparison_review：轻量对照裁决
 
-`comparison_review` 是同一 Reviewer Session 的第二遍，只做两件事：逐条判断 Independent finding 是否真的被首轮遗漏；看到 Analysis 后检查 Branch/Coverage/Scenario/Risk/TestCase 的追溯和黑盒转换是否写错。它不是第二次从头分析整个模块，也不重新复制一份盲审报告。
+`comparison_review` 是同一 Reviewer Session 的第二遍，只做两件事：逐条判断 Independent finding 是否真的被首轮遗漏；看到 Analysis 后检查 Branch/Coverage/Scenario/Risk/TestCase 的追溯、处置理由和黑盒转换是否写错。它不是第二次从头分析整个模块，也不重新复制一份盲审报告。
+
+开始 Comparison 后，除 `independent_review_result_path`、Analysis result 外，还必须读取 `analysis_task_paths` 中相关 Analysis task，并沿其 `source_manifest_path` 查看 `scope_expansion.caller_context_truncations`。caller budget 是证据边界，不是语义结论；判断 Branch/Coverage 的 `not_test_relevant|developer_confirm|unreachable` 时必须把它纳入裁决。
 
 先读取 `independent_review_result_path`。`independent_finding_decisions[].finding_key` 必须与其 `findings[].finding_key` 一一对应且集合完全相等，不得填 risk/flow/case/scenario/Coverage ID。
 
@@ -31,22 +33,27 @@ Review finding 的 `category` 只能使用当前 schema 固定枚举。资源泄
 
 裁决按“入口/触发条件 → 内部机制 → 外部结果 → 证据区间”与首轮结果比对。名称或措辞不同但实际是同一状态/资源、同一触发和同一结果时，不确认成第二条遗漏。
 
-随后审核首轮：Branch disposition 是否与源码可达性相符；Coverage→Scenario 是否真的能到达目标函数/分支；Scenario 的 `business_entry/actions/external_oracles` 是否有真实产品或协议支撑；Risk→Scenario 是否一致；TestCase 是否从真实 Scenario 转换。
+### 处置逃生口必须复核
+
+- `not_test_relevant` 只能在冻结证据已经足以正向证明该 Branch 不形成独立测试义务时成立。若理由实质是“更上层 caller 没看到”“业务入口没确认”“当前上下文不足”“Oracle 不知道”，尤其 source manifest 已记录相关 caller truncation 时，新增 `incorrect_conclusion` 要求改为 `developer_confirm` 或形成真实 Scenario。
+- `unreachable` 不能由 caller 截断或“没继续看到 caller”推出；没有正向不可达证据时必须纠正。
+- `developer_confirm` 是合法处置，但不是默认逃生口。如果冻结证据已经证明目标是稳定公开 API，参数/状态可由测试侧构造，且公开返回值、输出参数、错误码或对外状态能够判定，那么不能仅因为测试动作表现为“直接调用函数”就使用 `developer_confirm`。
+- C/C++ 公开 API 函数本身可以是业务入口。公开头文件声明、任务/设计契约、受支持客户端/测试直接调用等冻结证据可以证明它是公开接口；`non-static` 本身不够。对已经确认的公开 API，直接调用该 API 不属于“调用内部函数”的违规黑盒翻译。
+
+随后审核首轮：Branch disposition 是否与源码可达性及 caller 边界相符；Coverage→Scenario 是否真的能到达目标函数/分支，目标本身若是公开 API 是否被错误降成 `developer_confirm`；Scenario 的 `business_entry/actions/external_oracles` 是否有真实产品、协议或公开 API 支撑；Risk→Scenario 是否一致；TestCase 是否从真实 Scenario 转换。
 
 出现下面这类“源码事实可能成立，但测试翻译错了”的情况，新增 `category=blackbox_translation`：
 
 - Scenario/TestCase 声称的业务入口实际不能沿冻结控制流到达目标 Branch/风险路径；
 - 前置返回已经终止路径，却仍声称后续 Branch 被该场景覆盖；
 - TestCase 把源码没有产生的日志、状态或返回结果写成外部 Oracle；
-- 把内部函数调用、字段赋值、内部对象或内部返回值冒充测试人员业务动作/主要 Oracle；
+- 把实现 helper、私有函数、字段赋值、内部对象或内部返回值冒充测试人员业务动作/主要 Oracle；已经由冻结证据确认的公开 API 调用不属于此项；
 - Scenario 已声明 ready，但冻结证据只能支持内部条件，不能支持其具体业务动作或外部判定方式。
 
-若 Analysis 对源码事实本身就判断错误，例如把实际失败返回 0 说成返回一个大整数，使用 `incorrect_conclusion`；若源码事实和翻译方向没有明确错误，只是缺少一个必要可观察验证点，使用 `test_oracle`。Reviewer 只写 finding，仍由原 Analysis worker 在 Closure 修正 Scenario/TestCase。
-
-`developer_confirm` 是合法处置：冻结证据不足以确认业务可达性时，不因为没有 TestCase 就创建缺失用例 finding；只有已有证据足以裁决而 Analysis 处置错误时才纠正。
+若 Analysis 对源码事实本身就判断错误，使用 `incorrect_conclusion`；若 disposition 本身错误，例如把 caller 截断导致的证据不足写成 `not_test_relevant`，也使用 `incorrect_conclusion`；若源码事实和翻译方向没有明确错误，只是缺少一个必要可观察验证点，使用 `test_oracle`。Reviewer 只写 finding，仍由原 Analysis worker 在 Closure 修正。
 
 Comparison 新 finding 只用于首轮 Analysis 的真实错误或盲审未发现的实质遗漏，不复制 Independent finding。`linked_input_ids` 只引用 selected inputs 的真实编号。顶层 `unresolved`：Independent 只有冻结输入本身缺失时填写；Comparison 必须为 `[]`。
 
-写入前检查：finding_key 不重复；affected_unit_ids 来自 unit plan；新 finding evidence 非空且在冻结范围；Comparison decision 集合与 Independent finding 集合完全相等；dismissed 有反证；confirmed/unresolved 不重复抄 evidence。若 settle 返回错误，只修正同一 `result_path`，不把 Review 裁决交给 Python 或其他 Agent。
+写入前检查：finding_key 不重复；affected_unit_ids 来自 unit plan；新 finding evidence 非空且在冻结范围；Comparison decision 集合与 Independent finding 集合完全相等；dismissed 有反证；confirmed/unresolved 不重复抄 evidence；存在 caller truncation 时已复核相关 `not_test_relevant/unreachable/developer_confirm`。若 settle 返回错误，只修正同一 `result_path`，不把 Review 裁决交给 Python 或其他 Agent。
 
 最终回复只用一行 `完成 action_id=<task.action_id>`；历史 task 没有 action_id 时才只回复“完成”。
