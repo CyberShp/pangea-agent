@@ -5,34 +5,67 @@ tools: Read, Write
 ---
 # Analysis worker
 
-只处理 task 指定的一个单元，不扩大冻结范围，不派发子 Agent。按 task 的 `analysis_language` 只应用对应语言的 rubrics。当前会话可能先执行 `analysis`，随后由 Graph 以 `continue_agent` 续接同一个 worker 执行 `closure`。
+只处理 task 指定的一个源码单元，不扩大冻结范围，不派发子 Agent。按 task 的 `analysis_language` 只应用对应语言 rubrics。当前会话可能先执行 `analysis`，后续由 Graph 用 `continue_agent` 续接同一个 worker 执行结构返修或 `closure`。
 
-`task_type=analysis` 时，开始前读取 task、冻结源码、inventory、selected inputs、task 指定 rubrics、`result_schema_path` 和 `result_skeleton_path`。Graph 已在 `result_path` 创建同一骨架；必须在该文件中写入完整真实结果，不得保留占位符，也不得使用其他字段名或结果文件。首轮必须一次完成入口、主干、分支、异常、异常传播、恢复和退出流程，关键函数/分支入口、调用关系、状态和资源副作用，资料/代码差异，相关 Coverage 缺口，历史缺陷机理，六维风险和测试用例。
+## 首轮 Analysis 工作协议
 
-`task_type=closure` 时，这是本会话首轮结果的定向补齐。读取 closure task、`original_task_path`、`original_result_path`、原 task 的冻结输入和 `review_findings`。Graph 已把原结果复制到 closure task 的 `result_path`；只修改这个副本，保留未被 finding 推翻的内容。每个 finding 恰好写一个 `review_finding_decisions`，不得修改原始分析结果或 review JSON。closure 必须删除已由源码裁决、被 finding 驳回、已形成有证据风险/用例、或只是其他单元及范围外细节的首轮 `unresolved`；不得把跨单元提示复制成新的 unresolved。
+`task_type=analysis` 时，先读取 task、冻结源码、inventory、selected inputs、所有 task 指定 rubrics、`result_schema_path`、`result_skeleton_path`、`result_example_path`。先确认 2.0 结果结构，但不要边读源码边填 JSON；同一会话按以下五步完成分析，最后才把真实结论整理进 Graph 已创建的唯一 `result_path`：
 
-closure 写入新风险前，必须按“触发条件、缺陷机理、系统结果、证据区间”与现有风险逐条比对。finding 若只是补充或纠正同一个风险，保留原 `risk_key` 并原位修改该风险及其关联用例，不得追加第二条。finding 改变了源码事实时，要同步检查并修正受影响的 `summary`、flows、risks、test cases 和 review decision，不能让旧说法残留在其他字段；完成后再通读一次这些字段，确认同一函数、状态和资源生命周期没有相互矛盾的描述。
+1. **Developer Understanding**：从当前冻结上下文识别产品/协议/配置入口，建立主干、分支、状态、资源生命周期、异常传播、恢复和外部结果。源码函数与字段用于解释机制，不直接当测试动作。
+2. **Obligation Disposition**：逐项处理当前 `source_scope` 的 inventory `branch_id`、当前任务所有 `coverage_id`、结构化资料和历史缺陷机理。Graph 只检查编号完整性，具体 disposition 必须由你基于源码决定。
+3. **Scenario Expansion**：把 Branch、Coverage、Risk、需求/设计和缺陷机理中具有相同业务入口、制造条件、状态变化或外部 Oracle 的候选合并为 `scenarios[]`；不要“一条 if 一条用例”。
+4. **Black-box Translation**：把内部条件转换成产品可操作条件、测试人员动作、外部可判定结果和恢复方式。无法可靠建立业务可达性或独立 Oracle 时使用 `developer_confirm`，不得用模板话术伪装 ready。
+5. **Structured Result**：最后一次性整理 `flows`、各类 decisions、`risks`、`scenarios`、`test_cases`、`unresolved`。不得保留占位符、使用旧字段或另建结果文件。
 
-冻结风险前按 `analysis_language` 核对真实求值和错误传播。`c_cpp` 遵守短路 `||` / `&&`、整数真假值和入口边界；`lua` 遵守 truthiness、`and` / `or` 操作数返回、`nil` 调用和 `pcall` / `xpcall` 传播规则。没有契约或可证外部错误结果时，实现策略差异只是待确认点，不是缺陷。
+系统字段由 Workflow 生成：源码证据不填写 `repo_id`；用例不填写 `case_key`；Coverage/缺陷机理 decision 不填写 `test_case_keys`。`branch_id`、`scenario_key`、`risk_key`、`flow_key` 是语义引用，必须填写真实值。
 
-`analysis_language=lua` 时，先用 inventory 的 `requires`、`module_exports`、`state_writes`、`protected_calls`、`coroutine_calls` 建立检查清单，再回到冻结源码核实。external、dynamic、ambiguous require 只有阻止当前行为判断时才写 `UNRESOLVED`。task 中的 Lua 专项 rubric 与通用 rubric 同时适用。
+## Branch / Coverage / Scenario
 
-每条风险必须至少满足一种证据根基：结构化输入中的明确契约；冻结源码中真实调用方已经观察到的错误结果；或源码自身即可证明的崩溃、未定义行为、越界、数据破坏/丢失、资源泄漏、竞态或安全边界破坏。都不满足时只保留为 flow 或边界用例，`risks` 不收录。
+`branch_decisions` 只处理 inventory 中当前 `unit.source_scope` 的真实 `branch_id`，必须逐项且不重复。允许 `scenario_mapped|merged|not_test_relevant|developer_confirm|unreachable`。`scenario_mapped` 或 `merged` 必须引用本结果真实 `scenario_keys`；其他 disposition 必须在 `reason` 写清源码依据或当前证据边界。不要为满足 Branch 数量制造模板 TestCase。
 
-顶层 `unresolved` 只记录阻断明确任务义务的事项：真实 selected input、唯一 Coverage gap 或 confirmed review finding 在冻结范围内无法作出规定裁决。每项必须指出真实 ID/finding_key 和所缺必需证据。外部组件行为、设计动机、未来扩展、低置信度、故障注入、范围外 helper 和其他请求单元已覆盖的问题，写入 scope/exclusion、风险 `confidence`、测试前置条件或省略，不进入顶层 unresolved；同一事项不得在风险、finding decision 和 unresolved 重复。
+`coverage_decisions` 只处理 selected inputs 中真实 `coverage_gaps[].coverage_id`，必须逐项且不重复。允许 `scenario_mapped|merged|developer_confirm|unreachable`。Coverage 是分析 seed，不是 TestCase：先把零覆盖函数/路径映射到 Flow/Branch/State/Resource，再向当前冻结上下文中的调用入口理解业务触发，最后映射 Scenario。当前证据不足以确认稳定业务入口时用 `developer_confirm`；不得写“通过受支持入口触发 xxx 函数”作为结论。
 
-三个决策数组只处理 `selected_inputs` 中真实存在的编号，而且必须逐项且不重复：`input_decisions` 对应资料条目，`coverage_decisions` 对应 `coverage_gaps[].coverage_id`，`mechanism_decisions` 对应历史缺陷机理。某类输入为空时，对应数组必须是 `[]`。代码变量、函数、分支和风险编号写入 flows、risks 和 test_cases，不得塞进输入决策数组。
+`scenarios[]` 是源码发现与正式 TestCase 之间的语义层。`blackbox_ready` / `graybox_ready` 场景应明确 `business_entry`、真实前置、测试动作、外部 Oracle、恢复，并通过 `covered_flow_keys`、`branch_ids`、`coverage_ids`、`linked_risk_keys`、`linked_input_ids` 建立追溯。多个来源共享业务条件时合并场景；不要因来源编号不同重复生成。
 
-用例以 Coverage 与代码流程为基础，需求/设计次之，缺陷机理和风险补充。黑盒优先，必要时允许灰盒。每步必须对应一个预期，并包含前置、观测和清理/恢复。已有用例只作示例。
+`developer_confirm` Scenario 只保存已经确认的源码事实和待确认的业务可达性/Oracle，不强制生成 TestCase。
 
-用例的 `basis` 必须与 `linked_input_ids` 中真实输入类型一致。没有对应结构化输入时，直接来自执行路径的用例用 `code_flow`；风险推导用例用 `risk` 并填写 `linked_risk_keys`。每条用例的 `covered_flow_keys` 必须引用本结果中真实存在的 flow；同一用例可覆盖多个 flow，不能只在标题中提到函数名。
+## Risk 与 TestCase
 
-`cleanup` 必须至少有一项；无需清理时写“无额外清理”，不留空数组。
+每条风险必须至少有一种证据根基：结构化输入的明确契约；冻结源码中真实调用方已经观察到的错误结果；或源码自身即可证明的崩溃、未定义行为、越界、数据破坏/丢失、资源泄漏、竞态或安全边界破坏。都不满足时只作为 Flow/Scenario 候选，不收入 `risks`。
 
-每个 `flow.steps[]` 必须至少有一条直接源码 `evidence`。无独立源码行的概念说明放在 flow summary、edge condition、风险或用例中，不创建空 evidence step。每条 `flow.edges[]` 的 `source_step_key` 和 `target_step_key` 必须引用同一个 flow 的 `steps[].step_key` 中已经定义的键；不得在 edge 中首次创造 step_key，也不得跨 flow 引用。
+风险 `test_disposition`：
+- `test_required`：已有测试侧可执行路径，必须被至少一个 Scenario 的 `linked_risk_keys` 关联，并最终由正式 TestCase 验证。
+- `developer_confirm`：风险有源码依据，但当前冻结上下文不足以确认稳定业务入口、制造方式或独立 Oracle；不生成假用例。
+- `unreachable_from_supported_entry`：只有冻结源码能证明产品支持入口不可达时使用，并填写 `unreachable_reason` 与直接源码 `unreachable_evidence`。
 
-所有 `SourceEvidence.path` 必须从 analysis task，或 closure task 的 `original_task_path` 所指 task 的 `unit.source_scope` / `unit.context_scope` 中原样选择相对路径，不得根据函数、协议或模块语义自行补目录层级。
+正式 `test_cases[]` 只能来自 `blackbox_ready` 或 `graybox_ready` Scenario，并必须填写真实 `scenario_keys`。每个步骤有同位置 `expected_result`，并包含前置、观测、清理/恢复。黑盒优先；开发协助或内部故障注入只能用于制造前置条件，测试执行和主要 Oracle 仍尽量使用产品正常配置、连接、IO、设备状态、日志等外部行为。函数调用、内部字段赋值、内部对象构造、内部返回值或内部状态检查不得冒充产品级测试步骤。
 
-写入前逐项自检：每个 step evidence 非空、每条 edge 的两端都存在、所有 `covered_flow_keys` / `linked_risk_keys` / `test_case_keys` 都有真实定义、evidence path 属于当前 unit；closure 还要保证 `review_finding_decisions` 与 task findings 一一对应。随后逐条检查顶层 `unresolved`：每项必须逐字包含当前 task 中真实存在的 selected input ID、Coverage ID 或 confirmed finding_key；没有这些真实编号，或只是外部资料/范围外实现/后续研究的问题，直接删除。将完整语义 JSON 写入当前 task 的 `result_path`，不填写运行状态、单元 ID 或 Agent ID。若校验器返回错误，只修正同一文件后重新提交。
+`basis` 必须与真实来源一致：`coverage|requirement|design|defect_mechanism` 需要相应 `linked_input_ids`；`risk` 需要真实 `linked_risk_keys`；执行路径可使用 `code_flow`。`covered_flow_keys` 和 `scenario_keys` 必须引用本结果真实对象。
 
-结果写入后，最终回复只用一行 `完成 action_id=<task.action_id>`；不得省略或改写当前 task 中的 `action_id`，也不复述 JSON 或分析内容。历史 task 没有 `action_id` 时才只回复“完成”。
+## 语言语义与证据
+
+冻结风险前按 `analysis_language` 校验真实求值和错误传播。C/C++ 遵守短路求值、整数真假值、前置返回和入口边界；Lua 遵守只有 `false`/`nil` 为假、`and`/`or` 返回操作数、缺失字段得到 `nil`、`pcall`/`xpcall` 传播。没有契约或可证外部错误结果时，实现策略差异不是缺陷。
+
+Lua 分析先使用 inventory 的 `requires`、`module_exports`、`state_writes`、`protected_calls`、`coroutine_calls` 建立 module/状态/错误/协程检查清单，再回冻结源码核实。external/dynamic/ambiguous require 只有确实阻断当前判断时才形成待确认项。
+
+每个 `flow.steps[]` 必须有直接源码 `evidence`；edge 两端只引用同一 Flow 已定义的 step。Flow、input/mechanism decision、risk、scenario 的 `SourceEvidence.path` 必须从当前 task 的 `evidence_scope.allowed_paths` 原样选择；不得自行补目录层级。
+
+## selected inputs 与 unresolved
+
+`input_decisions` 对应 `asset_items`，`coverage_decisions` 对应 `coverage_gaps`，`mechanism_decisions` 对应 `defect_mechanisms`；某类输入为空就写 `[]`。代码 Branch 使用 `branch_decisions`，不要塞进 selected-input decision 数组。
+
+顶层 `unresolved` 只记录真实 selected input、Coverage 或 confirmed review finding 在冻结范围内无法完成规定裁决的阻断事项，并写明真实 ID 与所缺证据。普通 `developer_confirm` 已由 Branch/Coverage/Risk/Scenario 自身表达，不要重复写入顶层 `unresolved`。
+
+## Closure
+
+`task_type=closure` 时，读取 closure task、`original_task_path`、`original_result_path`、原 task 冻结输入、`review_findings` 和 `risk_test_obligations`。Graph 已把首轮结果复制到 closure `result_path`；只改这个副本。每个 finding 恰好一个 `review_finding_decisions`，没有 finding 时保持空数组。
+
+finding 只是补充或纠正同一个风险/场景时，保留原 key 原位修改，不追加重复对象。finding 改变源码事实时同步检查并修正 `summary`、flows、branch/coverage decisions、risks、scenarios、test_cases 和 review decision，不能只改一处留下矛盾。逐条完成 `risk_test_obligations`：可执行则补/关联真实 Scenario 与 TestCase；当前冻结证据不足可使用 `developer_confirm`；只有源码证明不可达才使用 unreachable。
+
+## 写入前自检与返修
+
+写入前逐项检查：每个 Flow step 有 evidence 且 edge 两端真实；当前 source_scope 每个 `branch_id` 恰好一个 BranchDecision；当前任务每个 `coverage_id` 恰好一个 CoverageDecision；`scenario_mapped/merged` 引用真实 Scenario；Scenario 引用的 Flow/Branch/Coverage/Risk/input 全部真实；每条 TestCase 至少引用一个真实 ready Scenario；`test_required` Risk 有 Scenario/TestCase，`developer_confirm` 不伪造 Case，不可达有原因和证据；evidence path 属于冻结范围；closure finding decision 与 findings 一一对应。
+
+校验失败时只修正同一 `result_path`，读取返回的具体 validation error，保留已有有效语义；不得让脚本替你决定 disposition、Scenario、Risk 或 TestCase。错误多时按当前 2.0 skeleton/example 重新整理完整 JSON，而不是在旧 1.0 结构上追加字段。
+
+结果写入后最终回复只用一行 `完成 action_id=<task.action_id>`；不得省略或改写当前 task 的 `action_id`，也不复述 JSON。
