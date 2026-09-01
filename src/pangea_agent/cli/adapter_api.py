@@ -17,10 +17,6 @@ from pangea_agent.graph.nodes.advance_workflow import (
     _validate_review,
 )
 from pangea_agent.graph.analysis_normalizer import normalize_analysis_result
-from pangea_agent.graph.degraded_results import (
-    build_degraded_analysis_result,
-    build_degraded_planning_result,
-)
 from pangea_agent.graph.planning import (
     accept_planning_result,
     normalize_planning_result,
@@ -38,22 +34,21 @@ from pangea_agent.models.analysis import (
     AnalysisTask,
     ClosureTask,
     ComparisonReviewResult,
-    IndependentFindingDecision,
     IndependentReviewResult,
     PlanningResult,
     PlanningResultV2,
     PlanningTask,
-    UnitSemanticResult,
     ValidationFailureRecord,
 )
 from pangea_agent.models.asset import AssetExtractionResult
 
 
+REPEATED_REPAIR_ATTENTION_AFTER = 3
+TOTAL_REPAIR_ATTENTION_AFTER = 6
 MAX_VALIDATION_ERROR_DETAILS = 24
-AUTO_DEGRADE_AFTER_VALIDATION_FAILURES = 2
 
 
-def _submission_failures(action: ActionState) -> int:
+def _repair_attempts(action: ActionState) -> int:
     return action.validation_failures + action.incomplete_attempts
 
 
@@ -118,14 +113,10 @@ def _invalid_result(
         details=validation_details,
         details_truncated=error.get("details_truncated", False),
     ))
-    if _submission_failures(action) >= AUTO_DEGRADE_AFTER_VALIDATION_FAILURES:
-        degraded = _degrade_invalid_result(state, progress, action, message)
-        if degraded is not None:
-            return degraded
     save_progress(state, progress)
     repair_action = _repair_action(action)
     repair_action["validation_error"] = error
-    payload = {
+    return {
         "action_id": action.action_id,
         "status": "invalid",
         "recoverable": True,
@@ -135,110 +126,11 @@ def _invalid_result(
         "error": error,
         "validation_failures": action.validation_failures,
         "repeated_validation_failures": action.repeated_validation_failures,
-        "attention_required": False,
-        "repair_action": repair_action,
-    }
-    return payload
-
-
-def _degrade_invalid_result(
-    state: dict,
-    progress,
-    action: ActionState,
-    message: str,
-) -> dict | None:
-    raw_task = read_json(Path(action.task_path))
-    result = None
-    if action.role == "planning":
-        task = PlanningTask.model_validate(raw_task)
-        run_dir = run_directory(state)
-        result = build_degraded_planning_result(
-            task,
-            read_json(Path(task.compact_metadata_path)),
-            read_json(run_dir / "inputs" / "asset-items.json"),
-            read_json(run_dir / "inputs" / "coverage-gaps.json"),
-            message,
-        )
-    elif action.role == "analysis":
-        task = AnalysisTask.model_validate(raw_task)
-        try:
-            raw_result = read_json(Path(task.result_path))
-        except (OSError, ValueError):
-            raw_result = None
-        try:
-            inventory = read_json(Path(task.inventory_path))
-        except (OSError, ValueError):
-            inventory = {}
-        selected_inputs = read_json(Path(task.selected_inputs_path))
-        result = build_degraded_analysis_result(
-            task,
-            raw_result,
-            inventory,
-            selected_inputs,
-            message,
-        )
-    elif action.role == "closure":
-        task = ClosureTask.model_validate(raw_task)
-        result = UnitSemanticResult.model_validate(
-            read_json(Path(task.original_result_path))
-        ).model_copy(deep=True)
-        result.unresolved.append(
-            f"{task.unit.unit_id}: 定向补齐在一次自动修复后仍无法形成合法结构；"
-            f"Workflow 保留首轮 Analysis 结果继续完成。原因：{message}"
-        )
-    elif action.role == "review" and raw_task.get("task_type") == "independent_review":
-        result = IndependentReviewResult(
-            summary="独立复核结构化结果降级，Workflow 继续进入对照复核",
-            unresolved=[f"independent_review: 一次自动修复后仍不可用：{message}"],
-        )
-    elif action.role == "review" and raw_task.get("task_type") == "comparison_review":
-        independent = IndependentReviewResult.model_validate(
-            read_json(Path(raw_task["independent_review_result_path"]))
-        )
-        result = ComparisonReviewResult(
-            summary="对照复核结构化结果降级，未决 finding 交由后续 Closure 记录",
-            independent_finding_decisions=[
-                IndependentFindingDecision(
-                    finding_key=finding.finding_key,
-                    disposition="unresolved",
-                    conclusion="对照复核结构修复未收敛，保留该 finding 进入降级 Closure",
-                    evidence=finding.evidence,
-                )
-                for finding in independent.findings
-            ],
-        )
-    if result is None:
-        return None
-
-    write_json(
-        validated_result_path(state, action.action_id),
-        result.model_dump(mode="json"),
-    )
-    progress.degradations = [
-        item
-        for item in progress.degradations
-        if item.get("action_id") != action.action_id
-    ]
-    progress.degradations.append({
-        "action_id": action.action_id,
-        "kind": "agent_result_degraded",
-        "message": (
-            "Agent 结构化结果在一次自动修复后仍不可用；"
-            "Workflow 已冻结可消费的降级结果并继续完成。"
+        "attention_required": (
+            action.repeated_validation_failures >= REPEATED_REPAIR_ATTENTION_AFTER
+            or _repair_attempts(action) >= TOTAL_REPAIR_ATTENTION_AFTER
         ),
-        "validation_failures": action.validation_failures,
-        "incomplete_attempts": action.incomplete_attempts,
-        "last_error": message,
-    })
-    action.error = None
-    action.repeated_validation_failures = 0
-    save_progress(state, progress)
-    return {
-        "action_id": action.action_id,
-        "status": "valid",
-        "degraded": True,
-        "validation_failures": action.validation_failures,
-        "warning": progress.degradations[-1]["message"],
+        "repair_action": repair_action,
     }
 
 
@@ -267,11 +159,6 @@ def _incomplete_result(
         message=message,
     )
     action.incomplete_history.append(record)
-    if _submission_failures(action) >= AUTO_DEGRADE_AFTER_VALIDATION_FAILURES:
-        degraded = _degrade_invalid_result(state, progress, action, message)
-        if degraded is not None:
-            degraded["incomplete_attempts"] = action.incomplete_attempts
-            return degraded
     save_progress(state, progress)
     repair_action = _repair_action(action)
     error = {
@@ -289,7 +176,10 @@ def _incomplete_result(
         "error": error,
         "validation_failures": action.validation_failures,
         "incomplete_attempts": action.incomplete_attempts,
-        "attention_required": False,
+        "attention_required": (
+            action.incomplete_attempts >= REPEATED_REPAIR_ATTENTION_AFTER
+            or _repair_attempts(action) >= TOTAL_REPAIR_ATTENTION_AFTER
+        ),
         "repair_action": repair_action,
     }
 
