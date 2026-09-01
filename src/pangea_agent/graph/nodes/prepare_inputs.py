@@ -253,10 +253,9 @@ def prepare_inputs(state: PangeaState) -> PangeaState:
         methodology_catalog_path=str(
             run_dir / "inputs" / "methodologies" / "catalog.json"
         ),
-        result_contract_version="2.0",
-        result_schema_path=str(project_path("schemas", "planning_result_v2.schema.json")),
+        result_schema_path=str(project_path("schemas", "planning_result.schema.json")),
         result_skeleton_path=str(planning_skeleton_path),
-        result_example_path=str(project_path("schemas", "planning_result_v2.example.json")),
+        result_example_path=str(project_path("schemas", "planning_result.example.json")),
         result_path=str(planning_result_path(state)),
         rubric_paths=[str(project_path(
             "src",
