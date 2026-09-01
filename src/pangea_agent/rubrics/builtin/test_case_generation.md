@@ -63,6 +63,8 @@ Inventory 中属于当前 `source_scope` 的每个 `branch_id` 都必须有且�
 - `developer_confirm`：源码分支真实存在，但当前冻结上下文不足以建立稳定业务制造方式或独立 Oracle。
 - `unreachable`：已根据冻结源码确认当前产品支持入口无法到达；在 `reason` 中记录直接依据。
 
+`scenario_mapped|merged` 只可引用 `blackbox_ready|graybox_ready` Scenario。若唯一可建立的 Scenario 仍是 `developer_confirm`，对应 Branch 也必须是 `developer_confirm`；两者可以双向引用以保留已确认的源码关系。`not_test_relevant|unreachable` 不得残留 Scenario 引用。
+
 只要 `not_test_relevant` 的理由依赖“没看到更上层 caller”“业务入口没确认”“当前上下文不足”“Oracle 不知道”，就应使用 `developer_confirm`。若 source manifest 已记录与当前分析相关的 `caller_context_truncations`，且缺失的上层 caller 会影响该判断，更不能用 `not_test_relevant` 或 `unreachable` 代替证据不足。
 
 “正常防御性分支”“返回设计内错误码”“没有形成缺陷/Risk”都不自动等于 `not_test_relevant`。Branch 是否形成测试义务，要看它是否带来可构造的不同输入/状态或不同外部结果；这与是否建立 Risk 是两项独立判断。
@@ -153,6 +155,7 @@ Coverage Gap
 
 - 缺少稳定业务入口、制造方法或独立 Oracle 是证据缺口，不是产品运行时 Risk。不得创建 `system_result` / `external_observation` 只描述“测试无法触发、无法观测、需要开发确认”的 Risk；把对应 Branch/Coverage/Scenario 保持为 `developer_confirm`。
 - C/C++ undefined behavior（未定义行为）只说明结果不可依赖，不能在没有冻结构建/运行时契约时写成固定环绕值、`INT_MIN`、返回码、日志或状态。需要受控 sanitizer/构建方式但当前证据不足时保持 `developer_confirm`。
+- 未冻结目标 ABI/编译契约时只写类型边界符号（例如 `INT_MAX`），不得擅自把 `int` 固定成 32 位十进制值；ASan 主要检查内存错误，不能单独作为 signed-integer-overflow 的检测 Oracle，使用 UBSan/对应 signed-overflow sanitizer 时必须明确它依赖构建选项。
 - 源码已直接证明且未被正向证明不可达的 C/C++ 未定义行为必须保留 Risk；入口/制造/Oracle 不足时用 `developer_confirm`，不得把它改写成“六维无信号”或从 Risk 集合删除。
 - `test_required`：风险已经具备测试侧可执行路径，必须由至少一个 ready Scenario 关联，并最终由正式 TestCase 的 `linked_risk_keys` 覆盖。
 - `developer_confirm`：风险本身有源码依据，但当前冻结上下文不足以确认稳定业务入口、制造方法或独立 Oracle；不得强行生成正式 TestCase。

@@ -36,6 +36,8 @@ Review finding 的 `category` 只能使用当前 schema 固定枚举。资源泄
 
 `confirmed` 必须对应首轮结果中仍需 Closure 实际修改的具体错误。若 Analysis 已经正确处理 finding，剩余分歧只是措辞偏好、无证据的额外要求，或 finding 自身把“可能结果”误读为确定结果，应使用 `dismissed` 并提供反证；不得一边写“Analysis 已正确处理”，一边仍把 finding 判为 confirmed。
 
+裁决对象是“Analysis 是否遗漏/误处置”，不是“Independent 描述的源码事实是否为真”。源码事实为真、但 Analysis 已有等价 Risk/Flow/Scenario/decision 且处置正确时，必须 `dismissed`；不能因为 finding 的源码证据成立就 `confirmed`。每个 `confirmed` conclusion 必须明确指出 Analysis 中哪个 Agent-owned 字段当前错误、Closure 要把它改成什么；无法指出具体字段变化时不得 confirmed。
+
 裁决按“入口/触发条件 → 内部机制 → 外部结果 → 证据区间”与首轮结果比对。名称或措辞不同但实际是同一状态/资源、同一触发和同一结果时，不确认成第二条遗漏。
 
 ### 处置逃生口必须复核
@@ -66,6 +68,8 @@ Comparison 还必须独立核对冻结源码中显式可见的 C/C++ 未定义�
 若 Analysis 对源码事实本身就判断错误，使用 `incorrect_conclusion`；若 disposition 本身错误，例如把 caller 截断导致的证据不足写成 `not_test_relevant`，也使用 `incorrect_conclusion`；若源码事实和翻译方向没有明确错误，只是缺少一个必要可观察验证点，使用 `test_oracle`。Reviewer 只写 finding，仍由原 Analysis worker 在 Closure 修正 Scenario/TestCase。
 
 Comparison 新 finding 只用于首轮 Analysis 的真实错误或盲审未发现的实质遗漏，不复制 Independent finding。`linked_input_ids` 只引用 selected inputs 的真实编号。顶层 `unresolved`：Independent 只有冻结输入本身缺失时填写；Comparison 必须为 `[]`。
+
+新增 finding 前先逐字核对 Analysis 对应字段：若所要求的触发值、动作、条件或前提已经明确存在，只是措辞顺序不同，不得创建 finding。Analysis 已明确把 sanitizer 观测写成“仅在启用相应编译选项时”的条件性结果时，不得仅因冻结范围没有构建文件而再报一次“未说明构建前提”；应只指出仍然真实存在的错误，例如把 ASan 单独当作 signed-overflow 检测器。
 
 写入前检查：finding_key 不重复；affected_unit_ids 来自 unit plan；新 finding evidence 非空且每个 path 都从对应 unit 的 `allowed_paths` 原样选择，结构化资料只用真实 `linked_input_ids`，且每个结论链接的是实际依赖条目的 exact ID；Comparison decision 集合与 Independent finding 集合完全相等；dismissed 有反证；confirmed/unresolved 不重复抄 evidence；存在 caller truncation 时已复核所有 disposition，以及所有 ready Scenario/TestCase 的业务入口是否真的有公开/受支持证据；没有把证据缺口包装成 Risk，也没有把 C/C++ 未定义行为写成确定结果。若 settle 返回错误，只修正同一 `result_path`，不把 Review 裁决交给 Python 或其他 Agent。
 

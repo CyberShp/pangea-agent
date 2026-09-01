@@ -84,15 +84,63 @@ def analysis_obligations(
             known_scenarios,
         )
         if decision.disposition in SCENARIO_MAPPED_DISPOSITIONS:
+            ready_scenario_keys = {
+                scenario_key
+                for scenario_key in decision.scenario_keys
+                if scenarios_by_key.get(scenario_key)
+                and scenarios_by_key[scenario_key].readiness in READY_SCENARIO_STATES
+            }
+            if not ready_scenario_keys:
+                _add(
+                    issues,
+                    "missing_ready_branch_scenario",
+                    decision.branch_id,
+                    f"BranchDecision {decision.branch_id} 的 disposition={decision.disposition}，但没有 ready Scenario",
+                )
             for scenario_key in decision.scenario_keys:
                 scenario = scenarios_by_key.get(scenario_key)
-                if scenario is not None and decision.branch_id not in scenario.branch_ids:
+                if scenario is None:
+                    continue
+                if scenario.readiness not in READY_SCENARIO_STATES:
+                    _add(
+                        issues,
+                        "branch_scenario_readiness_conflict",
+                        decision.branch_id,
+                        f"BranchDecision {decision.branch_id} 的 disposition={decision.disposition}，但引用 Scenario {scenario_key} 的 readiness={scenario.readiness}",
+                    )
+                if decision.branch_id not in scenario.branch_ids:
                     _add(
                         issues,
                         "branch_scenario_mismatch",
                         decision.branch_id,
                         f"BranchDecision {decision.branch_id} 指向 Scenario {scenario_key}，但该 Scenario.branch_ids 未反向包含此 branch_id",
                     )
+        elif decision.disposition == "developer_confirm":
+            for scenario_key in decision.scenario_keys:
+                scenario = scenarios_by_key.get(scenario_key)
+                if scenario is None:
+                    continue
+                if scenario.readiness != "developer_confirm":
+                    _add(
+                        issues,
+                        "branch_scenario_readiness_conflict",
+                        decision.branch_id,
+                        f"BranchDecision {decision.branch_id} 声明 developer_confirm，但引用 Scenario {scenario_key} 的 readiness={scenario.readiness}",
+                    )
+                if decision.branch_id not in scenario.branch_ids:
+                    _add(
+                        issues,
+                        "branch_scenario_mismatch",
+                        decision.branch_id,
+                        f"BranchDecision {decision.branch_id} 指向 Scenario {scenario_key}，但该 Scenario.branch_ids 未反向包含此 branch_id",
+                    )
+        elif decision.scenario_keys:
+            _add(
+                issues,
+                "branch_scenario_disposition_conflict",
+                decision.branch_id,
+                f"BranchDecision {decision.branch_id} 的 disposition={decision.disposition}，但仍引用 Scenario={decision.scenario_keys}",
+            )
 
     for decision in result.coverage_decisions:
         _scenario_reference_issues(
@@ -178,10 +226,7 @@ def analysis_obligations(
             decision = branch_decisions_by_id.get(branch_id)
             if (
                 decision is not None
-                and (
-                    decision.disposition not in SCENARIO_MAPPED_DISPOSITIONS
-                    or scenario.scenario_key not in decision.scenario_keys
-                )
+                and scenario.scenario_key not in decision.scenario_keys
             ):
                 _add(
                     issues,

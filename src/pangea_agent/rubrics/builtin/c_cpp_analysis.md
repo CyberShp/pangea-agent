@@ -12,6 +12,8 @@
 
 冻结 Risk 前逐个核对 `source_scope` 中带符号整数的 `+`、`-`、`*`：前置 guard 之后是否仍可取类型边界。例如只排除 `< 0` 仍允许 `INT_MAX`，后续 `value + 1` 不能按普通返回值处理。
 
+没有冻结目标 ABI、编译器参数或构建契约时，使用 `INT_MAX` 等类型边界符号，不把 `int` 擅自写成固定 32 位数值。signed overflow 的受控观测可依赖 UBSan 或对应 sanitizer 构建；ASan 单独不是该算术错误的检测依据。Risk severity 必须结合受支持入口和产品影响证据，不得只因源码存在 UB 就自动判 High/Critical。
+
 重点抽取：
 
 - 外部入口、协议事件、CLI/REST 和状态机迁移。

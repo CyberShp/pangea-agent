@@ -31,6 +31,8 @@ tools: Read, Write
 
 `branch_decisions` 只处理 inventory 中当前 `unit.source_scope` 的真实 `branch_id`，必须逐项且不重复。允许 `scenario_mapped|merged|not_test_relevant|developer_confirm|unreachable`。`scenario_mapped` 或 `merged` 必须引用本结果真实 `scenario_keys`；其他 disposition 必须在 `reason` 写清源码依据或当前证据边界。不要为满足 Branch 数量制造模板 TestCase。
 
+`scenario_mapped|merged` 只表示 Branch 已被 `blackbox_ready|graybox_ready` Scenario 真正覆盖；不得引用 `developer_confirm` Scenario 后仍声称 mapped/merged。若 Branch 与 Scenario 都因入口、构造或 Oracle 未确认而待确认，Branch 必须用 `developer_confirm`，可以与同为 `developer_confirm` 的 Scenario 双向引用。`not_test_relevant|unreachable` 不得残留 `scenario_keys`。
+
 `not_test_relevant` 只能用于**现有冻结证据已经足以正向证明**该 Branch 不形成独立测试义务，例如只是同一已覆盖 Scenario 的实现细节且不改变可测试输入、状态或外部结果。它不是“暂时不知道怎么测”的出口。只要理由依赖“没看到更上层 caller”“业务入口还没确认”“当前上下文不足”“Oracle 还不知道”，就必须使用 `developer_confirm`，不能用 `not_test_relevant` 掩盖证据不足。caller context 被截断且缺失部分正好影响这项判断时尤其如此。
 
 `coverage_decisions` 只处理 selected inputs 中真实 `coverage_gaps[].coverage_id`，必须逐项且不重复。允许 `scenario_mapped|merged|developer_confirm|unreachable`。Coverage 是分析 seed，不是 TestCase：先把零覆盖函数/路径映射到 Flow/Branch/State/Resource，再理解测试侧入口和触发条件，最后映射 Scenario。
@@ -83,6 +85,8 @@ Lua 分析先使用 inventory 的 `requires`、`module_exports`、`state_writes`
 finding 只是补充或纠正同一个风险/场景时，保留原 key 原位修改，不追加重复对象。finding 改变源码事实时同步检查并修正 `summary`、flows、branch/coverage decisions、risks、scenarios、test_cases 和 review decision，不能只改一处留下矛盾。逐条完成 `risk_test_obligations`：可执行则补/关联真实 Scenario 与 TestCase；当前冻结证据不足可使用 `developer_confirm`；只有源码证明不可达才使用 unreachable。
 
 `review_finding_decisions[].disposition=incorporated` 表示最终语义对象已经实际满足 finding 的具体修正要求；如果冻结证据证明 finding 错误或要求过度，应使用 `dismissed` 并填写反证 evidence。不得在最终对象保持争议内容不变时仍标 incorporated，也不得用“首轮已正确、无需修改”作为 incorporated 的 conclusion。
+
+逐条比较 Closure 副本与原 Analysis：`incorporated` 必须能指出为满足 finding 而真实改变的 Agent-owned 字段及新值。只在 `reason`/`summary`/decision conclusion 中追加 finding 名称、复述首轮已有内容、把相同条件换一种说法，或确认“原结果已正确”，都不算 incorporated；此时必须 `dismissed` 并给出原结果已覆盖该检查的反证。Comparison 的 `confirmed` 不是命令，Closure 仍需按冻结证据独立判断。
 
 ## 写入前自检与返修
 
