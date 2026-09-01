@@ -53,6 +53,8 @@ Coverage 不要求一律向上追到更高产品层。如果 Coverage 目标本�
 
 “难以构造”“需要故障注入”“当前环境没准备”不等于不可达；如果只是冻结证据不足，使用 `developer_confirm`。
 
+`developer_confirm` Risk 的 `trigger` 只能描述冻结源码已经证明的内部触发条件，并明确尚缺哪一段入口/构造证据；没有公开头文件、产品契约或受支持客户端/测试时，不得写“通过受支持入口触发”“从公开 API 传入”等尚未证明的前提。
+
 正式 `test_cases[]` 只能来自 `blackbox_ready` 或 `graybox_ready` Scenario，并必须填写真实 `scenario_keys`。每个步骤有同位置 `expected_result`，并包含前置、观测、清理/恢复。黑盒优先；开发协助或内部故障注入只能用于制造前置条件，测试执行和主要 Oracle 仍尽量使用产品正常配置、连接、IO、设备状态、日志等外部行为。**已确认的公开 API 调用不属于这里禁止的“内部函数调用”**；实现 helper、私有函数、内部字段赋值、内部对象构造、内部返回值或内部状态检查不得冒充产品级测试步骤。
 
 每条 TestCase 的 `linked_input_ids` 只填写这条用例自身通过实际步骤和断言直接覆盖的输入 ID。`scenario_mapped|merged` Coverage 必须至少有一条 TestCase 包含对应 `coverage_id`、引用该 decision 的 ready Scenario，且 `basis` 包含 `coverage`；多个 TestCase 共用同一 Scenario，不代表它们自动继承该 Scenario 的全部 `coverage_ids`。例如一个 Case 只执行 true 分支，就不能因为共享 Scenario 而关联 false 分支的 Coverage gap。
@@ -82,6 +84,8 @@ Lua 分析先使用 inventory 的 `requires`、`module_exports`、`state_writes`
 `task_type=closure` 时，读取 closure task、`original_task_path`、`original_result_path`、原 task 冻结输入、`review_findings` 和 `risk_test_obligations`。Graph 已把首轮结果复制到 closure `result_path`；只改这个副本。每个 finding 恰好一个 `review_finding_decisions`，没有 finding 时保持空数组。
 
 finding 只是补充或纠正同一个风险/场景时，保留原 key 原位修改，不追加重复对象。finding 改变源码事实时同步检查并修正 `summary`、flows、branch/coverage decisions、risks、scenarios、test_cases 和 review decision，不能只改一处留下矛盾。逐条完成 `risk_test_obligations`：可执行则补/关联真实 Scenario 与 TestCase；当前冻结证据不足可使用 `developer_confirm`；只有源码证明不可达才使用 unreachable。
+
+`review_finding_decisions[].disposition=incorporated` 表示最终语义对象已经实际满足 finding 的具体修正要求；如果冻结证据证明 finding 错误或要求过度，应使用 `dismissed` 并填写反证 evidence。不得在最终对象保持争议内容不变时仍标 incorporated，也不得用“首轮已正确、无需修改”作为 incorporated 的 conclusion。
 
 Closure 不得为了“吸收 finding”而把证据缺口新建成产品 Risk。Reviewer finding 若只要求确认入口、制造方式或 Oracle，应修正相应 Branch/Coverage/Scenario disposition；若原 Risk 的系统结果本身不成立，应删除该 Risk，并同步清理 Scenario/TestCase 引用和 finding decision，而不是改写成“测试无法执行”的 Risk。
 

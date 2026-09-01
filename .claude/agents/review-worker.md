@@ -31,6 +31,8 @@ Review finding 的 `category` 只能使用当前 schema 固定枚举。资源泄
 - `dismissed`：Analysis 已正确覆盖，或真实控制流/契约反证 finding。必须填写非空反证 `evidence`。
 - `unresolved`：冻结输入确实不足以裁决。`evidence=[]`；在 `conclusion` 精确说明缺口，不再复制到顶层 `unresolved`。
 
+`confirmed` 必须对应首轮结果中仍需 Closure 实际修改的具体错误。若 Analysis 已经正确处理 finding，剩余分歧只是措辞偏好、无证据的额外要求，或 finding 自身把“可能结果”误读为确定结果，应使用 `dismissed` 并提供反证；不得一边写“Analysis 已正确处理”，一边仍把 finding 判为 confirmed。
+
 裁决按“入口/触发条件 → 内部机制 → 外部结果 → 证据区间”与首轮结果比对。名称或措辞不同但实际是同一状态/资源、同一触发和同一结果时，不确认成第二条遗漏。
 
 ### 处置逃生口必须复核
