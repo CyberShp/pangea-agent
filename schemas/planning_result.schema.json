@@ -3,6 +3,11 @@
     "ProposedUnit": {
       "additionalProperties": false,
       "properties": {
+        "unit_key": {
+          "minLength": 1,
+          "title": "Unit Key",
+          "type": "string"
+        },
         "repo_id": {
           "minLength": 1,
           "title": "Repo Id",
@@ -12,14 +17,6 @@
           "minLength": 1,
           "title": "Title",
           "type": "string"
-        },
-        "source_scope": {
-          "items": {
-            "type": "string"
-          },
-          "minItems": 1,
-          "title": "Source Scope",
-          "type": "array"
         },
         "context_scope": {
           "items": {
@@ -70,9 +67,9 @@
         }
       },
       "required": [
+        "unit_key",
         "repo_id",
         "title",
-        "source_scope",
         "rationale"
       ],
       "title": "ProposedUnit",
@@ -82,8 +79,8 @@
   "additionalProperties": false,
   "properties": {
     "schema_version": {
-      "const": "1.0",
-      "default": "1.0",
+      "const": "2.0",
+      "default": "2.0",
       "title": "Schema Version",
       "type": "string"
     },
@@ -100,8 +97,16 @@
       "title": "Units",
       "type": "array"
     },
+    "source_ownership": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "键必须与 Planning task 骨架中预填的 repo_id:path 完全一致；值必须引用 units[].unit_key。每个键在 JSON 对象中只能出现一次。",
+      "minProperties": 1,
+      "title": "Source Ownership",
+      "type": "object"
+    },
     "unresolved": {
-      "description": "通常必须为空。只有请求源码无法唯一归属或真实输入无法分配，因而无法生成有效 unit plan 时才填写；范围外文件、context_scope 依赖、后续研究、设计动机和共享状态说明不得写入。声称请求文件元数据缺失前，必须同时核对 planning metadata 的 owned_source_paths 和 files[].path。",
       "items": {
         "type": "string"
       },
@@ -111,7 +116,8 @@
   },
   "required": [
     "summary",
-    "units"
+    "units",
+    "source_ownership"
   ],
   "title": "PlanningResult",
   "type": "object"
