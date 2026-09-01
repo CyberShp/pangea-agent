@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from .branch_ids import assign_branch_ids
 from .languages import IGNORED_PARTS, LUA_SUFFIXES
 from .lua_resources import extract_lua_resource_signals
 from .lua_symbols import TreeSitterLuaUnavailableError, parse_lua_file
@@ -62,6 +63,11 @@ def build_lua_inventory(repositories: list[dict], module_scope: list[str]) -> di
                             "locations": parsed["parse_errors"],
                         }
                     )
+                branches = assign_branch_ids(
+                    repo_id,
+                    relative_path,
+                    parsed["branches"],
+                )
                 files.append(
                     {
                         "repo_id": repo_id,
@@ -75,7 +81,7 @@ def build_lua_inventory(repositories: list[dict], module_scope: list[str]) -> di
                         ),
                         "parse_errors": parsed["parse_errors"],
                         "functions": parsed["functions"],
-                        "branches": parsed["branches"],
+                        "branches": branches,
                         "preprocessor": [],
                         "types": [],
                         "calls": parsed["calls"],

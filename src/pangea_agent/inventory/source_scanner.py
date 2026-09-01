@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from .branch_ids import assign_branch_ids
 from .cpp_branches import extract_branches
 from .cpp_resources import extract_resource_signals
 from .cpp_symbols import TreeSitterUnavailableError, extract_functions, parse_cpp_file
@@ -88,6 +89,11 @@ def build_lightweight_inventory(repositories: list[dict], module_scope: list[str
                             "error": "tree-sitter reported syntax errors inside a function",
                             "locations": material_errors,
                         })
+                branches = assign_branch_ids(
+                    repo_id,
+                    relative_path,
+                    parsed["branches"],
+                )
                 files.append({
                     "repo_id": repo_id,
                     "path": relative_path,
@@ -98,7 +104,7 @@ def build_lightweight_inventory(repositories: list[dict], module_scope: list[str
                     "fallback_analysis": None if structural_complete else "raw_text",
                     "parse_errors": parsed["parse_errors"],
                     "functions": parsed["functions"],
-                    "branches": parsed["branches"],
+                    "branches": branches,
                     "preprocessor": parsed["preprocessor"],
                     "types": parsed["types"],
                     "calls": parsed["calls"],
