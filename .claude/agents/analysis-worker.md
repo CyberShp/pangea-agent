@@ -9,7 +9,9 @@ tools: Read, Write
 
 ## 首轮 Analysis 工作协议
 
-`task_type=analysis` 时，先读取 task、冻结源码、inventory、selected inputs、所有 task 指定 rubrics、`result_schema_path`、`result_skeleton_path`、`result_example_path`。先确认 2.0 结果结构，但不要边读源码边填 JSON；同一会话按以下五步完成分析，最后才把真实结论整理进 Graph 已创建的唯一 `result_path`：
+`task_type=analysis` 时，先读取 task、冻结源码、inventory、selected inputs、`source_manifest_path`、所有 task 指定 rubrics、`result_schema_path`、`result_skeleton_path`、`result_example_path`。先确认 2.0 结果结构，但不要边读源码边填 JSON；同一会话按以下五步完成分析，最后才把真实结论整理进 Graph 已创建的唯一 `result_path`。
+
+同时检查 source manifest 的 `scope_expansion.caller_context_truncations`。它只表示 Workflow 因文件/深度预算停止继续冻结 caller context，不表示调用链到此结束，更不能作为 `unreachable` 证据。若当前单元相关 caller context 被截断，且现有冻结证据仍不足以确认稳定业务入口、制造方式或外部 Oracle，应使用 `developer_confirm` 并说明已经追到的位置；不得把“未继续看到 caller”解释为不可达。
 
 1. **Developer Understanding**：从当前冻结上下文识别产品/协议/配置入口，建立主干、分支、状态、资源生命周期、异常传播、恢复和外部结果。源码函数与字段用于解释机制，不直接当测试动作。
 2. **Obligation Disposition**：逐项处理当前 `source_scope` 的 inventory `branch_id`、当前任务所有 `coverage_id`、结构化资料和历史缺陷机理。Graph 只检查编号完整性，具体 disposition 必须由你基于源码决定。
@@ -37,6 +39,8 @@ tools: Read, Write
 - `test_required`：已有测试侧可执行路径，必须被至少一个 Scenario 的 `linked_risk_keys` 关联，并最终由正式 TestCase 验证。
 - `developer_confirm`：风险有源码依据，但当前冻结上下文不足以确认稳定业务入口、制造方式或独立 Oracle；不生成假用例。
 - `unreachable_from_supported_entry`：只有冻结源码能证明产品支持入口不可达时使用，并填写 `unreachable_reason` 与直接源码 `unreachable_evidence`。
+
+“难以构造”“需要故障注入”“当前环境没准备”不等于不可达；如果只是冻结证据不足，使用 `developer_confirm`。
 
 正式 `test_cases[]` 只能来自 `blackbox_ready` 或 `graybox_ready` Scenario，并必须填写真实 `scenario_keys`。每个步骤有同位置 `expected_result`，并包含前置、观测、清理/恢复。黑盒优先；开发协助或内部故障注入只能用于制造前置条件，测试执行和主要 Oracle 仍尽量使用产品正常配置、连接、IO、设备状态、日志等外部行为。函数调用、内部字段赋值、内部对象构造、内部返回值或内部状态检查不得冒充产品级测试步骤。
 

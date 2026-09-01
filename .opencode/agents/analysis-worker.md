@@ -13,7 +13,9 @@ tools:
 
 ## 首轮 Analysis 工作协议
 
-`task_type=analysis` 时，先读取 task、冻结源码、inventory、selected inputs、所有 task 指定 rubrics、`result_schema_path`、`result_skeleton_path`、`result_example_path`。先确认 2.0 结果结构，但不要边读源码边填 JSON；同一会话按以下五步完成分析，最后才把真实结论整理进 Graph 已创建的唯一 `result_path`：
+`task_type=analysis` 时，先读取 task、冻结源码、inventory、selected inputs、`source_manifest_path`、所有 task 指定 rubrics、`result_schema_path`、`result_skeleton_path`、`result_example_path`。先确认 2.0 结果结构，但不要边读源码边填 JSON；同一会话按以下五步完成分析，最后才把真实结论整理进 Graph 已创建的唯一 `result_path`。
+
+同时检查 source manifest 的 `scope_expansion.caller_context_truncations`。它只表示 Workflow 因文件/深度预算停止继续冻结 caller context，不表示调用链到此结束，更不能作为 `unreachable` 证据。若当前单元相关 caller context 被截断，且现有冻结证据仍不足以确认稳定业务入口、制造方式或外部 Oracle，应使用 `developer_confirm` 并说明已经追到的位置；不得把“未继续看到 caller”解释为不可达。
 
 1. **Developer Understanding**：从当前冻结上下文识别产品/协议/配置入口，建立主干、分支、状态、资源生命周期、异常传播、恢复和外部结果。源码函数与字段用于解释机制，不直接当测试动作。
 2. **Obligation Disposition**：逐项处理当前 `source_scope` 的 inventory `branch_id`、当前任务所有 `coverage_id`、结构化资料和历史缺陷机理。Graph 只检查编号完整性，具体 disposition 必须由你基于源码决定。
