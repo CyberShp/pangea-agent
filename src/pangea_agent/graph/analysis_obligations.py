@@ -7,6 +7,7 @@ from pangea_agent.models.analysis import AnalysisTask, UnitSemanticResult
 
 
 READY_SCENARIO_STATES = {"blackbox_ready", "graybox_ready"}
+SCENARIO_MAPPED_DISPOSITIONS = {"scenario_mapped", "merged"}
 
 
 def analysis_obligations(
@@ -22,6 +23,12 @@ def analysis_obligations(
     known_risks = {item.risk_key for item in result.risks}
     scenarios_by_key = {item.scenario_key: item for item in result.scenarios}
     known_scenarios = set(scenarios_by_key)
+    branch_decisions_by_id = {
+        item.branch_id: item for item in result.branch_decisions
+    }
+    coverage_decisions_by_id = {
+        item.coverage_id: item for item in result.coverage_decisions
+    }
     expected_branches = _expected_branch_ids(task, inventory)
     expected_coverage = {
         str(item["coverage_id"])
@@ -68,6 +75,16 @@ def analysis_obligations(
             decision.scenario_keys,
             known_scenarios,
         )
+        if decision.disposition in SCENARIO_MAPPED_DISPOSITIONS:
+            for scenario_key in decision.scenario_keys:
+                scenario = scenarios_by_key.get(scenario_key)
+                if scenario is not None and decision.branch_id not in scenario.branch_ids:
+                    _add(
+                        issues,
+                        "branch_scenario_mismatch",
+                        decision.branch_id,
+                        f"BranchDecision {decision.branch_id} 指向 Scenario {scenario_key}，但该 Scenario.branch_ids 未反向包含此 branch_id",
+                    )
 
     for decision in result.coverage_decisions:
         _scenario_reference_issues(
@@ -78,6 +95,16 @@ def analysis_obligations(
             decision.scenario_keys,
             known_scenarios,
         )
+        if decision.disposition in SCENARIO_MAPPED_DISPOSITIONS:
+            for scenario_key in decision.scenario_keys:
+                scenario = scenarios_by_key.get(scenario_key)
+                if scenario is not None and decision.coverage_id not in scenario.coverage_ids:
+                    _add(
+                        issues,
+                        "coverage_scenario_mismatch",
+                        decision.coverage_id,
+                        f"CoverageDecision {decision.coverage_id} 指向 Scenario {scenario_key}，但该 Scenario.coverage_ids 未反向包含此 coverage_id",
+                    )
 
     for scenario in result.scenarios:
         if scenario.readiness in READY_SCENARIO_STATES:
@@ -114,6 +141,21 @@ def analysis_obligations(
                     scenario.scenario_key,
                     f"Scenario {scenario.scenario_key} 引用了当前单元不存在的 branch_id={branch_id}",
                 )
+                continue
+            decision = branch_decisions_by_id.get(branch_id)
+            if (
+                decision is not None
+                and (
+                    decision.disposition not in SCENARIO_MAPPED_DISPOSITIONS
+                    or scenario.scenario_key not in decision.scenario_keys
+                )
+            ):
+                _add(
+                    issues,
+                    "scenario_branch_mismatch",
+                    scenario.scenario_key,
+                    f"Scenario {scenario.scenario_key} 声明覆盖 branch_id={branch_id}，但对应 BranchDecision 未反向映射到该 Scenario",
+                )
         for coverage_id in scenario.coverage_ids:
             if coverage_id not in expected_coverage:
                 _add(
@@ -121,6 +163,21 @@ def analysis_obligations(
                     "unknown_coverage",
                     scenario.scenario_key,
                     f"Scenario {scenario.scenario_key} 引用了当前单元不存在的 coverage_id={coverage_id}",
+                )
+                continue
+            decision = coverage_decisions_by_id.get(coverage_id)
+            if (
+                decision is not None
+                and (
+                    decision.disposition not in SCENARIO_MAPPED_DISPOSITIONS
+                    or scenario.scenario_key not in decision.scenario_keys
+                )
+            ):
+                _add(
+                    issues,
+                    "scenario_coverage_mismatch",
+                    scenario.scenario_key,
+                    f"Scenario {scenario.scenario_key} 声明覆盖 coverage_id={coverage_id}，但对应 CoverageDecision 未反向映射到该 Scenario",
                 )
         for risk_key in scenario.linked_risk_keys:
             if risk_key not in known_risks:
@@ -300,7 +357,7 @@ def _scenario_reference_issues(
     scenario_keys: list[str],
     known_scenarios: set[str],
 ) -> None:
-    if disposition in {"scenario_mapped", "merged"} and not scenario_keys:
+    if disposition in SCENARIO_MAPPED_DISPOSITIONS and not scenario_keys:
         _add(
             issues,
             "missing_scenario_link",
