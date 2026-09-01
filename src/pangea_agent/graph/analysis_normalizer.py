@@ -6,6 +6,7 @@ from copy import deepcopy
 from typing import Any
 
 from pangea_agent.graph.analysis_obligations import analysis_obligations
+from pangea_agent.graph.result_contract import validate_unit_result
 from pangea_agent.models.analysis import AnalysisTask, UnitSemanticResult
 
 
@@ -37,6 +38,13 @@ def normalize_analysis_result(
         if len(issues) > 24:
             detail += f"\n- ... 另有 {len(issues) - 24} 项"
         raise ValueError(f"Analysis obligations incomplete:\n{detail}")
+
+    integrity_issues = validate_unit_result(task, result, dict(selected_inputs))
+    if integrity_issues:
+        detail = "\n".join(f"- {item}" for item in integrity_issues[:24])
+        if len(integrity_issues) > 24:
+            detail += f"\n- ... 另有 {len(integrity_issues) - 24} 项"
+        raise ValueError(f"Analysis deterministic integrity incomplete:\n{detail}")
     return result
 
 
