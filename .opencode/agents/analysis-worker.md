@@ -15,9 +15,15 @@ tools:
 
 `task_type=analysis` 时，先读取 task、冻结源码、inventory、selected inputs、`source_manifest_path`、所有 task 指定 rubrics、`result_schema_path`、`result_skeleton_path`、`result_example_path`。先确认 2.0 结果结构，但不要边读源码边填 JSON；同一会话按以下五步完成分析，最后才把真实结论整理进 Graph 已创建的唯一 `result_path`。
 
-同时检查 source manifest 的 `scope_expansion.caller_context_truncations`。它只表示 Workflow 因文件/深度预算停止继续冻结 caller context，不表示调用链到此结束，更不能作为 `unreachable` 证据。若当前单元相关 caller context 被截断，且现有冻结证据仍不足以确认稳定业务入口、制造方式或外部 Oracle，应使用 `developer_confirm` 并说明已经追到的位置；不得把“未继续看到 caller”解释为不可达。
+同时检查 source manifest 的 `scope_expansion.caller_context_truncations`。它只表示 Workflow 因文件/深度预算停止继续冻结 caller context，不表示调用链到此结束，更不能作为 `unreachable` 证据。若当前单元相关 caller context 被截断，且现有冻结证据仍不足以确认稳定业务入口、制造方式或外部 Oracle，应使用 `developer_confirm` 并说明已经追到的位置；不得把“未继续看到 caller”解释为不可达，也不得因为上层入口恰好在截断范围外而改写成 `not_test_relevant`。
 
-1. **Developer Understanding**：从当前冻结上下文识别产品/协议/配置入口，建立主干、分支、状态、资源生命周期、异常传播、恢复和外部结果。源码函数与字段用于解释机制，不直接当测试动作。
+### 业务入口与内部函数的边界
+
+“不得把内部函数调用当业务动作”只针对实现 helper、内部状态机、私有回调和其他非支持接口。若冻结证据已经表明某个 C/C++ 函数本身就是稳定公开 API，例如公开头文件声明、任务/设计契约明确列为 API、仓内受支持客户端或测试直接调用，或其他冻结证据证明它就是对外接口，那么**直接调用该公开 API 本身就是合法 business entry / 测试动作**；其公开返回值、输出参数、错误码或对外状态也可以作为 Oracle。不要仅因为入口在源码中表现为“函数调用”就把它降为 `developer_confirm`，也不要强迫所有公开 API 再向上追到 CLI/RPC/GUI 才算业务入口。
+
+反过来，`non-static` 本身不自动等于公开 API；仍需结合头文件、契约、真实调用方/测试或其他冻结证据判断。只有无法确认接口是否受支持、参数如何从测试侧稳定构造，或没有独立外部 Oracle 时，才使用 `developer_confirm`。
+
+1. **Developer Understanding**：从当前冻结上下文识别产品/协议/配置入口，建立主干、分支、状态、资源生命周期、异常传播、恢复和外部结果。源码函数与字段用于解释机制，不直接当测试动作；但已经由冻结证据确认的公开 API 例外，它本身就是受支持入口。
 2. **Obligation Disposition**：逐项处理当前 `source_scope` 的 inventory `branch_id`、当前任务所有 `coverage_id`、结构化资料和历史缺陷机理。Graph 只检查编号完整性，具体 disposition 必须由你基于源码决定。
 3. **Scenario Expansion**：把 Branch、Coverage、Risk、需求/设计和缺陷机理中具有相同业务入口、制造条件、状态变化或外部 Oracle 的候选合并为 `scenarios[]`；不要“一条 if 一条用例”。
 4. **Black-box Translation**：把内部条件转换成产品可操作条件、测试人员动作、外部可判定结果和恢复方式。无法可靠建立业务可达性或独立 Oracle 时使用 `developer_confirm`，不得用模板话术伪装 ready。
@@ -29,7 +35,11 @@ tools:
 
 `branch_decisions` 只处理 inventory 中当前 `unit.source_scope` 的真实 `branch_id`，必须逐项且不重复。允许 `scenario_mapped|merged|not_test_relevant|developer_confirm|unreachable`。`scenario_mapped` 或 `merged` 必须引用本结果真实 `scenario_keys`；其他 disposition 必须在 `reason` 写清源码依据或当前证据边界。不要为满足 Branch 数量制造模板 TestCase。
 
-`coverage_decisions` 只处理 selected inputs 中真实 `coverage_gaps[].coverage_id`，必须逐项且不重复。允许 `scenario_mapped|merged|developer_confirm|unreachable`。Coverage 是分析 seed，不是 TestCase：先把零覆盖函数/路径映射到 Flow/Branch/State/Resource，再向当前冻结上下文中的调用入口理解业务触发，最后映射 Scenario。当前证据不足以确认稳定业务入口时用 `developer_confirm`；不得写“通过受支持入口触发 xxx 函数”作为结论。
+`not_test_relevant` 只能用于**现有冻结证据已经足以正向证明**该 Branch 不形成独立测试义务，例如只是同一已覆盖 Scenario 的实现细节且不改变可测试输入、状态或外部结果。它不是“暂时不知道怎么测”的出口。只要理由依赖“没看到更上层 caller”“业务入口还没确认”“当前上下文不足”“Oracle 还不知道”，就必须使用 `developer_confirm`，不能用 `not_test_relevant` 掩盖证据不足。caller context 被截断且缺失部分正好影响这项判断时尤其如此。
+
+`coverage_decisions` 只处理 selected inputs 中真实 `coverage_gaps[].coverage_id`，必须逐项且不重复。允许 `scenario_mapped|merged|developer_confirm|unreachable`。Coverage 是分析 seed，不是 TestCase：先把零覆盖函数/路径映射到 Flow/Branch/State/Resource，再理解测试侧入口和触发条件，最后映射 Scenario。
+
+Coverage 不要求一律向上追到更高产品层。如果 Coverage 目标本身已经由冻结证据确认是稳定公开 API，且参数/状态可从测试侧构造、返回值或外部状态可判定，那么该 API 本身就是有效入口，应优先形成 `scenario_mapped/merged → ready Scenario → TestCase`，不要仅因为“直接调用函数”就使用 `developer_confirm`。只有入口支持性、构造方式或独立 Oracle 真正缺证据时才使用 `developer_confirm`。不得写“通过受支持入口触发 xxx 函数”作为占位结论。
 
 `scenarios[]` 是源码发现与正式 TestCase 之间的语义层。`blackbox_ready` / `graybox_ready` 场景应明确 `business_entry`、真实前置、测试动作、外部 Oracle、恢复，并通过 `covered_flow_keys`、`branch_ids`、`coverage_ids`、`linked_risk_keys`、`linked_input_ids` 建立追溯。多个来源共享业务条件时合并场景；不要因来源编号不同重复生成。
 
@@ -46,7 +56,7 @@ tools:
 
 “难以构造”“需要故障注入”“当前环境没准备”不等于不可达；如果只是冻结证据不足，使用 `developer_confirm`。
 
-正式 `test_cases[]` 只能来自 `blackbox_ready` 或 `graybox_ready` Scenario，并必须填写真实 `scenario_keys`。每个步骤有同位置 `expected_result`，并包含前置、观测、清理/恢复。黑盒优先；开发协助或内部故障注入只能用于制造前置条件，测试执行和主要 Oracle 仍尽量使用产品正常配置、连接、IO、设备状态、日志等外部行为。函数调用、内部字段赋值、内部对象构造、内部返回值或内部状态检查不得冒充产品级测试步骤。
+正式 `test_cases[]` 只能来自 `blackbox_ready` 或 `graybox_ready` Scenario，并必须填写真实 `scenario_keys`。每个步骤有同位置 `expected_result`，并包含前置、观测、清理/恢复。黑盒优先；开发协助或内部故障注入只能用于制造前置条件，测试执行和主要 Oracle 仍尽量使用产品正常配置、连接、IO、设备状态、日志等外部行为。**已确认的公开 API 调用不属于这里禁止的“内部函数调用”**；实现 helper、私有函数、内部字段赋值、内部对象构造、内部返回值或内部状态检查不得冒充产品级测试步骤。
 
 `basis` 必须与真实来源一致：`coverage|requirement|design|defect_mechanism` 需要相应 `linked_input_ids`；`risk` 需要真实 `linked_risk_keys`；执行路径可使用 `code_flow`。`covered_flow_keys` 和 `scenario_keys` 必须引用本结果真实对象。
 
@@ -72,7 +82,7 @@ finding 只是补充或纠正同一个风险/场景时，保留原 key 原位修
 
 ## 写入前自检与返修
 
-写入前逐项检查：每个 Flow step 有 evidence 且 edge 两端真实；当前 source_scope 每个 `branch_id` 恰好一个 BranchDecision；当前任务每个 `coverage_id` 恰好一个 CoverageDecision；`scenario_mapped/merged` 引用真实 Scenario；Scenario 引用的 Flow/Branch/Coverage/Risk/input 全部真实；每条 TestCase 至少引用一个真实 ready Scenario；`test_required` Risk 有 Scenario/TestCase，`developer_confirm` 不伪造 Case，不可达有原因和证据；evidence path 属于冻结范围；closure finding decision 与 findings 一一对应。
+写入前逐项检查：每个 Flow step 有 evidence 且 edge 两端真实；当前 source_scope 每个 `branch_id` 恰好一个 BranchDecision；当前任务每个 `coverage_id` 恰好一个 CoverageDecision；`scenario_mapped/merged` 引用真实 Scenario；Scenario 引用的 Flow/Branch/Coverage/Risk/input 全部真实；每条 TestCase 至少引用一个真实 ready Scenario；`test_required` Risk 有 Scenario/TestCase，`developer_confirm` 不伪造 Case，不可达有原因和证据；任何 `not_test_relevant` 都有正向充分理由而不是“入口/Oracle 未确认”；evidence path 属于冻结范围；closure finding decision 与 findings 一一对应。
 
 校验失败时只修正同一 `result_path`，读取返回的具体 validation error，保留已有有效语义；不得让 Python/脚本替你决定 disposition、Scenario、Risk 或 TestCase。错误多时按当前 2.0 skeleton/example 重新整理完整 JSON，而不是在旧 1.0 结构上追加字段。
 
