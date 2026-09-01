@@ -25,6 +25,8 @@ Review finding 的 `category` 只能使用当前 schema 固定枚举。资源泄
 
 supported-entry 缺口本身不建立独立 `category=risk` finding；它没有产品运行时 system result。若它只影响一条真实 Risk 的测试处置，就写进该 Risk finding 的 `required_check`；若没有独立的产品 Risk、流程遗漏或 Oracle 缺陷，则不为这项证据缺口单独建 finding。SourceEvidence observation 只描述对应源码行能证明的事实，不能把 source manifest、Analysis 字段或 task 范围伪装成源码 observation。
 
+同一条 source-proven Risk 的 supported-entry、制造方式和 Oracle 缺口只合并进这一条 Risk finding 的 `required_check`，不再拆成第二条 `risk` 或 `test_oracle` finding。只有存在与该 Risk 不同的独立产品流程或外部验证点缺陷时，才另建 finding。
+
 风险 finding 至少满足一种根基：结构化输入中的明确契约；冻结源码中的真实调用方已观察到错误结果；或源码自身即可证明的崩溃、未定义行为、越界、数据破坏/丢失、资源泄漏、竞态或安全边界破坏。都不满足时不建立 risk finding。
 
 一旦盲审已经识别出冻结源码可直接证明的未定义行为、越界、数据破坏、资源泄漏或竞态，且没有正向不可达证据，就必须输出 `category=risk` finding；缺少受支持入口只表示最终 Risk 应为 `developer_confirm`，不能在结论中写“看到了 UB 但无风险/六维无信号”。算术溢出等未定义行为至少属于“功能与状态”风险信号。
@@ -47,6 +49,8 @@ supported-entry 缺口本身不建立独立 `category=risk` finding；它没有�
 
 裁决对象是“Analysis 是否遗漏/误处置”，不是“Independent 描述的源码事实是否为真”。源码事实为真、但 Analysis 已有等价 Risk/Flow/Scenario/decision 且处置正确时，必须 `dismissed`；不能因为 finding 的源码证据成立就 `confirmed`。每个 `confirmed` conclusion 必须明确指出 Analysis 中哪个 Agent-owned 字段当前错误、Closure 要把它改成什么；无法指出具体字段变化时不得 confirmed。
 
+`dismissed.conclusion` 可以引用 Analysis 的 exact object/key/字段说明“已经覆盖”；`evidence[].observation` 只记录用于核对等价覆盖的对应源码事实。只有源码或冻结契约真正推翻 finding 时才称为反证；不能把 Analysis 字段、source manifest 或 task 范围写进源码 observation。
+
 裁决按“入口/触发条件 → 内部机制 → 外部结果 → 证据区间”与首轮结果比对。名称或措辞不同但实际是同一状态/资源、同一触发和同一结果时，不确认成第二条遗漏。
 
 ### 处置逃生口必须复核
@@ -60,7 +64,9 @@ supported-entry 缺口本身不建立独立 `category=risk` finding；它没有�
 
 Comparison 还必须独立核对冻结源码中显式可见的 C/C++ 未定义行为、越界、数据破坏、资源泄漏和竞态是否被 Analysis 记录为 Risk。源码已直接证明且无正向不可达证据、Analysis 却漏 Risk 时，新增 `category=risk` finding；不得因为 Independent findings 为空或入口仍待确认就跳过。
 
-在 dismiss 已被 Analysis 覆盖的 UB finding 前，检查 Analysis 的 summary、Risk、Scenario、evidence 和关联关系：未冻结 ABI 时出现固定十进制 `int` 边界，或普通构建 UB 被写成必然返回，新增一条 `incorrect_conclusion` 要求改为符号边界和“无稳定 Oracle”；Scenario 若链接该 Risk，却没有在自身 actions/external_oracles 保留 Risk trigger 与条件性观测，新增一条 `incorrect_conclusion` 要求修正或拆分风险场景。
+在 dismiss 已被 Analysis 覆盖的 source-proven Risk finding 前，检查 Analysis 的 summary、Risk、Scenario、evidence 和关联关系：Scenario 若链接该 Risk，必须在自身 preconditions/actions 精确保留 Risk trigger 的关键边界、在 external_oracles 保留条件性观测。trigger 只出现在 title/evidence，或把具体边界泛化成更宽输入域，都不算已承载；即使 Scenario 是 `developer_confirm` 也必须新增 `incorrect_conclusion`，要求修正或移除空壳 Scenario。Scenario 同时链接 Branch 时还要真实覆盖该 Branch 条件/结果，否则拆分或移除 Branch 引用。对于 UB，未冻结 ABI 时出现固定十进制 `int` 边界，或普通构建结果被写成必然返回，还要新增 `incorrect_conclusion`，要求改为符号边界和“无稳定 Oracle”。
+
+同时检查 Analysis 顶层 `unresolved`：已经由 Branch/Coverage/Risk/Scenario `developer_confirm` 表达的同源缺口不得重复；首轮条目必须引用本 task 真实 selected input 或 Coverage ID，Closure 条目才可引用 confirmed finding_key。违反时新增 `incorrect_conclusion`，要求删除或写回对应 disposition。
 
 逐条核对 TestCase 直接填写的 Coverage ID：该 Case 的实际动作和预期必须真的执行并判定对应函数或分支，且 `basis` 包含 `coverage`。多个 Case 共用一个 Scenario 时，不得据此把 Scenario 的全部 Coverage gap 视为每条 Case 都已覆盖。
 
@@ -80,6 +86,6 @@ Comparison 新建 `coverage_gap` finding 时同样必须链接 affected unit 拥
 
 新增 finding 前先逐字核对 Analysis 对应字段：若所要求的触发值、动作、条件或前提已经明确存在，只是措辞顺序不同，不得创建 finding。Analysis 已明确把 sanitizer 观测写成“仅在启用相应编译选项时”的条件性结果时，不得仅因冻结范围没有构建文件而再报一次“未说明构建前提”；应只指出仍然真实存在的错误，例如把 ASan 单独当作 signed-overflow 检测器。
 
-写入前检查：finding_key 不重复；affected_unit_ids 来自 unit plan；Independent 没有 `blackbox_translation`；每条 `coverage_gap` finding 都直连 affected unit 的真实 Coverage ID；新 finding evidence 非空且在冻结范围；Comparison decision 集合与 Independent finding 集合完全相等；dismissed 有反证；confirmed/unresolved 不重复抄 evidence；私有函数冒充 ready business entry 的主要修改对象是 Scenario/TestCase 时使用一条 `blackbox_translation`，不再建同根因 `incorrect_conclusion`；存在 caller truncation 时已复核相关 disposition 和所有 ready Scenario/TestCase。若 settle 返回错误，只修正同一 `result_path`，不把 Review 裁决交给 Python 或其他 Agent。
+写入前检查：finding_key 不重复；同一 Risk 的入口/制造/Oracle 缺口没有拆成重复 findings；affected_unit_ids 来自 unit plan；Independent 没有 `blackbox_translation`；每条 `coverage_gap` finding 都直连 affected unit 的真实 Coverage ID；新 finding evidence 非空且在冻结范围，observation 只写该源码行事实；Comparison decision 集合与 Independent finding 集合完全相等；dismissed 有反证；confirmed/unresolved 不重复抄 evidence；dismiss UB 前已检查所有关联 Scenario 的精确 trigger/oracle/Branch 动作以及顶层 unresolved；私有函数冒充 ready business entry 的主要修改对象是 Scenario/TestCase 时使用一条 `blackbox_translation`，不再建同根因 `incorrect_conclusion`；存在 caller truncation 时已复核相关 disposition 和所有 ready Scenario/TestCase。若 settle 返回错误，只修正同一 `result_path`，不把 Review 裁决交给 Python 或其他 Agent。
 
 最终回复只用一行 `完成 action_id=<task.action_id>`；历史 task 没有 action_id 时才只回复“完成”。

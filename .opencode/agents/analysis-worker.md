@@ -68,6 +68,8 @@ Coverage 不要求一律向上追到更高产品层。如果 Coverage 目标本�
 
 Scenario 只有在自身 actions 明确包含 Risk trigger、external_oracles 对应该 Risk 可用的观测方式时，才填写该 `linked_risk_key`。`developer_confirm` Risk 不强制生成 Scenario；若当前无法形成真实动作或稳定 Oracle，就让 Risk 自身保持 `developer_confirm` 且不建立空壳 Scenario。若保留风险 Scenario，它必须独立保存已经确认的触发和条件性观测，不得挂到只验证普通输入或其他 Branch 的泛化 Scenario 上。
 
+具体判断：若 `business_entry`、actions、external_oracles 实际都只能写“待确认”，不要创建 Scenario；`developer_confirm` Branch 的 `scenario_keys=[]`、Risk 单独保持 `developer_confirm` 都是完整结果。若仍保留关联 Risk 的 developer-confirm Scenario，actions/preconditions 必须精确保留 Risk trigger 的关键边界（例如 `INT_MAX`，不能泛化成“非负整数”），external_oracles 必须精确保留已经确认的条件性观测。Scenario 若填写 `branch_ids`，其 actions/oracles 还必须真实覆盖自己声明的分支 outcome 及结果；单个 Scenario 不强制同时覆盖 true/false，但不能用只走另一侧的动作声称覆盖该 outcome。
+
 没有冻结目标 ABI 时，summary、Risk、Scenario 和 evidence 全部只写 `INT_MAX` 等类型边界符号，不得附加 `2147483647` 等固定十进制位宽。普通构建下的 UB 只能写“没有稳定、可约定的产品 Oracle”，不能写成必然返回某个“不可预测值”；sanitizer 观测必须明确以冻结构建启用对应 UBSan/signed-overflow 检查为前提。
 
 正式 `test_cases[]` 只能来自 `blackbox_ready` 或 `graybox_ready` Scenario，并必须填写真实 `scenario_keys`。每个步骤有同位置 `expected_result`，并包含前置、观测、清理/恢复。黑盒优先；开发协助或内部故障注入只能用于制造前置条件，测试执行和主要 Oracle 仍尽量使用产品正常配置、连接、IO、设备状态、日志等外部行为。**已确认的公开 API 调用不属于这里禁止的“内部函数调用”**；实现 helper、私有函数、内部字段赋值、内部对象构造、内部返回值或内部状态检查不得冒充产品级测试步骤。
@@ -83,6 +85,8 @@ Scenario 只有在自身 actions 明确包含 Risk trigger、external_oracles �
 Lua 分析先使用 inventory 的 `requires`、`module_exports`、`state_writes`、`protected_calls`、`coroutine_calls` 建立 module/状态/错误/协程检查清单，再回冻结源码核实。external/dynamic/ambiguous require 只有确实阻断当前判断时才形成待确认项。
 
 每个 `flow.steps[]` 必须有直接源码 `evidence`；edge 两端只引用同一 Flow 已定义的 step。Flow、input/mechanism decision、risk、scenario 的 `SourceEvidence.path` 必须从当前 task 的 `evidence_scope.allowed_paths` 原样选择；`repo_id` 由 Workflow 补充。不得根据函数或模块名称自行补目录层级。
+
+`SourceEvidence.observation` 只描述对应源码行直接证明的事实。source manifest 的 truncation、task 范围、Analysis 字段或“没有其他文件”等范围结论写在 conclusion/reason，不得伪装成某一行源码 observation。
 
 ## selected inputs 与 unresolved
 
@@ -102,7 +106,7 @@ finding 只是补充或纠正同一个风险/场景时，保留原 key 原位修
 
 ## 写入前自检与返修
 
-写入前逐项检查：每个 Flow step 有 evidence 且 edge 两端真实；当前 source_scope 每个 `branch_id` 恰好一个 BranchDecision；当前任务每个 `coverage_id` 恰好一个 CoverageDecision；`scenario_mapped/merged` 引用真实 Scenario；Scenario 引用的 Flow/Branch/Coverage/Risk/input 全部真实，且每个 linked Risk 的 trigger/Oracle 都在该 Scenario 自身 actions/external_oracles 中；每条 TestCase 至少引用一个真实 ready Scenario；`test_required` Risk 有 Scenario/TestCase，`developer_confirm` 不伪造 Case，不可达有原因和证据；任何 `not_test_relevant` 都有正向充分理由而不是“入口/Oracle 未确认”；未冻结 ABI 时所有字段都没有固定十进制 `int` 边界，普通构建 UB 没有被写成必然返回；evidence path 属于冻结范围；closure finding decision 与 findings 一一对应。
+写入前逐项检查：每个 Flow step 有 evidence 且 edge 两端真实；当前 source_scope 每个 `branch_id` 恰好一个 BranchDecision；当前任务每个 `coverage_id` 恰好一个 CoverageDecision；`scenario_mapped/merged` 引用真实 Scenario；Scenario 引用的 Flow/Branch/Coverage/Risk/input 全部真实，且每个 linked Risk 的 trigger/Oracle 都在该 Scenario 自身 actions/external_oracles 中；每个填写 `branch_ids` 的 Scenario 都真实覆盖对应分支条件和结果，全是“待确认”的候选没有保留为空壳 Scenario；每条 TestCase 至少引用一个真实 ready Scenario；`test_required` Risk 有 Scenario/TestCase，`developer_confirm` 不伪造 Case，不可达有原因和证据；任何 `not_test_relevant` 都有正向充分理由而不是“入口/Oracle 未确认”；顶层 unresolved 没有重复 developer_confirm，首轮只引用本 task 真实 selected input 或 Coverage ID，Closure 才可引用 confirmed finding_key；未冻结 ABI 时所有字段都没有固定十进制 `int` 边界，普通构建 UB 没有被写成必然返回；evidence path 属于冻结范围；closure finding decision 与 findings 一一对应。
 
 校验失败时只修正同一 `result_path`，读取返回的具体 validation error，保留已有有效语义；不得让 Python/脚本替你决定 disposition、Scenario、Risk 或 TestCase。错误多时按当前 2.0 skeleton/example 重新整理完整 JSON，而不是在旧 1.0 结构上追加字段。
 
