@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from pathlib import Path, PurePosixPath
 
+from .cpp_symbols import externally_callable_definitions
+
 SOURCE_SUFFIXES = {".c", ".cc", ".cpp", ".cxx"}
 HEADER_SUFFIXES = {".h", ".hpp", ".hh"}
 CODE_SUFFIXES = SOURCE_SUFFIXES | HEADER_SUFFIXES
@@ -171,10 +173,6 @@ def _transitive_caller_context(
         relative: set(_CALL_RE.findall(text))
         for relative, text in texts.items()
     }
-    definitions_by_path = {
-        relative: _externally_callable_definitions(text)
-        for relative, text in texts.items()
-    }
     candidate_paths = sorted(
         relative
         for relative in texts
@@ -219,7 +217,10 @@ def _transitive_caller_context(
                     "path": relative,
                     "reason": f"caller_depth_{depth}:{','.join(sorted(calls)[:5])}",
                 })
-                new_symbols = definitions_by_path.get(relative, set()) - reachable_symbols
+                new_symbols = (
+                    externally_callable_definitions(root / relative)
+                    - reachable_symbols
+                )
                 next_frontier.update(new_symbols)
                 reachable_symbols.update(new_symbols)
 
@@ -248,16 +249,6 @@ def _transitive_caller_context(
             })
 
     return records, truncations
-
-
-def _externally_callable_definitions(text: str) -> set[str]:
-    symbols: set[str] = set()
-    for match in _DEF_RE.finditer(text):
-        name = match.group(1)
-        declaration = match.group(0).split("(", 1)[0]
-        if name not in COMMON_FUNCTIONS and not re.search(r"\bstatic\b", declaration):
-            symbols.add(name)
-    return symbols
 
 
 def _iter_files(root: Path, suffixes: set[str]):
@@ -422,11 +413,8 @@ def _exported_symbols(paths, domain_terms: tuple[str, ...]) -> set[str]:
     symbols: set[str] = set()
     for path in paths:
         text = path.read_text(encoding="utf-8", errors="replace")
-        for match in _DEF_RE.finditer(text):
-            name = match.group(1)
-            declaration = match.group(0).split("(", 1)[0]
-            if name not in COMMON_FUNCTIONS and not re.search(r"\bstatic\b", declaration):
-                symbols.add(name)
+        if path.suffix.lower() in SOURCE_SUFFIXES:
+            symbols.update(externally_callable_definitions(path))
         if path.suffix.lower() in HEADER_SUFFIXES:
             for match in _DECL_RE.finditer(text):
                 name = match.group(1)
