@@ -4,7 +4,7 @@
   "findings": [
     {
       "finding_key": "<唯一 finding_key>",
-      "category": "<missed_flow|document_delta|coverage_gap|defect_mechanism|risk|test_oracle|incorrect_conclusion>",
+      "category": "<missed_flow|document_delta|coverage_gap|defect_mechanism|risk|test_oracle|incorrect_conclusion|blackbox_translation>",
       "affected_unit_ids": ["<unit_id>"],
       "linked_input_ids": [],
       "summary": "<发现摘要>",
