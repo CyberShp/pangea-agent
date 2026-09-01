@@ -30,6 +30,8 @@
 
 “正常防御性分支”“返回设计内错误码”“没有形成缺陷/Risk”都不等于 `not_test_relevant`。Branch 是否形成测试义务，要看它是否对应可构造的不同输入/状态或不同外部结果；Risk 是否成立是另一项判断。
 
+返回不同错误码、状态或输出的输入校验分支本身具有可区分结果，不是纯实现细节。若冻结证据已经证明受支持入口，应映射/合并到真实 Scenario；若 caller truncation 导致受支持入口尚未确认，应使用 `developer_confirm`。覆盖相反条件的 Scenario 不能冒充覆盖当前 Branch；只有该 Scenario 的动作确实包含两侧条件、`branch_ids` 反向包含当前 `branch_id`，BranchDecision 才能写 `merged/scenario_mapped`。
+
 `coverage_decisions` 只处理 selected inputs 中真实 `coverage_gaps[].coverage_id`，必须逐项且不重复。允许 `scenario_mapped|merged|developer_confirm|unreachable`。Coverage 是分析 seed，不是 TestCase：先把零覆盖函数/路径映射到 Flow/Branch/State/Resource，再理解测试侧入口和触发条件，最后映射 Scenario。
 
 Coverage 不要求一律向上追到更高产品层。如果 Coverage 目标本身已经由冻结证据确认是稳定公开 API，且参数/状态可从测试侧构造、返回值或外部状态可判定，那么该 API 本身就是有效入口，应优先形成 `scenario_mapped/merged → ready Scenario → TestCase`，不要仅因为“直接调用函数”就使用 `developer_confirm`。只有入口支持性、构造方式或独立 Oracle 真正缺证据时才使用 `developer_confirm`。不得写“通过受支持入口触发 xxx 函数”作为占位结论。
@@ -60,6 +62,8 @@ Coverage 不要求一律向上追到更高产品层。如果 Coverage 目标本�
 冻结风险前按 `analysis_language` 校验真实求值和错误传播。C/C++ 遵守短路求值、整数真假值、前置返回和入口边界；Lua 遵守只有 `false`/`nil` 为假、`and`/`or` 返回操作数、缺失字段得到 `nil`、`pcall`/`xpcall` 传播。没有契约或可证外部错误结果时，实现策略差异不是缺陷。
 
 C/C++ 的 undefined behavior（未定义行为）只证明程序结果不可依赖，不能自行翻译成环绕值、`INT_MIN`、固定返回码、固定日志或固定状态。除非冻结的构建参数、运行时检查器或产品契约明确规定了可观测结果，否则 Risk/Scenario/TestCase 应保留为不可依赖行为或 `developer_confirm`，不得声称“实际返回某个确定值”。
+
+私有 `.c` 中的 `extern`、non-static 定义和跨文件调用只能用于证明内部路径可达。不得在 Risk `trigger/evidence`、Scenario `business_entry` 或总结中据此写“公开 API”“受支持入口”或“测试人员可直接调用”；缺少公开头文件、契约或受支持客户端/测试时，入口仍为待确认。
 
 Lua 分析先使用 inventory 的 `requires`、`module_exports`、`state_writes`、`protected_calls`、`coroutine_calls` 建立 module/状态/错误/协程检查清单，再回冻结源码核实。external/dynamic/ambiguous require 只有确实阻断当前判断时才形成待确认项。
 

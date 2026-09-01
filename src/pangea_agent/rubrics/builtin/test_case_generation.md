@@ -67,7 +67,11 @@ Inventory 中属于当前 `source_scope` 的每个 `branch_id` 都必须有且�
 
 “正常防御性分支”“返回设计内错误码”“没有形成缺陷/Risk”都不自动等于 `not_test_relevant`。Branch 是否形成测试义务，要看它是否带来可构造的不同输入/状态或不同外部结果；这与是否建立 Risk 是两项独立判断。
 
+输入校验 Branch 若返回不同错误码、状态或输出，就具有可区分结果，不是纯实现细节。受支持入口已证明时映射/合并真实 Scenario；caller truncation 使入口未确认时使用 `developer_confirm`。不能用只覆盖相反条件的 Scenario 声称当前 Branch 已覆盖；`merged/scenario_mapped` 必须有 Scenario `branch_ids` 反向引用，并由动作实际覆盖对应条件。
+
 caller truncation 不只约束 `not_test_relevant|developer_confirm|unreachable`，也约束乐观的 `scenario_mapped|merged` 和 ready Scenario/TestCase。若所谓业务入口只由私有 `.c` 的声明、跨文件调用或可链接性支撑，而缺失 caller 可能包含真正产品入口，就不能直接声明 ready；冻结证据不足时使用 `developer_confirm`。
+
+私有 `.c` 的 `extern`、non-static 或跨文件调用只可作为内部可达性证据，不得在 Risk trigger/evidence、Scenario business entry 或 Review finding 中改称公开 API、受支持入口或测试人员可直接调用。
 
 一个 Branch 不等于一个 TestCase。多个 Branch 可以汇聚到同一 Scenario；禁止为满足数量而“一条 if 一条模板用例”。
 

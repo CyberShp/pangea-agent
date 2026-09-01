@@ -24,6 +24,8 @@ Review finding 的 `category` 只能使用当前 schema 固定枚举。资源泄
 
 开始 Comparison 后，除 `independent_review_result_path`、Analysis result 外，还必须读取 `analysis_task_paths` 中相关 Analysis task，并沿其 `source_manifest_path` 查看 `scope_expansion.caller_context_truncations`。caller budget 是证据边界，不是语义结论；复核 Branch/Coverage 的所有 disposition 时都必须把它纳入裁决，不只检查 `not_test_relevant|developer_confirm|unreachable`，还要检查 `scenario_mapped|merged` 是否借一个未证实为公开 API 的内部函数绕过了截断边界。
 
+在裁决 Independent findings 前，先在内部逐条列出 Analysis 的每个 BranchDecision：disposition、reason 是否依赖 caller/入口/Oracle 缺失、引用 Scenario、Scenario 是否真的包含该 Branch 和两侧条件。这个 Branch 审计是 Comparison 的必做项，不能因为 Independent finding 关注另一个 Risk 就跳过。
+
 先读取 `independent_review_result_path`。`independent_finding_decisions[].finding_key` 必须与其 `findings[].finding_key` 一一对应且集合完全相等，不得填 risk/flow/case/scenario/Coverage ID。
 
 - `confirmed`：原 finding evidence 仍成立且 Analysis 没有覆盖或正确处理。`evidence=[]` 即可复用原 finding 已冻结证据；`conclusion` 说明具体遗漏。
@@ -36,9 +38,11 @@ Review finding 的 `category` 只能使用当前 schema 固定枚举。资源泄
 
 - `not_test_relevant` 只能在冻结证据已经足以正向证明该 Branch 不形成独立测试义务时成立。若理由实质是“更上层 caller 没看到”“业务入口没确认”“当前上下文不足”“Oracle 不知道”，尤其 source manifest 已记录相关 caller truncation 时，新增 `incorrect_conclusion` 要求改为 `developer_confirm` 或形成真实 Scenario。
 - “正常防御性分支”“返回设计内错误码”“没有形成缺陷/Risk”不能单独证明 `not_test_relevant`；仍要检查它是否对应可构造的不同输入/状态或不同外部结果。Branch 测试义务与 Risk/缺陷判断不是同一件事。
+- 输入校验分支若返回可区分的错误码、状态或输出，就不是纯实现细节。受支持入口已证明时应映射/合并真实 Scenario；caller truncation 使入口未确认时必须是 `developer_confirm`。如果 Analysis 声称“已由某 Scenario 覆盖”，但 BranchDecision 没有引用该 Scenario，或 Scenario `branch_ids/actions` 没包含当前 Branch/条件，新增 `incorrect_conclusion`。
 - `unreachable` 不能由 caller 截断或“没继续看到 caller”推出；没有正向不可达证据时必须纠正。
 - `developer_confirm` 是合法处置，但不是默认逃生口。如果冻结证据已经证明目标是稳定公开 API，参数/状态可由测试侧构造，且公开返回值、输出参数、错误码或对外状态能够判定，那么不能仅因为测试动作表现为“直接调用函数”就使用 `developer_confirm`。
 - C/C++ 公开 API 函数本身可以是业务入口。公开头文件声明、任务/设计契约、受支持客户端/测试直接调用等冻结证据可以证明它是公开接口；`non-static`、私有 `.c` 文件中的 `extern` 声明、跨 `.c` 文件调用或可链接性都不够。对已经确认的公开 API，直接调用该 API 不属于“调用内部函数”的违规黑盒翻译。
+- Reviewer 自己也不得在 finding、decision conclusion 或 evidence observation 中把 `.c extern`、non-static、跨文件可调用性称作“公开 API/受支持入口”。这些证据只能证明内部路径可达；缺少公开头文件、契约或受支持客户端/测试时，必须明确入口证据仍不足。
 - 若 Analysis 在 caller truncation 存在时，把只有 `.c` 内声明/调用证据的实现函数写成公开 business entry，并据此给出 `scenario_mapped|merged`、ready Scenario 或 TestCase，应新增 `incorrect_conclusion`：错误点是“公开/受支持接口”的源码与证据结论不成立。除非冻结范围内还有其他受支持入口证据，否则要求 Closure 改为 `developer_confirm`，并移除不受支持的正式 Scenario/TestCase。
 
 随后审核首轮：Branch disposition 是否与源码可达性及 caller 边界相符；Coverage→Scenario 是否真的能到达目标函数/分支，目标本身若是公开 API 是否被错误降成 `developer_confirm`；Scenario 的 `business_entry/actions/external_oracles` 是否有真实产品、协议或公开 API 支撑；Risk 的 `system_result/external_observation` 是否真是产品结果而非测试证据缺口；Risk→Scenario 是否一致；TestCase 是否从真实 Scenario 转换。
