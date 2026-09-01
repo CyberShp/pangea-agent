@@ -16,10 +16,10 @@ from pangea_agent.graph.nodes.advance_workflow import (
     _validate_comparison_review,
     _validate_review,
 )
+from pangea_agent.graph.analysis_normalizer import normalize_analysis_result
 from pangea_agent.graph.degraded_results import (
     build_degraded_analysis_result,
     build_degraded_planning_result,
-    normalize_analysis_result,
 )
 from pangea_agent.graph.planning import (
     accept_planning_result,

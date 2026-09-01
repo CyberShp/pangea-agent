@@ -5,7 +5,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from pangea_agent.agent_io import read_json
-from pangea_agent.graph.degraded_results import normalize_analysis_result
+from pangea_agent.graph.analysis_normalizer import normalize_analysis_result
 from pangea_agent.graph.planning import (
     accept_planning_result,
     normalize_planning_result,
