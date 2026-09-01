@@ -24,7 +24,7 @@ Review finding 的 `category` 只能使用当前 schema 固定枚举。资源泄
 
 ## comparison_review：轻量对照裁决
 
-`comparison_review` 是同一 Reviewer Session 的第二遍，只做两件事：
+`comparison_review` 由独立于盲审 Reviewer 的 Adjudicator Session 执行，只做两件事：
 
 1. 对 Independent finding 逐条判断首轮 Analysis 是否真的遗漏。
 2. 在看到 Analysis 后检查 Branch/Coverage/Scenario/Risk/TestCase 的追溯、处置理由和黑盒转换是否写错。

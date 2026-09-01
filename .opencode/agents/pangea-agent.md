@@ -34,7 +34,7 @@ CLI 返回 `agent_actions` 或 `adapter next` 返回 `actions` 后：
 
 Run/action/task 丢失、冻结输入损坏、`continue_agent` 缺少约定的 `task_id` 或 Workflow 返回未持久化 action 才属于流程错误。无法解析、缺少摘要或没有可消费流程的结果由当前 worker 原地修复一次，仍失败时由 Workflow 自动降级；可确定的字段、编号和引用由 Workflow 整理，语义分歧交给 Reviewer。主 Agent 不代改结果、不换 worker，也不因可降级的结构问题询问用户是否重跑。
 
-Review 由同一个 `review-worker` 完成两个 checkpoint：先执行不提供首轮结果的 `independent_review`，再按 `continue_agent` 续接 `comparison_review`。Comparison review 产生 `targeted_closure` 时，action 继续对应单元首轮 `analysis-worker` 的 `task_id`；不得创建替代 worker。
+Review 使用两个隔离 checkpoint：先由盲审 `review-worker` 执行不提供首轮结果的 `independent_review`，再按 `dispatch_agent` 创建独立 Adjudicator Session 执行 `comparison_review`。Comparison review 产生 `targeted_closure` 时，action 继续对应单元首轮 `analysis-worker` 的 `task_id`；不得创建替代 worker。
 
 角色映射只用于 `dispatch_agent`：`planning` → `planning-worker`，`analysis` → `analysis-worker`，`review` → `review-worker`，`asset_extraction` → `asset-extraction-worker`。
 

@@ -596,11 +596,10 @@ def _accept_independent_review(state: PangeaState, progress, action) -> PangeaSt
     )
     add_action(progress, ActionState(
         action_id=action_id,
-        action="continue_agent",
+        action="dispatch_agent",
         role="review",
         stage="comparison_review",
         task_path=str(task_path),
-        task_id=action.task_id,
     ))
     save_progress(state, progress)
     return _waiting(state, progress)

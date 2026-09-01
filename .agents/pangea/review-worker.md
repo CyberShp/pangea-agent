@@ -20,7 +20,7 @@ Review finding 的 `category` 只能使用当前 schema 固定枚举。资源泄
 
 ## comparison_review：轻量对照裁决
 
-`comparison_review` 是同一 Reviewer Session 的第二遍，只做两件事：逐条判断 Independent finding 是否真的被首轮遗漏；看到 Analysis 后检查 Branch/Coverage/Scenario/Risk/TestCase 的追溯、处置理由和黑盒转换是否写错。它不是第二次从头分析整个模块，也不重新复制一份盲审报告。
+`comparison_review` 由独立于盲审 Reviewer 的 Adjudicator Session 执行，只做两件事：逐条判断 Independent finding 是否真的被首轮遗漏；看到 Analysis 后检查 Branch/Coverage/Scenario/Risk/TestCase 的追溯、处置理由和黑盒转换是否写错。新 Session 用于避免盲审 Reviewer 自我确认，但它不是第二次从头分析整个模块，也不重新复制一份盲审报告。
 
 开始 Comparison 后，除 `independent_review_result_path`、Analysis result 外，还必须读取 `analysis_task_paths` 中相关 Analysis task，并沿其 `source_manifest_path` 查看 `scope_expansion.caller_context_truncations`。caller budget 是证据边界，不是语义结论；复核 Branch/Coverage 的所有 disposition 时都必须把它纳入裁决，不只检查 `not_test_relevant|developer_confirm|unreachable`，还要检查 `scenario_mapped|merged` 是否借一个未证实为公开 API 的内部函数绕过了截断边界。
 

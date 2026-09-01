@@ -42,12 +42,12 @@ pangea-data/
 → Planning Agent 按功能模块/文件族规划单元
 → 最多 8 个 analysis Agent 并行完成首轮分析
 → 1 个看不到首轮结果的独立复核 Agent
-→ 同一 Reviewer 对照首轮结果裁决 finding
+→ 独立 Adjudicator 对照盲审与首轮结果裁决 finding
 → 原 analysis worker 必要时只补齐受影响单元
 → 聚合 report.md 和 report.html
 ```
 
-“最多 8 个”是并发上限，不是整个 Run 的单元总数。首轮 analysis 已经负责代码/设计理解、主干与异常流程、调用链、资料/代码差异、Coverage 提示、缺陷机理、风险和用例；独立复核寻找遗漏，comparison review 由同一 Reviewer 对照首轮结果裁决发现，不拆成逐字段审计任务。
+“最多 8 个”是并发上限，不是整个 Run 的单元总数。首轮 analysis 已经负责代码/设计理解、主干与异常流程、调用链、资料/代码差异、Coverage 提示、缺陷机理、风险和用例；独立复核寻找遗漏，comparison review 由新的 Adjudicator Session 对照盲审与首轮结果裁决发现，不拆成逐字段审计任务。
 
 主 Agent 只处理 CLI 返回的 action：
 
