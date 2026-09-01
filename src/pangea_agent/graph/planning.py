@@ -455,8 +455,4 @@ def accept_planning_result(
             continue
         units[owner].coverage_ids.append(coverage_id)
         coverage_owners[coverage_id] = owner
-        advisory.append(
-            f"Coverage 缺口按唯一匹配源码自动归属："
-            f"{coverage_id} -> U{owner:02d}"
-        )
     return units
