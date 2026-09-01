@@ -16,6 +16,8 @@ Review finding 的 `category` 只能使用当前 schema 固定枚举。资源泄
 
 盲审可用 `.c` wrapper 链证明内部路径可达，但没有公开头文件、契约、受支持客户端/测试或其他正向冻结证据时，只能写“supported entry 未确认”，不得把 non-static、`extern` 或跨文件调用称为业务入口或 entry point。这不影响把源码自身已证明的 UB、越界等问题输出为 Risk finding。
 
+supported-entry 缺口本身不建立独立 `category=risk` finding；它没有产品运行时 system result。若它只影响一条真实 Risk 的测试处置，就写进该 Risk finding 的 `required_check`；若没有独立的产品 Risk、流程遗漏或 Oracle 缺陷，则不为这项证据缺口单独建 finding。SourceEvidence observation 只描述对应源码行能证明的事实，不能把 source manifest、Analysis 字段或 task 范围伪装成源码 observation。
+
 风险 finding 至少满足一种根基：结构化输入中的明确契约；冻结源码中的真实调用方已观察到错误结果；或源码自身即可证明的崩溃、未定义行为、越界、数据破坏/丢失、资源泄漏、竞态或安全边界破坏。都不满足时不建立 risk finding。
 
 一旦盲审已经识别出冻结源码可直接证明的未定义行为、越界、数据破坏、资源泄漏或竞态，且没有正向不可达证据，就必须输出 `category=risk` finding；缺少受支持入口只表示最终 Risk 应为 `developer_confirm`，不能在结论中写“看到了 UB 但无风险/六维无信号”。算术溢出等未定义行为至少属于“功能与状态”风险信号。
@@ -58,6 +60,8 @@ Review finding 的 `category` 只能使用当前 schema 固定枚举。资源泄
 随后审核首轮：Branch disposition 是否与源码可达性及 caller 边界相符；Coverage→Scenario 是否真的能到达目标函数/分支，目标本身若是公开 API 是否被错误降成 `developer_confirm`；Scenario 的 `business_entry/actions/external_oracles` 是否有真实产品、协议或公开 API 支撑；Risk 的 `system_result/external_observation` 是否真是产品结果而非测试证据缺口；Risk→Scenario 是否一致；TestCase 是否从真实 Scenario 转换。
 
 Comparison 还必须独立核对冻结源码中显式可见的 C/C++ 未定义行为、越界、数据破坏、资源泄漏和竞态是否被 Analysis 记录为 Risk。源码已直接证明且无正向不可达证据、Analysis 却漏 Risk 时，新增 `category=risk` finding；不得因为 Independent findings 为空或入口仍待确认就跳过。
+
+在 dismiss 已被 Analysis 覆盖的 UB finding 前，检查 Analysis 的 summary、Risk、Scenario、evidence 和关联关系：未冻结 ABI 时出现固定十进制 `int` 边界，或普通构建 UB 被写成必然返回，新增一条 `incorrect_conclusion` 要求改为符号边界和“无稳定 Oracle”；Scenario 若链接该 Risk，却没有在自身 actions/external_oracles 保留 Risk trigger 与条件性观测，新增一条 `incorrect_conclusion` 要求修正或拆分风险场景。
 
 逐条核对 TestCase 直接填写的 Coverage ID：该 Case 的实际动作和预期必须真的执行并判定对应函数或分支，且 `basis` 包含 `coverage`。多个 Case 共用一个 Scenario 时，不得据此把 Scenario 的全部 Coverage gap 视为每条 Case 都已覆盖；若 false 分支 gap 只由零值 Case 触发，非零值 Case 不能关联该 gap。
 

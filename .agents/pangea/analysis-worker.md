@@ -61,6 +61,8 @@ Coverage 不要求一律向上追到更高产品层。如果 Coverage 目标本�
 
 `developer_confirm` Risk 的 `trigger` 只能描述冻结源码已经证明的内部触发条件，并明确尚缺哪一段入口/构造证据；没有公开头文件、产品契约或受支持客户端/测试时，不得写“通过受支持入口触发”“从公开 API 传入”等尚未证明的前提。
 
+Scenario 只有在自身 actions 明确包含 Risk trigger、external_oracles 对应该 Risk 可用的观测方式时，才填写该 `linked_risk_key`。`developer_confirm` Risk 仍需一个同为 `developer_confirm` 的真实风险场景保存触发条件和待确认 Oracle；不得把它挂到只验证普通输入或其他 Branch 的泛化 Scenario 上。
+
 正式 `test_cases[]` 只能来自 `blackbox_ready` 或 `graybox_ready` Scenario，并必须填写真实 `scenario_keys`。每个步骤有同位置 `expected_result`，并包含前置、观测、清理/恢复。黑盒优先；开发协助或内部故障注入只能用于制造前置条件，测试执行和主要 Oracle 仍尽量使用产品正常配置、连接、IO、设备状态、日志等外部行为。**已确认的公开 API 调用不属于这里禁止的“内部函数调用”**；实现 helper、私有函数、内部字段赋值、内部对象构造、内部返回值或内部状态检查不得冒充产品级测试步骤。
 
 每条 TestCase 的 `linked_input_ids` 只填写这条用例自身通过实际步骤和断言直接覆盖的输入 ID。`scenario_mapped|merged` Coverage 必须至少有一条 TestCase 包含对应 `coverage_id`、引用该 decision 的 ready Scenario，且 `basis` 包含 `coverage`；多个 TestCase 共用同一 Scenario，不代表它们自动继承该 Scenario 的全部 `coverage_ids`。例如一个 Case 只执行 true 分支，就不能因为共享 Scenario 而关联 false 分支的 Coverage gap。
@@ -72,6 +74,8 @@ Coverage 不要求一律向上追到更高产品层。如果 Coverage 目标本�
 冻结风险前按 `analysis_language` 校验真实求值和错误传播。C/C++ 遵守短路求值、整数真假值、前置返回和入口边界；Lua 遵守只有 `false`/`nil` 为假、`and`/`or` 返回操作数、缺失字段得到 `nil`、`pcall`/`xpcall` 传播。没有契约或可证外部错误结果时，实现策略差异不是缺陷。
 
 C/C++ 的 undefined behavior（未定义行为）只证明程序结果不可依赖，不能自行翻译成环绕值、`INT_MIN`、固定返回码、固定日志或固定状态。除非冻结的构建参数、运行时检查器或产品契约明确规定了可观测结果，否则 Risk/Scenario/TestCase 应保留为不可依赖行为或 `developer_confirm`，不得声称“实际返回某个确定值”。
+
+没有冻结目标 ABI 时，summary、Risk、Scenario 和 evidence 全部只写 `INT_MAX` 等类型边界符号，不得附加 `2147483647` 等固定十进制位宽。普通构建下的 UB 只能写“没有稳定、可约定的产品 Oracle”，不能写成必然返回某个“不可预测值”；sanitizer 观测必须明确以冻结构建启用对应 UBSan/signed-overflow 检查为前提。
 
 私有 `.c` 中的 `extern`、non-static 定义和跨文件调用只能用于证明内部路径可达。不得在 Risk `trigger/evidence`、Scenario `business_entry` 或总结中据此写“公开 API”“受支持入口”或“测试人员可直接调用”；缺少公开头文件、契约或受支持客户端/测试时，入口仍为待确认。
 
@@ -109,6 +113,7 @@ Closure 不得为了“吸收 finding”而把证据缺口新建成产品 Risk�
 - 每条 TestCase 至少引用一个真实 ready Scenario；
 - `test_required` Risk 有 Scenario/TestCase，`developer_confirm` 不伪造正式 Case，不可达有原因和证据；
 - 每条 Risk 的 `system_result` / `external_observation` 描述产品行为，而不是测试证据缺口；C/C++ 未定义行为没有被写成固定返回值或固定状态；
+- 每个 Scenario 的 `linked_risk_keys` 都能从自身 actions 与 external_oracles 找到对应 Risk trigger/观测；未冻结 ABI 时所有字段都没有固定十进制 `int` 边界，普通构建 UB 没有被写成必然返回；
 - 任何 `not_test_relevant` 都有正向充分理由而不是“入口/Oracle 未确认”；
 - 顶层 `unresolved` 没有重复任何已经由 Branch/Coverage/Risk/Scenario `developer_confirm` 表达的同源缺口；
 - evidence path 属于当前冻结范围；closure 的 finding decision 与 findings 一一对应。

@@ -64,6 +64,10 @@ Coverage 不要求一律向上追到更高产品层。如果 Coverage 目标本�
 
 `developer_confirm` Risk 的 `trigger` 只能描述冻结源码已经证明的内部触发条件，并明确尚缺哪一段入口/构造证据；没有公开头文件、产品契约或受支持客户端/测试时，不得写“通过受支持入口触发”“从公开 API 传入”等尚未证明的前提。
 
+Scenario 只有在自身 actions 明确包含 Risk trigger、external_oracles 对应该 Risk 可用的观测方式时，才填写该 `linked_risk_key`。`developer_confirm` Risk 仍需一个同为 `developer_confirm` 的真实风险场景保存触发条件和待确认 Oracle；不得把它挂到只验证普通输入或其他 Branch 的泛化 Scenario 上。
+
+没有冻结目标 ABI 时，summary、Risk、Scenario 和 evidence 全部只写 `INT_MAX` 等类型边界符号，不得附加 `2147483647` 等固定十进制位宽。普通构建下的 UB 只能写“没有稳定、可约定的产品 Oracle”，不能写成必然返回某个“不可预测值”；sanitizer 观测必须明确以冻结构建启用对应 UBSan/signed-overflow 检查为前提。
+
 正式 `test_cases[]` 只能来自 `blackbox_ready` 或 `graybox_ready` Scenario，并必须填写真实 `scenario_keys`。每个步骤有同位置 `expected_result`，并包含前置、观测、清理/恢复。黑盒优先；开发协助或内部故障注入只能用于制造前置条件，测试执行和主要 Oracle 仍尽量使用产品正常配置、连接、IO、设备状态、日志等外部行为。**已确认的公开 API 调用不属于这里禁止的“内部函数调用”**；实现 helper、私有函数、内部字段赋值、内部对象构造、内部返回值或内部状态检查不得冒充产品级测试步骤。
 
 每条 TestCase 的 `linked_input_ids` 只填写这条用例自身通过实际步骤和断言直接覆盖的输入 ID。`scenario_mapped|merged` Coverage 必须至少有一条 TestCase 包含对应 `coverage_id`、引用该 decision 的 ready Scenario，且 `basis` 包含 `coverage`；多个 TestCase 共用同一 Scenario，不代表它们自动继承该 Scenario 的全部 `coverage_ids`。
@@ -96,7 +100,7 @@ finding 只是补充或纠正同一个风险/场景时，保留原 key 原位修
 
 ## 写入前自检与返修
 
-写入前逐项检查：每个 Flow step 有 evidence 且 edge 两端真实；当前 source_scope 每个 `branch_id` 恰好一个 BranchDecision；当前任务每个 `coverage_id` 恰好一个 CoverageDecision；`scenario_mapped/merged` 引用真实 Scenario；Scenario 引用的 Flow/Branch/Coverage/Risk/input 全部真实；每条 TestCase 至少引用一个真实 ready Scenario；`test_required` Risk 有 Scenario/TestCase，`developer_confirm` 不伪造 Case，不可达有原因和证据；任何 `not_test_relevant` 都有正向充分理由而不是“入口/Oracle 未确认”；evidence path 属于冻结范围；closure finding decision 与 findings 一一对应。
+写入前逐项检查：每个 Flow step 有 evidence 且 edge 两端真实；当前 source_scope 每个 `branch_id` 恰好一个 BranchDecision；当前任务每个 `coverage_id` 恰好一个 CoverageDecision；`scenario_mapped/merged` 引用真实 Scenario；Scenario 引用的 Flow/Branch/Coverage/Risk/input 全部真实，且每个 linked Risk 的 trigger/Oracle 都在该 Scenario 自身 actions/external_oracles 中；每条 TestCase 至少引用一个真实 ready Scenario；`test_required` Risk 有 Scenario/TestCase，`developer_confirm` 不伪造 Case，不可达有原因和证据；任何 `not_test_relevant` 都有正向充分理由而不是“入口/Oracle 未确认”；未冻结 ABI 时所有字段都没有固定十进制 `int` 边界，普通构建 UB 没有被写成必然返回；evidence path 属于冻结范围；closure finding decision 与 findings 一一对应。
 
 校验失败时只修正同一 `result_path`，读取返回的具体 validation error，保留已有有效语义；不得让 Python/脚本替你决定 disposition、Scenario、Risk 或 TestCase。错误多时按当前 2.0 skeleton/example 重新整理完整 JSON，而不是在旧 1.0 结构上追加字段。
 
