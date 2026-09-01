@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from copy import deepcopy
 from typing import Any
 
+from pangea_agent.graph.analysis_obligations import analysis_obligations
 from pangea_agent.models.analysis import AnalysisTask, UnitSemanticResult
 
 
@@ -17,7 +18,7 @@ def normalize_analysis_result(
 ) -> UnitSemanticResult:
     """Add only Workflow-owned fields, then validate the Agent result unchanged."""
 
-    del inventory, selected_inputs, warnings
+    del warnings
     if not isinstance(raw_result, Mapping):
         raise ValueError("Analysis 结果必须是一个 JSON 对象")
 
@@ -26,8 +27,17 @@ def normalize_analysis_result(
     _inject_case_keys(payload)
     _discard_submitted_derived_links(payload)
 
-    result = UnitSemanticResult.model_validate(payload)
-    return _derive_test_case_links(result)
+    result = _derive_test_case_links(UnitSemanticResult.model_validate(payload))
+    issues = analysis_obligations(task, result, inventory, selected_inputs)
+    if issues:
+        detail = "\n".join(
+            f"- {item['code']} [{item['item_id']}]: {item['message']}"
+            for item in issues[:24]
+        )
+        if len(issues) > 24:
+            detail += f"\n- ... 另有 {len(issues) - 24} 项"
+        raise ValueError(f"Analysis obligations incomplete:\n{detail}")
+    return result
 
 
 def _inject_evidence_repo_ids(payload: dict[str, Any], repo_id: str) -> None:
