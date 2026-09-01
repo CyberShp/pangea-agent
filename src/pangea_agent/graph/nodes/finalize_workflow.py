@@ -20,6 +20,9 @@ from pangea_agent.models.analysis import (
 from pangea_agent.report import write_reports
 
 
+READY_SCENARIO_STATES = {"blackbox_ready", "graybox_ready"}
+
+
 def _evidence(item) -> dict:
     end = item.line_end or item.line_start
     location = f"{item.repo_id}:{item.path}:{item.line_start}"
@@ -59,12 +62,15 @@ def _deduplicate_degradations(items: list[dict]) -> list[dict]:
         message = str(item.get("message", "结果存在待确认项"))
         key = (kind, message)
         action_ids = item.get("action_ids") or [item.get("action_id")]
-        entry = grouped.setdefault(key, {
-            "kind": kind,
-            "message": message,
-            "action_ids": [],
-            "occurrence_count": 0,
-        })
+        entry = grouped.setdefault(
+            key,
+            {
+                "kind": kind,
+                "message": message,
+                "action_ids": [],
+                "occurrence_count": 0,
+            },
+        )
         for action_id in action_ids:
             if action_id and action_id not in entry["action_ids"]:
                 entry["action_ids"].append(action_id)
@@ -86,19 +92,27 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
         unit.unit_id: _load_final_unit_result(state, progress, unit.unit_id)
         for unit in progress.analysis_units
     }
+
     risk_ids: dict[tuple[str, str], str] = {}
+    scenario_ids: dict[tuple[str, str], str] = {}
     case_ids: dict[tuple[str, str], str] = {}
-    risks = []
-    test_cases = []
-    flows = []
-    input_decisions = []
-    coverage_decisions = []
-    mechanism_decisions = []
-    unresolved = []
+
+    risks: list[dict] = []
+    scenarios: list[dict] = []
+    test_cases: list[dict] = []
+    flows: list[dict] = []
+    input_decisions: list[dict] = []
+    branch_decisions: list[dict] = []
+    coverage_decisions: list[dict] = []
+    mechanism_decisions: list[dict] = []
+    unresolved: list[dict] = []
 
     for unit in progress.analysis_units:
         result = results[unit.unit_id]
-        unresolved.extend({"unit_id": unit.unit_id, "reason": value} for value in result.unresolved)
+        unresolved.extend(
+            {"unit_id": unit.unit_id, "reason": value}
+            for value in result.unresolved
+        )
         unresolved.extend(
             {
                 "stage": "risk_test_coverage",
@@ -107,103 +121,198 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
             }
             for obligation in risk_test_obligations(result)
         )
+
         for number, risk in enumerate(result.risks, 1):
             risk_id = f"R-{unit.unit_id}-{number:03d}"
             risk_ids[(unit.unit_id, risk.risk_key)] = risk_id
-            risks.append({
-                **risk.model_dump(mode="json", exclude={"risk_key", "evidence"}),
-                "risk_id": risk_id,
-                "evidence": [_evidence(item) for item in risk.evidence],
-                "translation_status": "Uncovered",
-                "status": "identified",
-            })
+            risks.append(
+                {
+                    **risk.model_dump(
+                        mode="json",
+                        exclude={"risk_key", "evidence"},
+                    ),
+                    "risk_id": risk_id,
+                    "unit_id": unit.unit_id,
+                    "evidence": [_evidence(item) for item in risk.evidence],
+                    "translation_status": "Uncovered",
+                    "status": "identified",
+                }
+            )
+
+        for number, scenario in enumerate(result.scenarios, 1):
+            scenario_id = f"SCN-{unit.unit_id}-{number:03d}"
+            scenario_ids[(unit.unit_id, scenario.scenario_key)] = scenario_id
+
         for number, case in enumerate(result.test_cases, 1):
             case_id = f"TC-{unit.unit_id}-{number:03d}"
             case_ids[(unit.unit_id, case.case_key)] = case_id
+
+        for scenario in result.scenarios:
+            scenario_id = scenario_ids[(unit.unit_id, scenario.scenario_key)]
+            scenarios.append(
+                {
+                    "scenario_id": scenario_id,
+                    "unit_id": unit.unit_id,
+                    "title": scenario.title,
+                    "readiness": scenario.readiness,
+                    "business_entry": scenario.business_entry,
+                    "preconditions": scenario.preconditions,
+                    "actions": scenario.actions,
+                    "external_oracles": scenario.external_oracles,
+                    "recovery": scenario.recovery,
+                    "covered_flow_ids": [
+                        f"F-{unit.unit_id}-{key}"
+                        for key in scenario.covered_flow_keys
+                    ],
+                    "branch_ids": scenario.branch_ids,
+                    "coverage_ids": scenario.coverage_ids,
+                    "linked_risk_ids": [
+                        risk_ids[(unit.unit_id, key)]
+                        for key in scenario.linked_risk_keys
+                        if (unit.unit_id, key) in risk_ids
+                    ],
+                    "linked_input_ids": scenario.linked_input_ids,
+                    "evidence": [_evidence(item) for item in scenario.evidence],
+                }
+            )
+
+        for case in result.test_cases:
+            case_id = case_ids[(unit.unit_id, case.case_key)]
             unresolved_risk_keys = [
                 key
                 for key in case.linked_risk_keys
                 if (unit.unit_id, key) not in risk_ids
             ]
-            test_cases.append({
-                "test_case_id": case_id,
-                "title": case.title,
-                "case_type": case.level,
-                "basis": case.basis,
-                "covered_flow_ids": [
-                    f"F-{unit.unit_id}-{key}" for key in case.covered_flow_keys
-                ],
-                "linked_input_ids": case.linked_input_ids,
-                "linked_risk_ids": [
-                    risk_ids[(unit.unit_id, key)]
-                    for key in case.linked_risk_keys
-                    if (unit.unit_id, key) in risk_ids
-                ],
-                "unresolved_linked_risk_keys": unresolved_risk_keys,
-                "preconditions": case.preconditions,
-                "steps": [step.action for step in case.steps],
-                "expected_results": [step.expected_result for step in case.steps],
-                "observability": case.observability,
-                "cleanup": case.cleanup,
-                "status": "ready",
-            })
+            test_cases.append(
+                {
+                    "test_case_id": case_id,
+                    "unit_id": unit.unit_id,
+                    "title": case.title,
+                    "case_type": case.level,
+                    "basis": case.basis,
+                    "scenario_ids": [
+                        scenario_ids[(unit.unit_id, key)]
+                        for key in case.scenario_keys
+                        if (unit.unit_id, key) in scenario_ids
+                    ],
+                    "covered_flow_ids": [
+                        f"F-{unit.unit_id}-{key}"
+                        for key in case.covered_flow_keys
+                    ],
+                    "linked_input_ids": case.linked_input_ids,
+                    "linked_risk_ids": [
+                        risk_ids[(unit.unit_id, key)]
+                        for key in case.linked_risk_keys
+                        if (unit.unit_id, key) in risk_ids
+                    ],
+                    "unresolved_linked_risk_keys": unresolved_risk_keys,
+                    "preconditions": case.preconditions,
+                    "steps": [step.action for step in case.steps],
+                    "expected_results": [
+                        step.expected_result for step in case.steps
+                    ],
+                    "observability": case.observability,
+                    "cleanup": case.cleanup,
+                    "status": "ready",
+                }
+            )
+
         for flow in result.flows:
-            flows.append({
-                "flow_id": f"F-{unit.unit_id}-{flow.flow_key}",
-                "unit_id": unit.unit_id,
-                "title": flow.title,
-                "description": flow.summary,
-                "entry": flow.entry,
-                "steps": [f"[{step.kind}] {step.label}" for step in flow.steps],
-                "diagram": {
-                    "nodes": [
-                        {
-                            "id": step.step_key,
-                            "label": step.label,
-                            "kind": step.kind,
-                        }
+            flows.append(
+                {
+                    "flow_id": f"F-{unit.unit_id}-{flow.flow_key}",
+                    "unit_id": unit.unit_id,
+                    "title": flow.title,
+                    "description": flow.summary,
+                    "entry": flow.entry,
+                    "steps": [
+                        f"[{step.kind}] {step.label}"
                         for step in flow.steps
                     ],
-                    "edges": [edge.model_dump(mode="json") for edge in flow.edges],
-                },
-                "mermaid": _mermaid(flow),
-                "evidence": [
-                    _evidence(evidence)
-                    for step in flow.steps
-                    for evidence in step.evidence
-                ],
-            })
+                    "diagram": {
+                        "nodes": [
+                            {
+                                "id": step.step_key,
+                                "label": step.label,
+                                "kind": step.kind,
+                            }
+                            for step in flow.steps
+                        ],
+                        "edges": [
+                            edge.model_dump(mode="json")
+                            for edge in flow.edges
+                        ],
+                    },
+                    "mermaid": _mermaid(flow),
+                    "evidence": [
+                        _evidence(evidence)
+                        for step in flow.steps
+                        for evidence in step.evidence
+                    ],
+                }
+            )
+
         input_decisions.extend(
             {"unit_id": unit.unit_id, **item.model_dump(mode="json")}
             for item in result.input_decisions
         )
+
+        branch_decisions.extend(
+            {
+                "unit_id": unit.unit_id,
+                **item.model_dump(mode="json", exclude={"scenario_keys"}),
+                "scenario_ids": [
+                    scenario_ids[(unit.unit_id, key)]
+                    for key in item.scenario_keys
+                    if (unit.unit_id, key) in scenario_ids
+                ],
+            }
+            for item in result.branch_decisions
+        )
+
         coverage_decisions.extend(
             {
                 "unit_id": unit.unit_id,
-                **item.model_dump(mode="json", exclude={"test_case_keys"}),
+                **item.model_dump(
+                    mode="json",
+                    exclude={"scenario_keys", "test_case_keys"},
+                ),
+                "scenario_ids": [
+                    scenario_ids[(unit.unit_id, key)]
+                    for key in item.scenario_keys
+                    if (unit.unit_id, key) in scenario_ids
+                ],
                 "test_case_ids": [
                     case_ids[(unit.unit_id, case.case_key)]
                     for case in result.test_cases
-                    if item.coverage_id in case.linked_input_ids
+                    if set(case.scenario_keys) & set(item.scenario_keys)
                 ],
                 "unresolved_test_case_keys": [],
             }
             for item in result.coverage_decisions
         )
+
         mechanism_decisions.extend(
             {
                 "unit_id": unit.unit_id,
-                **item.model_dump(mode="json", exclude={"test_case_keys", "evidence"}),
+                **item.model_dump(
+                    mode="json",
+                    exclude={"test_case_keys", "evidence"},
+                ),
                 "test_case_ids": [
                     case_ids[(unit.unit_id, case.case_key)]
                     for case in result.test_cases
                     if item.mechanism_id in case.linked_input_ids
                 ],
                 "unresolved_test_case_keys": [],
-                "evidence": [_evidence(evidence) for evidence in item.evidence],
+                "evidence": [
+                    _evidence(evidence)
+                    for evidence in item.evidence
+                ],
             }
             for item in result.mechanism_decisions
         )
+
         unresolved.extend(
             {
                 "unit_id": unit.unit_id,
@@ -214,15 +323,42 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
             if item.disposition == "unresolved"
         )
 
-    linked_cases_by_risk: dict[str, list[str]] = defaultdict(list)
+    scenarios_by_risk: dict[str, list[dict]] = defaultdict(list)
+    for scenario in scenarios:
+        for risk_id in scenario["linked_risk_ids"]:
+            scenarios_by_risk[risk_id].append(scenario)
+
+    cases_by_risk: dict[str, list[dict]] = defaultdict(list)
     for case in test_cases:
         for risk_id in case["linked_risk_ids"]:
-            linked_cases_by_risk[risk_id].append(case["test_case_id"])
+            cases_by_risk[risk_id].append(case)
+
     for risk in risks:
-        linked_case_ids = linked_cases_by_risk.get(risk["risk_id"], [])
-        risk["test_case_ids"] = linked_case_ids
-        if linked_case_ids:
-            risk["translation_status"] = "Test-ready"
+        linked_scenarios = scenarios_by_risk.get(risk["risk_id"], [])
+        ready_scenarios = [
+            scenario
+            for scenario in linked_scenarios
+            if scenario["readiness"] in READY_SCENARIO_STATES
+        ]
+        ready_scenario_ids = {
+            scenario["scenario_id"] for scenario in ready_scenarios
+        }
+        linked_cases = cases_by_risk.get(risk["risk_id"], [])
+        ready_cases = [
+            case
+            for case in linked_cases
+            if ready_scenario_ids.intersection(case["scenario_ids"])
+        ]
+
+        risk["scenario_ids"] = [
+            scenario["scenario_id"] for scenario in linked_scenarios
+        ]
+        risk["test_case_ids"] = [
+            case["test_case_id"] for case in ready_cases
+        ]
+
+        if risk.get("test_disposition") == "developer_confirm":
+            risk["translation_status"] = "Developer-confirm"
         elif (
             risk.get("test_disposition")
             == "unreachable_from_supported_entry"
@@ -230,17 +366,24 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
             and risk.get("unreachable_evidence")
         ):
             risk["translation_status"] = "Unreachable"
+        elif ready_scenarios and ready_cases:
+            risk["translation_status"] = "Test-ready"
         else:
             risk["translation_status"] = "Uncovered"
 
     planning = read_json(run_dir / "inputs" / "unit-plan.json")
-    unresolved.extend({"stage": "planning", "reason": value} for value in planning.get("unresolved", []))
+    unresolved.extend(
+        {"stage": "planning", "reason": value}
+        for value in planning.get("unresolved", [])
+    )
+
     review = None
     review_action_id = f"{state['run_id']}:review"
     if review_action_id in progress.actions:
         review = IndependentReviewResult.model_validate(
             read_json(validated_result_path(state, review_action_id))
         )
+
     comparison_review = None
     comparison_action_id = f"{state['run_id']}:comparison-review"
     if comparison_action_id in progress.actions:
@@ -251,6 +394,7 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
             {"stage": "review", "reason": value}
             for value in comparison_review.unresolved
         )
+
     comparison_decisions = {
         decision.finding_key: decision.disposition
         for decision in (
@@ -259,6 +403,7 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
             else []
         )
     }
+
     semantic_unresolved = list(unresolved)
     degradations = _deduplicate_degradations(progress.degradations)
     advisories = [
@@ -281,9 +426,11 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
     ]
     unresolved.extend(validation_unresolved)
     quality_status = "UNRESOLVED" if unresolved else "PASS"
+
     source_manifest = read_json(run_dir / "inputs" / "source-manifest.json")
     inventory = read_json(run_dir / "inputs" / "inventory.json")
     coverage_gaps = read_json(run_dir / "inputs" / "coverage-gaps.json")
+
     final_state = {
         **state,
         "repositories": source_manifest["repositories"],
@@ -314,11 +461,17 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
         ],
         "business_flows": flows,
         "input_decisions": input_decisions,
+        "branch_decisions": branch_decisions,
         "coverage_decisions": coverage_decisions,
         "mechanism_decisions": mechanism_decisions,
         "risks": risks,
+        "scenarios": scenarios,
         "test_cases": test_cases,
-        "coverage_report": {"matched": coverage_gaps, "ambiguous": [], "unmatched": []},
+        "coverage_report": {
+            "matched": coverage_gaps,
+            "ambiguous": [],
+            "unmatched": [],
+        },
         "review_findings": [
             item.model_dump(mode="json")
             for item in (
@@ -328,7 +481,8 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
                     if comparison_decisions.get(
                         finding.finding_key,
                         "unresolved",
-                    ) != "dismissed"
+                    )
+                    != "dismissed"
                 ]
                 + comparison_review.findings
                 if review and comparison_review
@@ -339,25 +493,29 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
             "status": quality_status,
             "checks": [
                 "请求源码均由一个分析单元负责",
-                "相关结构化资料、Coverage 缺口和缺陷机理均已给出处置",
-                "独立复核已完成，可信遗漏已定向补齐",
+                "相关结构化资料、Branch、Coverage 缺口和缺陷机理均已给出处置",
+                "测试转换通过 Scenario readiness 与正式 TestCase 建立可追溯关系",
+                "独立复核和对照裁决已完成，可信遗漏已定向补齐",
             ],
             "unresolved": unresolved,
             "semantic_unresolved": semantic_unresolved,
             "workflow_diagnostics": validation_unresolved,
             "advisories": advisories,
             "diagnostic_occurrence_count": sum(
-                item["occurrence_count"] for item in blocking_degradations
+                item["occurrence_count"]
+                for item in blocking_degradations
             ),
         },
         "degradations": degradations,
         "degradation_occurrence_count": sum(
-            item["occurrence_count"] for item in degradations
+            item["occurrence_count"]
+            for item in degradations
         ),
         "errors": progress.errors,
         "phase": "COMPLETE" if quality_status == "PASS" else "INCOMPLETE",
         "run_status": "COMPLETE" if quality_status == "PASS" else "INCOMPLETE",
     }
+
     markdown_path, html_path = write_reports(run_dir, final_state)
     progress.lifecycle_status = "complete"
     progress.stage = "complete"
@@ -366,6 +524,7 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
     progress.report_path = str(markdown_path)
     progress.html_report_path = str(html_path)
     save_progress(state, progress)
+
     completed = {
         **final_state,
         "lifecycle_status": progress.lifecycle_status,
