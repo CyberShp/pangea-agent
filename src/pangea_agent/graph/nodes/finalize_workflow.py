@@ -4,15 +4,18 @@ from collections import defaultdict
 from pathlib import Path
 
 from pangea_agent.agent_io import read_json, write_json
+from pangea_agent.graph.analysis_obligations import analysis_obligations
 from pangea_agent.graph.state import PangeaState
-from pangea_agent.graph.result_contract import risk_test_obligations
+from pangea_agent.graph.result_contract import risk_test_obligations, validate_unit_result
 from pangea_agent.graph.workflow_store import (
+    analysis_task_path,
     load_progress,
     run_directory,
     save_progress,
     validated_result_path,
 )
 from pangea_agent.models.analysis import (
+    AnalysisTask,
     ComparisonReviewResult,
     IndependentReviewResult,
     UnitSemanticResult,
@@ -83,11 +86,63 @@ def _analysis_worker_id(progress, unit_id: str) -> str:
     return action.task_id if action and action.task_id else "未绑定"
 
 
+def _developer_confirm_items(unit_id: str, result: UnitSemanticResult) -> list[dict]:
+    items: list[dict] = []
+    items.extend(
+        {
+            "stage": "developer_confirm",
+            "unit_id": unit_id,
+            "item_type": "branch",
+            "item_id": decision.branch_id,
+            "reason": decision.reason,
+        }
+        for decision in result.branch_decisions
+        if decision.disposition == "developer_confirm"
+    )
+    items.extend(
+        {
+            "stage": "developer_confirm",
+            "unit_id": unit_id,
+            "item_type": "coverage",
+            "item_id": decision.coverage_id,
+            "reason": decision.reason,
+        }
+        for decision in result.coverage_decisions
+        if decision.disposition == "developer_confirm"
+    )
+    items.extend(
+        {
+            "stage": "developer_confirm",
+            "unit_id": unit_id,
+            "item_type": "risk",
+            "item_id": risk.risk_key,
+            "reason": "风险需要开发确认业务入口、构造方式或外部 Oracle",
+        }
+        for risk in result.risks
+        if risk.test_disposition == "developer_confirm"
+    )
+    items.extend(
+        {
+            "stage": "developer_confirm",
+            "unit_id": unit_id,
+            "item_type": "scenario",
+            "item_id": scenario.scenario_key,
+            "reason": "场景尚未达到可执行 readiness",
+        }
+        for scenario in result.scenarios
+        if scenario.readiness == "developer_confirm"
+    )
+    return items
+
+
 def finalize_workflow(state: PangeaState) -> PangeaState:
     progress = load_progress(state)
     if progress is None:
         raise ValueError("Run progress 不存在")
     run_dir = run_directory(state)
+    source_manifest = read_json(run_dir / "inputs" / "source-manifest.json")
+    inventory = read_json(run_dir / "inputs" / "inventory.json")
+    coverage_gaps = read_json(run_dir / "inputs" / "coverage-gaps.json")
     results = {
         unit.unit_id: _load_final_unit_result(state, progress, unit.unit_id)
         for unit in progress.analysis_units
@@ -109,6 +164,38 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
 
     for unit in progress.analysis_units:
         result = results[unit.unit_id]
+        task = AnalysisTask.model_validate(
+            read_json(analysis_task_path(state, unit.unit_id))
+        )
+        selected_inputs = read_json(Path(task.selected_inputs_path))
+        integrity_issues = analysis_obligations(
+            task,
+            result,
+            inventory,
+            selected_inputs,
+        )
+        integrity_warnings = validate_unit_result(
+            task,
+            result,
+            selected_inputs,
+        )
+        unresolved.extend(
+            {
+                "stage": "final_integrity",
+                "unit_id": unit.unit_id,
+                "reason": f"{item['code']} [{item['item_id']}]: {item['message']}",
+            }
+            for item in integrity_issues
+        )
+        unresolved.extend(
+            {
+                "stage": "final_integrity",
+                "unit_id": unit.unit_id,
+                "reason": warning,
+            }
+            for warning in integrity_warnings
+        )
+        unresolved.extend(_developer_confirm_items(unit.unit_id, result))
         unresolved.extend(
             {"unit_id": unit.unit_id, "reason": value}
             for value in result.unresolved
@@ -406,30 +493,16 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
 
     semantic_unresolved = list(unresolved)
     degradations = _deduplicate_degradations(progress.degradations)
-    advisories = [
-        item
-        for item in degradations
-        if item.get("kind") == "agent_result_warning"
-    ]
-    blocking_degradations = [
-        item
-        for item in degradations
-        if item.get("kind") != "agent_result_warning"
-    ]
     validation_unresolved = [
         {
             "stage": "validation",
             "action_ids": item.get("action_ids", []),
             "reason": item.get("message", "结果存在待确认项"),
         }
-        for item in blocking_degradations
+        for item in degradations
     ]
     unresolved.extend(validation_unresolved)
     quality_status = "UNRESOLVED" if unresolved else "PASS"
-
-    source_manifest = read_json(run_dir / "inputs" / "source-manifest.json")
-    inventory = read_json(run_dir / "inputs" / "inventory.json")
-    coverage_gaps = read_json(run_dir / "inputs" / "coverage-gaps.json")
 
     final_state = {
         **state,
@@ -500,10 +573,10 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
             "unresolved": unresolved,
             "semantic_unresolved": semantic_unresolved,
             "workflow_diagnostics": validation_unresolved,
-            "advisories": advisories,
+            "advisories": [],
             "diagnostic_occurrence_count": sum(
                 item["occurrence_count"]
-                for item in blocking_degradations
+                for item in degradations
             ),
         },
         "degradations": degradations,
@@ -512,8 +585,8 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
             for item in degradations
         ),
         "errors": progress.errors,
-        "phase": "COMPLETE" if quality_status == "PASS" else "INCOMPLETE",
-        "run_status": "COMPLETE" if quality_status == "PASS" else "INCOMPLETE",
+        "phase": "COMPLETE",
+        "run_status": "COMPLETE",
     }
 
     markdown_path, html_path = write_reports(run_dir, final_state)
