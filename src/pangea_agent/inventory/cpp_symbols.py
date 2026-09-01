@@ -4,7 +4,10 @@ import re
 from pathlib import Path
 from typing import Any
 
-_FUNCTION_RE = re.compile(r"^\s*(?:static\s+)?(?:inline\s+)?[A-Za-z_][\w\s\*]+\s+([A-Za-z_]\w*)\s*\([^;]*\)\s*\{")
+_FUNCTION_RE = re.compile(
+    r"^\s*(?P<static>static\s+)?(?:inline\s+)?[A-Za-z_][\w\s\*]+\s+"
+    r"(?P<name>[A-Za-z_]\w*)\s*\([^;]*\)\s*\{"
+)
 _CPP_SUFFIXES = {".cc", ".cpp", ".cxx", ".hpp", ".hh"}
 
 
@@ -20,8 +23,31 @@ def extract_functions(lines: list[str]) -> list[dict]:
     for idx, line in enumerate(lines, 1):
         match = _FUNCTION_RE.match(line)
         if match:
-            results.append({"line": idx, "symbol": match.group(1), "parser": "regex_fallback"})
+            results.append(
+                {
+                    "line": idx,
+                    "symbol": match.group("name"),
+                    "is_static": bool(match.group("static")),
+                    "parser": "regex_fallback",
+                }
+            )
     return results
+
+
+def externally_callable_definitions(path: Path) -> set[str]:
+    """Return non-static function definitions using the same parser as inventory."""
+    try:
+        functions = parse_cpp_file(path)["functions"]
+    except TreeSitterUnavailableError:
+        functions = extract_functions(
+            path.read_text(encoding="utf-8", errors="replace").splitlines()
+        )
+    return {
+        str(item["symbol"])
+        for item in functions
+        if item.get("symbol") and item.get("symbol") != "<unknown>"
+        and not item.get("is_static", False)
+    }
 
 
 def _load_parser(path: Path):
@@ -91,6 +117,18 @@ def _function_name(node, source: bytes) -> str | None:
     return _first_identifier(node, source)
 
 
+def _function_is_static(node, source: bytes) -> bool:
+    for child in node.children:
+        if child.type != "storage_class_specifier":
+            continue
+        value = source[child.start_byte:child.end_byte].decode(
+            "utf-8", errors="replace"
+        )
+        if value.strip() == "static":
+            return True
+    return False
+
+
 def parse_cpp_file(path: Path) -> dict:
     """Parse a C/C++ file and retain syntax and preprocessor evidence."""
     source = path.read_bytes()
@@ -121,6 +159,7 @@ def parse_cpp_file(path: Path) -> dict:
                 "line": line,
                 "end_line": end_line,
                 "symbol": _function_name(declarator, source) or "<unknown>",
+                "is_static": _function_is_static(node, source),
                 "parser": "tree_sitter",
             })
         if node.type == "call_expression":
