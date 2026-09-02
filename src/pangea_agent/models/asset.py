@@ -11,6 +11,7 @@ AssetType = Literal[
     "historical_defect",
     "reference",
     "coverage",
+    "test_case_example",
 ]
 
 
@@ -78,11 +79,20 @@ StructuredAssetItem = Annotated[
 
 
 class AssetRecord(StrictModel):
-    schema_version: Literal["1.0"] = "1.0"
+    # ``1.0`` is accepted so old asset catalogues and old Runs remain
+    # readable.  New records and every mutation are written as 2.0.
+    schema_version: Literal["1.0", "2.0"] = "2.0"
     asset_id: str = Field(min_length=1)
     asset_type: AssetType
     title: str = Field(min_length=1)
     source_path: str = Field(min_length=1)
+    revision: int = Field(default=1, ge=1)
+    source_name: str | None = None
+    source_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    source_size: int = Field(default=0, ge=0)
+    repository_ids: list[str] = Field(default_factory=list)
+    module_tags: list[str] = Field(default_factory=list)
+    language_tags: list[str] = Field(default_factory=list)
     created_at: str = Field(min_length=1)
     updated_at: str = Field(min_length=1)
     status: Literal[
@@ -100,8 +110,11 @@ class AssetRecord(StrictModel):
     )
     structured_item_count: int = Field(default=0, ge=0)
     extraction_task_path: str | None = None
+    normalized_text_path: str | None = None
+    parser_version: str | None = None
     result_path: str | None = None
     warnings: list[str] = Field(default_factory=list)
+    last_error: str | None = None
 
 
 class AssetExtractionTask(StrictModel):

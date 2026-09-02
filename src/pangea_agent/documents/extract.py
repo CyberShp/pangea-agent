@@ -142,7 +142,7 @@ def _extract_xlsx(path: Path, attachments_root: Path) -> DocumentExtraction:
 def extract_document(path: Path, attachments_root: Path) -> DocumentExtraction:
     """Extract text and image evidence without moving the source document."""
     suffix = path.suffix.lower()
-    if suffix in {".md", ".txt"}:
+    if suffix in {".md", ".txt", ".json", ".yaml", ".yml", ".csv", ".log"}:
         return _extract_text(path)
     if suffix == ".pdf":
         return _extract_pdf(path, attachments_root)

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Codetalks Skill 1.0.0 Markdown-first workflow and directory-layout guard."""
+"""Codetalks Skill 1.2.0 Markdown-first workflow and directory-layout guard."""
 
 from __future__ import annotations
 import argparse
@@ -169,6 +169,57 @@ def validate_evidence_index(root: Path, manifest: dict) -> list[str]:
                     errors.append(f"电子表格 {identity} 未记录有效 records_parsed")
     return errors
 
+def validate_methodology_selection(root: Path) -> list[str]:
+    """Validate the Step 01 receipt against the frozen catalog, never infer IDs."""
+    selection_path = root / "内部索引/方法论选择.json"
+    catalog_path = root / "inputs/methodologies/catalog.json"
+    errors = []
+    if not selection_path.exists():
+        return [f"缺少方法论选择收据：{selection_path}"]
+    try:
+        selection = load_json(selection_path)
+    except Exception as exc:
+        return [f"方法论选择收据无法解析：{exc}"]
+    if not isinstance(selection, dict):
+        return ["方法论选择收据必须是 JSON 对象"]
+    if selection.get("schema_version") != "1.0":
+        errors.append("方法论选择收据 schema_version 必须是 1.0")
+    if not isinstance(selection.get("selected"), list) or not isinstance(selection.get("excluded"), list):
+        return [*errors, "方法论选择收据必须包含 selected/excluded 数组"]
+    known = {"codetalks-skill"}
+    if catalog_path.is_file():
+        try:
+            catalog = load_json(catalog_path)
+            known.update(item.get("methodology_id") for item in catalog.get("builtin_methodologies", []))
+            known.update(item.get("methodology_id") for item in catalog.get("enabled_user_methodologies", []))
+        except Exception as exc:
+            errors.append(f"冻结方法论目录无法解析：{exc}")
+    seen = set()
+    for bucket in ("selected", "excluded"):
+        for number, item in enumerate(selection[bucket], 1):
+            if not isinstance(item, dict):
+                errors.append(f"{bucket}[{number}] 必须是对象")
+                continue
+            identifier = item.get("methodology_id")
+            if not isinstance(identifier, str) or not identifier.strip():
+                errors.append(f"{bucket}[{number}] 缺少 methodology_id")
+                continue
+            if identifier not in known:
+                errors.append(f"方法论 ID 不在冻结目录中：{identifier}")
+            if identifier in seen:
+                errors.append(f"方法论不能重复出现在 selected/excluded：{identifier}")
+            seen.add(identifier)
+            if not isinstance(item.get("reason"), str) or not item["reason"].strip():
+                errors.append(f"{bucket}[{number}] 缺少 reason：{identifier}")
+            evidence = item.get("evidence")
+            if not isinstance(evidence, list) or not evidence or any(not isinstance(value, str) or not value.strip() for value in evidence):
+                errors.append(f"{bucket}[{number}] 缺少 evidence：{identifier}")
+    if "codetalks-skill" not in {
+        item.get("methodology_id") for item in selection["selected"] if isinstance(item, dict)
+    }:
+        errors.append("内置 Codetalks Skill 必须出现在 selected")
+    return errors
+
 def validate_layout(root: Path, *, final_phase: bool = False) -> list[str]:
     errors = []
 
@@ -240,6 +291,9 @@ def validate_step(root: Path, step: dict, manifest: dict) -> list[str]:
     if step["id"] == "02":
         errors.extend(validate_evidence_index(root, manifest))
 
+    if "内部索引/方法论选择.json" in step.get("required", []):
+        errors.extend(validate_methodology_selection(root))
+
     if step["id"] == "08":
         judge_path = root / "内部索引/独立审查状态.json"
         if judge_path.exists():
@@ -277,7 +331,7 @@ def command_init(args) -> None:
         (root / relative).mkdir(parents=True, exist_ok=True)
 
     state = {
-        "version": "1.0.0",
+        "version": "1.2.0",
         "created_at": now(),
         "updated_at": now(),
         "skill_root": str(skill_root),
@@ -297,8 +351,8 @@ def command_init(args) -> None:
         "verdict": None,
     }
     save_json(state_path(root), state)
-    save_json(root / "内部索引/运行计划.json", {"version": "1.0.0", "passes": []})
-    save_json(root / "内部索引/输入材料索引.json", {"version": "1.0.0", "items": []})
+    save_json(root / "内部索引/运行计划.json", {"version": "1.2.0", "passes": []})
+    save_json(root / "内部索引/输入材料索引.json", {"version": "1.2.0", "items": []})
 
     layout_errors = validate_layout(root, final_phase=False)
     if layout_errors:
@@ -480,7 +534,7 @@ def main() -> None:
     init.add_argument("--source-raw", required=True)
     init.add_argument("--source-verified", required=True)
     init.add_argument("--output", required=False,
-                      help="兼容旧调用参数；1.0.0 正式输出固定为 <workspace>/正式输出/")
+                      help="兼容旧调用参数；1.1.0 正式输出固定为 <workspace>/正式输出/")
     init.add_argument("--scenario", required=True,
                       choices=["module-analysis", "issue-regression", "root-cause",
                                "special-risk", "custom"])

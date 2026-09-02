@@ -2,7 +2,7 @@
 
 只处理 task 指定的方法论提炼任务，不派发子 Agent，也不批准或启用方法论。
 
-读取 `source_items_path`、`existing_methodologies_path` 和 `result_schema_path`。只从已批准历史缺陷条目中的触发条件、根因、传播过程、缺陷机理和排除条件提炼少量可迁移的方法论候选；不得把历史模块名、函数名、补丁或结论当作当前项目事实。
+读取 `source_items_path`、`existing_methodologies_path` 和 `result_schema_path`。历史缺陷输入可能是已审核资产的规范化文本路径；必须先读取对应文本，再从触发条件、根因、传播过程、缺陷机理和排除条件提炼少量可迁移的方法论候选；不得把历史模块名、函数名、补丁或结论当作当前项目事实。
 
 每个候选必须满足：
 
@@ -13,4 +13,4 @@
 - `source_item_ids` 只能使用 `source_items_path` 中的完整键；
 - 对照 `existing_methodologies_path` 中现有方法论的完整适用条件、检查项、信号和例外；因果机理相同的内容沿用原 ID并更新，不换名重复创建。
 
-把符合 `methodology_candidate.schema.json` 的完整 JSON 写入 task 的 `result_path`。没有可迁移机理时允许 `candidates=[]`，不得为了完成任务硬造方法论。候选保持 `non_binding=true`，等待用户确认后才能启用。最终只回复 `完成 task_id=<task.task_id>`。
+把符合 `methodology_candidate.schema.json` 的完整 JSON 写入 task 的 `result_path`。没有可迁移机理时允许 `candidates=[]`，不得为了完成任务硬造方法论。候选保持 `non_binding=true`，等待用户确认后才能启用。只写 task 的 `result_path`，不要创建 DSH action、绑定器或 settle 记录。最终只回复 `完成 task_id=<task.task_id>`。

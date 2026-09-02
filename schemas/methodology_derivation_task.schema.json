@@ -2,8 +2,8 @@
   "additionalProperties": false,
   "properties": {
     "schema_version": {
-      "const": "1.0",
-      "default": "1.0",
+      "enum": ["1.0", "2.0"],
+      "default": "2.0",
       "title": "Schema Version",
       "type": "string"
     },
@@ -19,8 +19,14 @@
       "type": "string"
     },
     "action_id": {
-      "minLength": 1,
-      "title": "Action Id",
+      "anyOf": [{"minLength": 1, "type": "string"}, {"type": "null"}],
+      "default": null,
+      "title": "Action Id"
+    },
+    "execution": {
+      "const": "direct-skill",
+      "default": "direct-skill",
+      "title": "Execution",
       "type": "string"
     },
     "created_at": {
@@ -73,7 +79,6 @@
   },
   "required": [
     "task_id",
-    "action_id",
     "data_root",
     "source_asset_ids",
     "source_items_path",

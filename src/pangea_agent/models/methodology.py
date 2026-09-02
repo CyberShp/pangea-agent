@@ -178,10 +178,13 @@ class FrozenMethodologyCatalog(StrictModel):
 
 
 class MethodologyDerivationTask(StrictModel):
-    schema_version: Literal["1.0"] = "1.0"
+    # 1.0 tasks remain readable, but new candidate generation is a direct
+    # Skill task and has no action/settle identity.
+    schema_version: Literal["1.0", "2.0"] = "2.0"
     task_type: Literal["methodology_derivation"] = "methodology_derivation"
     task_id: str = Field(min_length=1)
-    action_id: str = Field(min_length=1)
+    action_id: str | None = None
+    execution: Literal["direct-skill"] = "direct-skill"
     created_at: AwareDatetime | None = None
     data_root: str = Field(min_length=1)
     source_asset_ids: list[NonEmptyText] = Field(min_length=1)

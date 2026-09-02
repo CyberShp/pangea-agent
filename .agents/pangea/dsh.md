@@ -1,6 +1,6 @@
 # PANGEA Codetalks Skill 直启规则
 
-PANGEA 分析只使用 `codetalks-skill 1.0.0`，不再存在 Graph、Planning worker、analysis worker、Review action、Closure action、Reporting action、bind、validate 或 settle。
+PANGEA 分析只使用 `codetalks-skill 1.2.0`（来源 `codetalks-fused-v2.4`），不再存在旧 Graph、Planning/Analysis/Review/Closure/Reporting action、bind、schema repair 或 settle 生命周期。语言 Profile 由已验证源码范围自动识别；检测到 Lua 或 openUBMC Lua 时读取冻结 Skill 中的对应参考文件。
 
 收到 Desktop 创建分析后：
 

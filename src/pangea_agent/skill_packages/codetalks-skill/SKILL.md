@@ -5,13 +5,15 @@ description: >
   问题+日志+代码根因辅助定位及专项风险分析。通过确定性步骤门禁、证据消费台账、
   分支/状态/资源/协议/覆盖率多源场景增殖、开发实现讲解、黑盒测试转换、SFMEA
   和独立 Coverage Judge，避免浅层扫描、遗漏分支和 compact 后信息丢失。
-version: 1.0.0
+version: 1.2.0
 derived_from: codetalks-fused-v2.4
 license: CC-BY-SA-4.0
 allowed-tools: Read Search Grep Glob Bash Write Edit Agent AskUserQuestion
 ---
 
-# Codetalks Skill 1.0.0：源码驱动黑盒测试分析
+# Codetalks Skill 1.2.0：源码驱动黑盒测试分析
+
+本版本沿用 `codetalks-fused-v2.4` 的九步门禁，并增加语言 Profile：Agent 根据冻结的已验证源码范围自动识别 C/C++、Lua 或混合范围。检测到 Lua 时必须读取 `references/language-lua.md`；检测到 openUBMC Lua 组件时再读取 `references/openubmc-lua.md`。用户无需手动选择语言，只有识别失败或范围有歧义时才请求用户修正范围。
 
 ## 0. 本 Skill 解决的问题
 
@@ -37,7 +39,7 @@ V1 的主要缺陷不是“规则不够多”，而是规则只有文字约束�
 
 早期流程将大量 JSON 设置为步骤完成工件，容易诱导 Agent 把结构化填表当作分析本身。
 
-1.0.0 改为：
+当前 1.2.0 基线固定为：
 
 ```text
 源码和证据
@@ -61,6 +63,29 @@ V1 的主要缺陷不是“规则不够多”，而是规则只有文字约束�
 场景候选、黑盒映射、测试依据、测试用例和 Coverage Gate。
 
 禁止使用 `--format json` 生成内容工件。
+
+## 0.2 运行输入冻结（Asset Management 2.0）
+
+新建分析只接受 `request_version=2.0`，请求字段为 `run_id`、`data_root`、
+`repository`、`target`、`source_scope` 和已选资产的内部 `asset_ids`。分析重点、
+手工结构化资产 ID 和文本用例路径不属于新请求；出现这些字段必须报错，不能静默转发。
+
+启动时，运行器将每个已选且状态为 `available`、完整性校验通过的资产复制到
+`<run_root>/inputs/assets/`，并写入 `manifest.json`。分析只能读取冻结副本；资产后来
+被修改、归档或产生新 revision，都不得改变当前 Run。资产类型与允许步骤如下：
+
+| 资产类型 | 允许消费步骤 |
+| --- | --- |
+| requirement / design | 02–04 |
+| coverage | 03、05、07 |
+| historical_defect | 05 |
+| reference | 02–07（按相关性） |
+| test_case_example | 07（仅格式和粒度参考，不得充当证据） |
+
+启用的用户方法论在启动时冻结到 `inputs/methodologies/`；内置 Codetalks 方法始终启用。
+Step 01 必须根据目标、源码范围、语言 Profile 和资产写入
+`内部索引/方法论选择.json`，逐项记录 selected/excluded、原因和证据，不得在运行中
+向用户追问或修改冻结目录。
 
 
 # 1. 最终目标

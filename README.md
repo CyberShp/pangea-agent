@@ -1,10 +1,10 @@
 # pangea-agent
 
-`pangea-agent` 是部署在测试人员 Windows 电脑上的 Codetalks Skill 运行时与本地资料管理组件。源码、需求/设计资料、Coverage 和历史问题都由 `codetalks-skill 1.0.0` 直接消费并形成 Markdown 活文档与正式输出。
+`pangea-agent` 是部署在测试人员 Windows 电脑上的 Codetalks Skill 运行时与本地资料管理组件。源码、需求/设计资料、Coverage 和历史问题都由 `codetalks-skill 1.2.0` 直接消费并形成 Markdown 活文档与正式输出。
 
 Python 只负责仓库/资料登记、创建 Skill Run、冻结 Skill 包和只读解释 `run_guard.py` 状态。Python 不规划分析单元、不编排 Agent、不校验语义结果，也不生成报告。
 
-每个新 Run 都冻结一份完整 `codetalks-skill 1.0.0`。DSH 分析会话读取该 Skill 后，使用它自己的 Step 01–09、`run_guard.py`、Producer/Judge 分工和正式输出契约走完整流程。`内部索引/运行状态.json` 是唯一生命周期真相。
+每个新 Run 都冻结一份完整 `codetalks-skill 1.2.0`，并在 Run 内冻结所选 Asset Management 2.0 资产和启用的方法论。DSH 分析会话读取该 Skill 后，使用它自己的 Step 01–09、`run_guard.py`、Producer/Judge 分工和正式输出契约走完整流程；语言 Profile 会根据已验证源码范围自动选择 C/C++、Lua 或混合模式。`内部索引/运行状态.json` 是唯一生命周期真相。
 
 ## 初始化
 
@@ -29,18 +29,18 @@ py -3.12 -m venv ".venv"
 ```text
 pangea-data/
 ├── repositories/       # 用户源码仓，可为 Git 或普通目录
-├── inbox/              # 导入的需求、设计、历史缺陷和参考资料
+├── inbox/              # 导入的需求、设计、历史缺陷、参考资料和用例示例
 ├── coverage/           # 导入的 Coverage XLSX
 ├── assets/             # 资产状态、提取任务和结构化结果
-└── runs/               # Run 输入、Agent 任务、结果、进度和报告
+└── runs/               # Run 输入、Skill 状态、Markdown 活文档和正式报告
 ```
 
-项目不会对 `repositories/` 中的用户源码执行 `pull`、`reset`、`stash`、`checkout` 或格式化。已有用例不进入资产库；单次 Run 可附带少量用例示例，仅供表达和环境参考。
+项目不会对 `repositories/` 中的用户源码执行 `pull`、`reset`、`stash`、`checkout` 或格式化。用例示例作为资产导入，只能在 Step 07 参考格式和粒度；新建 Run 不接受 focus、手写结构化资产 ID 或示例文件路径。
 
 ## 分析流程
 
 ```text
-创建空的 Skill Run 并冻结 Skill
+创建 Skill Run 并冻结 Skill、资产和方法论
 → 当前分析会话执行 Step 01–07
 → 独立 Judge 执行 Step 08
 → 当前分析会话根据审查结果执行 Step 09
@@ -53,7 +53,7 @@ pangea-data/
 ## 输入与用例设计
 
 - 历史缺陷资料先提取“事实 + 可迁移缺陷机理”，必须人工审核后才可用于 Run。
-- 需求、设计和参考资料先结构化，分析时只把相关条目送入单元。
+- 需求、设计和参考资料在导入时确定性规范化，Run 只读取冻结副本。
 - Coverage 只把当前 `source_scope` 中唯一匹配且 `count=0` 的函数作为补测提示。选择处理时保留真实 ID 和关联；不由 Python 强制生成测试用例。
 - 与当前范围无关的 Coverage 不进入分析结果和报告。
 - 用例设计顺序是：Coverage 与代码流程为基础，需求/设计约束次之，历史缺陷机理和六维 DFX 风险补充。

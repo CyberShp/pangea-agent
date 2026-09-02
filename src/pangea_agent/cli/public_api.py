@@ -6,6 +6,7 @@ from pangea_agent.assets import (
     archive_asset,
     asset_detail,
     import_asset,
+    import_asset_revision,
     list_assets,
     prepare_asset_extraction,
     review_asset,
@@ -34,14 +35,16 @@ def system_capabilities(data_root: str) -> dict:
     return {
         "analysis_skill": validate_runtime_skill(),
         "analysis_runtime": "direct-skill",
-        "analysis_languages": ["c_cpp", "lua"],
+        "analysis_languages": ["c_cpp", "lua", "mixed"],
         "asset_types": [
             "requirement",
             "design",
             "historical_defect",
             "reference",
             "coverage",
+            "test_case_example",
         ],
+        "asset_schema_version": "2.0",
         "repositories": list_registered_repositories(data_root),
         "report_formats": ["markdown"],
         "methodologies": {
@@ -99,6 +102,7 @@ __all__ = [
     "archive_asset",
     "asset_detail",
     "import_asset",
+    "import_asset_revision",
     "import_methodology_candidates",
     "complete_methodology_derivation",
     "list_assets",

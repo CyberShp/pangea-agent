@@ -1,7 +1,9 @@
-# Codetalks Skill 1.0.0
+# Codetalks Skill 1.2.0
 
 本版本由 `codetalks-fused-v2.4` 流程演进而来；运行和展示统一使用
-`codetalks-skill 1.0.0`。
+`codetalks-skill 1.2.0`，来源标记为 `codetalks-fused-v2.4`。新建分析使用 Asset
+Management 2.0：输入资产在 Run 启动时冻结，用户方法论在 Run 内冻结并由 Step 01
+记录选择收据。
 
 Codetalks 是一个面向黑盒测试人员的源码驱动测试分析 Skill。
 

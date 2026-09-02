@@ -9,6 +9,7 @@ from .public_api import (
     asset_detail,
     complete_methodology_derivation,
     import_asset,
+    import_asset_revision,
     import_methodology_candidates,
     list_assets,
     list_methodology_derivations,
@@ -41,9 +42,14 @@ def main() -> None:
     asset_import.add_argument(
         "--type",
         required=True,
-        choices=("requirement", "design", "historical_defect", "reference", "coverage"),
+        choices=("requirement", "design", "historical_defect", "reference", "coverage", "test_case_example"),
     )
     asset_import.add_argument("--title")
+    asset_revision = asset_commands.add_parser("revise")
+    asset_revision.add_argument("--data-root", default="pangea-data")
+    asset_revision.add_argument("--asset-id", required=True)
+    asset_revision.add_argument("--path", required=True)
+    asset_revision.add_argument("--title")
     asset_list = asset_commands.add_parser("list")
     asset_list.add_argument("--data-root", default="pangea-data")
     asset_list.add_argument("--cursor", type=int, default=0)
@@ -150,6 +156,9 @@ def main() -> None:
         try:
             if args.asset_command == "import":
                 result = import_asset(args.data_root, args.path, args.type, args.title)
+                print_success(result.model_dump(mode="json"))
+            elif args.asset_command == "revise":
+                result = import_asset_revision(args.data_root, args.asset_id, args.path, args.title)
                 print_success(result.model_dump(mode="json"))
             elif args.asset_command == "list":
                 print_success(list_assets(

@@ -1,14 +1,20 @@
 {
-  "version": "1.0.0",
+  "version": "1.2.0",
   "artifact_policy": {
     "primary_format": "markdown",
     "internal_json_only": [
       "内部索引/运行状态.json",
       "内部索引/运行计划.json",
       "内部索引/输入材料索引.json",
-      "内部索引/独立审查状态.json"
+      "内部索引/独立审查状态.json",
+      "内部索引/方法论选择.json"
     ],
     "forbid_json_as_content_deliverable": true
+  },
+  "language_profiles": {
+    "c_cpp": [],
+    "lua": ["references/language-lua.md"],
+    "openubmc_lua": ["references/language-lua.md", "references/openubmc-lua.md"]
   },
   "required_core_rules": {
     "path-fidelity": "references/path-fidelity.md",
@@ -20,7 +26,8 @@
       "id": "01",
       "file": "steps/01-intake-and-scope.md",
       "required": [
-        "活文档/01-范围与任务契约.md"
+        "活文档/01-范围与任务契约.md",
+        "内部索引/方法论选择.json"
       ],
       "markdown_min_chars": 600
     },

@@ -8,7 +8,7 @@ from typing import Literal
 from uuid import uuid4
 
 from pangea_agent.agent_io import read_json, write_json
-from pangea_agent.assets import analysis_asset_inputs
+from pangea_agent.assets import analysis_asset_inputs, load_asset
 from pangea_agent.models.methodology import (
     FrozenMethodologyCatalog,
     FrozenMethodologyManifest,
@@ -134,7 +134,6 @@ def _derivation_view(
         status = "pending"
     view = {
         "task_id": task.task_id,
-        "action_id": task.action_id,
         "status": status,
         "created_at": (
             task.created_at.isoformat()
@@ -150,6 +149,10 @@ def _derivation_view(
         "task_path": str(task_path),
         "result_path": task.result_path,
     }
+    # Keep the legacy identity readable for old tasks, but do not advertise an
+    # action lifecycle for new direct-Skill derivations.
+    if task.action_id:
+        view["action_id"] = task.action_id
     if include_completion and receipt is not None:
         view["completion"] = receipt.model_dump(mode="json")
     return view
@@ -199,26 +202,34 @@ def prepare_methodology_derivation(
     ))
     if not selected_asset_ids:
         raise ValueError("至少选择一个已批准的历史缺陷资产")
-    items = analysis_asset_inputs(str(data_root), selected_asset_ids)["items"]
-    historical_items = {
-        item_id: item
-        for item_id, item in items.items()
-        if item.get("item_type") == "historical_defect"
-    }
-    historical_asset_ids = {
-        item["asset_id"] for item in historical_items.values()
-    }
-    unavailable_asset_ids = sorted(
-        set(selected_asset_ids) - historical_asset_ids
-    )
+    historical_items = {}
+    unavailable_asset_ids = []
+    for asset_id in selected_asset_ids:
+        record = load_asset(str(data_root), asset_id)
+        if record.asset_type != "historical_defect":
+            unavailable_asset_ids.append(asset_id)
+            continue
+        if record.status != "available" or record.review_status not in {"approved", "not_required"}:
+            unavailable_asset_ids.append(asset_id)
+            continue
+        if not record.normalized_text_path or not Path(record.normalized_text_path).is_file():
+            unavailable_asset_ids.append(asset_id)
+            continue
+        historical_items[asset_id] = {
+            "item_type": "historical_defect",
+            "asset_id": asset_id,
+            "asset_title": record.title,
+            "revision": record.revision,
+            "normalized_text_path": record.normalized_text_path,
+            "source_sha256": record.source_sha256,
+            "source_references": [{"path": record.source_path, "location": "document"}],
+        }
     if unavailable_asset_ids:
         raise ValueError(
-            "以下资产不是含有效条目的已批准历史缺陷："
-            + ", ".join(unavailable_asset_ids)
+            "以下资产不是已批准且可读的历史缺陷：" + ", ".join(sorted(unavailable_asset_ids))
         )
 
     task_id = f"methodology-{uuid4()}"
-    action_id = f"{task_id}:derive"
     task_root = Path(data_root) / "methodologies" / "tasks" / task_id
     source_items_path = task_root / "source-items.json"
     existing_methodologies_path = task_root / "existing-methodologies.json"
@@ -239,8 +250,8 @@ def prepare_methodology_derivation(
         ]
     })
     task = MethodologyDerivationTask(
+        schema_version="2.0",
         task_id=task_id,
-        action_id=action_id,
         created_at=utc_now(),
         data_root=str(data_root),
         source_asset_ids=selected_asset_ids,
@@ -252,14 +263,8 @@ def prepare_methodology_derivation(
     task_path = task_root / "task.json"
     write_json(task_path, task.model_dump(mode="json"))
     return {
-        "action": {
-            "action_id": action_id,
-            "action": "dispatch_agent",
-            "role": "methodology",
-            "stage": "candidate_derivation",
-            "task_path": str(task_path),
-            "task_id": task_id,
-        }
+        "task": task.model_dump(mode="json"),
+        "execution": "direct-skill",
     }
 
 
@@ -337,11 +342,24 @@ def _candidate_values(candidate: MethodologyCandidate) -> dict:
 
 def _approved_historical_items(data_root: str | Path) -> set[str]:
     items = analysis_asset_inputs(str(data_root))["items"]
-    return {
+    identifiers = {
         item_id
         for item_id, item in items.items()
         if item.get("item_type") == "historical_defect"
     }
+    for record in (
+        load_asset(str(data_root), path.parent.name)
+        for path in (Path(data_root) / "assets").glob("*/asset.json")
+    ):
+        if (
+            record.asset_type == "historical_defect"
+            and record.status == "available"
+            and record.review_status in {"approved", "not_required"}
+            and record.normalized_text_path
+            and Path(record.normalized_text_path).is_file()
+        ):
+            identifiers.add(record.asset_id)
+    return identifiers
 
 
 def import_methodology_candidates(
