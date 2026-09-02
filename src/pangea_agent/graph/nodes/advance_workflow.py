@@ -171,12 +171,13 @@ def _audit_acceptance_rule(
             )
         if check in {"trigger_actions", "developer_confirm_content"}:
             return (
-                "先只看 observed_fields.actions 并作二选一：action 本身是在陈述具体内部操作、predicate"
-                "及对应 outcome，还是仍在询问或等待确认如何构造/调用。只有前者可以 accepted；后者"
-                "必须 finding 或删除 Scenario，不能用 readiness=developer_confirm、title、preconditions、"
-                "evidence 或‘如实表达待确认’作为通过理由。accepted conclusion 必须逐字引用一个已经"
-                "陈述具体 predicate/outcome 的 action。Scenario 引用 Branch/Flow 时，该 action 还必须"
-                "声明自己实际覆盖的分支条件或结果；泛化输入类型不算。"
+                "逐个 Scenario 单独从 observed_fields.actions 原文抄出具体 predicate/trigger 与对应"
+                "outcome；任一段不存在就必须 finding，不能从 title、preconditions、external_oracles"
+                "或另一个 Scenario 借答案。若 action 仍在询问或等待确认如何操作，也必须 finding 或"
+                "删除 Scenario；readiness=developer_confirm 和‘如实表达待确认’都不是通过理由。"
+                "accepted conclusion 必须逐字引用该 Scenario actions 中的 predicate 与 outcome，并写明"
+                "各自 action 下标。business_entry"
+                "仍待确认时，action 声称通过产品入口或公开 API 执行也必须 finding。"
             )
         if check.startswith("risk_trigger_action/"):
             return (
