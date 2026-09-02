@@ -84,22 +84,28 @@ def _audit_acceptance_rule(
     """Place the relevant semantic review rule beside one frozen audit target."""
     if check.startswith(("source_evidence/", "unreachable_evidence/")):
         return (
-            "逐从句对照 cited_source_lines；只有该 repo/path/line range 单独能证明的源码事实"
-            "才能 accepted。语言规则、Analysis 字段、manifest/caller truncation、跨文件缺失、"
-            "未由该范围直接声明的 ABI/构建/产品入口结论必须移出 SourceEvidence；不能把这些"
-            "范围事实换一种说法后继续留在 observation。即使引用范围包含完整表达式，signed "
-            "overflow、undefined behavior、TYPE_MAX 边界等仍是结合类型声明与语言规则得到的"
-            "分析结论，不是该表达式行直接证明的事实；Evidence 只保留表达式、条件和返回。"
+            "observation 必须逐字复制 cited_source_lines 中足以定位事实的最小源码片段，不能在"
+            "片段前后追加解释、推导或范围结论；所有 Flow、Risk、Scenario、finding 和 decision"
+            "中的 SourceEvidence 都适用同一规则。语言规则、Analysis 字段、manifest/caller "
+            "truncation、跨文件缺失、未由该范围直接声明的 ABI/构建/产品入口结论必须移出"
+            "SourceEvidence。即使引用范围包含完整表达式，signed overflow、undefined behavior、"
+            "TYPE_MAX 边界等仍是结合类型声明与语言规则得到的分析结论，不得附加到源码摘录。"
         )
     if object_type == "flow" and check == "control_flow":
         return (
             "每个语义不同且改变返回、状态或输出的源码 outcome 都要有可追踪 edge；结果相同可"
             "共用 step。若 Risk trigger 使正常结果不再受语言或冻结契约保证，正常 edge 必须排除"
-            "trigger，并保留 error、termination 或 undefined/no-stable-result outcome。"
+            "trigger，并保留 error、termination 或 undefined/no-stable-result outcome。达到 exit、"
+            "error 或 undefined terminal 已表示该结果；除非冻结源码明确存在循环或重试，terminal"
+            "不得再有 outgoing edge，更不得用指向自身的 edge 重复表示 return 或 outcome。"
         )
     if object_type == "risk":
         if check == "trigger":
-            return "trigger 只能保留冻结源码证明的精确内部条件，不能加入未证实入口或扩大边界。"
+            return (
+                "trigger 只能保留冻结源码证明的精确内部条件，不能加入未证实入口或扩大边界。"
+                "若冻结输入未证明受支持业务入口，trigger 只能写内部条件和到达的源码操作；入口"
+                "与制造方式的不确定性应写入 test_disposition/reason，不得写成已发生的触发前提。"
+            )
         if check == "system_result_and_observation":
             if analysis_language == "c_cpp":
                 return (
@@ -137,7 +143,9 @@ def _audit_acceptance_rule(
             return (
                 "external_oracles 必须写出对应源码结果或有明确前提的条件性观测；普通构建 UB 无稳定"
                 "Oracle；未冻结 recover/trap 或产品运行契约时，sanitizer 只能说执行已启用对应检查"
-                "的构建时可报告，不得升级成必然报告或中止。"
+                "的构建时可报告，不得升级成必然报告或中止。若同一 Scenario 同时写安全域正常结果"
+                "和 Risk trigger，正常结果的条件必须明确排除 trigger；不能一边声称全部非负输入正常"
+                "返回，一边又声明其中的 TYPE_MAX 触发 UB。"
             )
     if object_type == "unresolved":
         return "只允许真实 selected input/Coverage ID，且不得重复 Branch/Coverage/Risk/Scenario 已表达的 developer_confirm。"

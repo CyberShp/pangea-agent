@@ -75,7 +75,7 @@ Inventory 中属于当前 `source_scope` 的每个 `branch_id` 都必须有且�
 
 BranchDecision 引用的 Flow 必须包含条件节点和每个语义不同且改变返回、状态或输出的源码可见 successor；`developer_confirm` 不允许省略内部控制流。每个 outcome 必须有可追踪 successor edge；结果相同的 outcome 可以共用 successor step，但条件 edge 不能丢。把 return 只写在 branch step 的 label/evidence 不算对应 edge；缺少真实 return/state edge 属于 Flow 遗漏。
 
-Flow 还必须与已经建立的 Risk 保持一致：只有当 Risk trigger 使“正常返回/正常结果”不再由语言规则或冻结契约保证时，正常 edge 才必须排除该 trigger，并为 trigger 保留 error、termination 或 undefined outcome。必须能从 `flows[].edges[]` 直接指出 trigger 的 source、target 和 condition；只有安全域 edge、step label、summary、evidence 或 Risk 自己的 `exclusion_condition` 都不能替代这条 outcome edge。安全结果与 error/termination/undefined 是不同语义结果时，不能让它们的条件 edge 共用一个混合 terminal step。undefined outcome 是已识别 Risk 的语义结果，不是伪造源码 branch。资源泄漏、数据泄漏、错误状态写入等 Risk 即使发生后仍可能正常返回，不得仅为 Risk 账本伪造控制流分支。
+Flow 还必须与已经建立的 Risk 保持一致：只有当 Risk trigger 使“正常返回/正常结果”不再由语言规则或冻结契约保证时，正常 edge 才必须排除该 trigger，并为 trigger 保留 error、termination 或 undefined outcome。必须能从 `flows[].edges[]` 直接指出 trigger 的 source、target 和 condition；只有安全域 edge、step label、summary、evidence 或 Risk 自己的 `exclusion_condition` 都不能替代这条 outcome edge。安全结果与 error/termination/undefined 是不同语义结果时，不能让它们的条件 edge 共用一个混合 terminal step。到达 exit/error/undefined terminal 已表示相应结果；除非冻结源码明确存在循环或重试，terminal 不得有 outgoing edge 或 self-loop。undefined outcome 是已识别 Risk 的语义结果，不是伪造源码 branch。资源泄漏、数据泄漏、错误状态写入等 Risk 即使发生后仍可能正常返回，不得仅为 Risk 账本伪造控制流分支。
 
 caller truncation 不只约束 `not_test_relevant|developer_confirm|unreachable`，也约束乐观的 `scenario_mapped|merged` 和 ready Scenario/TestCase。若所谓业务入口只由私有 `.c` 的声明、跨文件调用或可链接性支撑，而缺失 caller 可能包含真正产品入口，就不能直接声明 ready；冻结证据不足时使用 `developer_confirm`。
 
@@ -174,7 +174,7 @@ Coverage Gap
 - `test_required`：风险已经具备测试侧可执行路径，必须由至少一个 ready Scenario 关联，并最终由正式 TestCase 的 `linked_risk_keys` 覆盖。
 - `developer_confirm`：风险本身有源码依据，但当前冻结上下文不足以确认稳定业务入口、制造方法或独立 Oracle；不得强行生成正式 TestCase。
 - `developer_confirm` Risk 的 `trigger` 只能写冻结源码已证明的内部条件，并明确尚缺的入口/构造证据；缺少公开头文件、产品契约或受支持客户端/测试时，不得声称“通过受支持入口”或“从公开 API”触发。
-- Scenario 只有在自身 actions 含该 Risk trigger、external_oracles 对应该 Risk 的观测方式时才填写 `linked_risk_keys`。产品入口可以待确认，但 actions 仍要直接陈述冻结证据已确定的内部构造动作；把“如何构造/触发”留作待回答问题不算 action。developer-confirm Risk 不强制生成 Scenario；无法形成真实动作或稳定 Oracle 时保留 Risk 本身即可，不建立空壳 Scenario。若保留风险 Scenario，它必须独立承载已确认触发和条件性观测，不能挂到只验证其他输入或 Branch 的泛化 Scenario。
+- Scenario 只有在自身 actions 含该 Risk trigger、external_oracles 对应该 Risk 的观测方式时才填写 `linked_risk_keys`。产品入口可以待确认，但 actions 仍要直接陈述冻结证据已确定的内部构造动作；把“如何构造/触发”留作待回答问题不算 action。developer-confirm Risk 不强制生成 Scenario；无法形成真实动作或稳定 Oracle 时保留 Risk 本身即可，不建立空壳 Scenario。若保留风险 Scenario，它必须独立承载已确认触发和条件性观测，不能挂到只验证其他输入或 Branch 的泛化 Scenario。同一 Scenario 若还声明安全域正常结果，正常结果条件必须排除 Risk trigger；不得把“全部非负输入正常返回”和“其中 `TYPE_MAX` 触发 UB”同时写成成立的 Oracle。
 - developer-confirm Scenario 必须保存至少一个冻结证据已证明的具体 predicate/trigger，以及对应的源码结果或条件性观测；入口或产品外部 Oracle可以明确待确认，但 actions 与 external_oracles 不能全部只剩占位话术。没有已确认内容就删除 Scenario 并重算 Branch/Risk 引用。若保留关联该 Risk 的 Scenario，关键边界必须出现在 actions 中，不能只藏在 title/preconditions/evidence；按 usual arithmetic conversions 后的真实有符号运算类型使用对应 `TYPE_MAX`，单点边界不能扩写成“其他极大值”“附近值”或更宽输入域；只有运算类型确为 `int` 的 `value + 1` 才使用 `value == INT_MAX`。Scenario 同时填写 `branch_ids` 时，还必须由自身动作与 Oracle 覆盖自己声明的分支 outcome/结果；单个 Scenario 不强制同时覆盖 true/false，否则拆分或移除该引用。
 - `unreachable_from_supported_entry`：只有确认无法从当前产品支持的业务入口到达时使用，同时填写 `unreachable_reason` 和直接源码 `unreachable_evidence`。
 - “难以构造”“需要故障注入”“暂时缺少环境”本身不等于不可达；如果只是无法在当前冻结证据中确认业务制造方式，使用 `developer_confirm`。
