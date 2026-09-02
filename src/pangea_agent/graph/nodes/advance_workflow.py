@@ -76,6 +76,73 @@ _UNIT_AUDIT_CHECKS = (
 )
 
 
+def _audit_acceptance_rule(
+    object_type: str,
+    check: str,
+    analysis_language: str,
+) -> str:
+    """Place the relevant semantic review rule beside one frozen audit target."""
+    if check.startswith(("source_evidence/", "unreachable_evidence/")):
+        return (
+            "逐从句对照 cited_source_lines；只有该 repo/path/line range 单独能证明的源码事实"
+            "才能 accepted。语言规则、Analysis 字段、manifest/caller truncation、跨文件缺失、"
+            "未由该范围直接声明的 ABI/构建/产品入口结论必须移出 SourceEvidence；不能把这些"
+            "范围事实换一种说法后继续留在 observation。"
+        )
+    if object_type == "flow" and check == "control_flow":
+        return (
+            "每个语义不同且改变返回、状态或输出的源码 outcome 都要有可追踪 edge；结果相同可"
+            "共用 step。若 Risk trigger 使正常结果不再受语言或冻结契约保证，正常 edge 必须排除"
+            "trigger，并保留 error、termination 或 undefined/no-stable-result outcome。"
+        )
+    if object_type == "risk":
+        if check == "trigger":
+            return "trigger 只能保留冻结源码证明的精确内部条件，不能加入未证实入口或扩大边界。"
+        if check == "system_result_and_observation":
+            if analysis_language == "c_cpp":
+                return (
+                    "C/C++ UB 的普通构建没有稳定产品 Oracle；可能后果不得写成固定值、必然结果"
+                    "或穷举。sanitizer 只能在执行已启用对应检查的构建时报告运行期问题，不能写成"
+                    "构建时报告；未冻结 recover/trap 配置时不得保证中止。"
+                )
+            return "system_result 与 external_observation 必须分别说明系统后果和可外部判定的观测，不得把测试证据缺口写成产品结果。"
+        if check == "exclusion_condition":
+            return (
+                "exclusion 必须由冻结证据证明能阻止完整 trigger、证明该 Risk 路径不可达，或让"
+                "相关操作具有受定义语义；sanitizer 只增加观测，不是 exclusion。"
+            )
+        if check == "severity_and_product_impact":
+            return (
+                "severity 只由 trigger 发生后的真实产品影响证据支撑；源码机理确定性属于 confidence。"
+                "入口未确认、测试难度或仅存在 UB 都不能自动推出 High/Critical，也不能用未冻结 ABI"
+                "下的固定环绕值补产品影响。"
+            )
+        if check == "flow_outcome_consistency":
+            return (
+                "若 trigger 使正常 successor 不再有语言或冻结契约保证，必须有排除 trigger 的正常"
+                "edge 和显式 error/termination/undefined outcome；正常返回仍可能发生的泄漏、竞态等"
+                "Risk 不得被迫伪造控制流分支。"
+            )
+    if object_type == "scenario":
+        if check in {"trigger_actions", "developer_confirm_content"} or check.startswith(
+            "risk_trigger_action/"
+        ):
+            return (
+                "保留的 Scenario 必须在实际 action 中直接陈述冻结证据证明的具体 predicate/trigger；"
+                "title、precondition、evidence 或询问如何触发的占位话术不能代替 action。"
+            )
+        if check == "external_oracles" or check.startswith("risk_external_oracle/"):
+            return (
+                "external_oracles 必须写出对应源码结果或有明确前提的条件性观测；普通构建 UB 无稳定"
+                "Oracle，sanitizer 观测必须说明执行已启用对应检查的构建。"
+            )
+    if object_type == "unresolved":
+        return "只允许真实 selected input/Coverage ID，且不得重复 Branch/Coverage/Risk/Scenario 已表达的 developer_confirm。"
+    if object_type == "unit" and check.endswith("_completeness"):
+        return "逐项对照 task 分配对象与 validated Analysis 的真实对象集合；空输入集合是空义务，不能制造 finding。"
+    return "逐字核对 observed_fields 与冻结源码、task 和输入；对象总体正确不能豁免当前 check 的字段错误。"
+
+
 def _analysis_audit_targets(
     unit_id: str,
     result: UnitSemanticResult,
@@ -99,11 +166,28 @@ def _analysis_audit_targets(
         check_prefix: str = "source_evidence",
     ) -> None:
         for evidence_index, item in enumerate(evidence):
+            cited_source_lines: list[dict[str, object]] = []
+            if task is not None:
+                relative_path = item.path.replace("\\", "/").strip("/")
+                source_path = Path(task.repository.source_root, relative_path)
+                try:
+                    lines = source_path.read_text(encoding="utf-8").splitlines()
+                except (OSError, UnicodeError):
+                    lines = []
+                line_end = item.line_end or item.line_start
+                cited_source_lines = [
+                    {"line": line_number, "text": lines[line_number - 1]}
+                    for line_number in range(item.line_start, line_end + 1)
+                    if line_number <= len(lines)
+                ]
             add(
                 object_type,
                 object_key,
                 f"{check_prefix}/{evidence_index}",
-                {"evidence": item.model_dump(mode="json")},
+                {
+                    "evidence": item.model_dump(mode="json"),
+                    "cited_source_lines": cited_source_lines,
+                },
             )
 
     decision_keys = {
@@ -141,7 +225,9 @@ def _analysis_audit_targets(
             flow.flow_key,
             "control_flow",
             {
+                "title": flow.title,
                 "entry": flow.entry,
+                "summary": flow.summary,
                 "steps": [
                     {
                         "step_key": step.step_key,
@@ -209,6 +295,7 @@ def _analysis_audit_targets(
             item.risk_key,
             "system_result_and_observation",
             {
+                "trigger": item.trigger,
                 "system_result": item.system_result,
                 "external_observation": item.external_observation,
             },
@@ -223,7 +310,15 @@ def _analysis_audit_targets(
             "risk",
             item.risk_key,
             "severity_and_product_impact",
-            {"dfx": item.dfx, "severity": item.severity, "confidence": item.confidence},
+            {
+                "dfx": item.dfx,
+                "severity": item.severity,
+                "confidence": item.confidence,
+                "trigger": item.trigger,
+                "system_result": item.system_result,
+                "external_observation": item.external_observation,
+                "test_disposition": item.test_disposition,
+            },
         )
         add(
             "risk",
@@ -327,6 +422,11 @@ def _analysis_audit_targets(
             object_key=object_key,
             check=check,
             observed_fields=observed_fields,
+            acceptance_rule=_audit_acceptance_rule(
+                object_type,
+                check,
+                task.analysis_language if task is not None else "c_cpp",
+            ),
         )
         for index, (object_type, object_key, check, observed_fields) in enumerate(
             coordinates,

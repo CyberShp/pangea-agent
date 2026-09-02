@@ -13,6 +13,12 @@
           "description": "Workflow 从 validated Analysis 和对应 Analysis task 原样冻结的待核对字段；仅用于让 Reviewer 直接看到当前值，不代表 Python 已作语义裁决",
           "title": "Observed Fields",
           "type": "object"
+        },
+        "acceptance_rule": {
+          "default": "",
+          "description": "Workflow 为当前 object/check 提供的就地核对规则；仅约束 Reviewer 如何裁决，不表示 Python 已判断 observed_fields 的语义正确性",
+          "title": "Acceptance Rule",
+          "type": "string"
         }
       },
       "required": ["audit_id", "unit_id", "object_type", "object_key", "check"],

@@ -242,6 +242,13 @@ class ComparisonAuditTarget(StrictModel):
             "仅用于让 Reviewer 直接看到当前值，不代表 Python 已作语义裁决"
         ),
     )
+    acceptance_rule: str = Field(
+        default="",
+        description=(
+            "Workflow 为当前 object/check 提供的就地核对规则；仅约束 Reviewer 如何裁决，"
+            "不表示 Python 已判断 observed_fields 的语义正确性"
+        ),
+    )
 
 
 class ComparisonAuditDecision(StrictModel):
