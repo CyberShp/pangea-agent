@@ -161,12 +161,17 @@ def _audit_acceptance_rule(
                 "accepted conclusion 必须引用 Scenario.external_oracles 的具体下标和其中的条件性观测；"
                 "Risk 自身的 system_result/external_observation 只能用于对照，不能替代 Scenario 字段。"
                 "未冻结 recover/trap 时 sanitizer 只能说执行已启用对应检查的构建时可报告。"
+                "developer_confirm Scenario 中，‘需确认构建是否启用该检查；若启用则可报告’本身就是"
+                "合格的条件性观测，不能仅因构建选项尚待确认而判 finding。若选择移除 Risk 链接，"
+                "correction target 必须另行精确指向 /linked_risk_keys；/external_oracles target 的"
+                " required_state 不得把修改另一个未列字段写成备选修法。"
             )
         if check == "external_oracles":
             return (
                 "external_oracles 必须写出对应源码结果或有明确前提的条件性观测；普通构建 UB 无稳定"
                 "Oracle；未冻结 recover/trap 或产品运行契约时，sanitizer 只能说执行已启用对应检查"
-                "的构建时可报告，不得升级成必然报告或中止。若同一 Scenario 同时写安全域正常结果"
+                "的构建时可报告，不得升级成必然报告或中止。构建选项本身尚待确认不使这种 if-enabled"
+                " 条件性观测失效。若同一 Scenario 同时写安全域正常结果"
                 "和 Risk trigger，正常结果的条件必须明确排除 trigger；不能一边声称全部非负输入正常"
                 "返回，一边又声明其中的 TYPE_MAX 触发 UB。"
             )

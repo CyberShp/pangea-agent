@@ -169,7 +169,7 @@ Coverage Gap
 
 - 缺少稳定业务入口、制造方法或独立 Oracle 是证据缺口，不是产品运行时 Risk。不得创建 `system_result` / `external_observation` 只描述“测试无法触发、无法观测、需要开发确认”的 Risk；把对应 Branch/Coverage/Scenario 保持为 `developer_confirm`。
 - C/C++ undefined behavior（未定义行为）只说明结果不可依赖，不能在没有冻结构建/运行时契约时写成固定环绕值、`INT_MIN`、返回码、日志或状态。需要受控 sanitizer/构建方式但当前证据不足时保持 `developer_confirm`。
-- 未冻结目标 ABI/编译契约时只写类型边界符号（例如 `INT_MAX`），不得擅自把 `int` 固定成 32 位十进制值；ASan 主要检查内存错误，不能单独作为 signed-integer-overflow 的检测 Oracle。使用 UBSan/对应 signed-overflow sanitizer 时必须明确依赖构建选项；未冻结 recover/trap 配置时只能说“可报告”，不能断言必然中止。普通构建没有稳定产品 Oracle，任何返回值、终止状态或其他表现都不能写成必然；列举可能后果时不得用穷举式“只能”排除其他 UB 表现。sanitizer 不是 Risk 排除条件。排除条件必须由冻结证据证明能阻止完整 trigger、证明该 Risk 路径不可达，或让相关操作具有受定义语义；应用后 Risk 所述失效结果必须不可能发生。安全域可以作为这类保证；能排除精确 trigger 的输入 guard/契约即使缩窄允许输入域，也不会因此失去 exclusion 身份。若文字实际排除安全输入却仍允许 trigger，且未改变相关语义，则不成立。
+- 未冻结目标 ABI/编译契约时只写类型边界符号（例如 `INT_MAX`），不得擅自把 `int` 固定成 32 位十进制值；ASan 主要检查内存错误，不能单独作为 signed-integer-overflow 的检测 Oracle。使用 UBSan/对应 signed-overflow sanitizer 时必须明确依赖构建选项；未冻结 recover/trap 配置时只能说“可报告”，不能断言必然中止。`developer_confirm` Scenario 可以明确写“需确认构建是否启用对应检查；若启用则可报告”，这已经是有前提的条件性观测，不能仅因构建选项尚待确认而删除；只有没有写明条件、或把报告/中止升级为必然时才不成立。普通构建没有稳定产品 Oracle，任何返回值、终止状态或其他表现都不能写成必然；列举可能后果时不得用穷举式“只能”排除其他 UB 表现。sanitizer 不是 Risk 排除条件。排除条件必须由冻结证据证明能阻止完整 trigger、证明该 Risk 路径不可达，或让相关操作具有受定义语义；应用后 Risk 所述失效结果必须不可能发生。安全域可以作为这类保证；能排除精确 trigger 的输入 guard/契约即使缩窄允许输入域，也不会因此失去 exclusion 身份。若文字实际排除安全输入却仍允许 trigger，且未改变相关语义，则不成立。
 - 源码已直接证明且未被正向证明不可达的 C/C++ 未定义行为必须保留 Risk；入口/制造/Oracle 不足时用 `developer_confirm`，不得把它改写成“六维无信号”或从 Risk 集合删除。
 - `test_required`：风险已经具备测试侧可执行路径，必须由至少一个 ready Scenario 关联，并最终由正式 TestCase 的 `linked_risk_keys` 覆盖。
 - `developer_confirm`：风险本身有源码依据，但当前冻结上下文不足以确认稳定业务入口、制造方法或独立 Oracle；不得强行生成正式 TestCase。
