@@ -125,19 +125,22 @@ def _analysis_audit_targets(
             "trigger",
             "system_result_and_observation",
             "exclusion_condition",
+            "severity_and_product_impact",
+            "flow_outcome_consistency",
             "test_disposition_and_links",
             "source_evidence",
         )
     for item in result.scenarios:
-        add(
-            "scenario",
-            item.scenario_key,
+        checks = [
             "entry_and_readiness",
             "trigger_actions",
             "external_oracles",
             "trace_links",
             "source_evidence",
-        )
+        ]
+        if item.readiness == "developer_confirm":
+            checks.append("developer_confirm_content")
+        add("scenario", item.scenario_key, *checks)
     for item in result.test_cases:
         add(
             "test_case",

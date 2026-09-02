@@ -18,6 +18,8 @@
 8. **Flow outcome→edge 表**：逐个源码条件列出每个语义不同且会改变返回、状态或输出的 outcome，并为每个 outcome 保留可追踪的 successor edge；结果相同的 outcome 可以共用 successor step，但条件 edge 不能丢。把 `return` 只写在 branch step 的 label/evidence 不算 successor；例如 `if (value < 0) return -1; return value + 1;` 必须同时存在负值 return/exit step 与 edge、非负加法 step 与 edge。
 9. **Risk exclusion 反事实表**：`exclusion_condition` 必须由冻结证据证明能阻止完整 trigger、证明该 Risk 路径不可达，或让相关操作具有受定义语义；应用该条件后，Risk 所述失效结果必须不可能发生。对 `int value + 1` 的单点 `value == INT_MAX` signed-overflow 风险，拒绝 `value == INT_MAX`、保证 `value != INT_MAX`，或把全部允许输入限制在 `value < INT_MAX`（更窄的已证安全域也可）都能阻止触发；若文字实际是在排除安全输入、却仍允许 `INT_MAX` 且未改变算术语义，则不成立。
 
+Flow 还要与已经建立的 Risk 对齐：只有当 Risk trigger 使某个“正常返回/正常结果”不再由语言规则或冻结契约保证时，才需要把安全域条件写进正常 edge，并为 trigger 保留 error、termination 或 undefined outcome；不得让一条无条件正常 edge 覆盖该 trigger。资源泄漏、数据泄漏、错误状态写入等 Risk 即使发生后仍可能正常返回，不得为满足这项核对伪造控制流分支。Risk 的 severity 必须由触发后的产品影响证据支撑，confidence 必须由结论证据强度支撑；入口待确认或测试困难本身既不能自动抬高，也不能自动压低 severity。
+
 同时检查 source manifest 的 `scope_expansion.caller_context_truncations`。它只表示 Workflow 因文件/深度预算停止继续冻结 caller context，不表示调用链到此结束，更不能作为 `unreachable` 证据。若当前单元相关 caller context 被截断，且现有冻结证据仍不足以确认稳定业务入口、制造方式或外部 Oracle，应使用 `developer_confirm` 并说明已经追到的位置；不得把“未继续看到 caller”解释为不可达，也不得因为上层入口恰好在截断范围外而改写成 `not_test_relevant`。
 
 ### 业务入口与内部函数的边界
