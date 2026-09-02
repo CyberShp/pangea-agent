@@ -39,6 +39,7 @@ from pangea_agent.models.analysis import (
     ComparisonReviewResult,
     ComparisonReviewTask,
     IndependentReviewResult,
+    IndependentReviewTask,
     PlanningResult,
     PlanningResultV2,
     PlanningTask,
