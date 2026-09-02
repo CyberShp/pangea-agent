@@ -24,6 +24,7 @@ class PangeaState(TypedDict, total=False):
     risks: list[dict[str, Any]]
     test_cases: list[dict[str, Any]]
     review_findings: list[dict[str, Any]]
+    review_finding_history: list[dict[str, Any]]
     quality_report: dict[str, Any]
     report_path: str
     html_report_path: str

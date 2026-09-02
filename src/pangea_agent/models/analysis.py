@@ -263,7 +263,7 @@ class AnalysisTask(StrictModel):
 
 class ReviewFinding(StrictModel):
     finding_key: str = Field(min_length=1)
-    category: Literal["missed_flow", "document_delta", "coverage_gap", "defect_mechanism", "risk", "test_oracle", "incorrect_conclusion", "blackbox_translation"] = Field(description="新增 finding 的类别；blackbox_translation 表示源码事实/风险可能成立，但 Scenario/TestCase 翻译出的业务入口、测试动作或外部 Oracle 不受冻结证据支持；不得写入 independent_finding_decisions.disposition")
+    category: Literal["missed_flow", "document_delta", "coverage_gap", "defect_mechanism", "risk", "test_oracle", "incorrect_conclusion", "blackbox_translation"] = Field(description="新增 finding 的类别；blackbox_translation 表示源码事实/风险可能成立，但 Scenario/TestCase 翻译出的业务入口、测试动作、可达路径、Coverage/Risk 追溯或外部 Oracle 不受冻结证据支持；不得写入 independent_finding_decisions.disposition")
     affected_unit_ids: list[str] = Field(min_length=1)
     linked_input_ids: list[str] = Field(default_factory=list)
     summary: str = Field(min_length=1)

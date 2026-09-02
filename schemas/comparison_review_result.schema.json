@@ -44,7 +44,7 @@
       "properties": {
         "finding_key": {"minLength": 1, "title": "Finding Key", "type": "string"},
         "category": {
-          "description": "新增 finding 的类别；blackbox_translation 表示源码事实/风险可能成立，但 Scenario/TestCase 翻译出的业务入口、测试动作或外部 Oracle 不受冻结证据支持；不得写入 independent_finding_decisions.disposition",
+          "description": "新增 finding 的类别；blackbox_translation 表示源码事实/风险可能成立，但 Scenario/TestCase 翻译出的业务入口、测试动作、可达路径、Coverage/Risk 追溯或外部 Oracle 不受冻结证据支持；不得写入 independent_finding_decisions.disposition",
           "enum": ["missed_flow", "document_delta", "coverage_gap", "defect_mechanism", "risk", "test_oracle", "incorrect_conclusion", "blackbox_translation"],
           "title": "Category",
           "type": "string"

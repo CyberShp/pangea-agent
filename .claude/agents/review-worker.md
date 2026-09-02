@@ -15,6 +15,8 @@ Review finding 的 `category` 只能使用当前 schema 固定枚举。资源泄
 
 `independent_review` 不读取、寻找或推测首轮 Analysis result。只基于 unit plan、冻结源码、inventory、selected inputs、rubrics 独立寻找关键业务流程遗漏候选、Branch/Coverage 相关路径遗漏、资料/代码差异、历史缺陷机理、风险和测试 oracle 缺口。盲审 finding 必须有源码或结构化输入证据，不因实现风格、命名或一般性最佳实践创建 finding。盲审看不到 Analysis 的 Scenario/TestCase，因此不使用 `blackbox_translation`；该类别只用于 comparison_review 看到首轮翻译结果后的新增 finding。
 
+Independent 写入前还要做角色隔离自检：`summary|required_check` 只能陈述冻结源码/输入事实与待核对事项，不得断言“首轮遗漏/已记录/是否已经处理”。源码直接证明的 UB、越界、数据破坏、资源泄漏或竞态 finding 固定使用 `category=risk`；具体失败机理写 `summary|required_check`，不得用 `defect_mechanism` 代替新发现的源码 Risk。
+
 盲审允许的 category 只有 `missed_flow|document_delta|coverage_gap|defect_mechanism|risk|test_oracle|incorrect_conclusion`。若准备写 `blackbox_translation`，说明你正在判断一个盲审不可见的 Analysis 翻译结果，必须停止并改回对冻结源码/输入本身的独立 finding；settle 会拒绝该类别。
 
 `category=coverage_gap` 必须在 `linked_input_ids` 中引用至少一个 `selected_inputs.coverage_gaps[]` 的真实 `coverage_id`，且该 ID 属于 affected unit。`source_manifest.coverage_diagnostics.unmatched|ambiguous` 只是未匹配诊断计数，不是 Coverage gap，不能从计数猜测函数级/分支级 gap 或制造 ID。没有真实 Coverage ID 时不得建立 `coverage_gap` finding。
@@ -68,11 +70,11 @@ Comparison 必须按顺序工作：先独立审计 Analysis 的 Flow/Branch/Cove
 
 Comparison 还必须独立核对冻结源码中显式可见的 C/C++ 未定义行为、越界、数据破坏、资源泄漏和竞态是否被 Analysis 记录为 Risk。源码已直接证明且无正向不可达证据、Analysis 却漏 Risk 时，新增 `category=risk` finding；不得因为 Independent findings 为空或入口仍待确认就跳过。
 
-在 dismiss 已被 Analysis 覆盖的 source-proven Risk finding 前，检查 Analysis 的 summary、Risk、Scenario、evidence 和关联关系：Scenario 若链接该 Risk，必须在自身 preconditions/actions 精确保留 Risk trigger 的关键边界、在 external_oracles 保留条件性观测。trigger 只出现在 title/evidence，或把具体边界泛化成更宽输入域，都不算已承载；即使 Scenario 是 `developer_confirm` 也必须新增 `incorrect_conclusion`，要求修正或移除空壳 Scenario。Scenario 同时链接 Branch 时还要真实覆盖该 Branch 条件/结果，否则拆分或移除 Branch 引用。对于 UB，未冻结 ABI 时出现固定十进制 `int` 边界，或普通构建结果被写成必然返回，还要新增 `incorrect_conclusion`，要求改为符号边界和“无稳定 Oracle”。
+在 dismiss 已被 Analysis 覆盖的 source-proven Risk finding 前，检查 Analysis 的 summary、Risk、Scenario、evidence 和关联关系：先独立核对 `Risk.trigger` 是否仍是源码证明的精确条件、`exclusion_condition` 是否真的排除该条件；即使没有关联 Scenario 也不能跳过。Scenario 若链接该 Risk，必须在自身 preconditions/actions 精确保留 Risk trigger 的关键边界、在 external_oracles 保留条件性观测。trigger 只出现在 title/evidence，或把单点边界泛化成“其他极大值”“附近值”或更宽输入域，都不算已承载；即使 Scenario 是 `developer_confirm` 也必须新增 `incorrect_conclusion`，要求修正或移除空壳 Scenario。Scenario 同时链接 Branch 时还要真实覆盖该 Branch 条件/结果，否则拆分或移除 Branch 引用。对于 UB，未冻结 ABI 时出现固定十进制 `int` 边界、普通构建结果被写成必然返回，或者 `exclusion_condition` 把 trap/recover/sanitizer 当作排除条件，还要新增 `incorrect_conclusion`；排除条件必须真正阻止触发、证明不可达或采用受定义语义。
 
 同时检查 Analysis 顶层 `unresolved`：已经由 Branch/Coverage/Risk/Scenario `developer_confirm` 表达的同源缺口不得重复；首轮条目必须引用本 task 真实 selected input 或 Coverage ID，Closure 条目才可引用 confirmed finding_key。违反时新增 `incorrect_conclusion`，要求删除或写回对应 disposition。
 
-逐条核对 TestCase 直接填写的 Coverage ID：该 Case 的实际动作和预期必须真的执行并判定对应函数或分支，且 `basis` 包含 `coverage`。多个 Case 共用一个 Scenario 时，不得据此把 Scenario 的全部 Coverage gap 视为每条 Case 都已覆盖。
+逐条核对 TestCase 直接填写的 Coverage ID：先从 Coverage record 还原函数或每个 count 为 0 的指定 branch outcome，再为每个 `(coverage_id, Case)` 单独判断其动作与预期是否亲自命中该目标，且 `basis` 包含 `coverage`；同一 record 两侧都为 0 时，true/false 必须分别有至少一条 Case 命中。多个 Case 共用一个 Scenario 时，不得据此把 Scenario 的全部 Coverage gap 视为每条 Case 都已覆盖；若 false 分支 gap 只由零值 Case 触发，非零值 Case 不能关联该 gap。发现 Case 直连了自己没有执行的 branch outcome 时新增一条 `blackbox_translation`；若 Scenario 与其他 Case 关系仍有独立证据成立，要求 Closure 只移除该 Case 的错误 `linked_input_ids`，保留真正命中缺口的 Case 与 ready Scenario。
 
 出现下面这类“源码事实可能成立，但测试翻译错了”的情况，新增 `category=blackbox_translation`：
 

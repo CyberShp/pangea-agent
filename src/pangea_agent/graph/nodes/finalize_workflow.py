@@ -51,7 +51,7 @@ def _load_final_unit_result(state: PangeaState, progress, unit_id: str) -> UnitS
     closure_action_id = f"{state['run_id']}:closure:{unit_id}"
     action_id = (
         closure_action_id
-        if closure_action_id in progress.actions
+        if unit_id in progress.completed_closure_units
         else f"{state['run_id']}:analysis:{unit_id}"
     )
     return UnitSemanticResult.model_validate(
@@ -134,6 +134,245 @@ def _developer_confirm_items(unit_id: str, result: UnitSemanticResult) -> list[d
         if scenario.readiness == "developer_confirm"
     )
     return items
+
+
+def _review_finding_projection(
+    review: IndependentReviewResult | None,
+    comparison_review: ComparisonReviewResult | None,
+    results: dict[str, UnitSemanticResult],
+    completed_closure_units: set[str],
+) -> tuple[list[dict], list[dict], list[dict]]:
+    comparison_decisions: dict[str, list] = defaultdict(list)
+    for decision in (
+        comparison_review.independent_finding_decisions
+        if comparison_review
+        else []
+    ):
+        comparison_decisions[decision.finding_key].append(decision)
+    closure_decisions: dict[tuple[str, str], list] = defaultdict(list)
+    for unit_id, result in results.items():
+        if unit_id not in completed_closure_units:
+            continue
+        for decision in result.review_finding_decisions:
+            closure_decisions[(decision.finding_key, unit_id)].append(decision)
+    active: list[dict] = []
+    history: list[dict] = []
+    diagnostics: list[dict] = []
+
+    if review is None:
+        diagnostics.append(
+            {
+                "stage": "review_contract",
+                "reason": "Independent Review 结果缺失",
+            }
+        )
+    if comparison_review is None:
+        diagnostics.append(
+            {
+                "stage": "review_contract",
+                "reason": "Comparison Review 结果缺失",
+            }
+        )
+    for unit_id, result in results.items():
+        if unit_id in completed_closure_units or not result.review_finding_decisions:
+            continue
+        diagnostics.append(
+            {
+                "stage": "final_integrity",
+                "unit_id": unit_id,
+                "reason": (
+                    "未完成 Targeted Closure 的单元包含 "
+                    "review_finding_decisions，未用于终结 finding"
+                ),
+            }
+        )
+
+    for source, finding in (
+        [("independent", item) for item in (review.findings if review else [])]
+        + [
+            ("comparison", item)
+            for item in (comparison_review.findings if comparison_review else [])
+        ]
+    ):
+        finding_comparison_decisions = (
+            comparison_decisions.get(finding.finding_key, [])
+            if source == "independent"
+            else []
+        )
+        comparison_disposition = (
+            finding_comparison_decisions[0].disposition
+            if len(finding_comparison_decisions) == 1
+            else "ambiguous" if finding_comparison_decisions else None
+        )
+        per_unit = []
+        missing_units = []
+        ambiguous_units = []
+        for unit_id in finding.affected_unit_ids:
+            decisions = closure_decisions.get((finding.finding_key, unit_id), [])
+            if not decisions:
+                missing_units.append(unit_id)
+                continue
+            if len(decisions) > 1:
+                ambiguous_units.append(unit_id)
+            per_unit.extend(
+                {"unit_id": unit_id, **decision.model_dump(mode="json")}
+                for decision in decisions
+            )
+
+        if source == "independent":
+            if len(finding_comparison_decisions) > 1:
+                final_status = "active"
+                diagnostics.append(
+                    {
+                        "stage": "review_contract",
+                        "finding_key": finding.finding_key,
+                        "reason": "Independent finding 存在重复的 Comparison Review decision",
+                    }
+                )
+                missing_units = []
+                ambiguous_units = []
+            elif comparison_disposition == "dismissed":
+                final_status = "dismissed"
+                missing_units = []
+                ambiguous_units = []
+            elif comparison_disposition not in {"confirmed", "unresolved"}:
+                final_status = "active"
+                diagnostics.append(
+                    {
+                        "stage": "review_contract",
+                        "finding_key": finding.finding_key,
+                        "reason": "Independent finding 缺少 Comparison Review decision",
+                    }
+                )
+                missing_units = []
+            else:
+                final_status = ""
+        else:
+            final_status = ""
+
+        if not final_status and (ambiguous_units or missing_units):
+            final_status = "active"
+            diagnostics.extend(
+                {
+                    "stage": "closure_finding",
+                    "unit_id": unit_id,
+                    "finding_key": finding.finding_key,
+                    "reason": "Targeted Closure 对该 finding 存在重复的最终 decision",
+                }
+                for unit_id in ambiguous_units
+            )
+            diagnostics.extend(
+                {
+                    "stage": "closure_finding",
+                    "unit_id": unit_id,
+                    "finding_key": finding.finding_key,
+                    "reason": "Targeted Closure 缺少该 finding 的最终 decision",
+                }
+                for unit_id in missing_units
+            )
+        elif not final_status:
+            dispositions = {item["disposition"] for item in per_unit}
+            if "unresolved" in dispositions:
+                final_status = "unresolved"
+            elif dispositions == {"incorporated"}:
+                final_status = "incorporated"
+            elif dispositions == {"dismissed"}:
+                final_status = "dismissed"
+            else:
+                final_status = "resolved_mixed"
+
+        history.append(
+            {
+                **finding.model_dump(mode="json"),
+                "source": source,
+                "comparison_disposition": comparison_disposition,
+                "comparison_decisions": [
+                    decision.model_dump(mode="json")
+                    for decision in finding_comparison_decisions
+                ],
+                "closure_decisions": per_unit,
+                "final_status": final_status,
+            }
+        )
+        if final_status in {"active", "unresolved"}:
+            active.append(finding.model_dump(mode="json"))
+
+    return active, history, diagnostics
+
+
+def _completed_checks(
+    test_cases: list[dict],
+    scenarios: list[dict],
+    progress,
+    results: dict[str, UnitSemanticResult],
+    review: IndependentReviewResult | None,
+    comparison_review: ComparisonReviewResult | None,
+) -> list[str]:
+    branch_count = sum(len(result.branch_decisions) for result in results.values())
+    coverage_count = sum(len(result.coverage_decisions) for result in results.values())
+    mechanism_count = sum(len(result.mechanism_decisions) for result in results.values())
+    checks = [
+        f"分析单元：{len(progress.analysis_units)} 个；"
+        f"已完成 {len(progress.completed_analysis_units)} 个",
+        f"语义 decision：Branch {branch_count} / Coverage {coverage_count} / "
+        f"Mechanism {mechanism_count}",
+    ]
+    if test_cases:
+        ready_scenario_ids = {
+            scenario["scenario_id"]
+            for scenario in scenarios
+            if scenario["readiness"] in READY_SCENARIO_STATES
+        }
+        traced_case_count = sum(
+            bool(ready_scenario_ids.intersection(case["scenario_ids"]))
+            for case in test_cases
+        )
+        checks.append(
+            f"正式 TestCase：{len(test_cases)} 条；"
+            f"其中 {traced_case_count} 条关联 ready Scenario"
+        )
+    else:
+        developer_confirm_count = sum(
+            scenario["readiness"] == "developer_confirm"
+            for scenario in scenarios
+        )
+        if developer_confirm_count:
+            checks.append(
+                "正式 TestCase：0 条；"
+                f"{developer_confirm_count} 个 Scenario 保持 developer_confirm"
+            )
+        elif scenarios:
+            checks.append("正式 TestCase：0 条；本次 Scenario 未形成正式用例")
+        else:
+            checks.append("正式 TestCase：0 条；本次没有 Scenario")
+
+    if progress.completed_closure_units:
+        closure_counts: dict[str, int] = defaultdict(int)
+        for unit_id in progress.completed_closure_units:
+            for decision in results[unit_id].review_finding_decisions:
+                closure_counts[decision.disposition] += 1
+        checks.append(
+            f"Targeted Closure：{len(progress.completed_closure_units)} 个单元；"
+            f"finding decisions {sum(closure_counts.values())}（"
+            f"incorporated {closure_counts['incorporated']} / "
+            f"dismissed {closure_counts['dismissed']} / "
+            f"unresolved {closure_counts['unresolved']}）"
+        )
+    else:
+        checks.append("Targeted Closure：未触发")
+    if review is None:
+        checks.append("Independent Review：结果缺失")
+    else:
+        checks.append(f"Independent Review：findings {len(review.findings)}")
+    if comparison_review is None:
+        checks.append("Comparison Review：结果缺失")
+    else:
+        checks.append(
+            "Comparison Review："
+            f"decisions {len(comparison_review.independent_finding_decisions)} / "
+            f"new findings {len(comparison_review.findings)}"
+        )
+    return checks
 
 
 def finalize_workflow(state: PangeaState) -> PangeaState:
@@ -412,12 +651,16 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
 
         unresolved.extend(
             {
+                "stage": "closure_finding",
                 "unit_id": unit.unit_id,
                 "finding_key": item.finding_key,
                 "reason": item.conclusion,
             }
             for item in result.review_finding_decisions
-            if item.disposition == "unresolved"
+            if (
+                unit.unit_id in progress.completed_closure_units
+                and item.disposition == "unresolved"
+            )
         )
 
     scenarios_by_risk: dict[str, list[dict]] = defaultdict(list)
@@ -480,6 +723,10 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
         review = IndependentReviewResult.model_validate(
             read_json(validated_result_path(state, review_action_id))
         )
+        unresolved.extend(
+            {"stage": "review", "reason": value}
+            for value in review.unresolved
+        )
 
     comparison_review = None
     comparison_action_id = f"{state['run_id']}:comparison-review"
@@ -492,16 +739,27 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
             for value in comparison_review.unresolved
         )
 
-    comparison_decisions = {
-        decision.finding_key: decision.disposition
-        for decision in (
-            comparison_review.independent_finding_decisions
-            if comparison_review
-            else []
-        )
-    }
+    (
+        active_review_findings,
+        review_finding_history,
+        review_finding_diagnostics,
+    ) = _review_finding_projection(
+        review,
+        comparison_review,
+        results,
+        set(progress.completed_closure_units),
+    )
+
+    semantic_review_diagnostics = [
+        item for item in review_finding_diagnostics if item["stage"] == "review"
+    ]
+    workflow_review_diagnostics = [
+        item for item in review_finding_diagnostics if item["stage"] != "review"
+    ]
+    unresolved.extend(semantic_review_diagnostics)
 
     semantic_unresolved = list(unresolved)
+    unresolved.extend(workflow_review_diagnostics)
     degradations = _deduplicate_degradations(progress.degradations)
     validation_unresolved = [
         {
@@ -512,6 +770,7 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
         for item in degradations
     ]
     unresolved.extend(validation_unresolved)
+    workflow_diagnostics = validation_unresolved + workflow_review_diagnostics
     quality_status = "UNRESOLVED" if unresolved else "PASS"
 
     final_state = {
@@ -555,39 +814,26 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
             "ambiguous": [],
             "unmatched": [],
         },
-        "review_findings": [
-            item.model_dump(mode="json")
-            for item in (
-                [
-                    finding
-                    for finding in review.findings
-                    if comparison_decisions.get(
-                        finding.finding_key,
-                        "unresolved",
-                    )
-                    != "dismissed"
-                ]
-                + comparison_review.findings
-                if review and comparison_review
-                else []
-            )
-        ],
+        "review_findings": active_review_findings,
+        "review_finding_history": review_finding_history,
         "quality_report": {
             "status": quality_status,
-            "checks": [
-                "请求源码均由一个分析单元负责",
-                "相关结构化资料、Branch、Coverage 缺口和缺陷机理均已给出处置",
-                "测试转换通过 Scenario readiness 与正式 TestCase 建立可追溯关系",
-                "独立复核和对照裁决已完成，可信遗漏已定向补齐",
-            ],
+            "checks": _completed_checks(
+                test_cases,
+                scenarios,
+                progress,
+                results,
+                review,
+                comparison_review,
+            ),
             "unresolved": unresolved,
             "semantic_unresolved": semantic_unresolved,
-            "workflow_diagnostics": validation_unresolved,
+            "workflow_diagnostics": workflow_diagnostics,
             "advisories": [],
             "diagnostic_occurrence_count": sum(
                 item["occurrence_count"]
                 for item in degradations
-            ),
+            ) + len(workflow_review_diagnostics),
         },
         "degradations": degradations,
         "degradation_occurrence_count": sum(

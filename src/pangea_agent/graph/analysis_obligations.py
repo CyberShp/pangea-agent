@@ -48,6 +48,14 @@ def analysis_obligations(
         ]
         for coverage_id in expected_coverage
     }
+    cases_by_scenario = {
+        scenario_key: [
+            case
+            for case in result.test_cases
+            if scenario_key in case.scenario_keys
+        ]
+        for scenario_key in known_scenarios
+    }
 
     _decision_set_issues(
         issues,
@@ -205,6 +213,13 @@ def analysis_obligations(
                     scenario.scenario_key,
                     "Scenario 声明为可执行，但缺少必需业务字段："
                     f"{','.join(missing_fields)}",
+                )
+            if not cases_by_scenario.get(scenario.scenario_key):
+                _add(
+                    issues,
+                    "missing_ready_scenario_case",
+                    scenario.scenario_key,
+                    f"Scenario {scenario.scenario_key} 的 readiness={scenario.readiness}，但没有正式 TestCase 直接引用该 Scenario",
                 )
         for flow_key in scenario.covered_flow_keys:
             if flow_key not in known_flows:

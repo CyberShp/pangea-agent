@@ -51,7 +51,7 @@ Pass 5  Structured Result
 
 `non-static` 本身不自动证明公开性；私有 `.c` 文件中的 `extern` 声明、跨 `.c` 文件直接调用或可被链接，也只证明 C 链接/调用关系。仍需公开头文件、契约、真实受支持调用方/测试等证据。caller context 已截断且当前入口只有上述链接性证据时，不得把该实现函数直接包装成 ready Scenario；接口支持性、测试侧构造方式或独立 Oracle 缺证据时，应使用 `developer_confirm`。
 
-ready 是逐 Scenario 的正向证明，不是默认值。每个 `blackbox_ready|graybox_ready` Scenario 都要在 `evidence` 中保留证明其 `business_entry` 受支持的源码证据，或在 `linked_input_ids` 中精确关联提供该证明的 Requirement/Design/task contract 等结构化输入；正式 TestCase 通过 `scenario_keys` 继承这份入口证据。如果只有私有 `.c` wrapper 链或链接性证据，就必须保持 `developer_confirm` 并且不生成正式 TestCase。除非冻结契约明确限定了支持参数域、构造方式或 Oracle，同一私有入口链不能对一个 Branch/输入声称 ready，同时对另一个 Branch/输入又承认入口未知。
+ready 是逐 Scenario 的正向证明，不是默认值。每个 `blackbox_ready|graybox_ready` Scenario 都要在 `evidence` 中保留证明其 `business_entry` 受支持的源码证据，或在 `linked_input_ids` 中精确关联提供该证明的 Requirement/Design/task contract 等结构化输入，并且至少被一条正式 TestCase 的 `scenario_keys` 直接引用；正式 TestCase 通过该引用继承入口证据。如果只有私有 `.c` wrapper 链或链接性证据，就必须保持 `developer_confirm` 并且不生成正式 TestCase。除非冻结契约明确限定了支持参数域、构造方式或 Oracle，同一私有入口链不能对一个 Branch/输入声称 ready，同时对另一个 Branch/输入又承认入口未知。
 
 ## Branch 处置
 
@@ -131,6 +131,8 @@ Coverage Gap
 
 `test_cases[].linked_input_ids` 只记录该 TestCase 自身通过实际步骤和断言直接覆盖的输入。`scenario_mapped|merged` Coverage 必须至少有一条 TestCase 直接填写真实 `coverage_id`、引用该 decision 的 ready Scenario，并在 `basis` 中包含 `coverage`。共享 Scenario 只表示业务条件相同，不会让其中每条 Case 自动继承 Scenario 的全部 `coverage_ids`；只执行 true 分支的 Case 不得关联 false 分支 Coverage gap，反之亦然。
 
+正式写入前先从每条 Coverage record 还原精确目标，再逐 Case 判断：函数 `count=0` 需要该 Case 实际执行目标函数；分支的每个 `true_count=0|false_count=0` 都需要至少一条 Case 实际执行并判定该指定 outcome。只有亲自命中目标的 Case 才直接链接该 `coverage_id`；同一 record 两侧都为 0 时，两侧 Case 可以直连同一个 ID，但不得把共享 Scenario 的 Coverage ID 当作整组 Case 标签批量复制。
+
 用例必须包含：用例描述、用例类型、前置条件、测试步骤、预期结果、观测方式、清理/恢复。用例不分优先级。
 
 生成用例时先列必要测试变体，再写正文。每个变体固定考虑关联风险、构建类型、运行模式、唯一终态。一条风险同时包含 Debug 崩溃与 Release 状态破坏时，先拆成两个变体，再分别生成 TestCase，不要写完一条混合用例后再修改。若唯一终态是进程或服务崩溃、退出、停止，且该变体还要验证恢复，后续动作的第一步固定为“重启并等待服务恢复”。
@@ -167,7 +169,7 @@ Coverage Gap
 - `developer_confirm`：风险本身有源码依据，但当前冻结上下文不足以确认稳定业务入口、制造方法或独立 Oracle；不得强行生成正式 TestCase。
 - `developer_confirm` Risk 的 `trigger` 只能写冻结源码已证明的内部条件，并明确尚缺的入口/构造证据；缺少公开头文件、产品契约或受支持客户端/测试时，不得声称“通过受支持入口”或“从公开 API”触发。
 - Scenario 只有在自身 actions 含该 Risk trigger、external_oracles 对应该 Risk 的观测方式时才填写 `linked_risk_keys`。developer-confirm Risk 不强制生成 Scenario；无法形成真实动作或稳定 Oracle 时保留 Risk 本身即可，不建立空壳 Scenario。若保留风险 Scenario，它必须独立承载已确认触发和条件性观测，不能挂到只验证其他输入或 Branch 的泛化 Scenario。
-- developer-confirm Scenario 必须保存至少一个冻结证据已证明的具体 predicate/trigger，以及对应的源码结果或条件性观测；入口或产品外部 Oracle可以明确待确认，但 actions 与 external_oracles 不能全部只剩占位话术。没有已确认内容就删除 Scenario 并重算 Branch/Risk 引用。若保留关联该 Risk 的 Scenario，关键边界必须出现在 actions 中，不能只藏在 title/preconditions/evidence；例如 signed overflow 的 `INT_MAX` 不能被泛化成“非负整数”。Scenario 同时填写 `branch_ids` 时，还必须由自身动作与 Oracle 覆盖自己声明的分支 outcome/结果；单个 Scenario 不强制同时覆盖 true/false，否则拆分或移除该引用。
+- developer-confirm Scenario 必须保存至少一个冻结证据已证明的具体 predicate/trigger，以及对应的源码结果或条件性观测；入口或产品外部 Oracle可以明确待确认，但 actions 与 external_oracles 不能全部只剩占位话术。没有已确认内容就删除 Scenario 并重算 Branch/Risk 引用。若保留关联该 Risk 的 Scenario，关键边界必须出现在 actions 中，不能只藏在 title/preconditions/evidence；按 usual arithmetic conversions 后的真实有符号运算类型使用对应 `TYPE_MAX`，单点边界不能扩写成“其他极大值”“附近值”或更宽输入域；只有运算类型确为 `int` 的 `value + 1` 才使用 `value == INT_MAX`。Scenario 同时填写 `branch_ids` 时，还必须由自身动作与 Oracle 覆盖自己声明的分支 outcome/结果；单个 Scenario 不强制同时覆盖 true/false，否则拆分或移除该引用。
 - `unreachable_from_supported_entry`：只有确认无法从当前产品支持的业务入口到达时使用，同时填写 `unreachable_reason` 和直接源码 `unreachable_evidence`。
 - “难以构造”“需要故障注入”“暂时缺少环境”本身不等于不可达；如果只是无法在当前冻结证据中确认业务制造方式，使用 `developer_confirm`。
 - 分支、边界、正常流程和 Coverage 场景可以不关联风险；不得为了满足风险映射而给它们强加无关风险。
