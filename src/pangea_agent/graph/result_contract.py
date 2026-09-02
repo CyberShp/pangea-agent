@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from copy import deepcopy
+from pathlib import Path
 from typing import Any
 
 from pangea_agent.models.analysis import (
@@ -23,6 +24,44 @@ _CORRECTION_COLLECTION_KEYS = {
     "scenarios": "scenario_key",
     "test_cases": "case_key",
 }
+
+
+def source_evidence_excerpt_errors(
+    evidence_items,
+    source_roots: Mapping[str, str],
+    label: str,
+) -> list[str]:
+    """Reject observations that are not contiguous excerpts of cited lines."""
+    errors: list[str] = []
+    for evidence in evidence_items:
+        source_root = source_roots.get(evidence.repo_id)
+        if source_root is None:
+            continue
+        root = Path(source_root).resolve()
+        source_path = (root / evidence.path.replace("\\", "/").strip("/")).resolve()
+        try:
+            source_path.relative_to(root)
+            lines = source_path.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeError, ValueError):
+            # Existing scope/input checks own unreadable or out-of-root paths.
+            continue
+        line_end = evidence.line_end or evidence.line_start
+        if evidence.line_start > len(lines) or line_end > len(lines):
+            errors.append(
+                f"{label}证据行号超出冻结源码："
+                f"{evidence.repo_id}:{evidence.path}:"
+                f"{evidence.line_start}-{line_end}；source_lines={len(lines)}"
+            )
+            continue
+        cited_excerpt = "\n".join(lines[evidence.line_start - 1:line_end])
+        observation = evidence.observation.replace("\r\n", "\n").replace("\r", "\n")
+        if observation not in cited_excerpt:
+            errors.append(
+                f"{label} observation 不是声明行范围内的连续逐字源码片段："
+                f"{evidence.repo_id}:{evidence.path}:"
+                f"{evidence.line_start}-{line_end}"
+            )
+    return errors
 
 
 def risk_test_obligations(result: UnitSemanticResult) -> list[str]:
@@ -102,6 +141,11 @@ def validate_unit_result(
                 f"{evidence.repo_id}:{evidence.path}:"
                 f"{evidence.line_start}-{evidence.line_end}"
             )
+    warnings.extend(source_evidence_excerpt_errors(
+        _all_evidence(result, include_review_decisions=True),
+        {task.repository.repo_id: task.repository.source_root},
+        "Analysis",
+    ))
     warnings.extend(_review_decision_evidence_warnings(
         task,
         result,

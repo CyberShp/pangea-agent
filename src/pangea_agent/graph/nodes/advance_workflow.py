@@ -9,6 +9,7 @@ from pangea_agent.graph.result_contract import (
     correction_target_identity_errors,
     risk_test_obligations,
     snapshot_correction_target,
+    source_evidence_excerpt_errors,
     validate_closure_corrections,
     validate_unit_result,
 )
@@ -878,7 +879,12 @@ def _accept_analysis(state: PangeaState, progress) -> PangeaState:
     return _waiting(state, progress)
 
 
-def _validate_review(progress, result, selected_inputs: dict) -> list[str]:
+def _validate_review(
+    progress,
+    result,
+    selected_inputs: dict,
+    source_roots: dict[str, str] | None = None,
+) -> list[str]:
     warnings: list[str] = []
     known_units = {unit.unit_id for unit in progress.analysis_units}
     coverage_ids = {
@@ -944,6 +950,13 @@ def _validate_review(progress, result, selected_inputs: dict) -> list[str]:
             sorted(known_units),
             f"复核 finding {finding.finding_key}",
         ))
+        excerpt_errors = source_evidence_excerpt_errors(
+            finding.evidence,
+            source_roots or {},
+            f"复核 finding {finding.finding_key}",
+        )
+        if excerpt_errors:
+            raise ValueError(" | ".join(excerpt_errors[:24]))
     return warnings
 
 
@@ -955,7 +968,19 @@ def _validate_comparison_review(
     comparison_task: ComparisonReviewTask | None = None,
     analysis_results: dict[str, UnitSemanticResult] | None = None,
 ) -> list[str]:
-    warnings = _validate_review(progress, comparison, selected_inputs)
+    source_roots: dict[str, str] = {}
+    if comparison_task is not None:
+        for task_path in comparison_task.analysis_task_paths.values():
+            analysis_task = AnalysisTask.model_validate(read_json(Path(task_path)))
+            source_roots[analysis_task.repository.repo_id] = (
+                analysis_task.repository.source_root
+            )
+    warnings = _validate_review(
+        progress,
+        comparison,
+        selected_inputs,
+        source_roots,
+    )
     independent_keys = {finding.finding_key for finding in independent.findings}
     independent_by_key = {
         finding.finding_key: finding for finding in independent.findings
@@ -983,6 +1008,13 @@ def _validate_comparison_review(
             sorted({unit.unit_id for unit in progress.analysis_units}),
             f"盲审裁决 {decision.finding_key}",
         ))
+        excerpt_errors = source_evidence_excerpt_errors(
+            decision.evidence,
+            source_roots,
+            f"盲审裁决 {decision.finding_key}",
+        )
+        if excerpt_errors:
+            raise ValueError(" | ".join(excerpt_errors[:24]))
     comparison_keys = {finding.finding_key for finding in comparison.findings}
     duplicates = independent_keys & comparison_keys
     if duplicates:
@@ -1463,6 +1495,7 @@ def _accept_independent_review(state: PangeaState, progress, action) -> PangeaSt
         progress,
         result,
         read_json(Path(task.selected_inputs_path)),
+        {item.repo_id: item.source_root for item in task.repositories},
     )
     if not action.task_id:
         raise ValueError(

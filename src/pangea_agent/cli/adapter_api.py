@@ -448,10 +448,19 @@ def _validate_action(data_root: str, run_id: str, action_id: str) -> dict:
                     analysis_results,
                 )
             else:
+                independent_task = IndependentReviewTask.model_validate(task)
                 result = IndependentReviewResult.model_validate(
                     read_json(Path(task["result_path"]))
                 )
-                warnings = _validate_review(progress, result, selected_inputs)
+                warnings = _validate_review(
+                    progress,
+                    result,
+                    selected_inputs,
+                    {
+                        item.repo_id: item.source_root
+                        for item in independent_task.repositories
+                    },
+                )
         except (FileNotFoundError, ValueError) as exc:
             return _invalid_result(state, progress, action, exc)
     elif action.role == "closure":
