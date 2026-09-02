@@ -75,7 +75,7 @@ Inventory 中属于当前 `source_scope` 的每个 `branch_id` 都必须有且�
 
 BranchDecision 引用的 Flow 必须包含条件节点和每个语义不同且改变返回、状态或输出的源码可见 successor；`developer_confirm` 不允许省略内部控制流。每个 outcome 必须有可追踪 successor edge；结果相同的 outcome 可以共用 successor step，但条件 edge 不能丢。把 return 只写在 branch step 的 label/evidence 不算对应 edge；缺少真实 return/state edge 属于 Flow 遗漏。
 
-Flow 还必须与已经建立的 Risk 保持一致：只有当 Risk trigger 使“正常返回/正常结果”不再由语言规则或冻结契约保证时，正常 edge 才必须排除该 trigger，并为 trigger 保留 error、termination 或 undefined outcome。Risk 对象自己的 `exclusion_condition` 不能替代 Flow 的条件和 outcome；undefined outcome 是已识别 Risk 的语义结果，不是伪造源码 branch。资源泄漏、数据泄漏、错误状态写入等 Risk 即使发生后仍可能正常返回，不得仅为 Risk 账本伪造控制流分支。
+Flow 还必须与已经建立的 Risk 保持一致：只有当 Risk trigger 使“正常返回/正常结果”不再由语言规则或冻结契约保证时，正常 edge 才必须排除该 trigger，并为 trigger 保留 error、termination 或 undefined outcome。必须能从 `flows[].edges[]` 直接指出 trigger 的 source、target 和 condition；只有安全域 edge、step label、summary、evidence 或 Risk 自己的 `exclusion_condition` 都不能替代这条 outcome edge。undefined outcome 是已识别 Risk 的语义结果，不是伪造源码 branch。资源泄漏、数据泄漏、错误状态写入等 Risk 即使发生后仍可能正常返回，不得仅为 Risk 账本伪造控制流分支。
 
 caller truncation 不只约束 `not_test_relevant|developer_confirm|unreachable`，也约束乐观的 `scenario_mapped|merged` 和 ready Scenario/TestCase。若所谓业务入口只由私有 `.c` 的声明、跨文件调用或可链接性支撑，而缺失 caller 可能包含真正产品入口，就不能直接声明 ready；冻结证据不足时使用 `developer_confirm`。
 

@@ -14,7 +14,7 @@
 
 冻结 Risk 前逐个核对 `source_scope` 中带符号整数的 `+`、`-`、`*`：前置 guard 之后是否仍可取类型边界。例如只排除 `< 0` 仍允许 `INT_MAX`，后续 `value + 1` 不能按普通返回值处理。
 
-Flow 表达这类源码时也必须保持语言语义：`if (value < 0) return -1; return value + 1;` 的负值分支直接返回 `-1`；非负分支只有在 `0 <= value < INT_MAX` 时能保证正常返回 `value + 1`，`value == INT_MAX` 应保留为无定义 successor/无稳定结果的 outcome。不得用一条无条件 `value >= 0` 正常返回 edge 覆盖该 Risk trigger，也不得用 Risk 自己的 `exclusion_condition` 代替 Flow 中缺失的安全域条件和无定义 outcome。
+Flow 表达这类源码时也必须保持语言语义：`if (value < 0) return -1; return value + 1;` 的负值分支直接返回 `-1`；非负分支只有在 `0 <= value < INT_MAX` 时能保证正常返回 `value + 1`，`value == INT_MAX` 应保留为无定义 successor/无稳定结果的 outcome。必须能从 `flows[].edges[]` 直接指出 `value == INT_MAX` 的 source、target 和 condition；只有 `0 <= value < INT_MAX` 的安全域 edge 不算已经表达无定义 outcome。不得用一条无条件 `value >= 0` 正常返回 edge 覆盖该 Risk trigger，也不得用 Risk 自己的 `exclusion_condition` 代替 Flow 中缺失的安全域条件和无定义 outcome。
 
 `SourceEvidence.observation` 只记录 cited range 本身的源码事实。若表达式行不含操作数的类型声明，应扩大引用到真实声明行，或只在 observation 描述表达式；usual arithmetic conversions、C 标准 UB 结论和 Risk 分类写入 trigger/system_result/summary，不伪装成单行源码观察。
 

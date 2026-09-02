@@ -49,6 +49,18 @@ def analysis_obligations(
         *selected_inputs.get("defect_mechanisms", {}),
         *expected_coverage,
     }
+    if (
+        not known_inputs
+        and result.unresolved
+        and not result.review_finding_decisions
+    ):
+        _add(
+            issues,
+            "unresolved_without_allowed_input",
+            task.unit.unit_id,
+            "当前单元没有可供顶层 unresolved 引用的 selected input 或 Coverage ID；"
+            "证据缺口应保留在对应 Branch/Risk/Scenario 的 developer_confirm disposition",
+        )
     claims_by_coverage: dict[str, list[tuple[Any, str]]] = {
         coverage_id: [] for coverage_id in expected_coverage
     }
