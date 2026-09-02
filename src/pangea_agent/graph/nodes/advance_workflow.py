@@ -160,6 +160,11 @@ def _analysis_audit_targets(
         ]
         if item.readiness == "developer_confirm":
             checks.append("developer_confirm_content")
+        for risk_key in item.linked_risk_keys:
+            checks.extend((
+                f"risk_trigger_action/{risk_key}",
+                f"risk_external_oracle/{risk_key}",
+            ))
         add("scenario", item.scenario_key, *checks)
         add_evidence("scenario", item.scenario_key, item.evidence)
     for item in result.test_cases:
