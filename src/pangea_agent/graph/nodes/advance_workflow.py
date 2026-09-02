@@ -79,12 +79,18 @@ _UNIT_AUDIT_CHECKS = (
 def _analysis_audit_targets(
     unit_id: str,
     result: UnitSemanticResult,
+    task: AnalysisTask | None = None,
 ) -> list[ComparisonAuditTarget]:
     """Enumerate review coordinates without judging their semantic verdict."""
-    coordinates: list[tuple[str, str, str]] = []
+    coordinates: list[tuple[str, str, str, dict]] = []
 
-    def add(object_type: str, object_key: str, *checks: str) -> None:
-        coordinates.extend((object_type, object_key, check) for check in checks)
+    def add(
+        object_type: str,
+        object_key: str,
+        check: str,
+        observed_fields: dict,
+    ) -> None:
+        coordinates.append((object_type, object_key, check, observed_fields))
 
     def add_evidence(
         object_type: str,
@@ -92,16 +98,61 @@ def _analysis_audit_targets(
         evidence: list[SourceEvidence],
         check_prefix: str = "source_evidence",
     ) -> None:
-        for evidence_index, _ in enumerate(evidence):
+        for evidence_index, item in enumerate(evidence):
             add(
                 object_type,
                 object_key,
                 f"{check_prefix}/{evidence_index}",
+                {"evidence": item.model_dump(mode="json")},
             )
 
-    add("unit", unit_id, *_UNIT_AUDIT_CHECKS)
+    decision_keys = {
+        "input_decision_completeness": [item.item_id for item in result.input_decisions],
+        "branch_completeness": [item.branch_id for item in result.branch_decisions],
+        "coverage_completeness": [item.coverage_id for item in result.coverage_decisions],
+        "mechanism_completeness": [item.mechanism_id for item in result.mechanism_decisions],
+        "risk_completeness": [item.risk_key for item in result.risks],
+        "scenario_completeness": [item.scenario_key for item in result.scenarios],
+        "test_case_completeness": [item.case_key for item in result.test_cases],
+    }
+    add("unit", unit_id, "summary_consistency", {"summary": result.summary})
+    add(
+        "unit",
+        unit_id,
+        "flow_completeness",
+        {"flow_keys": [item.flow_key for item in result.flows]},
+    )
+    for check in _UNIT_AUDIT_CHECKS[2:]:
+        observed_fields = {"result_object_keys": decision_keys[check]}
+        if task is not None:
+            task_key = {
+                "input_decision_completeness": "asset_item_ids",
+                "coverage_completeness": "coverage_ids",
+                "mechanism_completeness": "mechanism_ids",
+            }.get(check)
+            if task_key is not None:
+                observed_fields["assigned_input_ids"] = list(
+                    getattr(task.unit, task_key)
+                )
+        add("unit", unit_id, check, observed_fields)
     for flow in result.flows:
-        add("flow", flow.flow_key, "control_flow")
+        add(
+            "flow",
+            flow.flow_key,
+            "control_flow",
+            {
+                "entry": flow.entry,
+                "steps": [
+                    {
+                        "step_key": step.step_key,
+                        "label": step.label,
+                        "kind": step.kind,
+                    }
+                    for step in flow.steps
+                ],
+                "edges": [edge.model_dump(mode="json") for edge in flow.edges],
+            },
+        )
         for step in flow.steps:
             add_evidence(
                 "flow_step",
@@ -109,40 +160,109 @@ def _analysis_audit_targets(
                 step.evidence,
             )
     for item in result.input_decisions:
-        add("input_decision", item.item_id, "disposition_and_evidence")
+        add(
+            "input_decision",
+            item.item_id,
+            "disposition_and_evidence",
+            item.model_dump(mode="json", exclude={"evidence"}),
+        )
         add_evidence("input_decision", item.item_id, item.evidence)
     for item in result.branch_decisions:
-        add(
-            "branch_decision",
-            item.branch_id,
-            "flow_and_disposition",
-            "scenario_links",
-        )
+        snapshot = item.model_dump(mode="json")
+        add("branch_decision", item.branch_id, "flow_and_disposition", snapshot)
+        add("branch_decision", item.branch_id, "scenario_links", snapshot)
     for item in result.coverage_decisions:
+        snapshot = item.model_dump(mode="json")
+        add("coverage_decision", item.coverage_id, "disposition_and_scenario_links", snapshot)
         add(
             "coverage_decision",
             item.coverage_id,
-            "disposition_and_scenario_links",
             "direct_case_claims",
+            {
+                **snapshot,
+                "test_case_claims": [
+                    {
+                        "case_key": case.case_key,
+                        "direct_coverage_claims": [
+                            claim.model_dump(mode="json")
+                            for claim in case.direct_coverage_claims
+                            if claim.coverage_id == item.coverage_id
+                        ],
+                    }
+                    for case in result.test_cases
+                    if any(
+                        claim.coverage_id == item.coverage_id
+                        for claim in case.direct_coverage_claims
+                    )
+                ],
+            },
         )
     for item in result.mechanism_decisions:
-        add(
-            "mechanism_decision",
-            item.mechanism_id,
-            "causal_chain_and_disposition",
-            "case_links",
-        )
+        snapshot = item.model_dump(mode="json", exclude={"evidence"})
+        add("mechanism_decision", item.mechanism_id, "causal_chain_and_disposition", snapshot)
+        add("mechanism_decision", item.mechanism_id, "case_links", snapshot)
         add_evidence("mechanism_decision", item.mechanism_id, item.evidence)
     for item in result.risks:
+        add("risk", item.risk_key, "trigger", {"trigger": item.trigger})
         add(
             "risk",
             item.risk_key,
-            "trigger",
             "system_result_and_observation",
+            {
+                "system_result": item.system_result,
+                "external_observation": item.external_observation,
+            },
+        )
+        add(
+            "risk",
+            item.risk_key,
             "exclusion_condition",
+            {"trigger": item.trigger, "exclusion_condition": item.exclusion_condition},
+        )
+        add(
+            "risk",
+            item.risk_key,
             "severity_and_product_impact",
+            {"dfx": item.dfx, "severity": item.severity, "confidence": item.confidence},
+        )
+        add(
+            "risk",
+            item.risk_key,
             "flow_outcome_consistency",
+            {
+                "trigger": item.trigger,
+                "system_result": item.system_result,
+                "flows": [
+                    {
+                        "flow_key": flow.flow_key,
+                        "steps": [
+                            {"step_key": step.step_key, "label": step.label, "kind": step.kind}
+                            for step in flow.steps
+                        ],
+                        "edges": [edge.model_dump(mode="json") for edge in flow.edges],
+                    }
+                    for flow in result.flows
+                ],
+            },
+        )
+        add(
+            "risk",
+            item.risk_key,
             "test_disposition_and_links",
+            {
+                "test_disposition": item.test_disposition,
+                "unreachable_reason": item.unreachable_reason,
+                "linked_scenario_keys": [
+                    scenario.scenario_key
+                    for scenario in result.scenarios
+                    if item.risk_key in scenario.linked_risk_keys
+                ],
+                "linked_test_case_keys": [
+                    case.case_key
+                    for case in result.test_cases
+                    if item.risk_key in case.linked_risk_keys
+                ],
+            },
         )
         add_evidence("risk", item.risk_key, item.evidence)
         add_evidence(
@@ -165,18 +285,39 @@ def _analysis_audit_targets(
                 f"risk_trigger_action/{risk_key}",
                 f"risk_external_oracle/{risk_key}",
             ))
-        add("scenario", item.scenario_key, *checks)
+        base_snapshot = item.model_dump(mode="json", exclude={"evidence"})
+        for check in checks:
+            observed_fields = base_snapshot
+            if check.startswith("risk_trigger_action/"):
+                risk_key = check.split("/", 1)[1]
+                risk = next(risk for risk in result.risks if risk.risk_key == risk_key)
+                observed_fields = {
+                    "risk_trigger": risk.trigger,
+                    "preconditions": item.preconditions,
+                    "actions": item.actions,
+                }
+            elif check.startswith("risk_external_oracle/"):
+                risk_key = check.split("/", 1)[1]
+                risk = next(risk for risk in result.risks if risk.risk_key == risk_key)
+                observed_fields = {
+                    "risk_system_result": risk.system_result,
+                    "risk_external_observation": risk.external_observation,
+                    "external_oracles": item.external_oracles,
+                }
+            add("scenario", item.scenario_key, check, observed_fields)
         add_evidence("scenario", item.scenario_key, item.evidence)
     for item in result.test_cases:
+        snapshot = item.model_dump(mode="json")
+        add("test_case", item.case_key, "entry_actions_oracles", snapshot)
+        add("test_case", item.case_key, "coverage_claims", snapshot)
+        add("test_case", item.case_key, "risk_links", snapshot)
+    for index, unresolved in enumerate(result.unresolved):
         add(
-            "test_case",
-            item.case_key,
-            "entry_actions_oracles",
-            "coverage_claims",
-            "risk_links",
+            "unresolved",
+            str(index),
+            "scope_and_nonduplication",
+            {"unresolved": unresolved},
         )
-    for index, _ in enumerate(result.unresolved):
-        add("unresolved", str(index), "scope_and_nonduplication")
 
     return [
         ComparisonAuditTarget(
@@ -185,8 +326,9 @@ def _analysis_audit_targets(
             object_type=object_type,
             object_key=object_key,
             check=check,
+            observed_fields=observed_fields,
         )
-        for index, (object_type, object_key, check) in enumerate(
+        for index, (object_type, object_key, check, observed_fields) in enumerate(
             coordinates,
             start=1,
         )
@@ -993,11 +1135,14 @@ def _accept_independent_review(state: PangeaState, progress, action) -> PangeaSt
     }
     required_analysis_audits = []
     for unit in progress.analysis_units:
+        analysis_task = AnalysisTask.model_validate(
+            read_json(analysis_task_path(state, unit.unit_id))
+        )
         analysis_result = UnitSemanticResult.model_validate(
             read_json(Path(analysis_result_paths[unit.unit_id]))
         )
         required_analysis_audits.extend(
-            _analysis_audit_targets(unit.unit_id, analysis_result)
+            _analysis_audit_targets(unit.unit_id, analysis_result, analysis_task)
         )
     comparison_task = ComparisonReviewTask(
         action_id=action_id,

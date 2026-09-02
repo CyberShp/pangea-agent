@@ -7,7 +7,13 @@
         "unit_id": {"minLength": 1, "title": "Unit Id", "type": "string"},
         "object_type": {"minLength": 1, "title": "Object Type", "type": "string"},
         "object_key": {"minLength": 1, "title": "Object Key", "type": "string"},
-        "check": {"minLength": 1, "title": "Check", "type": "string"}
+        "check": {"minLength": 1, "title": "Check", "type": "string"},
+        "observed_fields": {
+          "additionalProperties": true,
+          "description": "Workflow 从 validated Analysis 和对应 Analysis task 原样冻结的待核对字段；仅用于让 Reviewer 直接看到当前值，不代表 Python 已作语义裁决",
+          "title": "Observed Fields",
+          "type": "object"
+        }
       },
       "required": ["audit_id", "unit_id", "object_type", "object_key", "check"],
       "title": "ComparisonAuditTarget",

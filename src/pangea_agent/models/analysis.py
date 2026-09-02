@@ -235,6 +235,13 @@ class ComparisonAuditTarget(StrictModel):
     object_type: str = Field(min_length=1)
     object_key: str = Field(min_length=1)
     check: str = Field(min_length=1)
+    observed_fields: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Workflow 从 validated Analysis 和对应 Analysis task 原样冻结的待核对字段；"
+            "仅用于让 Reviewer 直接看到当前值，不代表 Python 已作语义裁决"
+        ),
+    )
 
 
 class ComparisonAuditDecision(StrictModel):

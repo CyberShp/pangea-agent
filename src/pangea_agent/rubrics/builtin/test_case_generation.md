@@ -89,6 +89,8 @@ Coverage 只指出需要补覆盖的函数或路径，不等于测试步骤。�
 
 每条真实 Coverage record 始终各自形成冻结 obligation。只有冻结证据正向证明 records 属于同一次采集并具有可直接比较的计数语义时，才另行判断计数一致性；一致性问题不能替代每条 record 自己的 CoverageDecision。
 
+本单元没有被分配任何 Coverage ID 且 `coverage_decisions=[]` 时，Coverage obligation 集合就是空集合。缺少 Coverage 文件/record 不是源码 Flow 遗漏，也不是可改换 category 表达的 Coverage finding；只有真实 Coverage record 才要求 CoverageDecision，Flow completeness 只检查源码路径是否被 Flow 表达。
+
 每个当前任务的 `coverage_id` 必须有且只有一个 `coverage_decisions[]`：
 
 - `scenario_mapped`：已经映射到真实 Scenario。
