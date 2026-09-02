@@ -128,6 +128,8 @@ finding 只是补充或纠正同一个风险/场景时，保留原 key 原位修
 
 Closure 修正 `exclusion_condition` 时必须区分“当前冻结证据没有已确认 exclusion”和“假设存在的 guard 不是 exclusion”：没有 guard/契约证据时写前者；若真实 guard 能阻止完整 trigger 到达风险操作，它就是有效 exclusion，不能因为绕过 guard 后底层操作仍会失败而否认它。
 
+保留 `developer_confirm` Scenario 时，`actions` 必须是陈述冻结源码已证明的具体内部动作和 predicate/outcome；以“待确认”“待开发确认”“需要确认”开头的动作仍是问题，不是动作，必须改写为已证明的内部条件或删除该 Scenario。入口、制造方式和产品 Oracle 可以在 `business_entry`、`preconditions` 或 `external_oracles` 中待确认，但不能把待确认前缀留在 action 上冒充已承载 trigger。
+
 Closure 不得为了“吸收 finding”而把证据缺口新建成产品 Risk。Reviewer finding 若只要求确认入口、制造方式或 Oracle，应修正相应 Branch/Coverage/Scenario disposition；若原 Risk 的系统结果本身不成立，应删除该 Risk，并同步清理 Scenario/TestCase 引用和 finding decision，而不是改写成“测试无法执行”的 Risk。
 
 ## 写入前自检与返修
