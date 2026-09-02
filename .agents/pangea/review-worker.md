@@ -9,7 +9,7 @@
 `comparison_review` 写结果前必须完成下面的内部核对账本，再写 decision/finding：
 
 - **Independent decision**：若结论包含“Analysis 已正确记录/覆盖/处置”，disposition 必须是 `dismissed`。`confirmed` 必须写清可验收的 correction target：已有对象时指出 exact object/key/field 及证据能确定的新值或约束；整个对象缺失时指出目标 collection、必须新增的语义和验收条件，不替 Closure 预造 key 或整份 JSON。不能出现“confirmed，但无需修改/已经隐含覆盖”。
-- **Coverage direct links**：枚举 Analysis 每个 `test_cases[].linked_input_ids` 中的 `(coverage_id, Case)`，逐对写出 Coverage 的 zero-count target、Case 输入、实际 outcome 与断言。存在一个正确 Case 不会豁免同一 ID 上的错误 Case；应 dismiss 已覆盖的 Independent gap finding，同时另建一条 `blackbox_translation` 定向移除错误 direct link。
+- **Coverage direct links**：枚举 Analysis 每个 `test_cases[].direct_coverage_claims` 中的 `(coverage_id, target, Case)`，先核对 `target` 是否正是该 Coverage record 的 function 零执行或 branch true/false 零计数 outcome，再对照 Case 的实际动作与 Oracle 判断它是否亲自命中该 target；同一 Case 在 `linked_input_ids` 中的 Coverage ID 集合必须与 claims 的 ID 集合一致。存在一个正确 Case 不会豁免同一 ID 上的错误 Case；应 dismiss 已覆盖的 Independent gap finding，同时另建一条 `blackbox_translation` 定向移除错误 claim 和 direct link。
 - **Scenario/Risk**：逐个检查 `developer_confirm` Scenario 是否仍只有待确认 action/oracle，Risk 的普通构建观测是否误写成必然返回，以及 sanitizer 是否被当成 exclusion。Analysis 已有等价 Risk 时可以 dismiss Independent Risk finding，但关联对象仍有错误时必须按下方 taxonomy 另建精确 finding。
 - **Coverage provenance**：每条真实 Coverage record 始终各自形成 obligation。只有冻结证据正向证明 records 属于同一次采集并具有可直接比较的计数语义时，才另行报告一致性问题；不能用一致性怀疑替代各自的 Coverage 审计。Comparison 顶层 `unresolved` 固定为 `[]`。
 - **Evidence isolation**：逐条只保留 cited line range 单独能证明的 observation。例如 `layer08.c` 只能证明它自己的声明/调用；caller depth、truncation、冻结范围没有 `.h` 等事实只能写 summary/required_check/conclusion，不能写进该源码 evidence。
@@ -87,7 +87,7 @@ Comparison 还必须独立核对冻结源码中显式可见的 C/C++ 未定义�
 
 同时检查 Analysis 顶层 `unresolved`：已经由 Branch/Coverage/Risk/Scenario `developer_confirm` 表达的同源缺口不得重复；首轮条目必须引用本 task 真实 selected input 或 Coverage ID，Closure 条目才可引用 confirmed finding_key。违反时新增 `incorrect_conclusion`，要求删除或写回对应 disposition。
 
-逐条核对 TestCase 直接填写的 Coverage ID：先从 Coverage record 还原函数或每个 count 为 0 的指定 branch outcome，再为每个 `(coverage_id, Case)` 单独判断其动作与预期是否亲自命中该目标，且 `basis` 包含 `coverage`；同一 record 两侧都为 0 时，true/false 必须分别有至少一条 Case 命中。多个 Case 共用一个 Scenario 时，不得据此把 Scenario 的全部 Coverage gap 视为每条 Case 都已覆盖；若 false 分支 gap 只由零值 Case 触发，非零值 Case 不能关联该 gap。发现 Case 直连了自己没有执行的 branch outcome 时新增一条 `blackbox_translation`；若 Scenario 与其他 Case 关系仍有独立证据成立，要求 Closure 只移除该 Case 的错误 `linked_input_ids`，保留真正命中缺口的 Case 与 ready Scenario。
+逐条核对 TestCase 的 Coverage claim 与 direct link：先从 Coverage record 还原函数或每个 count 为 0 的指定 branch outcome，再为每个 `(coverage_id, target, Case)` 判断 target 是否属于该 record 的真实零覆盖目标、Case 动作与预期是否亲自命中它，且 `basis` 包含 `coverage`、`linked_input_ids` Coverage ID 集合与 claims 一致；同一 record 两侧都为 0 时，true/false target 必须分别有至少一条 Case 命中。多个 Case 共用一个 Scenario 时，不得据此把 Scenario 的全部 Coverage gap 视为每条 Case 都已覆盖；若 false 分支 gap 只由零值 Case 触发，非零值 Case 不能声明或关联该 gap。发现错误时新增一条 `blackbox_translation`；若 Scenario 与其他 Case 关系仍有独立证据成立，要求 Closure 只移除该 Case 的错误 claim 和 `linked_input_ids`，保留真正命中缺口的 Case 与 ready Scenario。
 
 出现下面这类“源码事实可能成立，但测试翻译错了”的情况，新增 `category=blackbox_translation`，不要混成普通 `incorrect_conclusion`：
 

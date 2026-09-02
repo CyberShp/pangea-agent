@@ -35,18 +35,25 @@ def analysis_obligations(
         for item in selected_inputs.get("coverage_gaps", [])
         if isinstance(item, Mapping) and item.get("coverage_id")
     }
+    coverage_records = {
+        str(item["coverage_id"]): item
+        for item in selected_inputs.get("coverage_gaps", [])
+        if isinstance(item, Mapping) and item.get("coverage_id")
+    }
+    zero_targets_by_coverage = {
+        coverage_id: _zero_coverage_targets(record)
+        for coverage_id, record in coverage_records.items()
+    }
     known_inputs = {
         *selected_inputs.get("asset_items", {}),
         *selected_inputs.get("defect_mechanisms", {}),
         *expected_coverage,
     }
-    cases_by_coverage = {
-        coverage_id: [
-            case
-            for case in result.test_cases
-            if coverage_id in case.linked_input_ids
-        ]
-        for coverage_id in expected_coverage
+    claims_by_coverage: dict[str, list[tuple[Any, str]]] = {
+        coverage_id: [] for coverage_id in expected_coverage
+    }
+    all_claims_by_coverage: dict[str, list[Any]] = {
+        coverage_id: [] for coverage_id in expected_coverage
     }
     cases_by_scenario = {
         scenario_key: [
@@ -56,6 +63,78 @@ def analysis_obligations(
         ]
         for scenario_key in known_scenarios
     }
+
+    for case in result.test_cases:
+        seen_claims: set[tuple[str, str]] = set()
+        known_claim_coverage_ids: set[str] = set()
+        for claim in case.direct_coverage_claims:
+            claim_key = (claim.coverage_id, claim.target)
+            if claim_key in seen_claims:
+                _add(
+                    issues,
+                    "duplicate_coverage_claim",
+                    case.case_key,
+                    "TestCase "
+                    f"{case.case_key} 重复声明 Coverage target="
+                    f"{claim.coverage_id}:{claim.target}",
+                )
+                continue
+            seen_claims.add(claim_key)
+
+            record = coverage_records.get(claim.coverage_id)
+            if record is None:
+                _add(
+                    issues,
+                    "unknown_coverage_claim",
+                    case.case_key,
+                    f"TestCase {case.case_key} 声明了当前任务不存在的 "
+                    f"coverage_id={claim.coverage_id}",
+                )
+                continue
+
+            known_claim_coverage_ids.add(claim.coverage_id)
+            all_claims_by_coverage[claim.coverage_id].append(case)
+            target_counts = _coverage_target_counts(record)
+            if claim.target not in target_counts:
+                _add(
+                    issues,
+                    "unknown_coverage_claim_target",
+                    case.case_key,
+                    f"TestCase {case.case_key} 对 coverage_id="
+                    f"{claim.coverage_id} 声明了不适用的 target={claim.target}",
+                )
+                continue
+            if target_counts[claim.target] != 0:
+                _add(
+                    issues,
+                    "nonzero_coverage_claim_target",
+                    case.case_key,
+                    f"TestCase {case.case_key} 声明 coverage_id="
+                    f"{claim.coverage_id} 的 target={claim.target}，"
+                    f"但冻结 count={target_counts[claim.target]} 并非 0",
+                )
+                continue
+            claims_by_coverage[claim.coverage_id].append((case, claim.target))
+
+        linked_coverage_ids = set(case.linked_input_ids) & expected_coverage
+        if linked_coverage_ids != known_claim_coverage_ids:
+            _add(
+                issues,
+                "coverage_claim_link_mismatch",
+                case.case_key,
+                f"TestCase {case.case_key} 的 Coverage linked_input_ids "
+                "必须与 direct_coverage_claims.coverage_id 集合一致："
+                f"linked={sorted(linked_coverage_ids)} "
+                f"claims={sorted(known_claim_coverage_ids)}",
+            )
+        if case.direct_coverage_claims and "coverage" not in case.basis:
+            _add(
+                issues,
+                "coverage_claim_missing_basis",
+                case.case_key,
+                f"TestCase {case.case_key} 声明了 direct_coverage_claims，"
+                "但 basis 未包含 coverage",
+            )
 
     _decision_set_issues(
         issues,
@@ -173,17 +252,31 @@ def analysis_obligations(
                     decision.coverage_id,
                     f"CoverageDecision {decision.coverage_id} 的 disposition={decision.disposition}，但没有 ready Scenario",
                 )
-            ready_cases = [
-                case
-                for case in cases_by_coverage.get(decision.coverage_id, [])
+            ready_claims = [
+                (case, target)
+                for case, target in claims_by_coverage.get(
+                    decision.coverage_id, []
+                )
                 if set(case.scenario_keys) & ready_scenario_keys
             ]
-            if not ready_cases:
+            if not ready_claims:
                 _add(
                     issues,
                     "missing_coverage_case",
                     decision.coverage_id,
-                    f"CoverageDecision {decision.coverage_id} 的 disposition={decision.disposition}，但没有 TestCase 通过 linked_input_ids 直接关联该 Coverage 并引用其 ready Scenario",
+                    f"CoverageDecision {decision.coverage_id} 的 disposition={decision.disposition}，但没有 TestCase 通过 direct_coverage_claims 声明零覆盖目标并引用其 ready Scenario",
+                )
+            claimed_ready_targets = {target for _, target in ready_claims}
+            for target in sorted(
+                zero_targets_by_coverage.get(decision.coverage_id, set())
+                - claimed_ready_targets
+            ):
+                _add(
+                    issues,
+                    "missing_coverage_target_claim",
+                    decision.coverage_id,
+                    f"CoverageDecision {decision.coverage_id} 的零覆盖目标 "
+                    f"target={target} 没有 ready Scenario 下的 TestCase claim",
                 )
             for scenario_key in decision.scenario_keys:
                 scenario = scenarios_by_key.get(scenario_key)
@@ -194,6 +287,14 @@ def analysis_obligations(
                         decision.coverage_id,
                         f"CoverageDecision {decision.coverage_id} 指向 Scenario {scenario_key}，但该 Scenario.coverage_ids 未反向包含此 coverage_id",
                     )
+        elif all_claims_by_coverage.get(decision.coverage_id):
+            _add(
+                issues,
+                "coverage_claim_disposition_conflict",
+                decision.coverage_id,
+                f"CoverageDecision {decision.coverage_id} 的 disposition="
+                f"{decision.disposition}，但仍有 TestCase 声明 direct Coverage claims",
+            )
 
     for scenario in result.scenarios:
         if scenario.readiness in READY_SCENARIO_STATES:
@@ -321,7 +422,8 @@ def analysis_obligations(
                     case.case_key,
                     f"TestCase {case.case_key} 引用了 readiness=developer_confirm 的 Scenario {scenario_key}",
                 )
-        for item_id in case.linked_input_ids:
+        for claim in case.direct_coverage_claims:
+            item_id = claim.coverage_id
             if item_id not in expected_coverage:
                 continue
             decision = coverage_decisions_by_id.get(item_id)
@@ -341,13 +443,6 @@ def analysis_obligations(
                     "coverage_case_scenario_mismatch",
                     case.case_key,
                     f"TestCase {case.case_key} 直接关联 coverage_id={item_id}，但它与对应 CoverageDecision 没有共享 Scenario",
-                )
-            if "coverage" not in case.basis:
-                _add(
-                    issues,
-                    "coverage_case_missing_basis",
-                    case.case_key,
-                    f"TestCase {case.case_key} 直接关联 coverage_id={item_id}，但 basis 未包含 coverage",
                 )
         for risk_key in case.linked_risk_keys:
             cases_by_risk.setdefault(risk_key, []).append(case)
@@ -426,6 +521,26 @@ def analysis_obligations(
             )
 
     return issues
+
+
+def _coverage_target_counts(record: Mapping[str, Any]) -> dict[str, Any]:
+    coverage_type = record.get("coverage_type")
+    if coverage_type == "function":
+        return {"function_execution": record.get("count")}
+    if coverage_type == "branch":
+        return {
+            "branch_true_outcome": record.get("true_count"),
+            "branch_false_outcome": record.get("false_count"),
+        }
+    return {}
+
+
+def _zero_coverage_targets(record: Mapping[str, Any]) -> set[str]:
+    return {
+        target
+        for target, count in _coverage_target_counts(record).items()
+        if count == 0
+    }
 
 
 def _expected_branch_ids(task: AnalysisTask, inventory: Mapping[str, Any]) -> set[str]:

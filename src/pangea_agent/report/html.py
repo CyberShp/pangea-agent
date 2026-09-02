@@ -11,8 +11,10 @@ from typing import Any
 
 from .markdown import (
     _boundary_text,
+    _coverage_decision_rows,
     _coverage_rows,
     _contract_rows,
+    _direct_coverage_claim_labels,
     _items,
     _methodology_rows,
     _parse_failures,
@@ -344,13 +346,9 @@ def render_html_report(state: Mapping[str, Any]) -> str:
         coverage_html += '<p class="muted">未出现在 Coverage 文件中的函数或分支状态为“未提供/未知”，不按 0 次执行处理。</p>'
     else:
         coverage_html = _list(coverage, "未提供覆盖率文件或匹配结果。")
-    coverage_decision_rows = [
-        (item.get("unit_id"), item.get("coverage_id"), item.get("disposition"), item.get("test_case_ids"), item.get("reason"))
-        for item in _items(state.get("coverage_decisions"))
-        if isinstance(item, Mapping)
-    ]
+    coverage_decision_rows = _coverage_decision_rows(state)
     coverage_html += '<h3>用例闭环</h3>' + _table(
-        ("分析单元", "Coverage", "处理", "关联用例", "说明"),
+        ("分析单元", "Coverage / 精确目标", "处理", "关联用例", "说明"),
         coverage_decision_rows,
         {0, 1, 2, 3},
     )
@@ -369,7 +367,10 @@ def render_html_report(state: Mapping[str, Any]) -> str:
             )
         else:
             rows = "".join(f"<tr><td>{index}</td><td>{_escape(step)}</td><td>{_escape(expected[index-1] if index-1 < len(expected) else '未提供对应预期结果（语义缺口）')}</td></tr>" for index, step in enumerate(steps, 1))
-        case_parts.append(f'<details><summary>{_escape(case.get("test_case_id"), "未编号")} · {_escape(case.get("title"))}</summary><div class="detail-body"><dl><dt>用例层级</dt><dd>{_escape(case.get("case_type") or case.get("type") or case.get("test_type"))}</dd><dt>设计依据</dt><dd>{_escape("、".join(str(v) for v in _items(case.get("basis"))) or "未提供")}</dd><dt>关联输入</dt><dd>{_escape("、".join(str(v) for v in _items(case.get("linked_input_ids"))) or "无")}</dd><dt>关联风险</dt><dd>{_escape("、".join(str(v) for v in _items(case.get("linked_risk_ids"))) or "无")}</dd><dt>前置条件</dt><dd>{_list(case.get("preconditions"))}</dd></dl><table><thead><tr><th>#</th><th>操作目标</th><th>预期结果</th></tr></thead><tbody>{rows}</tbody></table><h4>观测方式</h4>{_list(case.get("observability"))}<h4>清理/恢复</h4>{_list(case.get("cleanup"))}</div></details>')
+        coverage_claims = "、".join(
+            _direct_coverage_claim_labels(case.get("direct_coverage_claims"))
+        ) or "无"
+        case_parts.append(f'<details><summary>{_escape(case.get("test_case_id"), "未编号")} · {_escape(case.get("title"))}</summary><div class="detail-body"><dl><dt>用例层级</dt><dd>{_escape(case.get("case_type") or case.get("type") or case.get("test_type"))}</dd><dt>设计依据</dt><dd>{_escape("、".join(str(v) for v in _items(case.get("basis"))) or "未提供")}</dd><dt>直接 Coverage 声明</dt><dd>{_escape(coverage_claims)}</dd><dt>关联输入</dt><dd>{_escape("、".join(str(v) for v in _items(case.get("linked_input_ids"))) or "无")}</dd><dt>关联风险</dt><dd>{_escape("、".join(str(v) for v in _items(case.get("linked_risk_ids"))) or "无")}</dd><dt>前置条件</dt><dd>{_list(case.get("preconditions"))}</dd></dl><table><thead><tr><th>#</th><th>操作目标</th><th>预期结果</th></tr></thead><tbody>{rows}</tbody></table><h4>观测方式</h4>{_list(case.get("observability"))}<h4>清理/恢复</h4>{_list(case.get("cleanup"))}</div></details>')
     rendered_cases = "".join(case_parts) or '<p class="muted">未生成测试用例。</p>'
     body.append(f'<section id="cases"><a class="back" href="#top">回到顶部</a><h2>8. 测试用例与风险映射</h2>{rendered_cases}</section>')
 

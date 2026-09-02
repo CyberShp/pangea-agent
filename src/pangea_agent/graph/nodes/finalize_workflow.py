@@ -4,7 +4,6 @@ from collections import defaultdict
 from pathlib import Path
 
 from pangea_agent.agent_io import read_json, write_json
-from pangea_agent.graph.analysis_normalizer import test_case_keys_by_input
 from pangea_agent.graph.analysis_obligations import analysis_obligations
 from pangea_agent.graph.state import PangeaState
 from pangea_agent.graph.result_contract import risk_test_obligations, validate_unit_result
@@ -45,6 +44,31 @@ def _mermaid(flow) -> str:
         arrow = f' -->|"{condition}"| ' if condition else " --> "
         lines.append(f"    {edge.source_step_key}{arrow}{edge.target_step_key}")
     return "\n".join(lines)
+
+
+def _zero_coverage_targets(record: dict) -> list[str]:
+    if record.get("coverage_type") == "function":
+        return ["function_execution"] if record.get("count") == 0 else []
+    if record.get("coverage_type") != "branch":
+        return []
+    targets: list[str] = []
+    if record.get("true_count") == 0:
+        targets.append("branch_true_outcome")
+    if record.get("false_count") == 0:
+        targets.append("branch_false_outcome")
+    return targets
+
+
+def _coverage_claim_case_keys(
+    result: UnitSemanticResult,
+) -> dict[tuple[str, str], list[str]]:
+    claims: dict[tuple[str, str], list[str]] = defaultdict(list)
+    for case in result.test_cases:
+        for claim in case.direct_coverage_claims:
+            key = (claim.coverage_id, claim.target)
+            if case.case_key not in claims[key]:
+                claims[key].append(case.case_key)
+    return dict(claims)
 
 
 def _load_final_unit_result(state: PangeaState, progress, unit_id: str) -> UnitSemanticResult:
@@ -383,6 +407,11 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
     source_manifest = read_json(run_dir / "inputs" / "source-manifest.json")
     inventory = read_json(run_dir / "inputs" / "inventory.json")
     coverage_gaps = read_json(run_dir / "inputs" / "coverage-gaps.json")
+    zero_targets_by_coverage = {
+        item["coverage_id"]: _zero_coverage_targets(item)
+        for item in coverage_gaps
+        if isinstance(item, dict) and item.get("coverage_id")
+    }
     results = {
         unit.unit_id: _load_final_unit_result(state, progress, unit.unit_id)
         for unit in progress.analysis_units
@@ -527,6 +556,10 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
                         for key in case.covered_flow_keys
                     ],
                     "linked_input_ids": case.linked_input_ids,
+                    "direct_coverage_claims": [
+                        claim.model_dump(mode="json")
+                        for claim in case.direct_coverage_claims
+                    ],
                     "linked_risk_ids": [
                         risk_ids[(unit.unit_id, key)]
                         for key in case.linked_risk_keys
@@ -583,7 +616,11 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
             {"unit_id": unit.unit_id, **item.model_dump(mode="json")}
             for item in result.input_decisions
         )
-        direct_case_keys = test_case_keys_by_input(result)
+        mechanism_case_keys = {
+            item.mechanism_id: list(item.test_case_keys)
+            for item in result.mechanism_decisions
+        }
+        coverage_claims = _coverage_claim_case_keys(result)
 
         branch_decisions.extend(
             {
@@ -598,31 +635,56 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
             for item in result.branch_decisions
         )
 
-        coverage_decisions.extend(
-            {
-                "unit_id": unit.unit_id,
-                **item.model_dump(
-                    mode="json",
-                    exclude={"scenario_keys", "test_case_keys"},
-                ),
-                "scenario_ids": [
-                    scenario_ids[(unit.unit_id, key)]
-                    for key in item.scenario_keys
-                    if (unit.unit_id, key) in scenario_ids
-                ],
-                "test_case_ids": [
-                    case_ids[(unit.unit_id, case_key)]
-                    for case_key in direct_case_keys.get(item.coverage_id, [])
-                    if (unit.unit_id, case_key) in case_ids
-                ],
-                "unresolved_test_case_keys": [
-                    case_key
-                    for case_key in direct_case_keys.get(item.coverage_id, [])
-                    if (unit.unit_id, case_key) not in case_ids
-                ],
-            }
-            for item in result.coverage_decisions
-        )
+        for item in result.coverage_decisions:
+            targets = list(zero_targets_by_coverage.get(item.coverage_id, []))
+            target_test_case_ids = []
+            claimed_case_keys: list[str] = []
+            unresolved_case_keys: list[str] = []
+            for target in targets:
+                target_case_keys = coverage_claims.get(
+                    (item.coverage_id, target),
+                    [],
+                )
+                for case_key in target_case_keys:
+                    if case_key not in claimed_case_keys:
+                        claimed_case_keys.append(case_key)
+                    if (
+                        (unit.unit_id, case_key) not in case_ids
+                        and case_key not in unresolved_case_keys
+                    ):
+                        unresolved_case_keys.append(case_key)
+                target_test_case_ids.append(
+                    {
+                        "target": target,
+                        "test_case_ids": [
+                            case_ids[(unit.unit_id, case_key)]
+                            for case_key in target_case_keys
+                            if (unit.unit_id, case_key) in case_ids
+                        ],
+                    }
+                )
+
+            coverage_decisions.append(
+                {
+                    "unit_id": unit.unit_id,
+                    **item.model_dump(
+                        mode="json",
+                        exclude={"scenario_keys", "test_case_keys"},
+                    ),
+                    "scenario_ids": [
+                        scenario_ids[(unit.unit_id, key)]
+                        for key in item.scenario_keys
+                        if (unit.unit_id, key) in scenario_ids
+                    ],
+                    "test_case_ids": [
+                        case_ids[(unit.unit_id, case_key)]
+                        for case_key in claimed_case_keys
+                        if (unit.unit_id, case_key) in case_ids
+                    ],
+                    "target_test_case_ids": target_test_case_ids,
+                    "unresolved_test_case_keys": unresolved_case_keys,
+                }
+            )
 
         mechanism_decisions.extend(
             {
@@ -633,12 +695,12 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
                 ),
                 "test_case_ids": [
                     case_ids[(unit.unit_id, case_key)]
-                    for case_key in direct_case_keys.get(item.mechanism_id, [])
+                    for case_key in mechanism_case_keys.get(item.mechanism_id, [])
                     if (unit.unit_id, case_key) in case_ids
                 ],
                 "unresolved_test_case_keys": [
                     case_key
-                    for case_key in direct_case_keys.get(item.mechanism_id, [])
+                    for case_key in mechanism_case_keys.get(item.mechanism_id, [])
                     if (unit.unit_id, case_key) not in case_ids
                 ],
                 "evidence": [

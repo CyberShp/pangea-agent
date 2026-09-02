@@ -95,6 +95,51 @@ def _items(value: Any) -> list[Any]:
     return [value]
 
 
+def _direct_coverage_claim_labels(value: Any) -> list[str]:
+    labels: list[str] = []
+    for claim in _items(value):
+        if not isinstance(claim, Mapping):
+            continue
+        labels.append(
+            f"{_text(claim.get('coverage_id'))} / {_text(claim.get('target'))}"
+        )
+    return labels
+
+
+def _coverage_decision_rows(state: Mapping[str, Any]) -> list[tuple[Any, ...]]:
+    rows: list[tuple[Any, ...]] = []
+    for item in _items(state.get("coverage_decisions")):
+        if not isinstance(item, Mapping):
+            continue
+        targets = [
+            target
+            for target in _items(item.get("target_test_case_ids"))
+            if isinstance(target, Mapping)
+        ]
+        if not targets:
+            rows.append(
+                (
+                    item.get("unit_id"),
+                    f"{_text(item.get('coverage_id'))} / 未提供精确零覆盖目标",
+                    item.get("disposition"),
+                    [],
+                    item.get("reason"),
+                )
+            )
+            continue
+        rows.extend(
+            (
+                item.get("unit_id"),
+                f"{_text(item.get('coverage_id'))} / {_text(target.get('target'))}",
+                item.get("disposition"),
+                target.get("test_case_ids"),
+                item.get("reason"),
+            )
+            for target in targets
+        )
+    return rows
+
+
 def _mapping_lines(value: Mapping[str, Any], prefix: str = "- ") -> list[str]:
     lines: list[str] = []
     for key, item in value.items():
@@ -611,17 +656,10 @@ def render_report(state: "PangeaState | Mapping[str, Any]") -> str:
     else:
         _append_list(lines, coverage, "- 未提供覆盖率文件或匹配结果。")
     lines.extend(["", "### 用例闭环", ""])
-    lines.extend(_markdown_table(("分析单元", "Coverage", "处理", "关联用例", "说明"), [
-        (
-            item.get("unit_id"),
-            item.get("coverage_id"),
-            item.get("disposition"),
-            item.get("test_case_ids"),
-            item.get("reason"),
-        )
-        for item in _items(state.get("coverage_decisions"))
-        if isinstance(item, Mapping)
-    ]))
+    lines.extend(_markdown_table(
+        ("分析单元", "Coverage / 精确目标", "处理", "关联用例", "说明"),
+        _coverage_decision_rows(state),
+    ))
 
     lines.extend(["", "## 8. 测试用例与风险映射", ""])
     cases = _items(state.get("test_cases"))
@@ -638,6 +676,7 @@ def render_report(state: "PangeaState | Mapping[str, Any]") -> str:
                 "",
                 f"- **用例类型**：{_text(case.get('case_type') or case.get('type') or case.get('test_type'))}",
                 f"- **设计依据**：{'、'.join(_text(item) for item in _items(case.get('basis'))) or '未提供'}",
+                f"- **直接 Coverage 声明**：{'、'.join(_direct_coverage_claim_labels(case.get('direct_coverage_claims'))) or '无'}",
                 f"- **关联输入**：{', '.join(_text(item) for item in _items(case.get('linked_input_ids'))) or '无'}",
                 f"- **关联风险**：{', '.join(_text(item) for item in _items(case.get('linked_risk_ids'))) or '无'}",
                 "- **前置条件**：",

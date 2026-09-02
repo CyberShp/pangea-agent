@@ -95,11 +95,12 @@ def _discard_submitted_derived_links(payload: dict[str, Any]) -> None:
 
 
 def _derive_test_case_links(result: UnitSemanticResult) -> UnitSemanticResult:
+    coverage_cases = test_case_keys_by_coverage_claim(result)
     cases_by_input = test_case_keys_by_input(result)
 
     coverage_decisions = []
     for decision in result.coverage_decisions:
-        linked = list(cases_by_input.get(decision.coverage_id, []))
+        linked = list(coverage_cases.get(decision.coverage_id, []))
         coverage_decisions.append(
             decision.model_copy(update={"test_case_keys": linked})
         )
@@ -116,6 +117,19 @@ def _derive_test_case_links(result: UnitSemanticResult) -> UnitSemanticResult:
         },
         deep=True,
     )
+
+
+def test_case_keys_by_coverage_claim(
+    result: UnitSemanticResult,
+) -> dict[str, list[str]]:
+    """Return Coverage-to-case links declared by exact structured claims."""
+
+    cases_by_coverage: dict[str, list[str]] = defaultdict(list)
+    for case in result.test_cases:
+        for claim in case.direct_coverage_claims:
+            if case.case_key not in cases_by_coverage[claim.coverage_id]:
+                cases_by_coverage[claim.coverage_id].append(case.case_key)
+    return dict(cases_by_coverage)
 
 
 def test_case_keys_by_input(result: UnitSemanticResult) -> dict[str, list[str]]:

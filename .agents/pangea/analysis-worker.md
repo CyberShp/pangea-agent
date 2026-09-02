@@ -8,7 +8,7 @@
 
 写入结果前必须先在内部完成五张核对表，任一项说不清就不能写入正式对象：
 
-1. **Coverage→Case 表**：每个 `coverage_id` 的精确缺口（函数执行，或 branch 的具体 zero-count outcome）× 每条准备直连它的 Case。逐格写出 Case 实际输入、走到的 outcome 和断言；Case 没亲自命中缺口就从 `linked_input_ids` 删除。每条真实 Coverage record 始终各自形成义务；只有冻结证据正向证明 records 属于同一次采集并具有可直接比较的计数语义时，才另行报告一致性问题，不能用一致性怀疑代替各自的 CoverageDecision。
+1. **Coverage→Case 表**：每个 `coverage_id` 的精确缺口（函数执行，或 branch 的具体 zero-count outcome）× 每条准备直连它的 Case。逐格写出 Case 实际输入、走到的 outcome 和断言；亲自命中函数零执行目标时填写 `direct_coverage_claims[].target=function_execution`，命中 branch 的 true/false 零计数 outcome 时分别填写 `branch_true_outcome` / `branch_false_outcome`。每条 claim 同时在 `linked_input_ids` 保留同一个真实 `coverage_id`，两处 Coverage ID 集合必须一致。Case 没亲自命中缺口就同时删除 claim 和该 Coverage ID。每条真实 Coverage record 始终各自形成义务；只有冻结证据正向证明 records 属于同一次采集并具有可直接比较的计数语义时，才另行报告一致性问题，不能用一致性怀疑代替各自的 CoverageDecision。
 2. **Scenario 保留表**：每个 `developer_confirm` Scenario 必须保留冻结证据已经证明的具体 predicate/trigger 和对应源码结果或条件性观测；业务入口、制造方式或产品 Oracle 可以继续待确认。若 actions 与 external_oracles 没有任何已确认的 trigger/result，只剩“待确认如何执行/观察”的话术，就删除该 Scenario，并同步清理 Branch/Coverage/Risk 引用。
 3. **UB 表述表**：普通构建只允许写“无稳定产品 Oracle，可能不返回、异常终止或产生其他未定义后果”；不得写成“会返回不可预测值”。sanitizer 只能作为明确构建前提下的条件性观测，不能写进 exclusion。
 4. **Evidence 表**：逐条只保留 cited line range 单独能证明的 observation，只写该范围内的声明、调用、条件、返回等直接代码事实；caller depth、truncation、冻结范围没有 `.h` 等跨文件事实写进 summary/reason，不能塞进源码 evidence。
@@ -79,9 +79,9 @@ Scenario 只有在自身 actions 明确包含 Risk trigger、external_oracles �
 
 正式 `test_cases[]` 只能来自 `blackbox_ready` 或 `graybox_ready` Scenario，并必须填写真实 `scenario_keys`。每个步骤有同位置 `expected_result`，并包含前置、观测、清理/恢复。黑盒优先；开发协助或内部故障注入只能用于制造前置条件，测试执行和主要 Oracle 仍尽量使用产品正常配置、连接、IO、设备状态、日志等外部行为。**已确认的公开 API 调用不属于这里禁止的“内部函数调用”**；实现 helper、私有函数、内部字段赋值、内部对象构造、内部返回值或内部状态检查不得冒充产品级测试步骤。
 
-每条 TestCase 的 `linked_input_ids` 只填写这条用例自身通过实际步骤和断言直接覆盖的输入 ID。`scenario_mapped|merged` Coverage 必须至少有一条 TestCase 包含对应 `coverage_id`、引用该 decision 的 ready Scenario，且 `basis` 包含 `coverage`；多个 TestCase 共用同一 Scenario，不代表它们自动继承该 Scenario 的全部 `coverage_ids`。例如一个 Case 只执行 true 分支，就不能因为共享 Scenario 而关联 false 分支的 Coverage gap。
+每条 TestCase 的 `linked_input_ids` 只填写这条用例自身通过实际步骤和断言直接覆盖的输入 ID。对 Coverage，同一 Case 还必须在 `direct_coverage_claims[]` 填写真实 `coverage_id` 与精确 zero target，两处 Coverage ID 集合一致。`scenario_mapped|merged` Coverage 必须至少有一条 TestCase 包含对应 `coverage_id` 和 claim、引用该 decision 的 ready Scenario，且 `basis` 包含 `coverage`；多个 TestCase 共用同一 Scenario，不代表它们自动继承该 Scenario 的全部 `coverage_ids`。例如一个 Case 只执行 true 分支，就不能因为共享 Scenario 而声明或关联 false 分支的 Coverage gap。
 
-写 TestCase 前先为每个真实 `coverage_id` 做逐 Case 核对：从 Coverage record 还原缺口的精确目标（函数 `count=0` 是执行该函数；分支的每个 `true_count=0|false_count=0` 都是一个待命中的指定 outcome），再逐条回答该 Case 的动作和断言是否亲自命中该目标。只有答案为“是”的 Case 才填写该 `coverage_id`。若同一 branch Coverage record 的两侧都为 0，true/false 两个 outcome 必须分别由至少一条 Case 命中，两侧 Case 可以直连同一个 `coverage_id`。Scenario 同时包含 true/false 动作时，拆出的单侧 Case 仍只证明自己实际执行的那一侧；不得把 Coverage ID 当成整组 Scenario 的标签批量复制。
+写 TestCase 前先为每个真实 `coverage_id` 做逐 Case 核对：从 Coverage record 还原缺口的精确目标（函数 `count=0` 是 `function_execution`；分支的 `true_count=0|false_count=0` 分别是 `branch_true_outcome|branch_false_outcome`），再逐条回答该 Case 的动作和断言是否亲自命中该目标。只有答案为“是”的 Case 才同时填写 claim 和该 `coverage_id`。若同一 branch Coverage record 的两侧都为 0，true/false 两个 target 必须分别由至少一条 Case 命中，两侧 Case 可以声明同一个 `coverage_id` 的不同 target。Scenario 同时包含 true/false 动作时，拆出的单侧 Case 仍只证明自己实际执行的那一侧；不得把 Coverage ID 当成整组 Scenario 的标签批量复制。
 
 `basis` 必须与真实来源一致：`coverage|requirement|design|defect_mechanism` 需要相应 `linked_input_ids`；`risk` 需要真实 `linked_risk_keys`；执行路径可使用 `code_flow`。`covered_flow_keys` 和 `scenario_keys` 必须引用本结果真实对象。
 
@@ -133,7 +133,7 @@ Closure 不得为了“吸收 finding”而把证据缺口新建成产品 Risk�
 - 每条 Risk 的 `system_result` / `external_observation` 描述产品行为，而不是测试证据缺口；C/C++ 未定义行为没有被写成固定返回值或固定状态；
 - 每个 Scenario 的 `linked_risk_keys` 都能从自身 actions 与 external_oracles 找到对应 Risk trigger/观测；未冻结 ABI 时所有字段都没有固定十进制 `int` 边界，普通构建 UB 没有被写成必然返回；
 - 每个 Risk 的 `exclusion_condition` 确实阻止触发、证明不可达或把运算改成受定义语义；trap/recover/sanitizer 只改变观测或处置，没有被当作排除条件；单点 Risk trigger 没有扩写成附近值或“其他极大值”；
-- 已按 Coverage record 的函数/指定分支 outcome 逐 Case 核对 `linked_input_ids`，没有把共享 Scenario 的 Coverage ID 批量复制给未命中该缺口的 Case；
+- 已按 Coverage record 的函数/指定分支 outcome 逐 Case 核对 `direct_coverage_claims` 与 `linked_input_ids`，两处 Coverage ID 集合一致，没有把共享 Scenario 的 Coverage ID 批量复制给未命中该缺口的 Case；
 - 每个填写 `branch_ids` 的 Scenario 都由自身 actions/oracles 覆盖对应分支条件和结果；全是“待确认”的 developer-confirm 候选没有被保留为空壳 Scenario；
 - 任何 `not_test_relevant` 都有正向充分理由而不是“入口/Oracle 未确认”；
 - 顶层 `unresolved` 没有重复任何已经由 Branch/Coverage/Risk/Scenario `developer_confirm` 表达的同源缺口；首轮 Analysis 的 unresolved 只引用本 task 真实 selected input 或 Coverage ID，Closure 才可引用 confirmed finding_key；

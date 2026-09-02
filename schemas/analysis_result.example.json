@@ -147,6 +147,12 @@
       "scenario_keys": ["SCN-AUTH-MISMATCH"],
       "covered_flow_keys": ["FLOW-CONNECT"],
       "linked_input_ids": ["COV-AUTH-LOOKUP"],
+      "direct_coverage_claims": [
+        {
+          "coverage_id": "COV-AUTH-LOOKUP",
+          "target": "function_execution"
+        }
+      ],
       "linked_risk_keys": ["RISK-AUTH-STATE"],
       "level": "blackbox",
       "preconditions": [

@@ -131,9 +131,9 @@ Coverage Gap
 
 正式 `test_cases[]` 只能来自 `blackbox_ready` 或 `graybox_ready` Scenario，并必须填写对应 `scenario_keys`。一个 Scenario 可以生成一个或多个用例；一个用例也可以关联多个共享业务条件的 Scenario，但不得脱离 Scenario 直接由 Branch/Coverage/Risk 生成模板用例。
 
-`test_cases[].linked_input_ids` 只记录该 TestCase 自身通过实际步骤和断言直接覆盖的输入。`scenario_mapped|merged` Coverage 必须至少有一条 TestCase 直接填写真实 `coverage_id`、引用该 decision 的 ready Scenario，并在 `basis` 中包含 `coverage`。共享 Scenario 只表示业务条件相同，不会让其中每条 Case 自动继承 Scenario 的全部 `coverage_ids`；只执行 true 分支的 Case 不得关联 false 分支 Coverage gap，反之亦然。
+`test_cases[].linked_input_ids` 只记录该 TestCase 自身通过实际步骤和断言直接覆盖的输入。对 Coverage，Case 还必须在 `direct_coverage_claims[]` 中用同一个真实 `coverage_id` 明确声明亲自命中的精确目标：函数零执行使用 `function_execution`，branch 的 true/false 零计数 outcome 分别使用 `branch_true_outcome` / `branch_false_outcome`；同一 Case 两处 Coverage ID 集合必须一致。`scenario_mapped|merged` Coverage 必须至少有一条 TestCase 直接填写真实 `coverage_id` 和对应 claim、引用该 decision 的 ready Scenario，并在 `basis` 中包含 `coverage`。共享 Scenario 只表示业务条件相同，不会让其中每条 Case 自动继承 Scenario 的全部 `coverage_ids`；只执行 true 分支的 Case 不得声明或关联 false 分支 Coverage gap，反之亦然。
 
-正式写入前先从每条 Coverage record 还原精确目标，再逐 Case 判断：函数 `count=0` 需要该 Case 实际执行目标函数；分支的每个 `true_count=0|false_count=0` 都需要至少一条 Case 实际执行并判定该指定 outcome。只有亲自命中目标的 Case 才直接链接该 `coverage_id`；同一 record 两侧都为 0 时，两侧 Case 可以直连同一个 ID，但不得把共享 Scenario 的 Coverage ID 当作整组 Case 标签批量复制。
+正式写入前先从每条 Coverage record 还原精确目标，再逐 Case 判断：函数 `count=0` 需要该 Case 实际执行目标函数；分支的每个 `true_count=0|false_count=0` 都需要至少一条 Case 实际执行并判定该指定 outcome。只有亲自命中目标的 Case 才填写对应 `direct_coverage_claims` 并直接链接该 `coverage_id`；同一 record 两侧都为 0 时，两侧 Case 可以声明同一个 ID 的不同 target，一条 Case 确实执行并判定两侧时也可同时声明两个 target，但不得把共享 Scenario 的 Coverage ID 当作整组 Case 标签批量复制。
 
 用例必须包含：用例描述、用例类型、前置条件、测试步骤、预期结果、观测方式、清理/恢复。用例不分优先级。
 

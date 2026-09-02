@@ -137,7 +137,10 @@ class CoverageDecision(StrictModel):
     scenario_keys: list[str] = Field(default_factory=list)
     test_case_keys: list[str] = Field(
         default_factory=list,
-        description="Workflow 从 test_cases[].linked_input_ids 直接派生；不按共享 Scenario 扩大关联",
+        description=(
+            "Workflow 从 test_cases[].direct_coverage_claims 的真实 coverage_id "
+            "直接派生；不按 linked_input_ids 或共享 Scenario 扩大关联"
+        ),
     )
     reason: str = Field(min_length=1)
 
@@ -189,6 +192,15 @@ class TestStep(StrictModel):
     expected_result: str = Field(min_length=1)
 
 
+class CoverageTargetClaim(StrictModel):
+    coverage_id: str = Field(min_length=1)
+    target: Literal[
+        "function_execution",
+        "branch_true_outcome",
+        "branch_false_outcome",
+    ]
+
+
 class GeneratedTestCase(StrictModel):
     case_key: str = Field(min_length=1)
     title: str = Field(min_length=1)
@@ -197,7 +209,17 @@ class GeneratedTestCase(StrictModel):
     covered_flow_keys: list[str] = Field(min_length=1)
     linked_input_ids: list[str] = Field(
         default_factory=list,
-        description="仅列此 TestCase 的实际步骤和断言直接覆盖的输入 ID；共享 Scenario 不自动继承其全部输入",
+        description=(
+            "仅列此 TestCase 的实际步骤和断言直接覆盖的输入 ID；共享 Scenario 不自动继承其全部输入。"
+            "其中 Coverage ID 集合必须与 direct_coverage_claims[].coverage_id 集合一致"
+        ),
+    )
+    direct_coverage_claims: list[CoverageTargetClaim] = Field(
+        default_factory=list,
+        description=(
+            "Agent 对本 TestCase 亲自命中的精确零覆盖目标所作的结构化声明；"
+            "target 只表示 function 执行或 branch true/false outcome，不从步骤文本推断"
+        ),
     )
     linked_risk_keys: list[str] = Field(default_factory=list)
     level: Literal["blackbox", "graybox"]
