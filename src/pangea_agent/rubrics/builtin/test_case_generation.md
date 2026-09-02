@@ -73,7 +73,7 @@ Inventory 中属于当前 `source_scope` 的每个 `branch_id` 都必须有且�
 
 输入校验 Branch 若返回不同错误码、状态或输出，就具有可区分结果，不是纯实现细节。受支持入口已证明时映射/合并真实 Scenario；caller truncation 使入口未确认时使用 `developer_confirm`。不能用只覆盖相反条件的 Scenario 声称当前 Branch 已覆盖；`merged/scenario_mapped` 必须有 Scenario `branch_ids` 反向引用，并由动作实际覆盖对应条件。
 
-BranchDecision 引用的 Flow 必须包含条件节点和每个改变返回、状态或输出的源码可见 successor；`developer_confirm` 不允许省略内部控制流。缺少真实 return/state edge 属于 Flow 遗漏。
+BranchDecision 引用的 Flow 必须包含条件节点和每个语义不同且改变返回、状态或输出的源码可见 successor；`developer_confirm` 不允许省略内部控制流。每个 outcome 必须有可追踪 successor edge；结果相同的 outcome 可以共用 successor step，但条件 edge 不能丢。把 return 只写在 branch step 的 label/evidence 不算对应 edge；缺少真实 return/state edge 属于 Flow 遗漏。
 
 caller truncation 不只约束 `not_test_relevant|developer_confirm|unreachable`，也约束乐观的 `scenario_mapped|merged` 和 ready Scenario/TestCase。若所谓业务入口只由私有 `.c` 的声明、跨文件调用或可链接性支撑，而缺失 caller 可能包含真正产品入口，就不能直接声明 ready；冻结证据不足时使用 `developer_confirm`。
 
@@ -165,7 +165,7 @@ Coverage Gap
 
 - 缺少稳定业务入口、制造方法或独立 Oracle 是证据缺口，不是产品运行时 Risk。不得创建 `system_result` / `external_observation` 只描述“测试无法触发、无法观测、需要开发确认”的 Risk；把对应 Branch/Coverage/Scenario 保持为 `developer_confirm`。
 - C/C++ undefined behavior（未定义行为）只说明结果不可依赖，不能在没有冻结构建/运行时契约时写成固定环绕值、`INT_MIN`、返回码、日志或状态。需要受控 sanitizer/构建方式但当前证据不足时保持 `developer_confirm`。
-- 未冻结目标 ABI/编译契约时只写类型边界符号（例如 `INT_MAX`），不得擅自把 `int` 固定成 32 位十进制值；ASan 主要检查内存错误，不能单独作为 signed-integer-overflow 的检测 Oracle。使用 UBSan/对应 signed-overflow sanitizer 时必须明确依赖构建选项；未冻结 recover/trap 配置时只能说“可报告”，不能断言必然中止。sanitizer 不是 Risk 排除条件。
+- 未冻结目标 ABI/编译契约时只写类型边界符号（例如 `INT_MAX`），不得擅自把 `int` 固定成 32 位十进制值；ASan 主要检查内存错误，不能单独作为 signed-integer-overflow 的检测 Oracle。使用 UBSan/对应 signed-overflow sanitizer 时必须明确依赖构建选项；未冻结 recover/trap 配置时只能说“可报告”，不能断言必然中止。普通构建没有稳定产品 Oracle，任何返回值、终止状态或其他表现都不能写成必然；列举可能后果时不得用穷举式“只能”排除其他 UB 表现。sanitizer 不是 Risk 排除条件。排除条件必须由冻结证据证明能阻止完整 trigger、证明该 Risk 路径不可达，或让相关操作具有受定义语义；应用后 Risk 所述失效结果必须不可能发生。安全域可以作为这类保证；若文字实际排除安全输入却仍允许 trigger，且未改变相关语义，则不成立。
 - 源码已直接证明且未被正向证明不可达的 C/C++ 未定义行为必须保留 Risk；入口/制造/Oracle 不足时用 `developer_confirm`，不得把它改写成“六维无信号”或从 Risk 集合删除。
 - `test_required`：风险已经具备测试侧可执行路径，必须由至少一个 ready Scenario 关联，并最终由正式 TestCase 的 `linked_risk_keys` 覆盖。
 - `developer_confirm`：风险本身有源码依据，但当前冻结上下文不足以确认稳定业务入口、制造方法或独立 Oracle；不得强行生成正式 TestCase。

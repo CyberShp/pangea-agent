@@ -12,7 +12,7 @@
 
 冻结 Risk 前逐个核对 `source_scope` 中带符号整数的 `+`、`-`、`*`：前置 guard 之后是否仍可取类型边界。例如只排除 `< 0` 仍允许 `INT_MAX`，后续 `value + 1` 不能按普通返回值处理。
 
-没有冻结目标 ABI、编译器参数或构建契约时，按 usual arithmetic conversions 后的真实有符号运算类型使用对应 `TYPE_MAX` 等边界符号，不把 `int` 擅自写成固定 32 位数值，也不把 `long`、整数提升后的 `short/signed char` 或 unsigned 运算套成 `INT_MAX` signed overflow。精确边界不能扩写成“其他极大值”“附近值”或更宽输入域；只有运算类型确为 `int` 的 `value + 1` 才在 `value == INT_MAX` 触发 signed overflow。signed overflow 的受控观测可依赖 UBSan 或对应 sanitizer 构建；ASan 单独不是该算术错误的检测依据。未冻结 UBSan recover/trap 配置时只能说“可报告该错误”，不能断言必然中止。启用 sanitizer 只能增加观测，不是 Risk 的 exclusion condition；排除条件必须真正移除触发输入、正向证明路径不可达，或改用受定义的算术语义。Risk severity 必须结合受支持入口和产品影响证据，不得只因源码存在 UB 就自动判 High/Critical。
+没有冻结目标 ABI、编译器参数或构建契约时，按 usual arithmetic conversions 后的真实有符号运算类型使用对应 `TYPE_MAX` 等边界符号，不把 `int` 擅自写成固定 32 位数值，也不把 `long`、整数提升后的 `short/signed char` 或 unsigned 运算套成 `INT_MAX` signed overflow。精确边界不能扩写成“其他极大值”“附近值”或更宽输入域；只有运算类型确为 `int` 的 `value + 1` 才在 `value == INT_MAX` 触发 signed overflow。signed overflow 的受控观测可依赖 UBSan 或对应 sanitizer 构建；ASan 单独不是该算术错误的检测依据。未冻结 UBSan recover/trap 配置时只能说“可报告该错误”，不能断言必然中止。普通构建必须明确不存在稳定产品 Oracle；任何返回值、终止状态或其他表现都不能被约定为必然，可列举但不得把可能后果写成穷举式“只能”。启用 sanitizer 只能增加观测，不是 Risk 的 exclusion condition；排除条件必须由冻结证据证明能阻止完整 trigger、证明该 Risk 路径不可达，或让相关操作具有受定义语义；应用后 Risk 所述失效结果必须不可能发生。对 `int value + 1` 的单点 `value == INT_MAX` signed-overflow 风险，拒绝 `value == INT_MAX`、保证 `value != INT_MAX`，或把全部允许输入限制在 `value < INT_MAX`（更窄的已证安全域也可）都能阻止触发；若文字实际排除安全输入却仍允许 `INT_MAX` 且未改变算术语义，则不成立。Risk severity 必须结合受支持入口和产品影响证据，不得只因源码存在 UB 就自动判 High/Critical。
 
 重点抽取：
 
