@@ -85,8 +85,9 @@ def _audit_acceptance_rule(
     """Place the relevant semantic review rule beside one frozen audit target."""
     if check.startswith(("source_evidence/", "unreachable_evidence/")):
         return (
-            "observation 必须逐字复制 cited_source_lines 中足以定位事实的最小源码片段，不能在"
-            "片段前后追加解释、推导或范围结论；所有 Flow、Risk、Scenario、finding 和 decision"
+            "observation 必须是 cited_source_lines 中足以定位事实的连续、逐字符相同的最小源码子串；"
+            "不要求覆盖整行，省略该子串之前或之后的行首/行尾空白仍然合法，不能仅因未复制片段外空白"
+            "而判 finding；不能在片段前后追加解释、推导或范围结论。所有 Flow、Risk、Scenario、finding 和 decision"
             "中的 SourceEvidence 都适用同一规则。语言规则、Analysis 字段、manifest/caller "
             "truncation、跨文件缺失、未由该范围直接声明的 ABI/构建/产品入口结论必须移出"
             "SourceEvidence。即使引用范围包含完整表达式，signed overflow、undefined behavior、"
