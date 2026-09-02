@@ -120,8 +120,9 @@ def _audit_acceptance_rule(
             return (
                 "exclusion 必须由冻结证据证明能阻止完整 trigger、证明该 Risk 路径不可达，或让"
                 "相关操作具有受定义语义；能排除精确 trigger 的输入 guard/契约即使缩窄允许输入也"
-                "是有效 exclusion，不能仅以其改变允许输入域为由否认。sanitizer 只增加观测，"
-                "不是 exclusion。"
+                "是有效 exclusion，不能仅以其改变允许输入域为由否认。sanitizer、recover 或 trap "
+                "只增加观测或改变处置，不得作为 exclusion_condition 的并列候选；即使同一句附带"
+                "它们不消除风险的免责声明，仍然不成立。"
             )
         if check == "severity_and_product_impact":
             return (
