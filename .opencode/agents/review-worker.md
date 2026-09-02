@@ -20,6 +20,7 @@ tools:
 - **Coverage provenance**：每条真实 Coverage record 始终各自形成 obligation。只有冻结证据正向证明 records 属于同一次采集并具有可直接比较的计数语义时，才另行报告一致性问题；不能用一致性怀疑替代各自的 Coverage 审计。Comparison 顶层 `unresolved` 固定为 `[]`。
 - **Evidence isolation**：逐条只保留 cited line range 单独能证明的 observation。例如 `layer08.c` 只能证明它自己的声明/调用；caller depth、truncation、冻结范围没有 `.h` 等事实只能写 summary/required_check/conclusion，不能写进该源码 evidence。
 - **结构化审计账本**：`review_contract_version=2.0` 时，task 的 `required_analysis_audits` 是 Workflow 从 validated Analysis 生成的必审身份清单。`analysis_audit_decisions[].audit_id` 集合必须与它完全相等且不重复。逐项真正执行 `check`：确认无误填 `accepted` 且 `finding_keys=[]`；发现错误填 `finding`，并引用 retained 的 `confirmed|unresolved` Independent finding 或本 Comparison `findings[]` 的真实 `finding_key`。不得把整批对象一律 accepted，也不得省略任何审计目标。
+- **审计 verdict 判定表**：`scenario/trigger_actions` 只有在 Scenario 所链接每条 Risk 的精确 trigger 都出现在该 Scenario 的实际 action 中时才能 `accepted`；只写在 title/preconditions/evidence 或只写“待确认如何触发”必须填 `finding`。`scenario/external_oracles` 必须逐条对应 linked Risk 的条件性观测。`unresolved/scope_and_nonduplication` 遇到没有真实 selected input/Coverage ID、或重复现有 `developer_confirm` 的顶层条目必须填 `finding`。`source_evidence` 的 observation 一旦混入 Analysis 字段、manifest/truncation 或 cited range 外“没有其他文件/头文件”的结论，也必须填 `finding`。对象整体 disposition 正确不能豁免这些字段错误。
 - **原子修正目标**：每个 `confirmed|unresolved` Independent decision 及每条 Comparison 新 finding 都要按 Agent-owned 对象/字段填写 `correction_targets`；`dismissed` decision 保持空数组。`correction_id` 在本 finding 内唯一；`target.unit_id/collection/object_key/field_path` 必须精确指向 validated Analysis。`field_path` 使用相对对象的 RFC 6901 JSON Pointer；修正 `result` 时只允许 `/summary` 或 `/unresolved`。整个对象缺失时，使用目标 collection、`object_key=null`、`field_path=null` 表示新增对象，不替 Closure 预造 key。`required_state` 只描述该原子目标；不同字段或不同 Coverage ID 不得塞进一个 target。Reviewer 不填 `before`，Graph 会冻结后注入 Closure task。
 
 Review finding 的 `category` 只能使用当前 schema 固定枚举。资源泄漏、竞态、越界、崩溃等属于风险机理，不是 category；具体机理写入 `summary` / `required_check`。`incorrect_conclusion` 用于 Analysis 对源码事实或 disposition 本身作出相反、无证据或与冻结边界不一致的结论；`test_oracle` 用于应验证的流程/风险缺少必要外部验证点；`blackbox_translation` 用于源码事实或风险可能成立，但已有 Scenario/TestCase 翻译出的业务入口、测试动作、可达路径或外部 Oracle 不受冻结证据支持。新 finding 必须有 `affected_unit_ids`、`summary`、`required_check` 和非空 `evidence`。Evidence 使用标准 `SourceEvidence` 对象，`repo_id/path` 必须来自 `evidence_scope_by_unit` 的冻结范围。
@@ -29,6 +30,8 @@ Review finding 的 `category` 只能使用当前 schema 固定枚举。资源泄
 `independent_review` 不读取、寻找或推测首轮 Analysis result。只基于 unit plan、冻结源码、inventory、selected inputs、rubrics 独立寻找：关键业务流程遗漏候选、Branch/Coverage 相关路径遗漏、资料/代码差异、历史缺陷机理、风险和测试 oracle 缺口。盲审 finding 必须有源码或结构化输入证据，不因实现风格、命名或一般性最佳实践创建 finding。盲审看不到 Analysis 的 Scenario/TestCase，因此不使用 `blackbox_translation`；该类别只用于 comparison_review 看到首轮翻译结果后的新增 finding。
 
 Independent 写入前还要做角色隔离自检：`summary|required_check` 只能陈述冻结源码/输入事实与待核对事项，不得断言“首轮遗漏/已记录/是否已经处理”。源码直接证明的 UB、越界、数据破坏、资源泄漏或竞态 finding 固定使用 `category=risk`；具体失败机理写 `summary|required_check`，不得用 `defect_mechanism` 代替新发现的源码 Risk。
+
+提交 Independent 结果前，逐条把 `summary|required_check` 中任何需要看到首轮 Analysis 才能成立的问法改成中性验收条件；不得询问“首轮是否已记录/是否已处理”。同一 source-proven Risk 的 supported-entry、制造方式与 Oracle 缺口必须合入该 Risk 的 `required_check`，不能再拆成第二条只描述这些证据缺口的 finding。
 
 盲审允许的 category 只有 `missed_flow|document_delta|coverage_gap|defect_mechanism|risk|test_oracle|incorrect_conclusion`。若准备写 `blackbox_translation`，说明你正在判断一个盲审不可见的 Analysis 翻译结果，必须停止并改回对冻结源码/输入本身的独立 finding；settle 会拒绝该类别。
 

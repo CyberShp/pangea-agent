@@ -15,13 +15,15 @@ tools:
 
 `task_type=analysis` 时，先读取 task、冻结源码、inventory、selected inputs、`source_manifest_path`、所有 task 指定 rubrics、`result_schema_path`、`result_skeleton_path`、`result_example_path`。先确认 2.0 结果结构，但不要边读源码边填 JSON；同一会话按以下五步完成分析，最后才把真实结论整理进 Graph 已创建的唯一 `result_path`。
 
-写入结果前必须先在内部完成五张核对表，任一项说不清就不能写入正式对象：
+写入结果前必须先在内部完成七张核对表，任一项说不清就不能写入正式对象：
 
 1. **Coverage→Case 表**：每个 `coverage_id` 的精确缺口（函数执行，或 branch 的具体 zero-count outcome）× 每条准备直连它的 Case。逐格写出 Case 实际输入、走到的 outcome 和断言；亲自命中函数零执行目标时填写 `direct_coverage_claims[].target=function_execution`，命中 branch 的 true/false 零计数 outcome 时分别填写 `branch_true_outcome` / `branch_false_outcome`。每条 claim 同时在 `linked_input_ids` 保留同一个真实 `coverage_id`，两处 Coverage ID 集合必须一致。Case 没亲自命中缺口就同时删除 claim 和该 Coverage ID。每条真实 Coverage record 始终各自形成义务；只有冻结证据正向证明 records 属于同一次采集并具有可直接比较的计数语义时，才另行报告一致性问题，不能用一致性怀疑代替各自的 CoverageDecision。
 2. **Scenario 保留表**：每个 `developer_confirm` Scenario 必须保留冻结证据已经证明的具体 predicate/trigger 和对应源码结果或条件性观测；业务入口、制造方式或产品 Oracle 可以继续待确认。若 actions 与 external_oracles 没有任何已确认的 trigger/result，只剩“待确认如何执行/观察”的话术，就删除该 Scenario，并同步清理 Branch/Coverage/Risk 引用。
 3. **UB 表述表**：普通构建只允许写“无稳定产品 Oracle，可能不返回、异常终止或产生其他未定义后果”；不得写成“会返回不可预测值”。sanitizer 只能作为明确构建前提下的条件性观测，不能写进 exclusion。
 4. **Evidence 表**：逐条只保留 cited line range 单独能证明的 observation，只写该范围内的声明、调用、条件、返回等直接代码事实；caller depth、truncation、冻结范围没有 `.h` 等跨文件事实写进 summary/reason，不能塞进源码 evidence。
 5. **Closure delta 表**：`targeted_closure` 逐 finding 对比原 Analysis 与最终副本。`incorporated` 必须列出 finding 要求的实质 Agent-owned object/key/field before→after；若 finding 本身指出 evidence、summary 或 reason 错误，真正纠正这些字段也可 incorporated。只有 decision conclusion 变化、追加 finding 名称、复述/同义改写，或者结论仍是“首轮已正确、无需修改”时，必须改为 `dismissed` 并提供核对 evidence。
+6. **Risk→Scenario 逐字段表**：只要 Scenario 填写 `linked_risk_keys`，逐条把所链接 Risk 的精确 `trigger` 抄成该 Scenario 必须实际构造的 action，并把 Risk 的条件性观测写入 `external_oracles`。trigger 只在 title、preconditions、evidence 或“待确认如何触发”的占位 action 中出现都不算承载；此时删除该 Risk 链接，或删除空壳 Scenario，让 Risk 单独保持 `developer_confirm`。
+7. **顶层 unresolved 允许表**：先列出本 task 真实 selected input ID、Coverage ID；Closure 再加本 task 收到的 finding_key。首轮 `unresolved[]` 的每一条都必须明确引用这张允许表中的真实 ID，且不能重复任何 Branch/Coverage/Risk/Scenario 已用 `developer_confirm` 表达的缺口；否则从顶层删除并保留对象自身 disposition。
 
 同时检查 source manifest 的 `scope_expansion.caller_context_truncations`。它只表示 Workflow 因文件/深度预算停止继续冻结 caller context，不表示调用链到此结束，更不能作为 `unreachable` 证据。若当前单元相关 caller context 被截断，且现有冻结证据仍不足以确认稳定业务入口、制造方式或外部 Oracle，应使用 `developer_confirm` 并说明已经追到的位置；不得把“未继续看到 caller”解释为不可达，也不得因为上层入口恰好在截断范围外而改写成 `not_test_relevant`。
 
