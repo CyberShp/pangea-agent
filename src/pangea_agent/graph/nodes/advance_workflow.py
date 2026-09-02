@@ -171,14 +171,12 @@ def _audit_acceptance_rule(
             )
         if check in {"trigger_actions", "developer_confirm_content"}:
             return (
-                "保留的 Scenario 必须在实际 action 中直接陈述至少一个冻结证据证明的具体 predicate"
-                "及对应 outcome；只写传入某类型/任意值的泛化动作不算具体 predicate。Scenario 引用"
-                "Branch/Flow 时，action 必须声明自己实际覆盖的分支条件或结果；title、precondition、"
-                "evidence 或询问如何触发的占位话术不能代替 action。"
-                "readiness=developer_confirm 不放宽这条要求：若 action 的实际含义仍是待确认如何构造"
-                "或调用，就必须 finding 或删除 Scenario；accepted conclusion 必须逐字引用一个已经"
-                "陈述具体 predicate/outcome 的 action，不能把 readiness 本身当作通过理由。移除 Risk"
-                "链接也不能替代本项对 Scenario 自身内容的修正。"
+                "先只看 observed_fields.actions 并作二选一：action 本身是在陈述具体内部操作、predicate"
+                "及对应 outcome，还是仍在询问或等待确认如何构造/调用。只有前者可以 accepted；后者"
+                "必须 finding 或删除 Scenario，不能用 readiness=developer_confirm、title、preconditions、"
+                "evidence 或‘如实表达待确认’作为通过理由。accepted conclusion 必须逐字引用一个已经"
+                "陈述具体 predicate/outcome 的 action。Scenario 引用 Branch/Flow 时，该 action 还必须"
+                "声明自己实际覆盖的分支条件或结果；泛化输入类型不算。"
             )
         if check.startswith("risk_trigger_action/"):
             return (
