@@ -1,11 +1,10 @@
 [project]
 name = "pangea-agent"
 version = "0.1.0"
-description = "Evidence-driven C/C++ and Lua testing analysis workflow for coding agents"
+description = "Codetalks Skill runtime and local test-analysis asset manager"
 readme = "README.md"
 requires-python = ">=3.10,<3.13"
 dependencies = [
-  "langgraph>=0.2,<2",
   "openpyxl>=3.1,<4",
   "Pillow>=11,<13",
   "pydantic>=2,<3",

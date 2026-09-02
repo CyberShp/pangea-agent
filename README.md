@@ -1,10 +1,10 @@
 # pangea-agent
 
-`pangea-agent` 是部署在测试人员 Windows 电脑上的 C/C++ 与 Lua 测试分析 Agent。它把冻结源码、经审核的历史缺陷机理、结构化需求/设计资料和相关 Coverage 转成代码流程、资料/代码差异、六维 DFX 风险、测试用例和离线报告。
+`pangea-agent` 是部署在测试人员 Windows 电脑上的 Codetalks Skill 运行时与本地资料管理组件。源码、需求/设计资料、Coverage 和历史问题都由 `codetalks-skill 1.0.0` 直接消费并形成 Markdown 活文档与正式输出。
 
-Python 只负责确定性工作：文件发现、语言识别、源码结构解析、Coverage 匹配、状态、JSON 契约、聚合和报告。单元规划、源码理解、独立复核和资料提取由当前客户端派发 Agent 完成。Python 不调用模型 API。
+Python 只负责仓库/资料登记、创建 Skill Run、冻结 Skill 包和只读解释 `run_guard.py` 状态。Python 不规划分析单元、不编排 Agent、不校验语义结果，也不生成报告。
 
-每个新 Run 都会冻结 `codetalks-skill 1.0.0` 及其摘要；Planning 依次执行 01–03，Analysis 执行 04–07，独立 Reviewer 执行 08，最终报告执行 09。Agent 只读取 task 中列出的冻结步骤与参考文件，旧 Run 不会被后续 Skill 更新改写。Workflow 只补充系统拥有的编号、证据仓 ID 和派生链接，不生成、清理或补齐语义结论。
+每个新 Run 都冻结一份完整 `codetalks-skill 1.0.0`。DSH 分析会话读取该 Skill 后，使用它自己的 Step 01–09、`run_guard.py`、Producer/Judge 分工和正式输出契约走完整流程。`内部索引/运行状态.json` 是唯一生命周期真相。
 
 ## 初始化
 
@@ -40,27 +40,15 @@ pangea-data/
 ## 分析流程
 
 ```text
-准备并冻结输入
-→ Planning Agent 按功能模块/文件族规划单元
-→ 最多 8 个 analysis Agent 并行完成首轮分析
-→ 1 个看不到首轮结果的独立复核 Agent
-→ 同一 Reviewer 对照首轮结果裁决 finding
-→ 原 analysis worker 必要时只补齐受影响单元
-→ 聚合 report.md 和 report.html
+创建空的 Skill Run 并冻结 Skill
+→ 当前分析会话执行 Step 01–07
+→ 独立 Judge 执行 Step 08
+→ 当前分析会话根据审查结果执行 Step 09
+→ run_guard validate / handoff / finalize
+→ 正式输出/完整分析报告.md
 ```
 
-“最多 8 个”是并发上限，不是整个 Run 的单元总数。首轮 analysis 已经负责代码/设计理解、主干与异常流程、调用链、资料/代码差异、Coverage 提示、缺陷机理、风险和用例；独立复核寻找遗漏，comparison review 由同一 Reviewer 对照首轮结果裁决发现，不拆成逐字段审计任务。
-
-主 Agent 只处理 CLI 返回的 action：
-
-1. `dispatch_agent` 创建 action 指定的 Agent，`continue_agent` 恢复 action 自带的同一任务；
-2. 用 `adapter bind` 记录真实客户端任务 ID；
-3. Agent 写入 task 指定的 `result_path`；
-4. 用 `adapter settle` 在同一次提交中校验并推进 graph；
-5. `validation.status=invalid|incomplete` 时按 `repair_action` 由同一 Agent 修正同一结果；
-6. 多次修复仍失败时保留真实错误并标记 `attention_required`，不生成降级结果冒充成功。
-
-结果文件只包含语义内容。Workflow 创建唯一 `result_path` 和对应骨架；Agent 在该文件中写入完整结果。`run_id`、`unit_id`、Agent 任务 ID、路径和状态由 Python 保存，Agent 不重复回填这些机械字段。
+旧 Graph、Planning/Analysis/Review/Closure action、schema、settle 和 Python Reporting 已删除。分析过程不再写 `progress.json`、`final-state.json`、`agent-results/`、`report.md` 或 `report.html`。
 
 ## 输入与用例设计
 
@@ -77,9 +65,7 @@ pangea-data/
 PANGEA 从已经人工批准的历史缺陷条目准备方法论提炼 task；DSH 按 task 派发仓库内的
 `methodology-worker`，再由 PANGEA 校验来源和候选结构。候选必须由用户明确启用，之后创建的 Run 才会在
 `inputs/methodologies/` 中冻结独立副本。内置专项方法论和已启用的用户方法论都会进入 Run 的精简
-`catalog.json`；Planning Agent 只读取其中的 ID、标题、适用条件和例外，按分析单元记录选择理由。只有选中的
-方法论全文才加入该单元 analysis worker 和 reviewer 的
-`rubric_paths`。旧 Run 始终使用自己的冻结副本。
+`catalog.json`；Skill 执行会读取其中的 ID、标题、适用条件和例外，并在 Markdown 运行计划中记录选择理由。旧 Run 始终使用自己的冻结副本。
 
 ```powershell
 & ".\.venv\Scripts\python.exe" -m pangea_agent.cli.main methodologies derive --data-root "pangea-data" --asset-id "asset-260830-001"
@@ -117,24 +103,18 @@ DSH 使用返回的 `task_path` 派发 `.agents/pangea/methodology-worker.md`。
 
 CLI 每次只向 stdout 输出一个 JSON envelope。主要能力分为：
 
-- `assets`：导入、列表、详情、结构化提取、历史缺陷审核、归档；
-- `runs`：创建、列表、详情、停止、打开 Markdown/HTML 报告；
+- `assets`：导入、列表、详情、原文提取、历史缺陷审核、归档；
+- `runs`：创建、列表、详情、停止、打开正式 Markdown 报告；
 - `system capabilities`：返回当前支持语言和接口版本；
-- `adapter`：供客户端绑定、校验和提交 Agent action。
-
-analysis/closure action 的 `methodologies` 字段列出当前单元实际冻结的方法论；`runs get` 在 Run
-级别返回同结构清单。每项包含稳定 ID、标题、内容 SHA-256、通用/专项类型、选择依据、来源基线摘要和
-专项来源目录路径。该字段只用于展示和追溯，不参与结果校验，也不替 Agent 判断风险或用例是否成立。
 
 当前支持 `c_cpp` 与纯 `lua` 模块。系统根据选中模块中的源码自动判断语言；同一模块同时包含 Lua 与 C/C++ 时会明确停止，第一阶段不分析混合语言模块。
 
 ## 报告
 
-每个 Run 固定生成：
+每个完整 Run 固定生成：
 
 ```text
-pangea-data/runs/<run-id>/report.md
-pangea-data/runs/<run-id>/report.html
+pangea-data/runs/<run-id>/正式输出/完整分析报告.md
 ```
 
 HTML 是无外链单文件，并直接渲染主干、分支、异常传播和恢复流程图。报告只展示与当前范围相关并已经处理的输入。

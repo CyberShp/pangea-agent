@@ -7,14 +7,11 @@ from pathlib import Path
 from pangea_agent.agent_io import read_json, write_json
 from pangea_agent.documents.coverage import parse_coverage_xlsx
 from pangea_agent.documents.extract import extract_document
-from pangea_agent.graph.workflow_store import project_path
 from pangea_agent.models.asset import (
     AssetExtractionResult,
-    AssetExtractionTask,
     AssetRecord,
     AssetType,
 )
-from pangea_agent.models.analysis import ActionState
 
 
 DOCUMENT_SUFFIXES = {".md", ".txt", ".pdf", ".docx", ".xlsx"}
@@ -34,21 +31,6 @@ def _asset_dir(data_root: str, asset_id: str) -> Path:
 
 def _record_path(data_root: str, asset_id: str) -> Path:
     return _asset_dir(data_root, asset_id) / "asset.json"
-
-
-def asset_action_path(data_root: str, asset_id: str) -> Path:
-    return _asset_dir(data_root, asset_id) / "action.json"
-
-
-def load_asset_action(data_root: str, asset_id: str) -> ActionState:
-    path = asset_action_path(data_root, asset_id)
-    if not path.is_file():
-        raise ValueError(f"资产提取 Action 不存在：{asset_id}")
-    return ActionState.model_validate(read_json(path))
-
-
-def save_asset_action(data_root: str, asset_id: str, action: ActionState) -> None:
-    write_json(asset_action_path(data_root, asset_id), action.model_dump(mode="json"))
 
 
 def _next_asset_id(data_root: str) -> str:
@@ -236,37 +218,14 @@ def prepare_asset_extraction(data_root: str, asset_id: str) -> dict:
     extraction = extract_document(source, asset_dir / "attachments")
     text_path = asset_dir / "extracted.txt"
     text_path.write_text(extraction.text, encoding="utf-8")
-    task_path = asset_dir / "extraction-task.json"
-    result_path = asset_dir / "extraction-result.json"
-    task = AssetExtractionTask(
-        asset_id=asset_id,
-        asset_type=record.asset_type,
-        title=record.title,
-        source_path=record.source_path,
-        extracted_text_path=str(text_path),
-        attachments=[item.__dict__ for item in extraction.attachments],
-        result_schema_path=str(
-            project_path("schemas", "asset_extraction_result.schema.json")
-        ),
-        result_path=str(result_path),
-    )
-    write_json(task_path, task.model_dump(mode="json"))
-    record.status = "extracting"
-    record.extraction_task_path = str(task_path)
-    record.result_path = str(result_path)
+    record.status = "available"
+    record.extraction_task_path = str(text_path)
+    record.result_path = None
     record.warnings = extraction.warnings
     _save_record(data_root, record)
-    action = ActionState(
-        action_id=f"asset:{asset_id}:extract",
-        action="dispatch_agent",
-        role="asset_extraction",
-        stage="structured_extraction",
-        task_path=str(task_path),
-    )
-    save_asset_action(data_root, asset_id, action)
     return {
         "asset": record.model_dump(mode="json"),
-        "action": action.model_dump(mode="json"),
+        "action": None,
     }
 
 

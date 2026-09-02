@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
-from pangea_agent.models.analysis import AnalysisLanguage
+AnalysisLanguage = Literal["c_cpp", "lua"]
 
 C_CPP_SUFFIXES = {".c", ".h", ".cc", ".cpp", ".cxx", ".hpp", ".hh"}
 LUA_SUFFIXES = {".lua"}

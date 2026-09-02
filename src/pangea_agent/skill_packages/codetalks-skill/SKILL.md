@@ -651,7 +651,7 @@ python3 {skill-root}/scripts/run_guard.py complete-step \
 用户提供的每份材料都必须进入：
 
 ```text
-工件/证据/输入材料消费台账.json
+内部索引/输入材料索引.json
 ```
 
 状态只能是：
@@ -690,7 +690,7 @@ python3 {skill-root}/scripts/run_guard.py complete-step \
 - 必须实际读取工作表、表头和数据行；
 - 识别行覆盖、分支覆盖、函数覆盖等口径；
 - 提取未覆盖文件、函数、范围或 Branch；
-- 生成 `coverage-gap-map.json`；
+- 在 `活文档/02-输入材料消费记录.md` 中记录 Coverage gap 映射；
 - 映射到 Flow/Branch/Scenario；
 - 不得只输出“文件存在”。
 

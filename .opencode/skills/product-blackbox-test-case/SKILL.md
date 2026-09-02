@@ -3,7 +3,7 @@ name: product-blackbox-test-case
 description: 将源码或协议层发现转换为测试人员可执行的产品级黑盒用例。生成 PANGEA 测试用例时使用，只影响用例表达，不增加分类、门禁、审计或返工。
 compatibility: opencode
 metadata:
-  audience: pangea-analysis-worker
+  audience: codetalks-skill
 ---
 
 # 产品级黑盒用例转换
