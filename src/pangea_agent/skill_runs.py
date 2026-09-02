@@ -78,9 +78,22 @@ def _resolve_scope(repository_root: Path, source_scope: list[str]) -> list[dict[
     resolved = []
     repository_root = repository_root.resolve()
     for raw in source_scope:
-        candidate = Path(raw)
-        if candidate.is_absolute():
-            raise ValueError(f"source_scope 必须使用仓库相对路径：{raw}")
+        # Accept paths copied from Windows Explorer as long as they resolve
+        # inside the registered repository.  Explorer emits a drive letter
+        # and backslashes even when the agent itself runs on POSIX.
+        normalized = raw.replace("\\", "/")
+        candidate = Path(normalized)
+        if len(normalized) >= 3 and normalized[1:3] == ":/":
+            parts = [part for part in normalized.split("/") if part]
+            matches = [i for i, part in enumerate(parts) if part.casefold() == repository_root.name.casefold()]
+            if not matches:
+                raise ValueError(f"source_scope 不属于已选仓库：{raw}")
+            candidate = Path(*parts[matches[-1] + 1:])
+        elif candidate.is_absolute():
+            try:
+                candidate = candidate.resolve().relative_to(repository_root)
+            except ValueError as exc:
+                raise ValueError(f"source_scope 不属于已选仓库：{raw}") from exc
         verified = (repository_root / candidate).resolve()
         try:
             verified.relative_to(repository_root)
