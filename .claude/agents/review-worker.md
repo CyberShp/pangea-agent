@@ -11,7 +11,7 @@ tools: Read, Write
 
 `comparison_review` 写结果前必须完成下面的内部核对账本，再写 decision/finding：
 
-- **Independent decision**：若结论包含“Analysis 已正确记录/覆盖/处置”，disposition 必须是 `dismissed`。`confirmed` 必须写清可验收的 correction target：已有对象时指出 exact object/key/field 及证据能确定的新值或约束；整个对象缺失时指出目标 collection、必须新增的语义和验收条件，不替 Closure 预造 key 或整份 JSON。先写实际需要改变的 target，再选 disposition；若 target 的目标状态仍是“原对象正确、保持不变、无需修改”，只能 `dismissed` 且 `correction_targets=[]`，不能出现“confirmed，但无需修改/已经隐含覆盖”。
+- **Independent decision**：先逐条定位 Independent finding 所声称的遗漏或误处置在 Analysis 中对应的对象，只根据该 finding 自身的 `summary|required_check` 判断这个对象是否需要改变，并立即冻结 disposition 与 correction targets。若结论包含“Analysis 已正确记录/覆盖/处置”，disposition 必须是 `dismissed`。`confirmed` 必须写清可验收的 correction target：已有对象时指出 exact object/key/field 及证据能确定的新值或约束；整个对象缺失时指出目标 collection、必须新增的语义和验收条件，不替 Closure 预造 key 或整份 JSON。先写实际需要改变的 target，再选 disposition；若 target 的目标状态仍是“原对象正确、保持不变、无需修改”，只能 `dismissed` 且 `correction_targets=[]`，不能出现“confirmed，但无需修改/已经隐含覆盖”。后续 Analysis graph audit 发现的 Scenario、Flow、TestCase 或其他对象错误不得重新打开这个已冻结 decision，也不得把那些对象的 target 挂到本应 dismissed 的 finding 上；必须另建 Comparison finding。只有 Independent finding 自身的 `required_check` 与 graph audit 指向同一个实际 Analysis target 和同一个 required state 时，才能复用该 retained finding。
 - **入口 readiness 联审**：对每个 `blackbox_ready|graybox_ready` Scenario，同时核对其 Branch disposition/links 和正式 TestCase。私有 `.c` 的 `extern`、non-static、跨文件调用、wrapper 链或可链接性只证明内部可达，不能证明受支持 business entry；内部函数返回值稳定也不能豁免。缺少公开头文件、产品/设计契约、受支持客户端/测试等正向冻结证据时，`scenario/entry_and_readiness`、对应 `branch_decision/flow_and_disposition|scenario_links` 和 `test_case/entry_actions_oracles` 都必须指向同一 `blackbox_translation` finding 的原子修正目标：Scenario 改为 `developer_confirm`、Branch 改为 `developer_confirm`、删除正式 TestCase，并同步清理引用。
 - **Coverage direct links**：枚举 Analysis 每个 `test_cases[].direct_coverage_claims` 中的 `(coverage_id, target, Case)`，先核对 `target` 是否正是该 Coverage record 的 function 零执行或 branch true/false 零计数 outcome，再对照 Case 的实际动作与 Oracle 判断它是否亲自命中该 target；同一 Case 在 `linked_input_ids` 中的 Coverage ID 集合必须与 claims 的 ID 集合一致。存在一个正确 Case 不会豁免同一 ID 上的错误 Case；应 dismiss 已覆盖的 Independent gap finding，同时另建一条 `blackbox_translation` 定向移除错误 claim 和 direct link。
 - **Scenario/Risk**：逐个检查 `developer_confirm` Scenario 是否仍只有待确认 action/oracle，Risk 的普通构建观测是否误写成必然返回，以及 sanitizer 是否被当成 exclusion。Analysis 已有等价 Risk 时可以 dismiss Independent Risk finding，但关联对象仍有错误时必须按下方 taxonomy 另建精确 finding。
@@ -61,7 +61,7 @@ Independent 写入前先按“产品失败机理”归并候选：先建立 sour
 
 ## comparison_review：轻量对照裁决
 
-Comparison 必须按顺序工作：先独立审计 Analysis 的 Flow/Branch/Coverage/Scenario/Risk/TestCase 关系并形成候选清单，再裁决 Independent findings，最后按产品失败机理合并重复候选后写 `findings[]`。某条 Independent finding 因 Analysis 已有等价 Risk 而 `dismissed`，不代表关联 Scenario、Flow 或 TestCase 正确；允许同时 dismiss 该 finding 并新增一条精确 `incorrect_conclusion`，但不得重复新增同一 Risk。
+Comparison 必须按顺序工作：先逐条把 Independent finding 与其声称遗漏或误处置的 Analysis 对象对照，冻结每条 `independent_finding_decisions[]`；再独立执行 Analysis 的 Flow/Branch/Coverage/Scenario/Risk/TestCase graph audit 并形成候选清单；最后只在指向同一个实际 Analysis target 和同一个 required state 时归并，否则分别写入 retained decision 与 `findings[]`。不得为了让一个 graph audit 有 finding_key，回头把已正确覆盖的 Independent finding 改成 `confirmed`，也不得给它附加另一个对象的 correction target。某条 Independent finding 因 Analysis 已有等价 Risk 而 `dismissed`，不代表关联 Scenario、Flow 或 TestCase 正确；允许同时 dismiss 该 finding 并新增一条精确 `incorrect_conclusion`，但不得重复新增同一 Risk。
 
 `comparison_review` 是同一 Reviewer Session 在盲审结果已冻结后的第二个 checkpoint，只做两件事：逐条判断 Independent finding 是否真的被首轮遗漏；看到 Analysis 后检查 Branch/Coverage/Scenario/Risk/TestCase 的追溯、处置理由和黑盒转换是否写错。不得回写已冻结的盲审结果；它不是第二次从头分析整个模块，也不重新复制一份盲审报告。
 
