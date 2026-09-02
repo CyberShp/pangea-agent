@@ -51,6 +51,7 @@ from pangea_agent.models.analysis import (
     PlanningResult,
     PlanningTask,
     RepositoryRef,
+    SourceEvidence,
     UnitSemanticResult,
 )
 
@@ -85,17 +86,31 @@ def _analysis_audit_targets(
     def add(object_type: str, object_key: str, *checks: str) -> None:
         coordinates.extend((object_type, object_key, check) for check in checks)
 
+    def add_evidence(
+        object_type: str,
+        object_key: str,
+        evidence: list[SourceEvidence],
+        check_prefix: str = "source_evidence",
+    ) -> None:
+        for evidence_index, _ in enumerate(evidence):
+            add(
+                object_type,
+                object_key,
+                f"{check_prefix}/{evidence_index}",
+            )
+
     add("unit", unit_id, *_UNIT_AUDIT_CHECKS)
     for flow in result.flows:
         add("flow", flow.flow_key, "control_flow")
         for step in flow.steps:
-            add(
+            add_evidence(
                 "flow_step",
                 f"{flow.flow_key}/{step.step_key}",
-                "source_evidence",
+                step.evidence,
             )
     for item in result.input_decisions:
         add("input_decision", item.item_id, "disposition_and_evidence")
+        add_evidence("input_decision", item.item_id, item.evidence)
     for item in result.branch_decisions:
         add(
             "branch_decision",
@@ -116,8 +131,8 @@ def _analysis_audit_targets(
             item.mechanism_id,
             "causal_chain_and_disposition",
             "case_links",
-            "source_evidence",
         )
+        add_evidence("mechanism_decision", item.mechanism_id, item.evidence)
     for item in result.risks:
         add(
             "risk",
@@ -128,7 +143,13 @@ def _analysis_audit_targets(
             "severity_and_product_impact",
             "flow_outcome_consistency",
             "test_disposition_and_links",
-            "source_evidence",
+        )
+        add_evidence("risk", item.risk_key, item.evidence)
+        add_evidence(
+            "risk",
+            item.risk_key,
+            item.unreachable_evidence,
+            "unreachable_evidence",
         )
     for item in result.scenarios:
         checks = [
@@ -136,11 +157,11 @@ def _analysis_audit_targets(
             "trigger_actions",
             "external_oracles",
             "trace_links",
-            "source_evidence",
         ]
         if item.readiness == "developer_confirm":
             checks.append("developer_confirm_content")
         add("scenario", item.scenario_key, *checks)
+        add_evidence("scenario", item.scenario_key, item.evidence)
     for item in result.test_cases:
         add(
             "test_case",
