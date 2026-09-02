@@ -1054,6 +1054,211 @@ def _validate_v2_comparison_contract(
     audit_by_id = {
         target.audit_id: target for target in task.required_analysis_audits
     }
+    decision_targets = {
+        decision.finding_key: decision.correction_targets
+        for decision in comparison.independent_finding_decisions
+        if decision.disposition != "dismissed"
+    }
+    finding_targets = {
+        **decision_targets,
+        **{
+            finding.finding_key: finding.correction_targets
+            for finding in comparison.findings
+        },
+    }
+
+    def path_matches(field_path: str | None, *prefixes: str) -> bool:
+        if field_path is None:
+            return True
+        return any(
+            field_path == prefix or field_path.startswith(f"{prefix}/")
+            for prefix in prefixes
+        )
+
+    def target_matches_audit(audit, correction) -> bool:
+        ref = correction.target
+        if ref.unit_id != audit.unit_id:
+            return False
+        check = audit.check
+        if audit.object_type == "unit":
+            if check == "summary_consistency":
+                return ref.collection == "result" and ref.field_path == "/summary"
+            collection = {
+                "flow_completeness": "flows",
+                "input_decision_completeness": "input_decisions",
+                "branch_completeness": "branch_decisions",
+                "coverage_completeness": "coverage_decisions",
+                "mechanism_completeness": "mechanism_decisions",
+                "risk_completeness": "risks",
+                "scenario_completeness": "scenarios",
+                "test_case_completeness": "test_cases",
+            }.get(check)
+            return ref.collection == collection
+        if audit.object_type == "unresolved":
+            return ref.collection == "result" and ref.field_path == "/unresolved"
+        if audit.object_type == "flow_step":
+            flow_key, _, _ = audit.object_key.partition("/")
+            return (
+                ref.collection == "flows"
+                and ref.object_key == flow_key
+                and path_matches(ref.field_path, "/steps")
+            )
+
+        collection = {
+            "flow": "flows",
+            "input_decision": "input_decisions",
+            "branch_decision": "branch_decisions",
+            "coverage_decision": "coverage_decisions",
+            "mechanism_decision": "mechanism_decisions",
+            "risk": "risks",
+            "scenario": "scenarios",
+            "test_case": "test_cases",
+        }.get(audit.object_type)
+        same_object = ref.collection == collection and ref.object_key == audit.object_key
+        if audit.object_type == "coverage_decision" and check == "direct_case_claims":
+            return ref.collection == "test_cases"
+        if audit.object_type == "mechanism_decision" and check == "case_links":
+            return ref.collection == "test_cases"
+        if same_object and ref.field_path is None:
+            return True
+
+        if check.startswith("source_evidence/"):
+            evidence_index = check.rsplit("/", 1)[1]
+            return same_object and path_matches(
+                ref.field_path,
+                f"/evidence/{evidence_index}",
+            )
+        if check.startswith("unreachable_evidence/"):
+            evidence_index = check.rsplit("/", 1)[1]
+            return same_object and path_matches(
+                ref.field_path,
+                f"/unreachable_evidence/{evidence_index}",
+            )
+        if audit.object_type == "flow":
+            return same_object and path_matches(
+                ref.field_path,
+                "/entry",
+                "/steps",
+                "/edges",
+                "/summary",
+            )
+        if audit.object_type == "input_decision":
+            return same_object
+        if audit.object_type == "branch_decision":
+            if check == "scenario_links":
+                return (
+                    same_object and path_matches(ref.field_path, "/scenario_keys")
+                ) or ref.collection == "scenarios"
+            return same_object and path_matches(
+                ref.field_path,
+                "/flow_key",
+                "/disposition",
+                "/reason",
+            )
+        if audit.object_type == "coverage_decision":
+            return same_object and path_matches(
+                ref.field_path,
+                "/disposition",
+                "/scenario_keys",
+                "/reason",
+            )
+        if audit.object_type == "mechanism_decision":
+            return same_object and path_matches(
+                ref.field_path,
+                "/disposition",
+                "/current_causal_chain",
+                "/conclusion",
+            )
+        if audit.object_type == "risk":
+            risk_fields = {
+                "trigger": ("/trigger",),
+                "system_result_and_observation": (
+                    "/system_result",
+                    "/external_observation",
+                ),
+                "exclusion_condition": ("/exclusion_condition",),
+                "severity_and_product_impact": ("/dfx", "/severity", "/confidence"),
+                "flow_outcome_consistency": ("/trigger", "/system_result"),
+                "test_disposition_and_links": (
+                    "/test_disposition",
+                    "/unreachable_reason",
+                    "/unreachable_evidence",
+                ),
+            }
+            if check == "flow_outcome_consistency" and ref.collection == "flows":
+                return True
+            if check == "test_disposition_and_links" and ref.collection in {
+                "scenarios",
+                "test_cases",
+            }:
+                return True
+            return same_object and path_matches(ref.field_path, *risk_fields.get(check, ()))
+        if audit.object_type == "scenario":
+            if check.startswith("risk_trigger_action/"):
+                return same_object and path_matches(
+                    ref.field_path,
+                    "/actions",
+                    "/preconditions",
+                    "/linked_risk_keys",
+                )
+            if check.startswith("risk_external_oracle/"):
+                return same_object and path_matches(
+                    ref.field_path,
+                    "/external_oracles",
+                    "/linked_risk_keys",
+                )
+            scenario_fields = {
+                "entry_and_readiness": ("/business_entry", "/readiness"),
+                "trigger_actions": ("/preconditions", "/actions"),
+                "external_oracles": ("/external_oracles",),
+                "developer_confirm_content": (
+                    "/preconditions",
+                    "/actions",
+                    "/external_oracles",
+                ),
+                "trace_links": (
+                    "/covered_flow_keys",
+                    "/branch_ids",
+                    "/coverage_ids",
+                    "/linked_risk_keys",
+                    "/linked_input_ids",
+                ),
+            }
+            if check == "trace_links" and ref.collection in {
+                "flows",
+                "branch_decisions",
+                "coverage_decisions",
+                "risks",
+                "test_cases",
+            }:
+                return True
+            return same_object and path_matches(
+                ref.field_path,
+                *scenario_fields.get(check, ()),
+            )
+        if audit.object_type == "test_case":
+            test_case_fields = {
+                "entry_actions_oracles": (
+                    "/preconditions",
+                    "/steps",
+                    "/observability",
+                    "/cleanup",
+                    "/level",
+                ),
+                "coverage_claims": (
+                    "/direct_coverage_claims",
+                    "/linked_input_ids",
+                ),
+                "risk_links": ("/linked_risk_keys",),
+            }
+            if check == "risk_links" and ref.collection in {"risks", "scenarios"}:
+                return True
+            return same_object and path_matches(
+                ref.field_path,
+                *test_case_fields.get(check, ()),
+            )
+        return False
+
     referenced_units: dict[str, set[str]] = defaultdict(set)
     for decision in comparison.analysis_audit_decisions:
         target = audit_by_id.get(decision.audit_id)
@@ -1085,6 +1290,13 @@ def _validate_v2_comparison_contract(
             if target.unit_id not in finding.affected_unit_ids:
                 errors.append(
                     f"audit {decision.audit_id} 与 finding {finding_key} 的 unit 不一致"
+                )
+                continue
+            targets = finding_targets.get(finding_key, [])
+            if not any(target_matches_audit(target, correction) for correction in targets):
+                errors.append(
+                    f"audit {decision.audit_id} 引用的 finding {finding_key} "
+                    "没有 correction target 对准该 audit 对象/字段或关系对端"
                 )
                 continue
             referenced_units[finding_key].add(target.unit_id)
