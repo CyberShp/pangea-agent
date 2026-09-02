@@ -1,6 +1,28 @@
 from __future__ import annotations
 
-from pangea_agent.models.analysis import AnalysisTask, ReviewFinding, UnitSemanticResult
+from collections.abc import Mapping
+from copy import deepcopy
+from typing import Any
+
+from pangea_agent.models.analysis import (
+    AnalysisTask,
+    ClosureTask,
+    ReviewFinding,
+    UnitSemanticResult,
+    ValueSnapshot,
+)
+
+
+_CORRECTION_COLLECTION_KEYS = {
+    "flows": "flow_key",
+    "input_decisions": "item_id",
+    "branch_decisions": "branch_id",
+    "coverage_decisions": "coverage_id",
+    "mechanism_decisions": "mechanism_id",
+    "risks": "risk_key",
+    "scenarios": "scenario_key",
+    "test_cases": "case_key",
+}
 
 
 def risk_test_obligations(result: UnitSemanticResult) -> list[str]:
@@ -85,12 +107,27 @@ def validate_unit_result(
         result,
         review_findings,
     ))
+    has_targeted_decisions = any(
+        getattr(item, "correction_id", None) is not None
+        for item in result.review_finding_decisions
+    )
     if review_findings is not None:
-        warnings.extend(_check_decisions(
-            "review_finding_decisions",
-            {item.finding_key for item in review_findings},
-            [item.finding_key for item in result.review_finding_decisions],
-        ))
+        expected_finding_keys = {item.finding_key for item in review_findings}
+        actual_finding_keys = [
+            item.finding_key for item in result.review_finding_decisions
+        ]
+        if has_targeted_decisions:
+            warnings.extend(_check_decision_membership(
+                "review_finding_decisions",
+                expected_finding_keys,
+                actual_finding_keys,
+            ))
+        else:
+            warnings.extend(_check_decisions(
+                "review_finding_decisions",
+                expected_finding_keys,
+                actual_finding_keys,
+            ))
 
     known_inputs = expected_inputs | expected_coverage | expected_mechanisms
     item_types = {
@@ -113,6 +150,368 @@ def validate_unit_result(
             )
 
     return warnings
+
+
+def resolve_correction_target(
+    result: UnitSemanticResult | Mapping[str, Any],
+    target: Any,
+) -> dict[str, Any]:
+    """Resolve one structured Closure target without interpreting text."""
+
+    payload = _as_mapping(result, "UnitSemanticResult")
+    target_data = _as_mapping(target, "correction target")
+    collection = target_data.get("collection")
+    object_key = target_data.get("object_key")
+    field_path = target_data.get("field_path")
+    if field_path is not None:
+        if (
+            not isinstance(field_path, str)
+            or not field_path
+            or not field_path.startswith("/")
+        ):
+            raise ValueError(
+                "correction target field_path 必须是 RFC 6901 JSON Pointer 或 null"
+            )
+
+    if collection == "result":
+        if object_key is not None:
+            raise ValueError("collection=result 时 object_key 必须为 null")
+        if field_path not in {"/summary", "/unresolved"}:
+            raise ValueError(
+                "collection=result 时 field_path 只允许 /summary 或 /unresolved"
+            )
+        return _snapshot_value(payload, field_path)
+
+    key_field = _CORRECTION_COLLECTION_KEYS.get(collection)
+    if key_field is None:
+        raise ValueError(f"correction target collection 不受支持：{collection!r}")
+    if object_key is None and field_path is None:
+        return {"exists": False, "value": None}
+    if not isinstance(object_key, str) or not object_key:
+        raise ValueError(
+            f"collection={collection} 时 object_key 必须是非空字符串；"
+            "仅新增整个对象的 target 可同时省略 object_key 和 field_path"
+        )
+    items = payload.get(collection)
+    if not isinstance(items, list):
+        raise ValueError(f"UnitSemanticResult.{collection} 必须是数组")
+    matches = [
+        item
+        for item in items
+        if isinstance(item, Mapping) and item.get(key_field) == object_key
+    ]
+    if len(matches) > 1:
+        raise ValueError(
+            f"correction target 定位到重复对象：{collection}:{object_key}"
+        )
+    if not matches:
+        return {"exists": False, "value": None}
+    return _snapshot_value(matches[0], field_path)
+
+
+def correction_target_identity_errors(
+    result: UnitSemanticResult | Mapping[str, Any],
+    target: Any,
+) -> list[str]:
+    """Validate one correction coordinate without judging its semantic content."""
+
+    try:
+        snapshot = resolve_correction_target(result, target)
+    except ValueError as exc:
+        return [str(exc)]
+
+    target_data = _as_mapping(target, "correction target")
+    collection = target_data.get("collection")
+    object_key = target_data.get("object_key")
+    field_path = target_data.get("field_path")
+    missing_object_target = (
+        collection != "result"
+        and object_key is None
+        and field_path is None
+    )
+    if missing_object_target:
+        return []
+
+    errors: list[str] = []
+    if collection != "result" and object_key is not None:
+        whole_object = resolve_correction_target(
+            result,
+            {**target_data, "field_path": None},
+        )
+        if not whole_object["exists"]:
+            errors.append(
+                "对象在 validated Analysis 中不存在；新增整个对象必须使用 "
+                "object_key=null、field_path=null"
+            )
+        elif field_path is not None and not snapshot["exists"]:
+            errors.append(
+                "field_path 在 validated Analysis 对象中不存在；"
+                "不得把缺失字段伪装成已有对象修正"
+            )
+
+    if field_path is None:
+        return errors
+
+    try:
+        tokens = [
+            _decode_json_pointer_token(token)
+            for token in field_path[1:].split("/")
+        ]
+    except ValueError as exc:
+        return [*errors, str(exc)]
+    key_field = _CORRECTION_COLLECTION_KEYS.get(collection)
+    if key_field is not None and tokens and tokens[0] == key_field:
+        errors.append("correction target 指向 Workflow-owned 身份字段")
+    if (
+        collection in {"coverage_decisions", "mechanism_decisions"}
+        and tokens
+        and tokens[0] == "test_case_keys"
+    ):
+        errors.append("correction target 指向 Workflow-owned 派生字段")
+    if tokens and tokens[-1] == "repo_id":
+        errors.append("correction target 指向 Workflow-owned repo_id 字段")
+    return errors
+
+
+def validate_closure_correction_contract(
+    closure_task: ClosureTask,
+    original_result: UnitSemanticResult,
+    result: UnitSemanticResult,
+) -> list[str]:
+    """Validate v2 Closure decisions against exact before/after snapshots."""
+
+    if getattr(closure_task, "review_contract_version", "1.0") != "2.0":
+        return []
+
+    errors: list[str] = []
+    targets = list(getattr(closure_task, "correction_targets", []))
+    target_by_id: dict[tuple[str, str], Any] = {}
+    for target in targets:
+        finding_key = getattr(target, "finding_key", None)
+        correction_id = getattr(target, "correction_id", None)
+        identity = (finding_key, correction_id)
+        if not all(isinstance(value, str) and value for value in identity):
+            errors.append(
+                "Closure correction target 的 finding_key/correction_id 必须为非空字符串"
+            )
+            continue
+        if identity in target_by_id:
+            errors.append(
+                "Closure correction_targets 包含重复编号："
+                f"{finding_key}/{correction_id}"
+            )
+            continue
+        target_by_id[identity] = target
+
+        ref = getattr(target, "target", None)
+        if getattr(ref, "unit_id", None) != closure_task.unit.unit_id:
+            errors.append(
+                f"Closure correction target {finding_key}/{correction_id} 的 "
+                f"unit_id={getattr(ref, 'unit_id', None)!r} 与 task unit "
+                f"{closure_task.unit.unit_id!r} 不一致"
+            )
+        try:
+            actual_before = resolve_correction_target(original_result, ref)
+        except ValueError as exc:
+            errors.append(
+                f"Closure correction target {finding_key}/{correction_id} 无法解析：{exc}"
+            )
+            continue
+        identity_errors = correction_target_identity_errors(original_result, ref)
+        errors.extend(
+            f"Closure correction target {finding_key}/{correction_id} 无效：{message}"
+            for message in identity_errors
+        )
+        declared_before = _snapshot_data(getattr(target, "before", None))
+        if declared_before != actual_before:
+            errors.append(
+                f"Closure correction target {finding_key}/{correction_id} 的 "
+                f"before 与 original_result 不一致："
+                f"declared={declared_before!r} actual={actual_before!r}"
+            )
+
+    decision_by_id: dict[tuple[str, str | None], Any] = {}
+    for decision in result.review_finding_decisions:
+        identity = (decision.finding_key, getattr(decision, "correction_id", None))
+        if identity in decision_by_id:
+            errors.append(
+                "Closure review_finding_decisions 包含重复编号："
+                f"{identity[0]}/{identity[1]}"
+            )
+            continue
+        decision_by_id[identity] = decision
+
+    expected_ids = set(target_by_id)
+    actual_ids = set(decision_by_id)
+    missing = expected_ids - actual_ids
+    extra = actual_ids - expected_ids
+    if missing or extra:
+        errors.append(
+            "Closure v2 decision 集合必须与 correction_targets 完全一致："
+            f"missing={_format_correction_ids(missing)} "
+            f"extra={_format_correction_ids(extra)}"
+        )
+
+    for identity in sorted(expected_ids & actual_ids):
+        target = target_by_id[identity]
+        decision = decision_by_id[identity]
+        ref = getattr(target, "target", None)
+        try:
+            before = resolve_correction_target(original_result, ref)
+        except ValueError:
+            continue
+        label = f"{identity[0]}/{identity[1]}"
+        ref_data = _as_mapping(ref, "correction target")
+        missing_object_target = (
+            ref_data.get("collection") != "result"
+            and ref_data.get("object_key") is None
+            and ref_data.get("field_path") is None
+        )
+        resolved_object_key = getattr(decision, "resolved_object_key", None)
+        if missing_object_target and decision.disposition == "incorporated":
+            if not isinstance(resolved_object_key, str) or not resolved_object_key:
+                errors.append(
+                    f"Closure correction {label} 新增整个对象时，"
+                    "incorporated decision 必须填写 resolved_object_key"
+                )
+                continue
+            resolved_ref = {
+                **ref_data,
+                "object_key": resolved_object_key,
+            }
+            resolved_before = resolve_correction_target(
+                original_result,
+                resolved_ref,
+            )
+            after = resolve_correction_target(result, resolved_ref)
+            if resolved_before["exists"]:
+                errors.append(
+                    f"Closure correction {label} 的 resolved_object_key="
+                    f"{resolved_object_key!r} 在 original_result 中已经存在"
+                )
+            if not after["exists"]:
+                errors.append(
+                    f"Closure correction {label} 的 resolved_object_key="
+                    f"{resolved_object_key!r} 未出现在 Closure result 中"
+                )
+            changed = not resolved_before["exists"] and after["exists"]
+        else:
+            after = resolve_correction_target(result, ref)
+            changed = before != after
+            if resolved_object_key is not None:
+                errors.append(
+                    f"Closure correction {label} 只有新增整个对象并标记 "
+                    "incorporated 时才允许 resolved_object_key"
+                )
+        if decision.disposition == "incorporated" and not changed:
+            errors.append(
+                f"Closure correction {label} 标记 incorporated，"
+                "但目标 before 与 after 完全相同"
+            )
+        elif decision.disposition in {"dismissed", "unresolved"} and changed:
+            errors.append(
+                f"Closure correction {label} 标记 {decision.disposition}，"
+                "但目标 before 与 after 已发生变化"
+            )
+        if decision.disposition == "dismissed" and not decision.evidence:
+            errors.append(
+                f"Closure correction {label} 标记 dismissed，必须提供反证 evidence"
+            )
+    return errors
+
+
+def snapshot_correction_target(
+    result: UnitSemanticResult | Mapping[str, Any],
+    ref: Any,
+) -> ValueSnapshot:
+    """Public resolver used by Closure task construction and finalization."""
+
+    return ValueSnapshot.model_validate(resolve_correction_target(result, ref))
+
+
+def validate_closure_corrections(
+    task: ClosureTask,
+    original_result: UnitSemanticResult,
+    closure_result: UnitSemanticResult,
+) -> list[str]:
+    """Public v2 Closure contract validator."""
+
+    return validate_closure_correction_contract(
+        task,
+        original_result,
+        closure_result,
+    )
+
+
+def _as_mapping(value: Any, label: str) -> dict[str, Any]:
+    if isinstance(value, Mapping):
+        return dict(value)
+    model_dump = getattr(value, "model_dump", None)
+    if callable(model_dump):
+        dumped = model_dump(mode="json")
+        if isinstance(dumped, Mapping):
+            return dict(dumped)
+    raise ValueError(f"{label} 必须是 JSON 对象")
+
+
+def _snapshot_value(value: Any, field_path: str | None) -> dict[str, Any]:
+    if field_path is None:
+        return {"exists": True, "value": deepcopy(value)}
+    current = value
+    for encoded_token in field_path[1:].split("/"):
+        token = _decode_json_pointer_token(encoded_token)
+        if isinstance(current, Mapping):
+            if token not in current:
+                return {"exists": False, "value": None}
+            current = current[token]
+            continue
+        if isinstance(current, list):
+            if token == "-":
+                raise ValueError("correction target field_path 不支持 '-' append token")
+            if not token.isdigit() or (len(token) > 1 and token.startswith("0")):
+                raise ValueError(
+                    "correction target field_path 的数组 token 必须是规范非负索引"
+                )
+            index = int(token)
+            if index >= len(current):
+                return {"exists": False, "value": None}
+            current = current[index]
+            continue
+        return {"exists": False, "value": None}
+    return {"exists": True, "value": deepcopy(current)}
+
+
+def _decode_json_pointer_token(token: str) -> str:
+    decoded: list[str] = []
+    index = 0
+    while index < len(token):
+        char = token[index]
+        if char != "~":
+            decoded.append(char)
+            index += 1
+            continue
+        if index + 1 >= len(token) or token[index + 1] not in {"0", "1"}:
+            raise ValueError(
+                "correction target field_path 包含无效 RFC 6901 '~' 转义"
+            )
+        decoded.append("~" if token[index + 1] == "0" else "/")
+        index += 2
+    return "".join(decoded)
+
+
+def _snapshot_data(value: Any) -> dict[str, Any]:
+    data = _as_mapping(value, "before snapshot")
+    return {
+        "exists": data.get("exists"),
+        "value": deepcopy(data.get("value")),
+    }
+
+
+def _format_correction_ids(values: set[tuple[str, str | None]]) -> list[str]:
+    return sorted(
+        f"{finding_key}/{correction_id}"
+        for finding_key, correction_id in values
+    )
 
 
 def unit_submission_warnings(
@@ -264,14 +663,30 @@ def _check_decisions(name: str, expected: set[str], actual: list[str]) -> list[s
     return warnings
 
 
+def _check_decision_membership(
+    name: str,
+    expected: set[str],
+    actual: list[str],
+) -> list[str]:
+    warnings = []
+    unknown = set(actual) - expected
+    if unknown:
+        warnings.append(f"{name} 引用了当前任务不存在的编号：{sorted(unknown)}")
+    missing = expected - set(actual)
+    if missing:
+        warnings.append(f"{name} 未记录全部可选处理项：missing={sorted(missing)}")
+    return warnings
+
+
 def _reference_warnings(result: UnitSemanticResult) -> list[str]:
     warnings: list[str] = []
     keyed = {
         "flow_key": [item.flow_key for item in result.flows],
         "risk_key": [item.risk_key for item in result.risks],
         "case_key": [item.case_key for item in result.test_cases],
-        "finding_key": [
-            item.finding_key for item in result.review_finding_decisions
+        "review_decision_key": [
+            (item.finding_key, getattr(item, "correction_id", None))
+            for item in result.review_finding_decisions
         ],
     }
     for name, values in keyed.items():

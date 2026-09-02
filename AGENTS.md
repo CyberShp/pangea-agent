@@ -82,7 +82,7 @@
 - 共享范围只包括 graph、schema、rubric 和 CLI 契约；客户端专有的命令、会话轨迹和 Agent 调用方式不得写入共享方法论。
 - Python 不调用模型 API，也不做语义拆分。一个 Planning Agent 按功能模块或文件族规划单元。
 - 首轮 analysis 最多同时派发 8 个互不重叠单元，总单元数不受 8 限制；worker 不得再派发子 Agent。
-- analysis 结果齐备后先启动 1 个盲审 Reviewer。`independent_review` task 不包含 analysis result；随后为 `comparison_review` 启动独立 Adjudicator Session，对照盲审与首轮结果裁决和补充 finding。Comparison 不是第二次完整分析，也不再启动第三个复核 Agent。
+- analysis 结果齐备后先启动 1 个盲审 Reviewer。`independent_review` task 不包含 analysis result；Graph 接受盲审后，以 `continue_agent` 续接同一 Reviewer 的真实 `task_id` 执行 `comparison_review`，再向该会话开放盲审与首轮结果做对照裁决。Comparison 不是第二次完整分析，也不再启动新的 Reviewer 或第三个复核 Agent。
 - comparison review 保留的 finding 只为受影响单元生成一次 `targeted_closure`；该 action 必须续接对应单元首轮 analysis worker 的真实 `task_id`，在 Workflow 预先复制的 closure 结果中定向补齐，不能创建替代 worker，也不能修改原始 analysis 结果。
 - 主 Agent 只执行 CLI 返回的 action。DSH 在子 Agent 回合结束后直接调用 `pangea_action_settle`；该工具在一次调用内完成校验和推进，不得预先调用 `pangea_action_validate`。不得自行填写或修正语义结果。
 - Graph 创建的新 task 必须写入与 action 相同的不可变 `action_id`；worker 最终只回显这个编号。DSH 并发完成通知必须按回显的 exact `action_id` 逐项 settle，不得根据子任务 UUID、单元名、通知顺序或记忆猜测，也不得把已经 settled 的 action 当成另一个 repair 的待处理 action。这个编号只用于确定性路由，不参与语义校验。

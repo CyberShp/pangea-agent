@@ -21,7 +21,10 @@ from pangea_agent.graph.planning import (
     accept_planning_result,
     normalize_planning_result,
 )
-from pangea_agent.graph.result_contract import validate_unit_result
+from pangea_agent.graph.result_contract import (
+    validate_closure_corrections,
+    validate_unit_result,
+)
 from pangea_agent.graph.workflow_store import (
     load_progress,
     pending_actions,
@@ -34,10 +37,12 @@ from pangea_agent.models.analysis import (
     AnalysisTask,
     ClosureTask,
     ComparisonReviewResult,
+    ComparisonReviewTask,
     IndependentReviewResult,
     PlanningResult,
     PlanningResultV2,
     PlanningTask,
+    UnitSemanticResult,
     ValidationFailureRecord,
 )
 from pangea_agent.models.asset import AssetExtractionResult
@@ -131,6 +136,37 @@ def _invalid_result(
             or _repair_attempts(action) >= TOTAL_REPAIR_ATTENTION_AFTER
         ),
         "repair_action": repair_action,
+    }
+
+
+def _workflow_input_error(
+    state: dict,
+    progress,
+    action: ActionState,
+    exc: Exception,
+) -> dict:
+    """Fail a run when an immutable, Workflow-owned input is unreadable."""
+
+    message = str(exc)
+    action.status = "failed"
+    action.error = message
+    progress.lifecycle_status = "failed"
+    progress.errors.append(
+        {
+            "kind": "workflow_input_invalid",
+            "action_id": action.action_id,
+            "reason": message,
+        }
+    )
+    save_progress(state, progress)
+    return {
+        "action_id": action.action_id,
+        "status": "failed",
+        "recoverable": False,
+        "error": {
+            "code": exc.__class__.__name__,
+            "message": message,
+        },
     }
 
 
@@ -340,6 +376,26 @@ def _validate_action(data_root: str, run_id: str, action_id: str) -> dict:
         raise ValueError(f"Action task 不存在：{task_path}")
 
     raw_task = read_json(task_path)
+    comparison_task = None
+    independent = None
+    analysis_results = None
+    if (
+        action.role == "review"
+        and raw_task.get("task_type") == "comparison_review"
+    ):
+        try:
+            comparison_task = ComparisonReviewTask.model_validate(raw_task)
+            independent = IndependentReviewResult.model_validate(
+                read_json(Path(comparison_task.independent_review_result_path))
+            )
+            analysis_results = {
+                unit_id: UnitSemanticResult.model_validate(
+                    read_json(Path(result_path))
+                )
+                for unit_id, result_path in comparison_task.analysis_result_paths.items()
+            }
+        except (OSError, ValueError) as exc:
+            return _workflow_input_error(state, progress, action, exc)
     if _is_untouched_result_skeleton(raw_task):
         return _incomplete_result(state, progress, action)
 
@@ -378,17 +434,18 @@ def _validate_action(data_root: str, run_id: str, action_id: str) -> dict:
         selected_inputs = read_json(Path(task["selected_inputs_path"]))
         try:
             if task["task_type"] == "comparison_review":
+                if comparison_task is None or independent is None or analysis_results is None:
+                    raise ValueError("Comparison Review 冻结输入未完成预检")
                 result = ComparisonReviewResult.model_validate(
                     read_json(Path(task["result_path"]))
-                )
-                independent = IndependentReviewResult.model_validate(
-                    read_json(Path(task["independent_review_result_path"]))
                 )
                 warnings = _validate_comparison_review(
                     progress,
                     independent,
                     result,
                     selected_inputs,
+                    comparison_task,
+                    analysis_results,
                 )
             else:
                 result = IndependentReviewResult.model_validate(
@@ -400,6 +457,9 @@ def _validate_action(data_root: str, run_id: str, action_id: str) -> dict:
     elif action.role == "closure":
         task = ClosureTask.model_validate(raw_task)
         original = AnalysisTask.model_validate(read_json(Path(task.original_task_path)))
+        original_result = UnitSemanticResult.model_validate(
+            read_json(Path(task.original_result_path))
+        )
         selected_inputs = read_json(Path(original.selected_inputs_path))
         try:
             try:
@@ -419,6 +479,13 @@ def _validate_action(data_root: str, run_id: str, action_id: str) -> dict:
                 selected_inputs,
                 task.review_findings,
             ))
+            correction_errors = validate_closure_corrections(
+                task,
+                original_result,
+                result,
+            )
+            if correction_errors:
+                raise ValueError(" | ".join(correction_errors[:24]))
         except (FileNotFoundError, ValueError) as exc:
             return _invalid_result(state, progress, action, exc)
     else:
@@ -471,6 +538,14 @@ def settle_action(data_root: str, run_id: str, action_id: str) -> dict:
         current = load_progress(state)
         if current is None:
             raise ValueError(f"Run 不存在：{run_id}")
+        if validation.get("recoverable") is False:
+            return {
+                "run_id": run_id,
+                "lifecycle_status": current.lifecycle_status,
+                "stage": current.stage,
+                "validation": validation,
+                "agent_actions": [],
+            }
         payload = {
             "run_id": run_id,
             "lifecycle_status": current.lifecycle_status,

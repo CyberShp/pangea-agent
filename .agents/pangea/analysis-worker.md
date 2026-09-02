@@ -109,7 +109,9 @@ Lua 分析先使用 inventory 的 `requires`、`module_exports`、`state_writes`
 
 ## Closure
 
-`task_type=closure` 时，读取 closure task、`original_task_path`、`original_result_path`、原 task 冻结输入、`review_findings` 和 `risk_test_obligations`。Graph 已把首轮结果复制到 closure `result_path`；只改这个副本。每个 finding 恰好一个 `review_finding_decisions`，没有 finding 时保持空数组。
+`task_type=closure` 时，读取 closure task、`original_task_path`、`original_result_path`、原 task 冻结输入、`review_findings`、`correction_targets` 和 `risk_test_obligations`。Graph 已把首轮结果复制到 closure `result_path`；只改这个副本。`review_contract_version=2.0` 时，`correction_targets` 是 Graph 从 Reviewer 原子修正目标生成的冻结账本；每个 `(finding_key, correction_id)` 恰好填写一条 `review_finding_decisions`，原样回填 `correction_id`，不得合并、遗漏或另造目标。旧版 task 没有 correction target 时，仍按每个 finding 一条 decision，`correction_id` 省略。
+
+逐条读取 `correction_targets[].target`、`required_state` 和 Workflow 注入的 `before` 快照，再核对 Closure 副本中同一目标的真实状态：`incorporated` 必须实际改变该目标；`dismissed` 必须保持该目标不变并提供源码/契约 evidence；`unresolved` 用于冻结证据仍不能裁决且目标保持不变。目标表示“新增整个对象”时，只有 `incorporated` 才在 `resolved_object_key` 回填新对象的真实 key；其他情况保持 `null`。一个 finding 同时包含正确和错误要求时，分别裁决其 correction targets，不能用一条 finding 级结论掩盖混合结果。不要填写或改写 `before`，也不要在 decision 中自报 after；Workflow 会从 normalized Closure 结果机械读取 after。
 
 finding 只是补充或纠正同一个风险/场景时，保留原 key 原位修改，不追加重复对象。finding 改变源码事实时同步检查并修正 `summary`、flows、branch/coverage decisions、risks、scenarios、test_cases 和 review decision，不能只改一处留下矛盾。逐条完成 `risk_test_obligations`：可执行则补/关联真实 Scenario 与 TestCase；当前冻结证据不足可使用 `developer_confirm`；只有源码证明不可达才使用 unreachable。
 
@@ -137,7 +139,7 @@ Closure 不得为了“吸收 finding”而把证据缺口新建成产品 Risk�
 - 每个填写 `branch_ids` 的 Scenario 都由自身 actions/oracles 覆盖对应分支条件和结果；全是“待确认”的 developer-confirm 候选没有被保留为空壳 Scenario；
 - 任何 `not_test_relevant` 都有正向充分理由而不是“入口/Oracle 未确认”；
 - 顶层 `unresolved` 没有重复任何已经由 Branch/Coverage/Risk/Scenario `developer_confirm` 表达的同源缺口；首轮 Analysis 的 unresolved 只引用本 task 真实 selected input 或 Coverage ID，Closure 才可引用 confirmed finding_key；
-- evidence path 属于当前冻结范围；closure 的 finding decision 与 findings 一一对应。
+- evidence path 属于当前冻结范围；v2 closure 的 finding decision 与 `correction_targets` 按 `(finding_key, correction_id)` 一一对应，旧版 task 才按 finding 一一对应。
 
 校验失败时只修正同一 `result_path`，读取返回的具体 validation error，保留已有有效语义；不得让 Python/脚本替你决定 disposition、Scenario、Risk 或 TestCase。错误多时按当前 2.0 skeleton/example 重新整理完整 JSON，而不是在旧 1.0 结构上追加字段。
 

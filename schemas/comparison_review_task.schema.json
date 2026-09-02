@@ -1,5 +1,18 @@
 {
   "$defs": {
+    "ComparisonAuditTarget": {
+      "additionalProperties": false,
+      "properties": {
+        "audit_id": {"minLength": 1, "title": "Audit Id", "type": "string"},
+        "unit_id": {"minLength": 1, "title": "Unit Id", "type": "string"},
+        "object_type": {"minLength": 1, "title": "Object Type", "type": "string"},
+        "object_key": {"minLength": 1, "title": "Object Key", "type": "string"},
+        "check": {"minLength": 1, "title": "Check", "type": "string"}
+      },
+      "required": ["audit_id", "unit_id", "object_type", "object_key", "check"],
+      "title": "ComparisonAuditTarget",
+      "type": "object"
+    },
     "EvidenceScopeContract": {
       "additionalProperties": false,
       "properties": {
@@ -52,6 +65,12 @@
       "default": null,
       "title": "Action Id"
     },
+    "review_contract_version": {
+      "default": "1.0",
+      "enum": ["1.0", "2.0"],
+      "title": "Review Contract Version",
+      "type": "string"
+    },
     "run_id": {
       "minLength": 1,
       "title": "Run Id",
@@ -98,6 +117,11 @@
       "minProperties": 1,
       "title": "Analysis Result Paths",
       "type": "object"
+    },
+    "required_analysis_audits": {
+      "items": {"$ref": "#/$defs/ComparisonAuditTarget"},
+      "title": "Required Analysis Audits",
+      "type": "array"
     },
     "independent_review_result_path": {
       "minLength": 1,

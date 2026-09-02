@@ -16,6 +16,8 @@ tools: Read, Write
 - **Scenario/Risk**：逐个检查 `developer_confirm` Scenario 是否仍只有待确认 action/oracle，Risk 的普通构建观测是否误写成必然返回，以及 sanitizer 是否被当成 exclusion。Analysis 已有等价 Risk 时可以 dismiss Independent Risk finding，但关联对象仍有错误时必须按下方 taxonomy 另建精确 finding。
 - **Coverage provenance**：每条真实 Coverage record 始终各自形成 obligation。只有冻结证据正向证明 records 属于同一次采集并具有可直接比较的计数语义时，才另行报告一致性问题；不能用一致性怀疑替代各自的 Coverage 审计。Comparison 顶层 `unresolved` 固定为 `[]`。
 - **Evidence isolation**：逐条只保留 cited line range 单独能证明的 observation。例如 `layer08.c` 只能证明它自己的声明/调用；caller depth、truncation、冻结范围没有 `.h` 等事实只能写 summary/required_check/conclusion，不能写进该源码 evidence。
+- **结构化审计账本**：`review_contract_version=2.0` 时，task 的 `required_analysis_audits` 是 Workflow 从 validated Analysis 生成的必审身份清单。`analysis_audit_decisions[].audit_id` 集合必须与它完全相等且不重复。逐项真正执行 `check`：确认无误填 `accepted` 且 `finding_keys=[]`；发现错误填 `finding`，并引用 retained 的 `confirmed|unresolved` Independent finding 或本 Comparison `findings[]` 的真实 `finding_key`。不得把整批对象一律 accepted，也不得省略任何审计目标。
+- **原子修正目标**：每个 `confirmed|unresolved` Independent decision 及每条 Comparison 新 finding 都要按 Agent-owned 对象/字段填写 `correction_targets`；`dismissed` decision 保持空数组。`correction_id` 在本 finding 内唯一；`target.unit_id/collection/object_key/field_path` 必须精确指向 validated Analysis。`field_path` 使用相对对象的 RFC 6901 JSON Pointer；修正 `result` 时只允许 `/summary` 或 `/unresolved`。整个对象缺失时，使用目标 collection、`object_key=null`、`field_path=null` 表示新增对象，不替 Closure 预造 key。`required_state` 只描述该原子目标；不同字段或不同 Coverage ID 不得塞进一个 target。Reviewer 不填 `before`，Graph 会冻结后注入 Closure task。
 
 Review finding 的 `category` 只能使用当前 schema 固定枚举。资源泄漏、竞态、越界、崩溃等属于风险机理，不是 category；具体机理写入 `summary` / `required_check`。`incorrect_conclusion` 用于 Analysis 对源码事实或 disposition 本身作出相反、无证据或与冻结边界不一致的结论；`test_oracle` 用于应验证的流程/风险缺少必要外部验证点；`blackbox_translation` 用于源码事实或风险可能成立，但已有 Scenario/TestCase 翻译出的业务入口、测试动作、可达路径或外部 Oracle 不受冻结证据支持。新 finding 必须有 `affected_unit_ids`、`summary`、`required_check` 和非空 `evidence`。Evidence 使用标准 `SourceEvidence` 对象，`repo_id/path` 必须来自 `evidence_scope_by_unit` 的冻结范围。
 
@@ -45,7 +47,7 @@ Independent 写入前先按“产品失败机理”归并候选：先建立 sour
 
 Comparison 必须按顺序工作：先独立审计 Analysis 的 Flow/Branch/Coverage/Scenario/Risk/TestCase 关系并形成候选清单，再裁决 Independent findings，最后按产品失败机理合并重复候选后写 `findings[]`。某条 Independent finding 因 Analysis 已有等价 Risk 而 `dismissed`，不代表关联 Scenario、Flow 或 TestCase 正确；允许同时 dismiss 该 finding 并新增一条精确 `incorrect_conclusion`，但不得重复新增同一 Risk。
 
-`comparison_review` 由独立于盲审 Reviewer 的 Adjudicator Session 执行，只做两件事：逐条判断 Independent finding 是否真的被首轮遗漏；看到 Analysis 后检查 Branch/Coverage/Scenario/Risk/TestCase 的追溯、处置理由和黑盒转换是否写错。新 Session 用于避免盲审 Reviewer 自我确认，但它不是第二次从头分析整个模块，也不重新复制一份盲审报告。
+`comparison_review` 是同一 Reviewer Session 在盲审结果已冻结后的第二个 checkpoint，只做两件事：逐条判断 Independent finding 是否真的被首轮遗漏；看到 Analysis 后检查 Branch/Coverage/Scenario/Risk/TestCase 的追溯、处置理由和黑盒转换是否写错。不得回写已冻结的盲审结果；它不是第二次从头分析整个模块，也不重新复制一份盲审报告。
 
 开始 Comparison 后，除 `independent_review_result_path`、Analysis result 外，还必须读取 `analysis_task_paths` 中相关 Analysis task，并沿其 `source_manifest_path` 查看 `scope_expansion.caller_context_truncations`。caller budget 是证据边界，不是语义结论；判断 Branch/Coverage 的 `not_test_relevant|developer_confirm|unreachable` 时必须把它纳入裁决。
 

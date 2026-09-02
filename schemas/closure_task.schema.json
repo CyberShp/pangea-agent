@@ -1,5 +1,16 @@
 {
   "$defs": {
+    "AtomicCorrectionTarget": {
+      "additionalProperties": false,
+      "properties": {
+        "correction_id": {"minLength": 1, "title": "Correction Id", "type": "string"},
+        "target": {"$ref": "#/$defs/CorrectionTargetRef"},
+        "required_state": {"minLength": 1, "title": "Required State", "type": "string"}
+      },
+      "required": ["correction_id", "target", "required_state"],
+      "title": "AtomicCorrectionTarget",
+      "type": "object"
+    },
     "AnalysisUnit": {
       "additionalProperties": false,
       "properties": {
@@ -120,6 +131,72 @@
       "title": "EvidenceScopeContract",
       "type": "object"
     },
+    "CorrectionTargetRef": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {"collection": {"const": "result"}},
+            "required": ["collection"]
+          },
+          "then": {
+            "properties": {
+              "object_key": {"type": "null"},
+              "field_path": {"enum": ["/summary", "/unresolved"]}
+            },
+            "required": ["field_path"]
+          },
+          "else": {
+            "if": {"properties": {"object_key": {"type": "null"}}},
+            "then": {"properties": {"field_path": {"type": "null"}}},
+            "else": {
+              "properties": {
+                "field_path": {
+                  "anyOf": [
+                    {"pattern": "^/", "type": "string"},
+                    {"type": "null"}
+                  ]
+                }
+              }
+            }
+          }
+        }
+      ],
+      "properties": {
+        "unit_id": {"minLength": 1, "title": "Unit Id", "type": "string"},
+        "collection": {
+          "enum": ["result", "flows", "input_decisions", "branch_decisions", "coverage_decisions", "mechanism_decisions", "risks", "scenarios", "test_cases"],
+          "title": "Collection",
+          "type": "string"
+        },
+        "object_key": {
+          "anyOf": [{"minLength": 1, "type": "string"}, {"type": "null"}],
+          "default": null,
+          "title": "Object Key"
+        },
+        "field_path": {
+          "anyOf": [{"minLength": 1, "type": "string"}, {"type": "null"}],
+          "default": null,
+          "title": "Field Path"
+        }
+      },
+      "required": ["unit_id", "collection"],
+      "title": "CorrectionTargetRef",
+      "type": "object"
+    },
+    "ClosureCorrectionTarget": {
+      "additionalProperties": false,
+      "properties": {
+        "correction_id": {"minLength": 1, "title": "Correction Id", "type": "string"},
+        "target": {"$ref": "#/$defs/CorrectionTargetRef"},
+        "required_state": {"minLength": 1, "title": "Required State", "type": "string"},
+        "finding_key": {"minLength": 1, "title": "Finding Key", "type": "string"},
+        "before": {"$ref": "#/$defs/ValueSnapshot"}
+      },
+      "required": ["correction_id", "target", "required_state", "finding_key", "before"],
+      "title": "ClosureCorrectionTarget",
+      "type": "object"
+    },
     "RepositoryRef": {
       "additionalProperties": false,
       "properties": {
@@ -201,6 +278,11 @@
           "minItems": 1,
           "title": "Evidence",
           "type": "array"
+        },
+        "correction_targets": {
+          "items": {"$ref": "#/$defs/AtomicCorrectionTarget"},
+          "title": "Correction Targets",
+          "type": "array"
         }
       },
       "required": [
@@ -259,6 +341,16 @@
       ],
       "title": "SourceEvidence",
       "type": "object"
+    },
+    "ValueSnapshot": {
+      "additionalProperties": false,
+      "properties": {
+        "exists": {"title": "Exists", "type": "boolean"},
+        "value": {"title": "Value"}
+      },
+      "required": ["exists", "value"],
+      "title": "ValueSnapshot",
+      "type": "object"
     }
   },
   "additionalProperties": false,
@@ -287,6 +379,12 @@
       ],
       "default": null,
       "title": "Action Id"
+    },
+    "review_contract_version": {
+      "default": "1.0",
+      "enum": ["1.0", "2.0"],
+      "title": "Review Contract Version",
+      "type": "string"
     },
     "run_id": {
       "minLength": 1,
@@ -339,6 +437,11 @@
         "$ref": "#/$defs/ReviewFinding"
       },
       "title": "Review Findings",
+      "type": "array"
+    },
+    "correction_targets": {
+      "items": {"$ref": "#/$defs/ClosureCorrectionTarget"},
+      "title": "Correction Targets",
       "type": "array"
     },
     "risk_test_obligations": {

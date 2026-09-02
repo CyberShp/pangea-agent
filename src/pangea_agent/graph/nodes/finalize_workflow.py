@@ -6,9 +6,16 @@ from pathlib import Path
 from pangea_agent.agent_io import read_json, write_json
 from pangea_agent.graph.analysis_obligations import analysis_obligations
 from pangea_agent.graph.state import PangeaState
-from pangea_agent.graph.result_contract import risk_test_obligations, validate_unit_result
+from pangea_agent.graph.result_contract import (
+    resolve_correction_target,
+    risk_test_obligations,
+    validate_closure_corrections,
+    validate_unit_result,
+)
 from pangea_agent.graph.workflow_store import (
     analysis_task_path,
+    closure_task_path,
+    comparison_review_task_path,
     load_progress,
     run_directory,
     save_progress,
@@ -16,6 +23,7 @@ from pangea_agent.graph.workflow_store import (
 )
 from pangea_agent.models.analysis import (
     AnalysisTask,
+    ClosureTask,
     ComparisonReviewResult,
     IndependentReviewResult,
     UnitSemanticResult,
@@ -160,12 +168,258 @@ def _developer_confirm_items(unit_id: str, result: UnitSemanticResult) -> list[d
     return items
 
 
+def _closure_correction_projection(
+    state: PangeaState,
+    progress,
+    results: dict[str, UnitSemanticResult],
+) -> tuple[dict[tuple[str, str], list[dict]], set[str], list[dict]]:
+    projected: dict[tuple[str, str], list[dict]] = defaultdict(list)
+    v2_units: set[str] = set()
+    diagnostics: list[dict] = []
+    for unit_id in progress.completed_closure_units:
+        task_payload = read_json(closure_task_path(state, unit_id))
+        if task_payload.get("review_contract_version") != "2.0":
+            continue
+        v2_units.add(unit_id)
+        closure_task = ClosureTask.model_validate(task_payload)
+        original_result = UnitSemanticResult.model_validate(
+            read_json(Path(closure_task.original_result_path))
+        )
+        contract_errors = validate_closure_corrections(
+            closure_task,
+            original_result,
+            results[unit_id],
+        )
+        contract_invalid = bool(contract_errors)
+        diagnostics.extend(
+            {
+                "stage": "closure_finding",
+                "unit_id": unit_id,
+                "reason": f"Targeted Closure v2 contract 无效：{message}",
+            }
+            for message in contract_errors[:24]
+        )
+        targets = task_payload.get("correction_targets", [])
+        decisions = [
+            item.model_dump(mode="json")
+            for item in results[unit_id].review_finding_decisions
+        ]
+        decisions_by_id: dict[
+            tuple[str | None, str | None], list[dict]
+        ] = defaultdict(list)
+        for decision in decisions:
+            decisions_by_id[
+                (decision.get("finding_key"), decision.get("correction_id"))
+            ].append(decision)
+
+        target_id_counts: dict[tuple[str | None, str | None], int] = defaultdict(int)
+        for item in targets:
+            target_id_counts[
+                (item.get("finding_key"), item.get("correction_id"))
+            ] += 1
+
+        known_ids = {
+            (item.get("finding_key"), item.get("correction_id"))
+            for item in targets
+            if item.get("finding_key") and item.get("correction_id")
+        }
+        for identity in decisions_by_id:
+            if identity in known_ids:
+                continue
+            finding_key, correction_id = identity
+            diagnostics.append(
+                {
+                    "stage": "closure_finding",
+                    "unit_id": unit_id,
+                    "finding_key": finding_key,
+                    "correction_id": correction_id,
+                    "reason": (
+                        "Targeted Closure decision 引用了未知 correction_id"
+                        if correction_id
+                        else "Targeted Closure v2 decision 缺少 correction_id"
+                    ),
+                }
+            )
+
+        for item in targets:
+            finding_key = item.get("finding_key")
+            correction_id = item.get("correction_id")
+            identity = (finding_key, correction_id)
+            linked_decisions = decisions_by_id.get(identity, [])
+            duplicate_target = target_id_counts.get(identity, 0) > 1
+            if contract_invalid:
+                status = "invalid"
+            elif duplicate_target or len(linked_decisions) > 1:
+                status = "duplicate"
+            elif not linked_decisions:
+                status = "missing"
+            else:
+                status = linked_decisions[0]["disposition"]
+            target = item.get("target", {})
+            before = item.get("before", {"exists": False, "value": None})
+            resolved_object_key = (
+                linked_decisions[0].get("resolved_object_key")
+                if len(linked_decisions) == 1
+                else None
+            )
+            resolved_target = target
+            if (
+                target.get("collection") != "result"
+                and target.get("object_key") is None
+                and target.get("field_path") is None
+                and resolved_object_key
+            ):
+                resolved_target = {
+                    **target,
+                    "object_key": resolved_object_key,
+                }
+            try:
+                after = resolve_correction_target(results[unit_id], resolved_target)
+            except ValueError as exc:
+                after = {"exists": False, "value": None}
+                status = "invalid"
+                diagnostics.append(
+                    {
+                        "stage": "closure_finding",
+                        "unit_id": unit_id,
+                        "finding_key": finding_key,
+                        "correction_id": correction_id,
+                        "reason": f"Targeted Closure correction target 无法解析：{exc}",
+                    }
+                )
+            entry = {
+                "unit_id": unit_id,
+                "finding_key": finding_key,
+                "correction_id": correction_id,
+                "target": target,
+                "resolved_object_key": resolved_object_key,
+                "required_state": item.get("required_state"),
+                "before": before,
+                "after": after,
+                "changed": before != after,
+                "disposition": (
+                    linked_decisions[0]["disposition"]
+                    if len(linked_decisions) == 1 and not duplicate_target
+                    else None
+                ),
+                "status": status,
+                "decisions": linked_decisions,
+            }
+            projected[(finding_key, unit_id)].append(entry)
+            if status in {"missing", "duplicate"}:
+                diagnostics.append(
+                    {
+                        "stage": "closure_finding",
+                        "unit_id": unit_id,
+                        "finding_key": finding_key,
+                        "correction_id": correction_id,
+                        "reason": (
+                            "Targeted Closure 缺少 correction target decision"
+                            if status == "missing"
+                            else "Targeted Closure correction target 或 decision 重复"
+                        ),
+                    }
+                )
+    return dict(projected), v2_units, diagnostics
+
+
+def _comparison_audit_projection(
+    state: PangeaState,
+    comparison_review: ComparisonReviewResult | None,
+) -> tuple[dict | None, list[dict]]:
+    if comparison_review is None:
+        return None, []
+    task_payload = read_json(comparison_review_task_path(state))
+    if task_payload.get("review_contract_version") != "2.0":
+        return None, []
+
+    targets = task_payload.get("required_analysis_audits", [])
+    decisions = [
+        item.model_dump(mode="json")
+        for item in getattr(comparison_review, "analysis_audit_decisions", [])
+    ]
+    decisions_by_id: dict[str | None, list[dict]] = defaultdict(list)
+    for decision in decisions:
+        decisions_by_id[decision.get("audit_id")].append(decision)
+    target_id_counts: dict[str, int] = defaultdict(int)
+    for target in targets:
+        target_id_counts[target.get("audit_id", "")] += 1
+
+    diagnostics: list[dict] = []
+    known_ids = {
+        target.get("audit_id")
+        for target in targets
+        if target.get("audit_id")
+    }
+    unmatched_decisions = []
+    for audit_id in decisions_by_id:
+        if audit_id in known_ids:
+            continue
+        unmatched_decisions.extend(decisions_by_id[audit_id])
+        diagnostics.append(
+            {
+                "stage": "review_contract",
+                "audit_id": audit_id,
+                "reason": "Comparison audit decision 引用了未知 audit_id",
+            }
+        )
+
+    joined = []
+    counts: dict[str, int] = defaultdict(int)
+    for target in targets:
+        audit_id = target.get("audit_id")
+        linked_decisions = decisions_by_id.get(audit_id, [])
+        if target_id_counts.get(audit_id or "", 0) > 1 or len(linked_decisions) > 1:
+            status = "duplicate"
+        elif not linked_decisions:
+            status = "missing"
+        else:
+            status = linked_decisions[0]["disposition"]
+        counts[status] += 1
+        joined.append(
+            {
+                **target,
+                "status": status,
+                "decisions": linked_decisions,
+            }
+        )
+        if status in {"missing", "duplicate"}:
+            diagnostics.append(
+                {
+                    "stage": "review_contract",
+                    "audit_id": audit_id,
+                    "reason": (
+                        "Comparison 缺少 required analysis audit decision"
+                        if status == "missing"
+                        else "Comparison analysis audit target 或 decision 重复"
+                    ),
+                }
+            )
+    return {
+        "targets": joined,
+        "counts": {
+            "total": len(targets),
+            "accepted": counts["accepted"],
+            "finding": counts["finding"],
+            "missing": counts["missing"],
+            "duplicate": counts["duplicate"],
+            "unmatched": len(unmatched_decisions),
+        },
+        "unmatched_decisions": unmatched_decisions,
+    }, diagnostics
+
+
 def _review_finding_projection(
     review: IndependentReviewResult | None,
     comparison_review: ComparisonReviewResult | None,
     results: dict[str, UnitSemanticResult],
     completed_closure_units: set[str],
+    correction_targets: dict[tuple[str, str], list[dict]] | None = None,
+    v2_closure_units: set[str] | None = None,
+    correction_diagnostics: list[dict] | None = None,
 ) -> tuple[list[dict], list[dict], list[dict]]:
+    correction_targets = correction_targets or {}
+    v2_closure_units = v2_closure_units or set()
     comparison_decisions: dict[str, list] = defaultdict(list)
     for decision in (
         comparison_review.independent_finding_decisions
@@ -181,7 +435,7 @@ def _review_finding_projection(
             closure_decisions[(decision.finding_key, unit_id)].append(decision)
     active: list[dict] = []
     history: list[dict] = []
-    diagnostics: list[dict] = []
+    diagnostics: list[dict] = list(correction_diagnostics or [])
 
     if review is None:
         diagnostics.append(
@@ -229,15 +483,41 @@ def _review_finding_projection(
             else "ambiguous" if finding_comparison_decisions else None
         )
         per_unit = []
+        correction_target_decisions = []
+        terminal_dispositions = []
         missing_units = []
         ambiguous_units = []
+        invalid_target_contract = False
         for unit_id in finding.affected_unit_ids:
             decisions = closure_decisions.get((finding.finding_key, unit_id), [])
+            if unit_id in v2_closure_units:
+                targets = correction_targets.get((finding.finding_key, unit_id), [])
+                if not targets:
+                    missing_units.append(unit_id)
+                correction_target_decisions.extend(targets)
+                target_statuses = [item["status"] for item in targets]
+                invalid_target_contract = invalid_target_contract or any(
+                    status in {"missing", "duplicate", "invalid"}
+                    for status in target_statuses
+                )
+                terminal_dispositions.extend(
+                    status
+                    for status in target_statuses
+                    if status in {"incorporated", "dismissed", "unresolved"}
+                )
+                per_unit.extend(
+                    {"unit_id": unit_id, **decision.model_dump(mode="json")}
+                    for decision in decisions
+                )
+                continue
             if not decisions:
                 missing_units.append(unit_id)
                 continue
             if len(decisions) > 1:
                 ambiguous_units.append(unit_id)
+            terminal_dispositions.extend(
+                decision.disposition for decision in decisions
+            )
             per_unit.extend(
                 {"unit_id": unit_id, **decision.model_dump(mode="json")}
                 for decision in decisions
@@ -259,6 +539,8 @@ def _review_finding_projection(
                 final_status = "dismissed"
                 missing_units = []
                 ambiguous_units = []
+                invalid_target_contract = False
+                terminal_dispositions = []
             elif comparison_disposition not in {"confirmed", "unresolved"}:
                 final_status = "active"
                 diagnostics.append(
@@ -274,7 +556,9 @@ def _review_finding_projection(
         else:
             final_status = ""
 
-        if not final_status and (ambiguous_units or missing_units):
+        if not final_status and (
+            ambiguous_units or missing_units or invalid_target_contract
+        ):
             final_status = "active"
             diagnostics.extend(
                 {
@@ -295,7 +579,7 @@ def _review_finding_projection(
                 for unit_id in missing_units
             )
         elif not final_status:
-            dispositions = {item["disposition"] for item in per_unit}
+            dispositions = set(terminal_dispositions)
             if "unresolved" in dispositions:
                 final_status = "unresolved"
             elif dispositions == {"incorporated"}:
@@ -315,6 +599,7 @@ def _review_finding_projection(
                     for decision in finding_comparison_decisions
                 ],
                 "closure_decisions": per_unit,
+                "correction_target_decisions": correction_target_decisions,
                 "final_status": final_status,
             }
         )
@@ -331,6 +616,7 @@ def _completed_checks(
     results: dict[str, UnitSemanticResult],
     review: IndependentReviewResult | None,
     comparison_review: ComparisonReviewResult | None,
+    comparison_audit: dict | None,
 ) -> list[str]:
     branch_count = sum(len(result.branch_decisions) for result in results.values())
     coverage_count = sum(len(result.coverage_decisions) for result in results.values())
@@ -395,6 +681,14 @@ def _completed_checks(
             "Comparison Review："
             f"decisions {len(comparison_review.independent_finding_decisions)} / "
             f"new findings {len(comparison_review.findings)}"
+        )
+    if comparison_audit is not None:
+        counts = comparison_audit["counts"]
+        checks.append(
+            "Comparison audit："
+            f"targets {counts['total']}（accepted {counts['accepted']} / "
+            f"finding {counts['finding']} / missing {counts['missing']} / "
+            f"duplicate {counts['duplicate']} / unmatched {counts['unmatched']}）"
         )
     return checks
 
@@ -801,6 +1095,16 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
             for value in comparison_review.unresolved
         )
 
+    comparison_audit, comparison_audit_diagnostics = _comparison_audit_projection(
+        state,
+        comparison_review,
+    )
+    (
+        correction_targets,
+        v2_closure_units,
+        correction_diagnostics,
+    ) = _closure_correction_projection(state, progress, results)
+
     (
         active_review_findings,
         review_finding_history,
@@ -810,6 +1114,9 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
         comparison_review,
         results,
         set(progress.completed_closure_units),
+        correction_targets,
+        v2_closure_units,
+        correction_diagnostics + comparison_audit_diagnostics,
     )
 
     semantic_review_diagnostics = [
@@ -878,6 +1185,7 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
         },
         "review_findings": active_review_findings,
         "review_finding_history": review_finding_history,
+        "comparison_audit": comparison_audit,
         "quality_report": {
             "status": quality_status,
             "checks": _completed_checks(
@@ -887,6 +1195,7 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
                 results,
                 review,
                 comparison_review,
+                comparison_audit,
             ),
             "unresolved": unresolved,
             "semantic_unresolved": semantic_unresolved,

@@ -13,7 +13,7 @@
 
 角色映射只用于 `dispatch_agent`：`planning`、`analysis`、`review`、`asset_extraction`。
 
-Python 负责确定性解析、状态、契约和报告，不判断测试用例或 Reviewer 的语义结论。Review 由盲审 Reviewer 完成 `independent_review`，再由独立 Adjudicator Session 完成 `comparison_review`。定向补齐以 `continue_agent` 续接对应单元首轮 analysis worker；Graph 预先复制原结果，worker 只修改 closure `result_path`。
+Python 负责确定性解析、状态、契约和报告，不判断测试用例或 Reviewer 的语义结论。Review 由同一 Reviewer Session 先完成不读取首轮结果的 `independent_review`，Graph 接受后再以 `continue_agent` 开放首轮结果并完成 `comparison_review`。定向补齐以 `continue_agent` 续接对应单元首轮 analysis worker；Graph 预先复制原结果，worker 只修改 closure `result_path`。
 
 结果骨架和唯一结果路径由 Workflow 创建。主会话不得另建、改名、代填或从其他文件兜底读取结果。
 

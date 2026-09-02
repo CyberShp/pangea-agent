@@ -6,7 +6,19 @@
       "finding_key": "<只能从 independent_review_result_path 顶层 findings[].finding_key 原样选择>",
       "disposition": "<只能 confirmed|dismissed|unresolved>",
       "conclusion": "<逐条裁决结论>",
-      "evidence": []
+      "evidence": [],
+      "correction_targets": [
+        {
+          "correction_id": "<本 finding 内唯一 correction_id>",
+          "target": {
+            "unit_id": "<unit_id>",
+            "collection": "<result|flows|input_decisions|branch_decisions|coverage_decisions|mechanism_decisions|risks|scenarios|test_cases>",
+            "object_key": "<已有对象的 exact key；新增整个对象或 result 填写 null>",
+            "field_path": "<已有对象的相对 RFC6901 JSON Pointer，整个已有对象或新增对象填写 null；result 只允许 /summary 或 /unresolved>"
+          },
+          "required_state": "<该原子字段或对象应达到的语义状态>"
+        }
+      ]
     }
   ],
   "findings": [
@@ -25,7 +37,26 @@
           "line_end": 1,
           "observation": "<该源码区间直接支持的事实>"
         }
+      ],
+      "correction_targets": [
+        {
+          "correction_id": "<本 finding 内唯一 correction_id>",
+          "target": {
+            "unit_id": "<unit_id>",
+            "collection": "<result|flows|input_decisions|branch_decisions|coverage_decisions|mechanism_decisions|risks|scenarios|test_cases>",
+            "object_key": "<已有对象的 exact key；新增整个对象或 result 填写 null>",
+            "field_path": "<已有对象的相对 RFC6901 JSON Pointer，整个已有对象或新增对象填写 null；result 只允许 /summary 或 /unresolved>"
+          },
+          "required_state": "<该原子字段或对象应达到的语义状态>"
+        }
       ]
+    }
+  ],
+  "analysis_audit_decisions": [
+    {
+      "audit_id": "<从 task.required_analysis_audits 原样选择>",
+      "disposition": "<accepted|finding>",
+      "finding_keys": []
     }
   ],
   "unresolved": []

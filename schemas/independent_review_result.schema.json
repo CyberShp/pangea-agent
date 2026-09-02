@@ -54,6 +54,13 @@
           "minItems": 1,
           "title": "Evidence",
           "type": "array"
+        },
+        "correction_targets": {
+          "description": "Independent Review 看不到 Analysis Result，必须为空；由 Comparison Review 对 retained finding 填写原子修正目标",
+          "items": {},
+          "maxItems": 0,
+          "title": "Correction Targets",
+          "type": "array"
         }
       },
       "required": [

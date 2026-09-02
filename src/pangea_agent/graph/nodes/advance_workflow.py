@@ -5,7 +5,13 @@ from pathlib import Path
 
 from pangea_agent.agent_io import read_json, write_json
 from pangea_agent.graph.planning import accept_planning_result, planning_result_model
-from pangea_agent.graph.result_contract import risk_test_obligations, validate_unit_result
+from pangea_agent.graph.result_contract import (
+    correction_target_identity_errors,
+    risk_test_obligations,
+    snapshot_correction_target,
+    validate_closure_corrections,
+    validate_unit_result,
+)
 from pangea_agent.graph.state import PangeaState
 from pangea_agent.graph.workflow_store import (
     add_action,
@@ -35,6 +41,8 @@ from pangea_agent.models.analysis import (
     ActionState,
     AnalysisTask,
     ClosureTask,
+    ClosureCorrectionTarget,
+    ComparisonAuditTarget,
     ComparisonReviewResult,
     ComparisonReviewTask,
     EvidenceScopeContract,
@@ -52,6 +60,108 @@ COMMON_RUBRIC_NAMES = (
     "risk_reproducibility.md",
     "test_case_generation.md",
 )
+
+
+_UNIT_AUDIT_CHECKS = (
+    "summary_consistency",
+    "flow_completeness",
+    "input_decision_completeness",
+    "branch_completeness",
+    "coverage_completeness",
+    "mechanism_completeness",
+    "risk_completeness",
+    "scenario_completeness",
+    "test_case_completeness",
+)
+
+
+def _analysis_audit_targets(
+    unit_id: str,
+    result: UnitSemanticResult,
+) -> list[ComparisonAuditTarget]:
+    """Enumerate review coordinates without judging their semantic verdict."""
+    coordinates: list[tuple[str, str, str]] = []
+
+    def add(object_type: str, object_key: str, *checks: str) -> None:
+        coordinates.extend((object_type, object_key, check) for check in checks)
+
+    add("unit", unit_id, *_UNIT_AUDIT_CHECKS)
+    for flow in result.flows:
+        add("flow", flow.flow_key, "control_flow")
+        for step in flow.steps:
+            add(
+                "flow_step",
+                f"{flow.flow_key}/{step.step_key}",
+                "source_evidence",
+            )
+    for item in result.input_decisions:
+        add("input_decision", item.item_id, "disposition_and_evidence")
+    for item in result.branch_decisions:
+        add(
+            "branch_decision",
+            item.branch_id,
+            "flow_and_disposition",
+            "scenario_links",
+        )
+    for item in result.coverage_decisions:
+        add(
+            "coverage_decision",
+            item.coverage_id,
+            "disposition_and_scenario_links",
+            "direct_case_claims",
+        )
+    for item in result.mechanism_decisions:
+        add(
+            "mechanism_decision",
+            item.mechanism_id,
+            "causal_chain_and_disposition",
+            "case_links",
+            "source_evidence",
+        )
+    for item in result.risks:
+        add(
+            "risk",
+            item.risk_key,
+            "trigger",
+            "system_result_and_observation",
+            "exclusion_condition",
+            "test_disposition_and_links",
+            "source_evidence",
+        )
+    for item in result.scenarios:
+        add(
+            "scenario",
+            item.scenario_key,
+            "entry_and_readiness",
+            "trigger_actions",
+            "external_oracles",
+            "trace_links",
+            "source_evidence",
+        )
+    for item in result.test_cases:
+        add(
+            "test_case",
+            item.case_key,
+            "entry_actions_oracles",
+            "coverage_claims",
+            "risk_links",
+        )
+    for index, _ in enumerate(result.unresolved):
+        add("unresolved", str(index), "scope_and_nonduplication")
+
+    return [
+        ComparisonAuditTarget(
+            audit_id=f"AUD-{unit_id}-{index:04d}",
+            unit_id=unit_id,
+            object_type=object_type,
+            object_key=object_key,
+            check=check,
+        )
+        for index, (object_type, object_key, check) in enumerate(
+            coordinates,
+            start=1,
+        )
+    ]
 
 
 def _general_rubrics(analysis_language: str) -> list[str]:
@@ -480,8 +590,22 @@ def _validate_review(progress, result, selected_inputs: dict) -> list[str]:
     }
     finding_keys = [finding.finding_key for finding in result.findings]
     if len(finding_keys) != len(set(finding_keys)):
+        if isinstance(result, IndependentReviewResult):
+            raise ValueError("Independent Review finding_key 包含重复编号")
         warnings.append("复核 finding_key 包含重复编号")
     for finding in result.findings:
+        if len(finding.affected_unit_ids) != len(set(finding.affected_unit_ids)):
+            raise ValueError(
+                f"Review finding {finding.finding_key} 的 affected_unit_ids 包含重复单元"
+            )
+        if (
+            isinstance(result, IndependentReviewResult)
+            and finding.correction_targets
+        ):
+            raise ValueError(
+                f"Independent finding {finding.finding_key} 看不到 Analysis，"
+                "不得预填 correction_targets"
+            )
         unknown = set(finding.affected_unit_ids) - known_units
         if unknown:
             warnings.append(f"复核引用了未知单元：{sorted(unknown)}")
@@ -524,6 +648,8 @@ def _validate_comparison_review(
     independent: IndependentReviewResult,
     comparison: ComparisonReviewResult,
     selected_inputs: dict,
+    comparison_task: ComparisonReviewTask | None = None,
+    analysis_results: dict[str, UnitSemanticResult] | None = None,
 ) -> list[str]:
     warnings = _validate_review(progress, comparison, selected_inputs)
     independent_keys = {finding.finding_key for finding in independent.findings}
@@ -578,7 +704,229 @@ def _validate_comparison_review(
             check_input_references(finding)
     for finding in comparison.findings:
         check_input_references(finding)
+    if (
+        comparison_task is not None
+        and comparison_task.review_contract_version == "2.0"
+    ):
+        _validate_v2_comparison_contract(
+            independent,
+            comparison,
+            comparison_task,
+            analysis_results,
+        )
     return warnings
+
+
+def _validate_v2_comparison_contract(
+    independent: IndependentReviewResult,
+    comparison: ComparisonReviewResult,
+    task: ComparisonReviewTask,
+    analysis_results: dict[str, UnitSemanticResult] | None = None,
+) -> None:
+    errors: list[str] = []
+    independent_keys = [finding.finding_key for finding in independent.findings]
+    if len(independent_keys) != len(set(independent_keys)):
+        errors.append("Independent findings 包含重复 finding_key")
+    independent_by_key = {
+        finding.finding_key: finding for finding in independent.findings
+    }
+    if comparison.unresolved:
+        errors.append("Comparison v2 顶层 unresolved 必须为空；待修问题必须进入 finding")
+    decision_keys = [
+        decision.finding_key
+        for decision in comparison.independent_finding_decisions
+    ]
+    if len(decision_keys) != len(set(decision_keys)):
+        errors.append("Independent finding 存在重复的 Comparison decision")
+    missing_decisions = set(independent_by_key) - set(decision_keys)
+    extra_decisions = set(decision_keys) - set(independent_by_key)
+    if missing_decisions or extra_decisions:
+        errors.append(
+            "Independent finding decision 集合不完整："
+            f"missing={sorted(missing_decisions)} extra={sorted(extra_decisions)}"
+        )
+    decisions_by_key = {
+        decision.finding_key: decision
+        for decision in comparison.independent_finding_decisions
+    }
+    new_findings = {
+        finding.finding_key: finding for finding in comparison.findings
+    }
+    if len(new_findings) != len(comparison.findings):
+        errors.append("Comparison findings 包含重复 finding_key")
+    retained_findings = {
+        key: independent_by_key[key]
+        for key, decision in decisions_by_key.items()
+        if key in independent_by_key and decision.disposition != "dismissed"
+    }
+    duplicate_closure_keys = set(retained_findings) & set(new_findings)
+    if duplicate_closure_keys:
+        errors.append(
+            "Comparison finding_key 与 retained Independent finding 重复："
+            f"{sorted(duplicate_closure_keys)}"
+        )
+    closure_findings = {**retained_findings, **new_findings}
+
+    if analysis_results is None:
+        analysis_results = {
+            unit_id: UnitSemanticResult.model_validate(read_json(Path(result_path)))
+            for unit_id, result_path in task.analysis_result_paths.items()
+        }
+
+    for finding in independent.findings:
+        if finding.correction_targets:
+            errors.append(
+                f"Independent finding {finding.finding_key} 不得预填 correction_targets"
+            )
+
+    def validate_targets(label: str, affected_units: list[str], targets) -> None:
+        target_ids = [target.correction_id for target in targets]
+        if len(target_ids) != len(set(target_ids)):
+            errors.append(f"{label} correction_id 重复")
+        target_refs = [
+            (
+                target.target.unit_id,
+                target.target.collection,
+                target.target.object_key,
+                target.target.field_path,
+            )
+            for target in targets
+            if not (
+                target.target.collection != "result"
+                and target.target.object_key is None
+                and target.target.field_path is None
+            )
+        ]
+        if len(target_refs) != len(set(target_refs)):
+            errors.append(f"{label} correction target 定位重复")
+        whole_objects = {
+            ref[:3] for ref in target_refs if ref[2] is not None and ref[3] is None
+        }
+        overlapping = sorted({
+            ref[:3]
+            for ref in target_refs
+            if ref[3] is not None and ref[:3] in whole_objects
+        })
+        if overlapping:
+            errors.append(
+                f"{label} 同时定位整个对象和其字段：{overlapping}"
+            )
+        for target in targets:
+            if target.target.unit_id not in affected_units:
+                errors.append(
+                    f"{label} correction target {target.correction_id} 的 unit_id "
+                    f"不属于 affected_unit_ids：{target.target.unit_id}"
+                )
+                continue
+            analysis_result = analysis_results.get(target.target.unit_id)
+            if analysis_result is None:
+                errors.append(
+                    f"{label} correction target {target.correction_id} "
+                    "引用了 task 中不存在的 Analysis unit"
+                )
+                continue
+            target_errors = correction_target_identity_errors(
+                analysis_result,
+                target.target,
+            )
+            errors.extend(
+                f"{label} correction target {target.correction_id} 无效：{message}"
+                for message in target_errors
+            )
+        covered_units = {target.target.unit_id for target in targets}
+        missing_units = set(affected_units) - covered_units
+        if missing_units:
+            errors.append(
+                f"{label} 缺少 affected unit 的 correction target："
+                f"{sorted(missing_units)}"
+            )
+
+    for decision in comparison.independent_finding_decisions:
+        finding = independent_by_key.get(decision.finding_key)
+        if finding is None:
+            continue
+        if decision.disposition == "dismissed":
+            if decision.correction_targets:
+                errors.append(
+                    f"dismissed Independent finding {decision.finding_key} "
+                    "不得携带 correction_targets"
+                )
+            continue
+        validate_targets(
+            f"Independent decision {decision.finding_key}",
+            finding.affected_unit_ids,
+            decision.correction_targets,
+        )
+    for finding in comparison.findings:
+        validate_targets(
+            f"Comparison finding {finding.finding_key}",
+            finding.affected_unit_ids,
+            finding.correction_targets,
+        )
+
+    expected_ids = [target.audit_id for target in task.required_analysis_audits]
+    actual_ids = [decision.audit_id for decision in comparison.analysis_audit_decisions]
+    if len(expected_ids) != len(set(expected_ids)):
+        errors.append("Comparison task 的 required_analysis_audits 包含重复 audit_id")
+    if not expected_ids:
+        errors.append("Comparison v2 task 缺少 required_analysis_audits")
+    if len(actual_ids) != len(set(actual_ids)):
+        errors.append("Comparison result 的 analysis_audit_decisions 包含重复 audit_id")
+    missing_audits = set(expected_ids) - set(actual_ids)
+    extra_audits = set(actual_ids) - set(expected_ids)
+    if missing_audits or extra_audits:
+        errors.append(
+            "Comparison audit ledger 不完整："
+            f"missing={sorted(missing_audits)} extra={sorted(extra_audits)}"
+        )
+
+    audit_by_id = {
+        target.audit_id: target for target in task.required_analysis_audits
+    }
+    referenced_units: dict[str, set[str]] = defaultdict(set)
+    for decision in comparison.analysis_audit_decisions:
+        target = audit_by_id.get(decision.audit_id)
+        if target is None:
+            continue
+        if decision.disposition == "accepted":
+            if decision.finding_keys:
+                errors.append(
+                    f"accepted audit {decision.audit_id} 不得引用 finding_keys"
+                )
+            continue
+        if not decision.finding_keys:
+            errors.append(
+                f"finding audit {decision.audit_id} 必须引用至少一个 finding_key"
+            )
+            continue
+        for finding_key in decision.finding_keys:
+            finding = closure_findings.get(finding_key)
+            if finding is None:
+                errors.append(
+                    f"audit {decision.audit_id} 引用了未进入 Closure 的 finding："
+                    f"{finding_key}"
+                )
+                continue
+            if target.unit_id not in finding.affected_unit_ids:
+                errors.append(
+                    f"audit {decision.audit_id} 与 finding {finding_key} 的 unit 不一致"
+                )
+                continue
+            referenced_units[finding_key].add(target.unit_id)
+
+    for finding_key, finding in closure_findings.items():
+        missing_units = (
+            set(finding.affected_unit_ids)
+            - referenced_units.get(finding_key, set())
+        )
+        if missing_units:
+            errors.append(
+                f"进入 Closure 的 finding {finding_key} 未被 fail audit 覆盖："
+                f"{sorted(missing_units)}"
+            )
+
+    if errors:
+        raise ValueError("Comparison v2 结构合同不完整：" + " | ".join(errors[:32]))
 
 
 def _accept_independent_review(state: PangeaState, progress, action) -> PangeaState:
@@ -596,11 +944,31 @@ def _accept_independent_review(state: PangeaState, progress, action) -> PangeaSt
         result,
         read_json(Path(task.selected_inputs_path)),
     )
+    if not action.task_id:
+        raise ValueError(
+            "Comparison Review 缺少可续接的 Independent Reviewer task_id"
+        )
     action.status = "accepted"
 
     action_id = f"{state['run_id']}:comparison-review"
+    analysis_result_paths = {
+        unit.unit_id: str(validated_result_path(
+            state,
+            f"{state['run_id']}:analysis:{unit.unit_id}",
+        ))
+        for unit in progress.analysis_units
+    }
+    required_analysis_audits = []
+    for unit in progress.analysis_units:
+        analysis_result = UnitSemanticResult.model_validate(
+            read_json(Path(analysis_result_paths[unit.unit_id]))
+        )
+        required_analysis_audits.extend(
+            _analysis_audit_targets(unit.unit_id, analysis_result)
+        )
     comparison_task = ComparisonReviewTask(
         action_id=action_id,
+        review_contract_version="2.0",
         run_id=state["run_id"],
         target=state["task_contract"]["target"],
         analysis_language=task.analysis_language,
@@ -610,13 +978,8 @@ def _accept_independent_review(state: PangeaState, progress, action) -> PangeaSt
             unit.unit_id: str(analysis_task_path(state, unit.unit_id))
             for unit in progress.analysis_units
         },
-        analysis_result_paths={
-            unit.unit_id: str(validated_result_path(
-                state,
-                f"{state['run_id']}:analysis:{unit.unit_id}",
-            ))
-            for unit in progress.analysis_units
-        },
+        analysis_result_paths=analysis_result_paths,
+        required_analysis_audits=required_analysis_audits,
         independent_review_result_path=str(
             validated_result_path(state, action.action_id)
         ),
@@ -636,10 +999,11 @@ def _accept_independent_review(state: PangeaState, progress, action) -> PangeaSt
     )
     add_action(progress, ActionState(
         action_id=action_id,
-        action="dispatch_agent",
+        action="continue_agent",
         role="review",
         stage="comparison_review",
         task_path=str(task_path),
+        task_id=action.task_id,
     ))
     save_progress(state, progress)
     return _waiting(state, progress)
@@ -667,19 +1031,25 @@ def _accept_comparison_review(state: PangeaState, progress, action) -> PangeaSta
             independent,
             comparison,
             read_json(Path(comparison_task.selected_inputs_path)),
+            comparison_task,
         )
     except Exception as exc:
         _fail_action(state, progress, action, exc)
         raise
     action.status = "accepted"
     decisions = {
-        decision.finding_key: decision.disposition
+        decision.finding_key: decision
         for decision in comparison.independent_finding_decisions
     }
     retained_independent_findings = [
-        finding
+        finding.model_copy(update={
+            "correction_targets": decisions[finding.finding_key].correction_targets,
+        })
         for finding in independent.findings
-        if decisions.get(finding.finding_key, "unresolved") != "dismissed"
+        if (
+            finding.finding_key in decisions
+            and decisions[finding.finding_key].disposition != "dismissed"
+        )
     ]
     all_findings = [*retained_independent_findings, *comparison.findings]
     obligations_by_unit = {}
@@ -722,9 +1092,28 @@ def _accept_comparison_review(state: PangeaState, progress, action) -> PangeaSta
             )
         original_task_path = analysis_task_path(state, unit.unit_id)
         original_task = AnalysisTask.model_validate(read_json(original_task_path))
+        original_result = UnitSemanticResult.model_validate(
+            read_json(validated_result_path(state, origin_action.action_id))
+        )
+        correction_targets = [
+            ClosureCorrectionTarget(
+                finding_key=finding.finding_key,
+                correction_id=target.correction_id,
+                target=target.target,
+                required_state=target.required_state,
+                before=snapshot_correction_target(
+                    original_result,
+                    target.target,
+                ),
+            )
+            for finding in findings
+            for target in finding.correction_targets
+            if target.target.unit_id == unit.unit_id
+        ]
         task_path = closure_task_path(state, unit.unit_id)
         closure_task = ClosureTask(
             action_id=action_id,
+            review_contract_version="2.0",
             run_id=state["run_id"],
             target=state["task_contract"]["target"],
             analysis_language=original_task.analysis_language,
@@ -737,6 +1126,7 @@ def _accept_comparison_review(state: PangeaState, progress, action) -> PangeaSta
                 origin_action.action_id,
             )),
             review_findings=findings,
+            correction_targets=correction_targets,
             risk_test_obligations=risk_obligations,
             result_schema_path=str(project_path("schemas", "analysis_result.schema.json")),
             result_example_path=str(
@@ -781,6 +1171,9 @@ def _accept_closure(state: PangeaState, progress) -> PangeaState:
         unit_id = action.action_id.rsplit(":", 1)[-1]
         closure_task = ClosureTask.model_validate(read_json(closure_task_path(state, unit_id)))
         original_task = AnalysisTask.model_validate(read_json(Path(closure_task.original_task_path)))
+        original_result = UnitSemanticResult.model_validate(
+            read_json(Path(closure_task.original_result_path))
+        )
         result = _read_validated_result(
             state,
             progress,
@@ -796,6 +1189,13 @@ def _accept_closure(state: PangeaState, progress) -> PangeaState:
                 read_json(Path(original_task.selected_inputs_path)),
                 closure_task.review_findings,
             )
+            correction_errors = validate_closure_corrections(
+                closure_task,
+                original_result,
+                result,
+            )
+            if correction_errors:
+                raise ValueError(" | ".join(correction_errors[:24]))
             # 引用不完整由 adapter 记录为降级；Graph 保留 Agent 原始结果继续汇总。
         except Exception as exc:
             _fail_action(state, progress, action, exc)

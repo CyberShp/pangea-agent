@@ -10,11 +10,15 @@ from pangea_agent.graph.planning import (
     accept_planning_result,
     normalize_planning_result,
 )
-from pangea_agent.graph.result_contract import unit_submission_warnings
+from pangea_agent.graph.result_contract import (
+    unit_submission_warnings,
+    validate_closure_corrections,
+)
 from pangea_agent.models.analysis import (
     AnalysisTask,
     ClosureTask,
     PlanningTask,
+    UnitSemanticResult,
 )
 
 
@@ -127,7 +131,31 @@ def check_result_json(task_path: str) -> dict:
         selected_inputs,
         review_findings,
     )
+    correction_errors: list[str] = []
+    if task_type == "closure":
+        try:
+            original_result = UnitSemanticResult.model_validate(
+                read_json(Path(closure_task.original_result_path))
+            )
+            correction_errors = validate_closure_corrections(
+                closure_task,
+                original_result,
+                result,
+            )
+        except ValidationError as exc:
+            correction_errors = _schema_advisories(exc)
+        except (OSError, ValueError) as exc:
+            correction_errors = [str(exc)]
+        response["advisories"].extend(correction_errors)
     response["advisory_count"] = len(response["advisories"])
+    if correction_errors:
+        response["status"] = "WARN"
+        response["submission_ready"] = False
+        response["agent_next_step"] = (
+            "按 correction target 修正同一 Closure result_path 后重跑；"
+            "before/after 与 decision 集合属于确定性结构合同"
+        )
+        return response
     if response["advisory_count"]:
         response["status"] = "WARN"
         response["agent_next_step"] = (

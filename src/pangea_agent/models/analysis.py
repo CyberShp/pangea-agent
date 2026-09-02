@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -229,8 +229,98 @@ class GeneratedTestCase(StrictModel):
     cleanup: list[str] = Field(min_length=1)
 
 
-class ReviewFindingDecision(StrictModel):
+class ComparisonAuditTarget(StrictModel):
+    audit_id: str = Field(min_length=1)
+    unit_id: str = Field(min_length=1)
+    object_type: str = Field(min_length=1)
+    object_key: str = Field(min_length=1)
+    check: str = Field(min_length=1)
+
+
+class ComparisonAuditDecision(StrictModel):
+    audit_id: str = Field(min_length=1)
+    disposition: Literal["accepted", "finding"]
+    finding_keys: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_finding_links(self) -> ComparisonAuditDecision:
+        if self.disposition == "accepted" and self.finding_keys:
+            raise ValueError("accepted audit decision must not link findings")
+        if self.disposition == "finding" and not self.finding_keys:
+            raise ValueError("finding audit decision must link at least one finding")
+        return self
+
+
+class CorrectionTargetRef(StrictModel):
+    unit_id: str = Field(min_length=1)
+    collection: Literal[
+        "result",
+        "flows",
+        "input_decisions",
+        "branch_decisions",
+        "coverage_decisions",
+        "mechanism_decisions",
+        "risks",
+        "scenarios",
+        "test_cases",
+    ]
+    object_key: str | None = Field(default=None, min_length=1)
+    field_path: str | None = Field(default=None, min_length=1)
+
+    @model_validator(mode="after")
+    def validate_target_identity(self) -> CorrectionTargetRef:
+        if self.collection == "result":
+            if self.object_key is not None:
+                raise ValueError("result correction target must not set object_key")
+            if self.field_path not in {"/summary", "/unresolved"}:
+                raise ValueError(
+                    "result correction target field_path must be /summary or /unresolved"
+                )
+            return self
+
+        if self.object_key is None:
+            if self.field_path is not None:
+                raise ValueError("new collection object target must not set field_path")
+            return self
+
+        if self.field_path is not None and not self.field_path.startswith("/"):
+            raise ValueError("field_path must be a relative RFC 6901 JSON Pointer")
+        return self
+
+
+class ValueSnapshot(StrictModel):
+    exists: bool
+    value: Any
+
+
+class AtomicCorrectionTarget(StrictModel):
+    correction_id: str = Field(min_length=1)
+    target: CorrectionTargetRef
+    required_state: str = Field(min_length=1)
+
+
+class ClosureCorrectionTarget(AtomicCorrectionTarget):
     finding_key: str = Field(min_length=1)
+    before: ValueSnapshot
+
+
+class ReviewFindingDecision(StrictModel):
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={
+            "if": {
+                "properties": {"disposition": {"const": "dismissed"}},
+                "required": ["disposition"],
+            },
+            "then": {
+                "properties": {"evidence": {"minItems": 1}},
+                "required": ["evidence"],
+            },
+        },
+    )
+    finding_key: str = Field(min_length=1)
+    correction_id: str | None = Field(default=None, min_length=1)
+    resolved_object_key: str | None = Field(default=None, min_length=1)
     disposition: Literal["incorporated", "dismissed", "unresolved"]
     conclusion: str = Field(min_length=1)
     evidence: list[SourceEvidence] = Field(default_factory=list)
@@ -291,6 +381,7 @@ class ReviewFinding(StrictModel):
     summary: str = Field(min_length=1)
     required_check: str = Field(min_length=1)
     evidence: list[SourceEvidence] = Field(min_length=1)
+    correction_targets: list[AtomicCorrectionTarget] = Field(default_factory=list)
 
 
 class IndependentReviewTask(StrictModel):
@@ -330,6 +421,16 @@ class IndependentReviewResult(StrictModel):
                 "independent_review 看不到 Analysis Result，不能使用 "
                 f"blackbox_translation：{invalid}"
             )
+        targeted = [
+            finding.finding_key
+            for finding in self.findings
+            if finding.correction_targets
+        ]
+        if targeted:
+            raise ValueError(
+                "independent_review 看不到 Analysis Result，不能预填 "
+                f"correction_targets：{targeted}"
+            )
         return self
 
 
@@ -341,6 +442,7 @@ class IndependentFindingDecision(StrictModel):
         default_factory=list,
         description="dismissed 必须提供用于核对 Analysis 等价覆盖或推翻 finding 的非空源码/契约证据；Analysis object/key/字段只写在 conclusion，不写进 SourceEvidence.observation",
     )
+    correction_targets: list[AtomicCorrectionTarget] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def require_dismissal_evidence(self):
@@ -354,6 +456,7 @@ class ComparisonReviewResult(StrictModel):
     summary: str = Field(min_length=1)
     independent_finding_decisions: list[IndependentFindingDecision] = Field(default_factory=list, description="编号集合必须与 independent review 顶层 findings[].finding_key 完全相等；盲审 findings 为空时本列表也必须为空")
     findings: list[ReviewFinding] = Field(default_factory=list)
+    analysis_audit_decisions: list[ComparisonAuditDecision] = Field(default_factory=list)
     unresolved: list[str] = Field(default_factory=list, description="通常必须为空。盲审 finding 无法裁决时只写对应 independent_finding_decisions 的 unresolved；范围外实现、外部文档、后续研究、低置信度和已交给 closure 的事项不得写入顶层。")
 
 
@@ -361,6 +464,7 @@ class ComparisonReviewTask(StrictModel):
     schema_version: Literal["1.0"] = "1.0"
     task_type: Literal["comparison_review"] = "comparison_review"
     action_id: str | None = Field(default=None, min_length=1)
+    review_contract_version: Literal["1.0", "2.0"] = "1.0"
     run_id: str = Field(min_length=1)
     target: str = Field(min_length=1)
     analysis_language: AnalysisLanguage = "c_cpp"
@@ -368,6 +472,7 @@ class ComparisonReviewTask(StrictModel):
     unit_plan_path: str = Field(min_length=1)
     analysis_task_paths: dict[str, str] = Field(min_length=1)
     analysis_result_paths: dict[str, str] = Field(min_length=1)
+    required_analysis_audits: list[ComparisonAuditTarget] = Field(default_factory=list)
     independent_review_result_path: str = Field(min_length=1)
     selected_inputs_path: str = Field(min_length=1)
     rubric_paths: list[str] = Field(min_length=1)
@@ -380,6 +485,7 @@ class ClosureTask(StrictModel):
     schema_version: Literal["1.0"] = "1.0"
     task_type: Literal["closure"] = "closure"
     action_id: str | None = Field(default=None, min_length=1)
+    review_contract_version: Literal["1.0", "2.0"] = "1.0"
     run_id: str = Field(min_length=1)
     target: str = Field(min_length=1)
     analysis_language: AnalysisLanguage = "c_cpp"
@@ -389,6 +495,7 @@ class ClosureTask(StrictModel):
     original_task_path: str = Field(min_length=1)
     original_result_path: str = Field(min_length=1)
     review_findings: list[ReviewFinding] = Field(default_factory=list)
+    correction_targets: list[ClosureCorrectionTarget] = Field(default_factory=list)
     risk_test_obligations: list[str] = Field(default_factory=list)
     result_schema_path: str = Field(default="schemas/analysis_result.schema.json", min_length=1)
     result_example_path: str = Field(default="schemas/analysis_result.example.json", min_length=1)
