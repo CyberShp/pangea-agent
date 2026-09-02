@@ -15,8 +15,9 @@ tools:
 
 `task_type=analysis` 时，先读取 task、冻结源码、inventory、selected inputs、`source_manifest_path`、所有 task 指定 rubrics、`result_schema_path`、`result_skeleton_path`、`result_example_path`。先确认 2.0 结果结构，但不要边读源码边填 JSON；同一会话按以下流程完成分析，最后才把真实结论整理进 Graph 已创建的唯一 `result_path`。
 
-写入结果前必须先在内部完成九张核对表，任一项说不清就不能写入正式对象：
+写入结果前必须先在内部完成十张核对表，任一项说不清就不能写入正式对象：
 
+0. **入口 readiness 表**：逐个列出准备写成 `blackbox_ready|graybox_ready` 的 Scenario、其 `business_entry`、关联 Branch/TestCase，以及证明该入口受支持的正向冻结证据。私有 `.c` 中的 `extern`、non-static、跨文件调用、wrapper 链或可链接性只证明内部可达；即使函数返回值稳定、输入容易构造，也不能把它直接包装成 ready Scenario。找不到公开头文件、产品/设计契约、受支持客户端/测试等正向证据时，Scenario 必须 `developer_confirm` 或删除，相关 Branch 必须 `developer_confirm`，正式 TestCase 必须为 0。
 1. **Coverage→Case 表**：每个 `coverage_id` 的精确缺口（函数执行，或 branch 的具体 zero-count outcome）× 每条准备直连它的 Case。逐格写出 Case 实际输入、走到的 outcome 和断言；亲自命中函数零执行目标时填写 `direct_coverage_claims[].target=function_execution`，命中 branch 的 true/false 零计数 outcome 时分别填写 `branch_true_outcome` / `branch_false_outcome`。每条 claim 同时在 `linked_input_ids` 保留同一个真实 `coverage_id`，两处 Coverage ID 集合必须一致。Case 没亲自命中缺口就同时删除 claim 和该 Coverage ID。每条真实 Coverage record 始终各自形成义务；只有冻结证据正向证明 records 属于同一次采集并具有可直接比较的计数语义时，才另行报告一致性问题，不能用一致性怀疑代替各自的 CoverageDecision。
 2. **Scenario 保留表**：每个 `developer_confirm` Scenario 必须保留冻结证据已经证明的具体 predicate/trigger 和对应源码结果或条件性观测；业务入口、制造方式或产品 Oracle 可以继续待确认，但未知项要与已确认内容分开写。`actions` 必须用陈述句写已经确定的内部构造动作；若 action 的实际含义仍是在询问或等待确认如何构造/调用，就不算 action。Scenario 引用 Branch/Flow 时，actions 还必须声明自己实际覆盖的至少一个具体分支 predicate/outcome；只写“向函数传入某类型/任意值”的泛化动作不算。Risk-linked Scenario 只写“普通构建无稳定 Oracle/结果不可依赖”也不足以保留链接，还必须在 Scenario 自己的 `external_oracles` 中写出冻结证据允许的条件性观测，否则移除 Risk 链接或 Scenario。若 actions 与 external_oracles 没有任何已确认的 trigger/result，只剩待确认话术，就删除该 Scenario，并同步清理 Branch/Coverage/Risk 引用。
 3. **UB 表述表**：普通构建必须明确任何返回值、终止状态或其他表现都不是稳定产品 Oracle；可以列举“不返回、异常终止、表面返回任意值”等可能后果，但不得写成必然结果，也不得用“只能观测不返回或异常终止”排除其他 UB 表现。sanitizer 只能作为明确构建前提下的条件性观测，不能写进 `exclusion_condition`；即使同一句随后声明它“只改变观测、不消除风险”，也不能把它列为排除条件的并列候选。

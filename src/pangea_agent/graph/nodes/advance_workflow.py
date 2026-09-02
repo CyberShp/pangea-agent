@@ -101,6 +101,20 @@ def _audit_acceptance_rule(
             "error 或 undefined terminal 已表示该结果；除非冻结源码明确存在循环或重试，terminal"
             "不得再有 outgoing edge，更不得用指向自身的 edge 重复表示 return 或 outcome。"
         )
+    if object_type == "branch_decision":
+        if check == "flow_and_disposition":
+            return (
+                "scenario_mapped|merged 只能建立在真实 blackbox_ready|graybox_ready Scenario 上；"
+                "若所谓入口只有私有 .c 中的 extern、non-static、跨文件调用或可链接性，而没有公开"
+                "头文件、产品/设计契约、受支持客户端/测试等正向冻结证据，必须使用 developer_confirm。"
+                "内部函数具有稳定返回值也不能把它升级为受支持业务入口。"
+            )
+        if check == "scenario_links":
+            return (
+                "逐个核对 scenario_keys 对端的 readiness、business_entry 与入口证据。私有 .c 的 extern、"
+                "non-static、wrapper 调用链或可链接性只证明内部可达，不能支撑 ready Scenario；只剩这类"
+                "证据时 Branch 必须 developer_confirm，引用的 Scenario 也只能 developer_confirm 或删除。"
+            )
     if object_type == "risk":
         if check == "trigger":
             return (
@@ -137,6 +151,14 @@ def _audit_acceptance_rule(
                 "Risk 不得被迫伪造控制流分支。"
             )
     if object_type == "scenario":
+        if check == "entry_and_readiness":
+            return (
+                "blackbox_ready|graybox_ready 必须有正向冻结证据证明 business_entry 是受支持入口；可用"
+                "证据包括公开头文件、产品/设计契约、受支持客户端或测试。私有 .c 中的 extern、"
+                "non-static、跨文件调用、wrapper 链或可链接性只证明内部可达，不能把实现函数直接包装"
+                "成 ready Scenario。证据不足时必须 developer_confirm 且不得生成正式 TestCase；不能因"
+                "该内部函数返回值稳定或某个输入易构造而例外。"
+            )
         if check in {"trigger_actions", "developer_confirm_content"}:
             return (
                 "保留的 Scenario 必须在实际 action 中直接陈述至少一个冻结证据证明的具体 predicate"
@@ -179,6 +201,13 @@ def _audit_acceptance_rule(
             )
     if object_type == "unresolved":
         return "只允许真实 selected input/Coverage ID，且不得重复 Branch/Coverage/Risk/Scenario 已表达的 developer_confirm。"
+    if object_type == "test_case" and check == "entry_actions_oracles":
+        return (
+            "正式 TestCase 必须引用真实 ready Scenario，并继承其受支持 business_entry 的正向冻结证据。"
+            "若执行入口只是私有 .c 函数、extern/non-static 声明、跨文件调用或 wrapper 链，则该 Case"
+            "必须删除，相关 Scenario 与 Branch 保持 developer_confirm；内部返回值可断言也不能豁免"
+            "入口合同。"
+        )
     if object_type == "unit" and check.endswith("_completeness"):
         return "逐项对照 task 分配对象与 validated Analysis 的真实对象集合；空输入集合是空义务，不能制造 finding。"
     return "逐字核对 observed_fields 与冻结源码、task 和输入；对象总体正确不能豁免当前 check 的字段错误。"
