@@ -22,7 +22,14 @@ class SourceEvidence(StrictModel):
     path: str = Field(min_length=1)
     line_start: int = Field(gt=0)
     line_end: int | None = Field(default=None, gt=0)
-    observation: str = Field(min_length=1)
+    observation: str = Field(
+        min_length=1,
+        description=(
+            "只陈述当前 repo/path/line_start..line_end 引用范围本身直接证明的源码事实；"
+            "类型声明若不在引用范围内不得补入，语言标准、Risk 分类、manifest、调用链深度、"
+            "跨文件缺失、ABI、构建配置和产品入口结论不得伪装成 SourceEvidence observation"
+        ),
+    )
 
 
 class ProposedUnit(StrictModel):

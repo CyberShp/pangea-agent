@@ -87,7 +87,9 @@ def _audit_acceptance_rule(
             "逐从句对照 cited_source_lines；只有该 repo/path/line range 单独能证明的源码事实"
             "才能 accepted。语言规则、Analysis 字段、manifest/caller truncation、跨文件缺失、"
             "未由该范围直接声明的 ABI/构建/产品入口结论必须移出 SourceEvidence；不能把这些"
-            "范围事实换一种说法后继续留在 observation。"
+            "范围事实换一种说法后继续留在 observation。即使引用范围包含完整表达式，signed "
+            "overflow、undefined behavior、TYPE_MAX 边界等仍是结合类型声明与语言规则得到的"
+            "分析结论，不是该表达式行直接证明的事实；Evidence 只保留表达式、条件和返回。"
         )
     if object_type == "flow" and check == "control_flow":
         return (
@@ -102,7 +104,7 @@ def _audit_acceptance_rule(
             if analysis_language == "c_cpp":
                 return (
                     "C/C++ UB 的普通构建没有稳定产品 Oracle；可能后果不得写成固定值、必然结果"
-                    "或穷举。sanitizer 只能在执行已启用对应检查的构建时报告运行期问题，不能写成"
+                    "或穷举。sanitizer 只能写成执行已启用对应检查的构建时可报告运行期问题，不能写成"
                     "构建时报告；未冻结 recover/trap 配置时不得保证中止。"
                 )
             return "system_result 与 external_observation 必须分别说明系统后果和可外部判定的观测，不得把测试证据缺口写成产品结果。"
@@ -134,7 +136,8 @@ def _audit_acceptance_rule(
         if check == "external_oracles" or check.startswith("risk_external_oracle/"):
             return (
                 "external_oracles 必须写出对应源码结果或有明确前提的条件性观测；普通构建 UB 无稳定"
-                "Oracle，sanitizer 观测必须说明执行已启用对应检查的构建。"
+                "Oracle；未冻结 recover/trap 或产品运行契约时，sanitizer 只能说执行已启用对应检查"
+                "的构建时可报告，不得升级成必然报告或中止。"
             )
     if object_type == "unresolved":
         return "只允许真实 selected input/Coverage ID，且不得重复 Branch/Coverage/Risk/Scenario 已表达的 developer_confirm。"
