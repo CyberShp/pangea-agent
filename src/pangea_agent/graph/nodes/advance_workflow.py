@@ -138,8 +138,18 @@ def _audit_acceptance_rule(
             return (
                 "保留的 Scenario 必须在实际 action 中直接陈述冻结证据证明的具体 predicate/trigger；"
                 "title、precondition、evidence 或询问如何触发的占位话术不能代替 action。"
+                "readiness=developer_confirm 不放宽这条要求：若 action 的实际含义仍是待确认如何构造"
+                "或调用，就必须 finding 或删除 Scenario；accepted conclusion 必须逐字引用一个已经"
+                "陈述内部构造动作的 action，不能把 readiness 本身当作通过理由。"
             )
-        if check == "external_oracles" or check.startswith("risk_external_oracle/"):
+        if check.startswith("risk_external_oracle/"):
+            return (
+                "Risk-linked Scenario 必须包含与该 Risk 对应的条件性观测；只写普通构建无稳定 Oracle"
+                "或结果不可依赖，不足以保留 linked_risk_keys。缺少条件性观测时必须 finding 并补充"
+                "冻结证据允许的观测，或移除 Risk 链接/Scenario；readiness=developer_confirm 不是豁免。"
+                "未冻结 recover/trap 时 sanitizer 只能说执行已启用对应检查的构建时可报告。"
+            )
+        if check == "external_oracles":
             return (
                 "external_oracles 必须写出对应源码结果或有明确前提的条件性观测；普通构建 UB 无稳定"
                 "Oracle；未冻结 recover/trap 或产品运行契约时，sanitizer 只能说执行已启用对应检查"
