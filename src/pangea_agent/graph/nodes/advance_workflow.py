@@ -93,6 +93,12 @@ def _audit_acceptance_rule(
             "SourceEvidence。即使引用范围包含完整表达式，signed overflow、undefined behavior、"
             "TYPE_MAX 边界等仍是结合类型声明与语言规则得到的分析结论，不得附加到源码摘录。"
         )
+    if object_type == "unit" and check == "summary_consistency":
+        return (
+            "summary 必须逐句受冻结输入支持。私有 wrapper 只能写成内部可达位置或待确认测试桩候选，"
+            "不能写成已经可用、受支持或已确认的测试/业务入口；caller 截断只能说明冻结范围到此为止，"
+            "不能推出不存在更高入口。"
+        )
     if object_type == "flow" and check == "control_flow":
         return (
             "每个语义不同且改变返回、状态或输出的源码 outcome 都要有可追踪 edge；结果相同可"
@@ -118,16 +124,19 @@ def _audit_acceptance_rule(
     if object_type == "risk":
         if check == "trigger":
             return (
-                "trigger 只能保留冻结源码证明的精确内部条件，不能加入未证实入口或扩大边界。"
-                "若冻结输入未证明受支持业务入口，trigger 只能写内部条件和到达的源码操作；入口"
-                "与制造方式的不确定性应写入 test_disposition/reason，不得写成已发生的触发前提。"
+                "accepted conclusion 必须引用 trigger 原文并写出冻结源码证明的精确内部条件和对应"
+                "源码操作，不能加入未证实入口或扩大边界。若冻结输入未证明受支持业务入口，把私有"
+                "wrapper 或待确认测试桩写成已经可用的测试/业务入口必须 finding；入口与制造方式的"
+                "不确定性应写入 test_disposition/reason。未冻结 ABI、目标编译器或构建契约时保留"
+                "INT_MAX/对应 TYPE_MAX 符号，不得追加固定 32 位或十进制边界。"
             )
         if check == "system_result_and_observation":
             if analysis_language == "c_cpp":
                 return (
                     "C/C++ UB 的普通构建没有稳定产品 Oracle；可能后果不得写成固定值、必然结果"
-                    "或穷举。sanitizer 只能写成执行已启用对应检查的构建时可报告运行期问题，不能写成"
-                    "构建时报告；未冻结 recover/trap 配置时不得保证中止。"
+                    "或穷举，也不得把数学上的 INT_MAX + 1 称为该 int 运算可比较的预期值。sanitizer "
+                    "只能写成执行已启用对应检查的构建时可报告运行期问题，不能写成构建时报告；"
+                    "未冻结 recover/trap 配置时不得保证中止。"
                 )
             return "system_result 与 external_observation 必须分别说明系统后果和可外部判定的观测，不得把测试证据缺口写成产品结果。"
         if check == "exclusion_condition":
