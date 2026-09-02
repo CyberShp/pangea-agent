@@ -117,7 +117,9 @@ def _audit_acceptance_rule(
         if check == "exclusion_condition":
             return (
                 "exclusion 必须由冻结证据证明能阻止完整 trigger、证明该 Risk 路径不可达，或让"
-                "相关操作具有受定义语义；sanitizer 只增加观测，不是 exclusion。"
+                "相关操作具有受定义语义；能排除精确 trigger 的输入 guard/契约即使缩窄允许输入也"
+                "是有效 exclusion，不能仅以其改变允许输入域为由否认。sanitizer 只增加观测，"
+                "不是 exclusion。"
             )
         if check == "severity_and_product_impact":
             return (
@@ -132,21 +134,31 @@ def _audit_acceptance_rule(
                 "Risk 不得被迫伪造控制流分支。"
             )
     if object_type == "scenario":
-        if check in {"trigger_actions", "developer_confirm_content"} or check.startswith(
-            "risk_trigger_action/"
-        ):
+        if check in {"trigger_actions", "developer_confirm_content"}:
             return (
-                "保留的 Scenario 必须在实际 action 中直接陈述冻结证据证明的具体 predicate/trigger；"
-                "title、precondition、evidence 或询问如何触发的占位话术不能代替 action。"
+                "保留的 Scenario 必须在实际 action 中直接陈述至少一个冻结证据证明的具体 predicate"
+                "及对应 outcome；只写传入某类型/任意值的泛化动作不算具体 predicate。Scenario 引用"
+                "Branch/Flow 时，action 必须声明自己实际覆盖的分支条件或结果；title、precondition、"
+                "evidence 或询问如何触发的占位话术不能代替 action。"
                 "readiness=developer_confirm 不放宽这条要求：若 action 的实际含义仍是待确认如何构造"
                 "或调用，就必须 finding 或删除 Scenario；accepted conclusion 必须逐字引用一个已经"
-                "陈述内部构造动作的 action，不能把 readiness 本身当作通过理由。"
+                "陈述具体 predicate/outcome 的 action，不能把 readiness 本身当作通过理由。移除 Risk"
+                "链接也不能替代本项对 Scenario 自身内容的修正。"
+            )
+        if check.startswith("risk_trigger_action/"):
+            return (
+                "Risk-linked Scenario 的实际 action 必须逐字声明所指 Risk 的精确 trigger；泛化输入域、"
+                "title、precondition、evidence 或询问如何触发的占位话术都不能代替。若冻结证据不足以"
+                "形成该 action，应以 /linked_risk_keys 为 correction target 移除链接；不得把 /actions"
+                " target 的 required_state 写成修改另一个未列 target 的字段。"
             )
         if check.startswith("risk_external_oracle/"):
             return (
                 "Risk-linked Scenario 必须包含与该 Risk 对应的条件性观测；只写普通构建无稳定 Oracle"
                 "或结果不可依赖，不足以保留 linked_risk_keys。缺少条件性观测时必须 finding 并补充"
                 "冻结证据允许的观测，或移除 Risk 链接/Scenario；readiness=developer_confirm 不是豁免。"
+                "accepted conclusion 必须引用 Scenario.external_oracles 的具体下标和其中的条件性观测；"
+                "Risk 自身的 system_result/external_observation 只能用于对照，不能替代 Scenario 字段。"
                 "未冻结 recover/trap 时 sanitizer 只能说执行已启用对应检查的构建时可报告。"
             )
         if check == "external_oracles":
