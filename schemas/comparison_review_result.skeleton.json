@@ -4,6 +4,7 @@
   "independent_finding_decisions": [
     {
       "finding_key": "<只能从 independent_review_result_path 顶层 findings[].finding_key 原样选择>",
+      "assessment": "<只能 missing|incorrect|equivalent_correct|finding_refuted|insufficient_evidence>",
       "disposition": "<只能 confirmed|dismissed|unresolved>",
       "conclusion": "<逐条裁决结论>",
       "evidence": [],

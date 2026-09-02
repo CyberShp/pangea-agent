@@ -121,6 +121,8 @@ finding 只是补充或纠正同一个风险/场景时，保留原 key 原位修
 
 逐条比较 Closure 副本与原 Analysis：`incorporated` 必须能指出为满足 finding 而真实改变的 Agent-owned 字段及新值。只在 `reason`/`summary`/decision conclusion 中追加 finding 名称、复述首轮已有内容、把相同条件换一种说法，或确认“原结果已正确”，都不算 incorporated；此时必须 `dismissed` 并给出原结果已覆盖该检查的反证。Comparison 的 `confirmed` 不是命令，Closure 仍需按冻结证据独立判断。
 
+Closure 修正 `exclusion_condition` 时必须区分“当前冻结证据没有已确认 exclusion”和“假设存在的 guard 不是 exclusion”：没有 guard/契约证据时写前者；若真实 guard 能阻止完整 trigger 到达风险操作，它就是有效 exclusion，不能因为绕过 guard 后底层操作仍会失败而否认它。
+
 ## 写入前自检与返修
 
 写入前逐项检查：每个 Flow step 有 evidence 且 edge 两端真实；当前 source_scope 每个 `branch_id` 恰好一个 BranchDecision；当前任务每个 `coverage_id` 恰好一个 CoverageDecision；`scenario_mapped/merged` 引用真实 Scenario；Scenario 引用的 Flow/Branch/Coverage/Risk/input 全部真实，且每个 linked Risk 的 trigger/Oracle 都在该 Scenario 自身 actions/external_oracles 中；每个填写 `branch_ids` 的 Scenario 都真实覆盖对应分支条件和结果，全是“待确认”的候选没有保留为空壳 Scenario；每条 TestCase 至少引用一个真实 ready Scenario；每个 Coverage ID 已按函数/指定 branch outcome 逐 Case 核对 `direct_coverage_claims` 与 `linked_input_ids`，两处 ID 集合一致，没有批量复制给未命中缺口的 Case；`test_required` Risk 有 Scenario/TestCase，`developer_confirm` 不伪造 Case，不可达有原因和证据；Risk exclusion 确实阻止触发、证明不可达或采用受定义语义，没有把 trap/recover/sanitizer 当排除条件，也没有扩大单点 trigger；任何 `not_test_relevant` 都有正向充分理由而不是“入口/Oracle 未确认”；顶层 unresolved 没有重复 developer_confirm，首轮只引用本 task 真实 selected input 或 Coverage ID，Closure 才可引用 confirmed finding_key；未冻结 ABI 时所有字段都没有固定十进制 `int` 边界，普通构建 UB 没有被写成必然返回；evidence path 属于冻结范围；v2 closure finding decision 与 `correction_targets` 按 `(finding_key, correction_id)` 一一对应，旧版 task 才按 finding 一一对应。

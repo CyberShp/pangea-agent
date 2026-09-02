@@ -461,6 +461,19 @@ class IndependentReviewResult(StrictModel):
 
 class IndependentFindingDecision(StrictModel):
     finding_key: str = Field(min_length=1, description="必须且只能引用 independent_review_result_path 顶层 findings[] 中已有的 finding_key；不得引用 Worker risk、flow、test case 或 Coverage 编号")
+    assessment: Literal[
+        "missing",
+        "incorrect",
+        "equivalent_correct",
+        "finding_refuted",
+        "insufficient_evidence",
+    ] | None = Field(
+        default=None,
+        description=(
+            "对 Analysis 与 Independent finding 关系的结构化判断；旧 artifact 可省略，"
+            "review_contract_version=2.0 的 Comparison 必填"
+        ),
+    )
     disposition: Literal["confirmed", "dismissed", "unresolved"] = Field(description="只表示对盲审 finding 的裁决；不得填写 risk、incorrect_conclusion 等 category")
     conclusion: str = Field(min_length=1)
     evidence: list[SourceEvidence] = Field(
@@ -473,6 +486,18 @@ class IndependentFindingDecision(StrictModel):
     def require_dismissal_evidence(self):
         if self.disposition == "dismissed" and not self.evidence:
             raise ValueError("dismissed 裁决必须提供非空核对 evidence；confirmed/unresolved 可复用原 finding evidence，不重复填写")
+        expected_disposition = {
+            "missing": "confirmed",
+            "incorrect": "confirmed",
+            "equivalent_correct": "dismissed",
+            "finding_refuted": "dismissed",
+            "insufficient_evidence": "unresolved",
+        }.get(self.assessment)
+        if expected_disposition is not None and self.disposition != expected_disposition:
+            raise ValueError(
+                "Independent finding 的 assessment 与 disposition 不一致："
+                f"assessment={self.assessment} 要求 disposition={expected_disposition}"
+            )
         return self
 
 

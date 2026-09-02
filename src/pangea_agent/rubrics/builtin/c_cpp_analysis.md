@@ -22,6 +22,8 @@ Flow、Risk、Scenario、finding、decision 中的所有 `SourceEvidence.observa
 
 `exclusion_condition` 只能列出真正阻止完整 trigger、证明路径不可达或赋予相关操作受定义语义的条件。sanitizer、recover 或 trap 只能留在观测/处置字段，不能作为并列排除候选；即使同一句随后声明它们“只改变观测、不消除风险”，也必须从 `exclusion_condition` 删除。
 
+冻结证据没有 caller guard、输入契约、不可达证明或受定义语义时，应明确当前没有已确认 exclusion，不得虚构一个 guard。冻结证据若确有 guard 阻止完整 trigger 到达风险操作，该 guard 就是有效 exclusion；不能因为绕过 guard 后底层操作仍会失败而否认它。
+
 重点抽取：
 
 - 外部入口、协议事件、CLI/REST 和状态机迁移。

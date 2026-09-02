@@ -126,6 +126,8 @@ finding 只是补充或纠正同一个风险/场景时，保留原 key 原位修
 
 逐条比较 Closure 副本与原 Analysis：`incorporated` 必须能指出为满足 finding 而真实改变的 Agent-owned 字段及新值。只在 `reason`/`summary`/decision conclusion 中追加 finding 名称、复述首轮已有内容、把相同条件换一种说法，或确认“原结果已正确”，都不算 incorporated；此时必须 `dismissed` 并给出原结果已覆盖该检查的反证。Comparison 的 `confirmed` 不是命令，Closure 仍需按冻结证据独立判断。
 
+Closure 修正 `exclusion_condition` 时必须区分“当前冻结证据没有已确认 exclusion”和“假设存在的 guard 不是 exclusion”：没有 guard/契约证据时写前者；若真实 guard 能阻止完整 trigger 到达风险操作，它就是有效 exclusion，不能因为绕过 guard 后底层操作仍会失败而否认它。
+
 Closure 不得为了“吸收 finding”而把证据缺口新建成产品 Risk。Reviewer finding 若只要求确认入口、制造方式或 Oracle，应修正相应 Branch/Coverage/Scenario disposition；若原 Risk 的系统结果本身不成立，应删除该 Risk，并同步清理 Scenario/TestCase 引用和 finding decision，而不是改写成“测试无法执行”的 Risk。
 
 ## 写入前自检与返修

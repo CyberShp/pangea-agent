@@ -114,6 +114,18 @@
             "properties": {"evidence": {"minItems": 1}},
             "required": ["evidence"]
           }
+        },
+        {
+          "if": {"properties": {"assessment": {"enum": ["missing", "incorrect"]}}, "required": ["assessment"]},
+          "then": {"properties": {"disposition": {"const": "confirmed"}}}
+        },
+        {
+          "if": {"properties": {"assessment": {"enum": ["equivalent_correct", "finding_refuted"]}}, "required": ["assessment"]},
+          "then": {"properties": {"disposition": {"const": "dismissed"}}}
+        },
+        {
+          "if": {"properties": {"assessment": {"const": "insufficient_evidence"}}, "required": ["assessment"]},
+          "then": {"properties": {"disposition": {"const": "unresolved"}}}
         }
       ],
       "properties": {
@@ -122,6 +134,15 @@
           "minLength": 1,
           "title": "Finding Key",
           "type": "string"
+        },
+        "assessment": {
+          "anyOf": [
+            {"enum": ["missing", "incorrect", "equivalent_correct", "finding_refuted", "insufficient_evidence"], "type": "string"},
+            {"type": "null"}
+          ],
+          "default": null,
+          "description": "对 Analysis 与 Independent finding 关系的结构化判断；旧 artifact 可省略，review_contract_version=2.0 的 Comparison 必填",
+          "title": "Assessment"
         },
         "disposition": {
           "description": "只表示对盲审 finding 的裁决；不得填写 risk、incorrect_conclusion 等 category",

@@ -1226,6 +1226,10 @@ def _validate_v2_comparison_contract(
         finding = independent_by_key.get(decision.finding_key)
         if finding is None:
             continue
+        if decision.assessment is None:
+            errors.append(
+                f"Independent decision {decision.finding_key} 缺少 assessment"
+            )
         if decision.disposition == "dismissed":
             if decision.correction_targets:
                 errors.append(
