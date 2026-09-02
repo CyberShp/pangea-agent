@@ -136,7 +136,8 @@ def _audit_acceptance_rule(
                     "C/C++ UB 的普通构建没有稳定产品 Oracle；可能后果不得写成固定值、必然结果"
                     "或穷举，也不得把数学上的 INT_MAX + 1 称为该 int 运算可比较的预期值。sanitizer "
                     "只能写成执行已启用对应检查的构建时可报告运行期问题，不能写成构建时报告；"
-                    "未冻结 recover/trap 配置时不得保证中止。"
+                    "未冻结 recover/trap 配置时不得保证中止。未冻结具体编译器、版本、优化与运行时"
+                    "契约时，也不得声称某种返回、终止或非返回表现通常、一般或常见发生。"
                 )
             return "system_result 与 external_observation 必须分别说明系统后果和可外部判定的观测，不得把测试证据缺口写成产品结果。"
         if check == "exclusion_condition":
