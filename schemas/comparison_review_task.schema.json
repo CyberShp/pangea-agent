@@ -123,6 +123,11 @@
       "title": "Required Analysis Audits",
       "type": "array"
     },
+    "require_audit_conclusions": {
+      "default": false,
+      "title": "Require Audit Conclusions",
+      "type": "boolean"
+    },
     "independent_review_result_path": {
       "minLength": 1,
       "title": "Independent Review Result Path",

@@ -56,7 +56,8 @@
     {
       "audit_id": "<从 task.required_analysis_audits 原样选择>",
       "disposition": "<accepted|finding>",
-      "finding_keys": []
+      "finding_keys": [],
+      "conclusion": "<逐项说明该 object/check 的核对事实；accepted 写成立依据，finding 写具体不一致>"
     }
   ],
   "unresolved": []

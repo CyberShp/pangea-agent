@@ -4,6 +4,8 @@
 
 先遵守 C/C++ 表达式的真实求值规则：`a || b` 在 a 为真时不求值 b，`a && b` 在 a 为假时不求值 b；`!x` 仅在 x 为 0 时为真，负数也是非零真值；负数不满足 `> 0`。不得用相反的布尔或不等式结论构造风险。
 
+只分析源码实际出现的运算符，不得把比较、分支条件或常量改写成另一种运算。`value < 0` 只比较 `value` 与零，不会计算 `-value`；`return -1` 的一元负号作用于常量 `1`，不作用于 `value`。因此 `if (value < 0) return -1;` 对 `value == INT_MIN` 本身不会产生 signed negation overflow，也不能据此制造 INT_MIN Risk。
+
 缺少锁、重置、递减、范围校验或恢复动作本身不自动构成缺陷。必须有需求/设计/公开接口约定、真实调用方协议，或一条能证明外部错误结果的调用序列；否则只保留为流程行为或边界测试点，不得直接下缺陷结论，也不得仅因需要范围外实现或设计说明就写入顶层 `unresolved`。
 
 每条风险在冻结前必须归入至少一种可核对的证据根基：结构化输入中的明确契约；冻结源码中真实调用方已经观察到的错误结果；或源码自身即可证明的崩溃、未定义行为、越界、数据破坏/丢失、资源泄漏、竞态或安全边界破坏。三者都不满足时，把它保留为流程行为或边界用例，不进入风险集合。仅证明“函数持续返回某个已写明的错误码”“字段接受普通 `int` 的全部非零值”或“当前单元没有某个 API”，不能单独证明外部结果是错误的。
@@ -11,6 +13,8 @@
 源码直接证明的 C/C++ 未定义行为、越界、数据破坏、资源泄漏或竞态，只要所在路径没有被正向证明不可达，就必须进入 Risk 集合。业务入口、制造方式或 Oracle 尚未确认时使用 `test_disposition=developer_confirm`；不能把“不可测试”误写成“无风险”，也不能用“六维无信号”排除算术溢出等功能与状态风险。
 
 冻结 Risk 前逐个核对 `source_scope` 中带符号整数的 `+`、`-`、`*`：前置 guard 之后是否仍可取类型边界。例如只排除 `< 0` 仍允许 `INT_MAX`，后续 `value + 1` 不能按普通返回值处理。
+
+Flow 表达这类源码时也必须保持语言语义：`if (value < 0) return -1; return value + 1;` 的负值分支直接返回 `-1`；非负分支只有在 `0 <= value < INT_MAX` 时能保证正常返回 `value + 1`，`value == INT_MAX` 应保留为无定义 successor/无稳定结果的 outcome。不得用一条无条件 `value >= 0` 正常返回 edge 覆盖该 Risk trigger。
 
 没有冻结目标 ABI、编译器参数或构建契约时，按 usual arithmetic conversions 后的真实有符号运算类型使用对应 `TYPE_MAX` 等边界符号，不把 `int` 擅自写成固定 32 位数值，也不把 `long`、整数提升后的 `short/signed char` 或 unsigned 运算套成 `INT_MAX` signed overflow。精确边界不能扩写成“其他极大值”“附近值”或更宽输入域；只有运算类型确为 `int` 的 `value + 1` 才在 `value == INT_MAX` 触发 signed overflow。signed overflow 的受控观测可依赖 UBSan 或对应 sanitizer 构建；ASan 单独不是该算术错误的检测依据。未冻结 UBSan recover/trap 配置时只能说“可报告该错误”，不能断言必然中止。普通构建必须明确不存在稳定产品 Oracle；任何返回值、终止状态或其他表现都不能被约定为必然，可列举但不得把可能后果写成穷举式“只能”。启用 sanitizer 只能增加观测，不是 Risk 的 exclusion condition；排除条件必须由冻结证据证明能阻止完整 trigger、证明该 Risk 路径不可达，或让相关操作具有受定义语义；应用后 Risk 所述失效结果必须不可能发生。对 `int value + 1` 的单点 `value == INT_MAX` signed-overflow 风险，拒绝 `value == INT_MAX`、保证 `value != INT_MAX`，或把全部允许输入限制在 `value < INT_MAX`（更窄的已证安全域也可）都能阻止触发；若文字实际排除安全输入却仍允许 `INT_MAX` 且未改变算术语义，则不成立。Risk severity 必须结合受支持入口和产品影响证据，不得只因源码存在 UB 就自动判 High/Critical。
 

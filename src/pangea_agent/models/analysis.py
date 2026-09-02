@@ -241,6 +241,10 @@ class ComparisonAuditDecision(StrictModel):
     audit_id: str = Field(min_length=1)
     disposition: Literal["accepted", "finding"]
     finding_keys: list[str] = Field(default_factory=list)
+    conclusion: str = Field(
+        default="",
+        description="本 audit 对象与 check 的逐项核对结论；新任务要求非空，旧 artifact 缺失时保持兼容",
+    )
 
     @model_validator(mode="after")
     def validate_finding_links(self) -> ComparisonAuditDecision:
@@ -473,6 +477,7 @@ class ComparisonReviewTask(StrictModel):
     analysis_task_paths: dict[str, str] = Field(min_length=1)
     analysis_result_paths: dict[str, str] = Field(min_length=1)
     required_analysis_audits: list[ComparisonAuditTarget] = Field(default_factory=list)
+    require_audit_conclusions: bool = False
     independent_review_result_path: str = Field(min_length=1)
     selected_inputs_path: str = Field(min_length=1)
     rubric_paths: list[str] = Field(min_length=1)

@@ -37,6 +37,12 @@
           "items": {"type": "string"},
           "title": "Finding Keys",
           "type": "array"
+        },
+        "conclusion": {
+          "default": "",
+          "description": "本 audit 对象与 check 的逐项核对结论；新任务要求非空，旧 artifact 缺失时保持兼容",
+          "title": "Conclusion",
+          "type": "string"
         }
       },
       "required": ["audit_id", "disposition"],

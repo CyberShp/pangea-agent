@@ -891,6 +891,10 @@ def _validate_v2_comparison_contract(
         target = audit_by_id.get(decision.audit_id)
         if target is None:
             continue
+        if task.require_audit_conclusions and not decision.conclusion.strip():
+            errors.append(
+                f"audit {decision.audit_id} 必须填写逐项核对 conclusion"
+            )
         if decision.disposition == "accepted":
             if decision.finding_keys:
                 errors.append(
@@ -983,6 +987,7 @@ def _accept_independent_review(state: PangeaState, progress, action) -> PangeaSt
         },
         analysis_result_paths=analysis_result_paths,
         required_analysis_audits=required_analysis_audits,
+        require_audit_conclusions=True,
         independent_review_result_path=str(
             validated_result_path(state, action.action_id)
         ),
