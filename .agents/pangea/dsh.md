@@ -35,11 +35,11 @@
   修复 action 必须恢复同一个 `task_id`，把返回的 `error`（包括有界 `details`、`detail_count` 和截断标记）交回该任务，只修正同一 `result_path` 后再次 settle。错误很多时让原 Agent 以 `result_skeleton_path` 为唯一字段基线，保留可用语义后重建结构；不得套用旧版或其他项目的字段，不得用普通 `send_message` 或通用子 Agent 代替 `repair_action`。修复派发后立即结束当前回合，收到该修复任务的完成通知后再 settle 同一 action。
 
   并行 Agent 的其他完成通知只能按各自 exact `action_id` 排队。当前 action 返回 invalid 后，在它的 repair 已真实 dispatch 之前，不得 settle 另一个已完成 action、读状态、猜测哪个任务已推进，也不得跳到下一条 repair。先完成这一次 `settle -> dispatch repair`，再处理队列中的下一个完成通知。多个 repair 完成后，逐个 settle 它们各自回显的 action；不得改成等待另一个已经 settled 的 action，也不得在仍有已完成但未 settle 的 exact action 时结束会话。
-- 修复回合完成后再次 settle：若结构已经合法则正常推进；若仍不合法，Workflow 自动冻结降级结果并继续，不再返回第二轮 repair，也不询问用户重跑或继续修复。每份可消费的 Analysis 结果都会先整理确定性字段并补齐尚未覆盖的结构化分支、Coverage gap 和输入裁决；降级结果额外保留未决事项。Review/Closure 降级保留未决事项。最终 Run 必须标记 `UNRESOLVED`，但仍完成报告生命周期。
+- 修复回合完成后再次 settle：若结构已经合法则正常推进；若仍不合法，Workflow 继续返回同一 action 的 `repair_action`，由同一个 `task_id` 修正同一 `result_path`。连续 3 次相同结构错误，或结构错误与未写入结果累计 6 次后，返回 `attention_required=true`，主 Agent 必须向用户报告具体校验错误并等待处理决定；不得伪造、补齐或冻结语义结果推进 Run。
 
-Run/action/task 丢失、冻结输入损坏、`continue_agent` 缺少约定的 `task_id` 或 Workflow 返回未持久化 action 才属于流程错误。无法解析、缺少摘要或没有可消费流程的结果由当前 worker 原地修复一次，仍失败时由 Workflow 自动降级；可确定的字段别名、枚举、边、系统编号和悬空引用由 Workflow 整理并记录提示，evidence 范围、Coverage 取舍和 finding 是否成立等分歧保留给 Reviewer。这些检查只说明契约关联状态，不裁决风险、流程或用例语义。返修时保留已有有效语义内容，编辑方法由当前 Agent 自己选择；不得把语义判断交给 Python 或脚本。主 Agent 不读取或代改结果，不得换 worker，也不因可降级的结构问题询问用户是否重跑。
+Run/action/task 丢失、冻结输入损坏、`continue_agent` 缺少约定的 `task_id` 或 Workflow 返回未持久化 action 属于流程错误。无法解析、缺少摘要或没有可消费流程的结果由当前 worker 原地修复；Workflow 只生成 `case_key`、证据 `repo_id` 和由用例反向推导的链接，不清理、改写、补齐或猜测 Agent 语义。evidence 范围、Coverage 取舍和 finding 是否成立等分歧保留给 Reviewer。这些检查只说明契约关联状态，不裁决风险、流程或用例语义。返修时保留已有有效语义内容，编辑方法由当前 Agent 自己选择；不得把语义判断交给 Python 或脚本。主 Agent 不读取或代改结果，也不得更换 worker。
 
-Worker 结束前可调用 `check-result-json --task`。DSH 在 POSIX 工作区固定使用 `.venv/bin/python -m pangea_agent.cli.main check-result-json --task '<当前 task JSON 路径>'`，Windows 工作区使用 `.venv\Scripts\python.exe`；不要用 `PYTHONPATH` 或系统 `python3` 绕过项目运行环境。该命令只读取 task 指向的结果，确认 JSON 能否被下游消费，并以 `advisories` 提示内部编号、声明链接和证据路径问题。`submission_ready=false` 时由当前 Agent 修正无法读取的结构；`submission_ready=true` 时允许结束回合，`status=WARN` 由 settle 保留为降级提示并继续流程。它不判断语义，任何内容修正仍由当前 Agent 自己决定。
+Worker 结束前可调用 `check-result-json --task`。DSH 在 POSIX 工作区固定使用 `.venv/bin/python -m pangea_agent.cli.main check-result-json --task '<当前 task JSON 路径>'`，Windows 工作区使用 `.venv\Scripts\python.exe`；不要用 `PYTHONPATH` 或系统 `python3` 绕过项目运行环境。该命令只读取 task 指向的结果，确认 JSON 能否被下游消费，并以 `advisories` 提示内部编号、声明链接和证据路径问题。`submission_ready=false` 时由当前 Agent 修正无法读取的结构；`submission_ready=true` 时允许结束回合，`status=WARN` 由 settle 保留为警告并继续流程。它不判断语义，任何内容修正仍由当前 Agent 自己决定。
 
 Review 固定分为同一 Reviewer 的两个 checkpoint：`independent_review` 不提供首轮结果；`comparison_review` 才提供首轮结果做对照。定向补齐后直接聚合，不启动新的复核 Agent。
 

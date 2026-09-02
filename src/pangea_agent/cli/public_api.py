@@ -30,6 +30,11 @@ from pangea_agent.report import reports_are_complete
 
 def system_capabilities(data_root: str) -> dict:
     return {
+        "analysis_skill": {
+            "skill_id": "codetalks-skill",
+            "version": "1.0.0",
+            "derived_from": "codetalks-fused-v2.4",
+        },
         "analysis_languages": ["c_cpp", "lua"],
         "asset_types": [
             "requirement",
@@ -92,6 +97,8 @@ def _run_summary(run_dir: Path) -> dict:
         "phase": phase,
         "stage": progress.get("stage"),
         "quality_status": progress.get("quality_status"),
+        "skill": progress.get("skill"),
+        "skill_step_ids": progress.get("skill_step_ids", []),
         "unit_count": len(units),
         "completed_unit_count": len(completed),
         "errors": progress.get("errors", []),

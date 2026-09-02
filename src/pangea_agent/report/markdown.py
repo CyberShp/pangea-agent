@@ -203,6 +203,7 @@ def _coverage_rows(coverage: Mapping[str, Any]) -> list[tuple[Any, ...]]:
 
 def _contract_rows(state: Mapping[str, Any], contract: Mapping[str, Any]) -> list[tuple[Any, Any]]:
     manifest = state.get("source_manifest") or {}
+    skill = state.get("skill") or {}
     analysis_language = (
         manifest.get("analysis_language") if isinstance(manifest, Mapping) else None
     )
@@ -211,6 +212,12 @@ def _contract_rows(state: Mapping[str, Any], contract: Mapping[str, Any]) -> lis
         ("分析对象", contract.get("target")),
         ("分析类型", MODE_LABELS.get(str(contract.get("mode")), contract.get("mode"))),
         ("分析语言", {"c_cpp": "C/C++", "lua": "Lua"}.get(analysis_language, analysis_language)),
+        (
+            "分析 Skill",
+            f"{skill.get('skill_id')} {skill.get('version')}"
+            if isinstance(skill, Mapping) and skill.get("skill_id") and skill.get("version")
+            else None,
+        ),
         ("源码仓", contract.get("repositories") or contract.get("repository")),
         ("分析重点", contract.get("focus")),
         ("用户指定源码", contract.get("source_scope")),

@@ -4,6 +4,8 @@
 
 Python 只负责确定性工作：文件发现、语言识别、源码结构解析、Coverage 匹配、状态、JSON 契约、聚合和报告。单元规划、源码理解、独立复核和资料提取由当前客户端派发 Agent 完成。Python 不调用模型 API。
 
+每个新 Run 都会冻结 `codetalks-skill 1.0.0` 及其摘要；Planning 依次执行 01–03，Analysis 执行 04–07，独立 Reviewer 执行 08，最终报告执行 09。Agent 只读取 task 中列出的冻结步骤与参考文件，旧 Run 不会被后续 Skill 更新改写。Workflow 只补充系统拥有的编号、证据仓 ID 和派生链接，不生成、清理或补齐语义结论。
+
 ## 初始化
 
 支持 Windows x86-64 和 Python 3.10～3.12：
@@ -54,9 +56,9 @@ pangea-data/
 1. `dispatch_agent` 创建 action 指定的 Agent，`continue_agent` 恢复 action 自带的同一任务；
 2. 用 `adapter bind` 记录真实客户端任务 ID；
 3. Agent 写入 task 指定的 `result_path`；
-4. 用 `adapter validate` 校验当前结果；
-5. `status=invalid` 时按 `repair_action` 由同一 Agent 修正同一结果；
-6. 校验通过后用 `adapter settle` 推进 graph。
+4. 用 `adapter settle` 在同一次提交中校验并推进 graph；
+5. `validation.status=invalid|incomplete` 时按 `repair_action` 由同一 Agent 修正同一结果；
+6. 多次修复仍失败时保留真实错误并标记 `attention_required`，不生成降级结果冒充成功。
 
 结果文件只包含语义内容。Workflow 创建唯一 `result_path` 和对应骨架；Agent 在该文件中写入完整结果。`run_id`、`unit_id`、Agent 任务 ID、路径和状态由 Python 保存，Agent 不重复回填这些机械字段。
 

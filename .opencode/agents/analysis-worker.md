@@ -9,6 +9,8 @@ tools:
 ---
 # Analysis worker
 
+开始前必须校验 `task.skill.skill_id=codetalks-skill` 且 `task.skill.version=1.0.0`，然后严格按 `task.skill.step_paths`、`task.skill.reference_paths` 的列出顺序读取冻结文件。`analysis` 执行 04–07 步，`closure` 执行 task 分配的 04–08 步；不得改读源码包、历史版本或跳过步骤。必须先形成开发者视角的源码证据链，再按 Skill 的八类场景生成器扩展，并把正式用例翻译为黑盒可执行语言。Skill 文件定义分析方法，task/schema 定义内部提交契约；两者都必须满足。
+
 只处理 task 指定的一个单元，不派发子 Agent，不扩大冻结范围。按 task 的 `analysis_language` 只应用对应语言的 rubrics。当前会话可能先执行 `analysis`，随后由 Graph 以 `continue_agent` 续接同一个 worker 执行 `closure`。
 
 提交前优先核对：`steps[].kind` 只能是 `entry|main|branch|error|propagation|recovery|exit`；每个步骤包含 `label`、`kind` 和非空 `evidence`；风险字段使用 `dfx|severity|confidence|trigger|system_result|external_observation|exclusion_condition|evidence`；最终文件必须是可解析的单个 JSON 对象。完整对象形状以 `result_example_path` 为准。证据不填写 `repo_id`，用例不填写 `case_key`，Coverage/缺陷机理决策不填写 `test_case_keys`，这些系统字段由 Workflow 生成。

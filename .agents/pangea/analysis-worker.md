@@ -1,5 +1,7 @@
 # Analysis worker
 
+开始前必须校验 `task.skill.skill_id=codetalks-skill` 且 `task.skill.version=1.0.0`，然后严格按 `task.skill.step_paths`、`task.skill.reference_paths` 的列出顺序读取冻结文件。`analysis` 执行 04–07 步，`closure` 执行 task 分配的 04–08 步；不得改读源码包、历史版本或跳过步骤。必须先形成开发者视角的源码证据链，再按 Skill 的八类场景生成器扩展，并把正式用例翻译为黑盒可执行语言。Skill 文件定义分析方法，task/schema 定义内部提交契约；两者都必须满足。
+
 只处理 task 指定的一个源码单元，不扩大冻结范围，不派发子 Agent。`analysis_language` 是 Graph 根据冻结模块源码判断出的当前语言，只应用 task 中对应语言的 rubrics。当前会话可能先执行 `analysis`，随后由 Graph 以 `continue_agent` 续接同一个 worker 执行 `closure`。
 
 提交前优先做四项机械核对：`steps[].kind` 只能是 `entry|main|branch|error|propagation|recovery|exit`；先完成 `steps[]`，再只从现有 `step_key` 集合枚举 edge 两端，不能用只在 edge 中出现的隐式 EXIT；`basis` 写 `risk` 时必须有真实 `linked_risk_keys`，写 `coverage|requirement|design|defect_mechanism` 时必须有对应真实 `linked_input_ids`，否则删除该 basis；最终文件必须是可解析的单个 JSON 对象。完整对象形状以 `result_example_path` 为准。
@@ -44,4 +46,4 @@ closure 写入新风险前，必须按“触发条件、缺陷机理、系统结
 
 写入前逐项自检：每个 step evidence 非空、每条 edge 的两端都存在、所有 `covered_flow_keys` / `linked_risk_keys` 都有真实定义、evidence path 属于当前 unit；反向枚举每个 `risk_key`，确认它已被用例关联，或已经写明有源码证据的不可达处置；closure 还要保证 `review_finding_decisions` 与 task findings 一一对应，并完成全部 `risk_test_obligations`。随后逐条检查顶层 `unresolved`：每项必须逐字包含当前 task 中真实存在的 selected input ID、Coverage ID 或 confirmed finding_key；没有这些真实编号，或只是外部资料/范围外实现/后续研究的问题，直接删除。将完整语义 JSON 写到当前 task 的 `result_path`。不填写 unit ID、Agent ID、路径或运行状态。若校验器返回错误，只修正同一文件后重新提交。
 
-结束前运行 `.venv/bin/python -m pangea_agent.cli.main check-result-json --task '<当前 task JSON 路径>'`；Windows 工作区对应使用 `.venv\Scripts\python.exe`。不要改用 `PYTHONPATH`、系统 `python3` 或只检查 JSON 语法的临时代码。该命令只读 JSON，并会列出 schema、编号引用、`basis` 链接和证据路径的 `advisories`；它不修改结果、不改变 Run 状态，也不判断风险、流程或用例语义。`submission_ready=false` 表示 JSON 无法被下游读取，必须修正后重跑；`submission_ready=true` 时可以结束当前回合，`status=WARN` 的确定性提示由 settle 保留为降级，不要求为迎合 Python 改写语义。最终回复一行 `完成 action_id=<task.action_id>`；不得省略或改写当前 task 中的 `action_id`，也不复述 JSON 或分析内容。历史 task 没有 `action_id` 时才只回复“完成”。
+结束前运行 `.venv/bin/python -m pangea_agent.cli.main check-result-json --task '<当前 task JSON 路径>'`；Windows 工作区对应使用 `.venv\Scripts\python.exe`。不要改用 `PYTHONPATH`、系统 `python3` 或只检查 JSON 语法的临时代码。该命令只读 JSON，并会列出 schema、编号引用、`basis` 链接和证据路径的 `advisories`；它不修改结果、不改变 Run 状态，也不判断风险、流程或用例语义。`submission_ready=false` 表示 JSON 无法被下游读取，必须修正后重跑；`submission_ready=true` 时可以结束当前回合，`status=WARN` 的确定性提示由 settle 保留为警告，不要求为迎合 Python 改写语义。最终回复一行 `完成 action_id=<task.action_id>`；不得省略或改写当前 task 中的 `action_id`，也不复述 JSON 或分析内容。历史 task 没有 `action_id` 时才只回复“完成”。

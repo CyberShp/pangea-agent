@@ -286,6 +286,8 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
     coverage_gaps = read_json(run_dir / "inputs" / "coverage-gaps.json")
     final_state = {
         **state,
+        "skill": progress.skill.model_dump(mode="json"),
+        "skill_step_ids": ["01", "02", "03", "04", "05", "06", "07", "08", "09"],
         "repositories": source_manifest["repositories"],
         "module_scope": source_manifest["source_scope"],
         "scope_expansion": source_manifest["scope_expansion"],
@@ -338,6 +340,7 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
         "quality_report": {
             "status": quality_status,
             "checks": [
+                "codetalks-skill 1.0.0 已冻结并按阶段注入 Agent task",
                 "请求源码均由一个分析单元负责",
                 "相关结构化资料、Coverage 缺口和缺陷机理均已给出处置",
                 "独立复核已完成，可信遗漏已定向补齐",
@@ -361,6 +364,7 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
     markdown_path, html_path = write_reports(run_dir, final_state)
     progress.lifecycle_status = "complete"
     progress.stage = "complete"
+    progress.skill_step_ids = ["01", "02", "03", "04", "05", "06", "07", "08", "09"]
     progress.quality_status = quality_status
     progress.degradations = degradations
     progress.report_path = str(markdown_path)

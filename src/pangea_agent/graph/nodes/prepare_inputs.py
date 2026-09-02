@@ -29,6 +29,7 @@ from pangea_agent.models.analysis import (
     WorkflowProgress,
 )
 from pangea_agent.repositories.resolver import resolve_repositories_from_contract
+from pangea_agent.skills import freeze_codetalks_skill, task_skill_context
 
 
 def _freeze_sources(state: PangeaState, repositories: list[dict], expansion: dict) -> list[dict]:
@@ -154,6 +155,7 @@ def _freeze_test_case_examples(state: PangeaState, examples: list[str]) -> list[
 def prepare_inputs(state: PangeaState) -> PangeaState:
     contract = state["task_contract"]
     run_dir = run_directory(state)
+    frozen_skill = freeze_codetalks_skill(run_dir)
     freeze_enabled_methodologies(
         state["data_root"],
         run_dir,
@@ -246,6 +248,7 @@ def prepare_inputs(state: PangeaState) -> PangeaState:
         run_id=state["run_id"],
         target=contract["target"],
         analysis_language=analysis_language,
+        skill=task_skill_context(frozen_skill, "planning"),
         repositories=[RepositoryRef.model_validate(item) for item in frozen_repositories],
         requested_scope=requested_scope,
         compact_metadata_path=str(compact_path),
@@ -278,7 +281,12 @@ def prepare_inputs(state: PangeaState) -> PangeaState:
         stage="unit_planning",
         task_path=str(task_path),
     )
-    progress = WorkflowProgress(run_id=state["run_id"], stage="planning")
+    progress = WorkflowProgress(
+        run_id=state["run_id"],
+        stage="planning",
+        skill=frozen_skill,
+        skill_step_ids=["01", "02", "03"],
+    )
     add_action(progress, action)
     save_progress(state, progress)
     return {

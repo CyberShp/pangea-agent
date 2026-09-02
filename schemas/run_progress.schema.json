@@ -225,6 +225,57 @@
       "title": "AnalysisUnit",
       "type": "object"
     },
+    "FrozenSkillRef": {
+      "additionalProperties": false,
+      "properties": {
+        "skill_id": {
+          "const": "codetalks-skill",
+          "default": "codetalks-skill",
+          "title": "Skill Id",
+          "type": "string"
+        },
+        "version": {
+          "const": "1.0.0",
+          "default": "1.0.0",
+          "title": "Version",
+          "type": "string"
+        },
+        "derived_from": {
+          "const": "codetalks-fused-v2.4",
+          "default": "codetalks-fused-v2.4",
+          "title": "Derived From",
+          "type": "string"
+        },
+        "digest": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Digest",
+          "type": "string"
+        },
+        "root_path": {
+          "minLength": 1,
+          "title": "Root Path",
+          "type": "string"
+        },
+        "manifest_path": {
+          "minLength": 1,
+          "title": "Manifest Path",
+          "type": "string"
+        },
+        "integration_path": {
+          "minLength": 1,
+          "title": "Integration Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "digest",
+        "root_path",
+        "manifest_path",
+        "integration_path"
+      ],
+      "title": "FrozenSkillRef",
+      "type": "object"
+    },
     "ValidationFailureRecord": {
       "additionalProperties": false,
       "properties": {
@@ -326,6 +377,16 @@
       "default": null,
       "title": "Quality Status"
     },
+    "skill": {
+      "$ref": "#/$defs/FrozenSkillRef"
+    },
+    "skill_step_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Skill Step Ids",
+      "type": "array"
+    },
     "analysis_units": {
       "items": {
         "$ref": "#/$defs/AnalysisUnit"
@@ -396,7 +457,8 @@
     }
   },
   "required": [
-    "run_id"
+    "run_id",
+    "skill"
   ],
   "title": "WorkflowProgress",
   "type": "object"

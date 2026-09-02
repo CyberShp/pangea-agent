@@ -25,6 +25,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "pangea_agent.rubrics" = ["builtin/*.md"]
+"pangea_agent" = ["skill_packages/codetalks-skill/**/*"]
 
 [build-system]
 requires = ["setuptools>=68"]

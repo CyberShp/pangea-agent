@@ -25,6 +25,96 @@
       ],
       "title": "RepositoryRef",
       "type": "object"
+    },
+    "SkillTaskContext": {
+      "additionalProperties": false,
+      "properties": {
+        "skill_id": {
+          "const": "codetalks-skill",
+          "default": "codetalks-skill",
+          "title": "Skill Id",
+          "type": "string"
+        },
+        "version": {
+          "const": "1.0.0",
+          "default": "1.0.0",
+          "title": "Version",
+          "type": "string"
+        },
+        "derived_from": {
+          "const": "codetalks-fused-v2.4",
+          "default": "codetalks-fused-v2.4",
+          "title": "Derived From",
+          "type": "string"
+        },
+        "digest": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Digest",
+          "type": "string"
+        },
+        "root_path": {
+          "minLength": 1,
+          "title": "Root Path",
+          "type": "string"
+        },
+        "manifest_path": {
+          "minLength": 1,
+          "title": "Manifest Path",
+          "type": "string"
+        },
+        "integration_path": {
+          "minLength": 1,
+          "title": "Integration Path",
+          "type": "string"
+        },
+        "stage": {
+          "enum": [
+            "planning",
+            "analysis",
+            "review",
+            "closure",
+            "reporting"
+          ],
+          "title": "Stage",
+          "type": "string"
+        },
+        "step_ids": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Step Ids",
+          "type": "array"
+        },
+        "step_paths": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Step Paths",
+          "type": "array"
+        },
+        "reference_paths": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Reference Paths",
+          "type": "array"
+        }
+      },
+      "required": [
+        "digest",
+        "root_path",
+        "manifest_path",
+        "integration_path",
+        "stage",
+        "step_ids",
+        "step_paths",
+        "reference_paths"
+      ],
+      "title": "SkillTaskContext",
+      "type": "object"
     }
   },
   "additionalProperties": false,
@@ -72,6 +162,9 @@
       ],
       "title": "Analysis Language",
       "type": "string"
+    },
+    "skill": {
+      "$ref": "#/$defs/SkillTaskContext"
     },
     "repositories": {
       "items": {
@@ -185,6 +278,7 @@
   "required": [
     "run_id",
     "target",
+    "skill",
     "repositories",
     "requested_scope",
     "compact_metadata_path",

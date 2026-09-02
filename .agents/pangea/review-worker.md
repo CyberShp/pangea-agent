@@ -1,5 +1,7 @@
 # Review worker
 
+开始前必须校验 `task.skill.skill_id=codetalks-skill` 且 `task.skill.version=1.0.0`，然后严格按 `task.skill.step_paths`、`task.skill.reference_paths` 的列出顺序读取冻结文件。本阶段只执行 08 独立裁判步骤；不得改读源码包、历史版本或跳过步骤。Producer 的结论不是证据，Reviewer 必须从冻结输入独立复核后再做对照。Skill 文件定义评审方法，task/schema 定义内部提交契约；两者都必须满足。
+
 每个 task 只执行其 `task_type` 指定的一个检查点，不派发子 Agent。
 
 Review 可以使用整个冻结分析范围内的源码作跨单元佐证；`affected_unit_ids` 只表示哪些单元的正式结果需要改变，不能为了容纳一条对照证据就扩大返工单元。每条 `evidence.path` 必须从 task 的 `evidence_scope_by_unit` 任一 `allowed_paths` 中原样选择，不加 `repo_id:` 前缀，不重复目录，也不得引用冻结范围外源码。
@@ -44,4 +46,4 @@ Review 自己的顶层 `unresolved` 也不是首轮未决项的汇总区。`inde
 
 写入前逐项自检：字段必须符合 schema、category 必须来自固定枚举、`affected_unit_ids` 必须来自 unit plan 且只包含需要修改正式结果的单元、evidence 必须是对象数组且 path 来自全局冻结范围。`comparison_review` 还必须用编号集合做最后等值检查：`set(independent_finding_decisions[].finding_key) == set(independent_review.findings[].finding_key)`，不得多、少或重复，也不得出现任何 Worker risk key。最后单独检查顶层 `unresolved`：`comparison_review` 必须为 `[]`，无法裁决的 finding 只写 decision；`independent_review` 除非 task 的冻结输入本身缺失，否则也必须为 `[]`。范围外实现、外部文档、运行时假设、后续研究和低置信度一律不写入。将完整 JSON 写到 task 的 `result_path`，不得修改其他结果。若校验器返回错误，只修正同一 `result_path` 后重新提交，不得改派其他 Agent 修 review JSON。
 
-结束前运行 `.venv/bin/python -m pangea_agent.cli.main check-result-json --task '<当前 task JSON 路径>'`；Windows 工作区对应使用 `.venv\Scripts\python.exe`。不要改用 `PYTHONPATH`、系统 `python3` 或只检查 JSON 语法的临时代码。该命令只读检查 JSON 是否可消费并提示确定性结构问题，不判断 finding、不改写结果或 Run 状态。`submission_ready=false` 表示 JSON 无法被下游读取，必须修正后重跑；`submission_ready=true` 时可以结束当前回合，`status=WARN` 的提示由 settle 原样记录为降级。最终回复只用一行 `完成 action_id=<task.action_id>`；不得省略或改写当前 task 中的 `action_id`，也不复述 JSON 或复核内容。历史 task 没有 `action_id` 时才只回复“完成”。
+结束前运行 `.venv/bin/python -m pangea_agent.cli.main check-result-json --task '<当前 task JSON 路径>'`；Windows 工作区对应使用 `.venv\Scripts\python.exe`。不要改用 `PYTHONPATH`、系统 `python3` 或只检查 JSON 语法的临时代码。该命令只读检查 JSON 是否可消费并提示确定性结构问题，不判断 finding、不改写结果或 Run 状态。`submission_ready=false` 表示 JSON 无法被下游读取，必须修正后重跑；`submission_ready=true` 时可以结束当前回合，`status=WARN` 的提示由 settle 原样记录为警告。最终回复只用一行 `完成 action_id=<task.action_id>`；不得省略或改写当前 task 中的 `action_id`，也不复述 JSON 或复核内容。历史 task 没有 `action_id` 时才只回复“完成”。

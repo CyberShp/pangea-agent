@@ -8,6 +8,8 @@ tools:
 ---
 # Review worker
 
+开始前必须校验 `task.skill.skill_id=codetalks-skill` 且 `task.skill.version=1.0.0`，然后严格按 `task.skill.step_paths`、`task.skill.reference_paths` 的列出顺序读取冻结文件。本阶段只执行 08 独立裁判步骤；不得改读源码包、历史版本或跳过步骤。Producer 的结论不是证据，Reviewer 必须从冻结输入独立复核后再做对照。Skill 文件定义评审方法，task/schema 定义内部提交契约；两者都必须满足。
+
 每个 task 只执行其 `task_type` 指定的一个检查点，不派发子 Agent。
 
 开始分析前必须读取 task、`result_schema_path` 和 `result_skeleton_path`。Graph 已把对应骨架写入 task 的唯一 `result_path`；必须在该文件中输出完整真实结果，不得保留占位符、使用字段别名或另建结果文件。

@@ -45,6 +45,7 @@ from pangea_agent.models.analysis import (
     RepositoryRef,
     UnitSemanticResult,
 )
+from pangea_agent.skills import task_skill_context
 
 
 COMMON_RUBRIC_NAMES = (
@@ -320,6 +321,7 @@ def _prepare_analysis(state: PangeaState, progress) -> PangeaState:
     progress.analysis_units = units
     planning_action.status = "accepted"
     progress.stage = "analyzing"
+    progress.skill_step_ids = ["04", "05", "06", "07"]
     user_rubric_paths = {
         Path(path).stem: path for path in frozen_methodology_paths(run_dir)
     }
@@ -346,6 +348,7 @@ def _prepare_analysis(state: PangeaState, progress) -> PangeaState:
             run_id=state["run_id"],
             target=state["task_contract"]["target"],
             analysis_language=analysis_language,
+            skill=task_skill_context(progress.skill, "analysis"),
             unit=unit,
             evidence_scope=_evidence_scope(unit),
             repository=repositories[unit.repo_id],
@@ -424,6 +427,7 @@ def _accept_analysis(state: PangeaState, progress) -> PangeaState:
         run_id=state["run_id"],
         target=state["task_contract"]["target"],
         analysis_language=analysis_language,
+        skill=task_skill_context(progress.skill, "review"),
         repositories=[
             RepositoryRef.model_validate(item) for item in source_manifest["repositories"]
         ],
@@ -453,6 +457,7 @@ def _accept_analysis(state: PangeaState, progress) -> PangeaState:
         read_json(Path(task.result_skeleton_path)),
     )
     progress.stage = "reviewing"
+    progress.skill_step_ids = ["08"]
     add_action(progress, ActionState(
         action_id=action_id,
         action="dispatch_agent",
@@ -564,6 +569,7 @@ def _accept_independent_review(state: PangeaState, progress, action) -> PangeaSt
         run_id=state["run_id"],
         target=state["task_contract"]["target"],
         analysis_language=task.analysis_language,
+        skill=task_skill_context(progress.skill, "review"),
         evidence_scope_by_unit=_evidence_scope_by_unit(progress),
         unit_plan_path=task.unit_plan_path,
         analysis_task_paths={
@@ -654,6 +660,7 @@ def _accept_comparison_review(state: PangeaState, progress, action) -> PangeaSta
         obligations_by_unit[unit.unit_id] = risk_test_obligations(result)
     if not all_findings and not any(obligations_by_unit.values()):
         progress.stage = "reporting"
+        progress.skill_step_ids = ["09"]
         save_progress(state, progress)
         return {**state, "ready_to_finalize": True}
 
@@ -666,6 +673,7 @@ def _accept_comparison_review(state: PangeaState, progress, action) -> PangeaSta
         for item in independent_task.repositories
     }
     progress.stage = "closing"
+    progress.skill_step_ids = ["04", "05", "06", "07", "08"]
     closure_created = False
     for unit in progress.analysis_units:
         findings = findings_by_unit.get(unit.unit_id, [])
@@ -689,6 +697,7 @@ def _accept_comparison_review(state: PangeaState, progress, action) -> PangeaSta
             run_id=state["run_id"],
             target=state["task_contract"]["target"],
             analysis_language=original_task.analysis_language,
+            skill=task_skill_context(progress.skill, "closure"),
             unit=unit,
             evidence_scope=_evidence_scope(unit),
             repository=repositories[unit.repo_id],
@@ -722,6 +731,7 @@ def _accept_comparison_review(state: PangeaState, progress, action) -> PangeaSta
         closure_created = True
     if not closure_created:
         progress.stage = "reporting"
+        progress.skill_step_ids = ["09"]
         save_progress(state, progress)
         return {**state, "ready_to_finalize": True}
     save_progress(state, progress)
@@ -757,13 +767,14 @@ def _accept_closure(state: PangeaState, progress) -> PangeaState:
                 read_json(Path(original_task.selected_inputs_path)),
                 closure_task.review_findings,
             )
-            # 引用不完整由 adapter 记录为降级；Graph 保留 Agent 原始结果继续汇总。
+            # 引用不完整由 adapter 记录为警告；Graph 保留 Agent 原始结果继续汇总。
         except Exception as exc:
             _fail_action(state, progress, action, exc)
             raise
         action.status = "accepted"
         progress.completed_closure_units.append(unit_id)
     progress.stage = "reporting"
+    progress.skill_step_ids = ["09"]
     save_progress(state, progress)
     return {**state, "ready_to_finalize": True}
 

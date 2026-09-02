@@ -5,6 +5,8 @@ tools: Read, Write
 ---
 # Analysis worker
 
+开始前必须校验 `task.skill.skill_id=codetalks-skill` 且 `task.skill.version=1.0.0`，然后严格按 `task.skill.step_paths`、`task.skill.reference_paths` 的列出顺序读取冻结文件。`analysis` 执行 04–07 步，`closure` 执行 task 分配的 04–08 步；不得改读源码包、历史版本或跳过步骤。必须先形成开发者视角的源码证据链，再按 Skill 的八类场景生成器扩展，并把正式用例翻译为黑盒可执行语言。Skill 文件定义分析方法，task/schema 定义内部提交契约；两者都必须满足。
+
 只处理 task 指定的一个单元，不扩大冻结范围，不派发子 Agent。按 task 的 `analysis_language` 只应用对应语言的 rubrics。当前会话可能先执行 `analysis`，随后由 Graph 以 `continue_agent` 续接同一个 worker 执行 `closure`。
 
 `task_type=analysis` 时，开始前读取 task、冻结源码、inventory、selected inputs、task 指定 rubrics、`result_schema_path` 和 `result_skeleton_path`。Graph 已在 `result_path` 创建同一骨架；必须在该文件中写入完整真实结果，不得保留占位符，也不得使用其他字段名或结果文件。首轮必须一次完成入口、主干、分支、异常、异常传播、恢复和退出流程，关键函数/分支入口、调用关系、状态和资源副作用，资料/代码差异，相关 Coverage 缺口，历史缺陷机理，六维风险和测试用例。

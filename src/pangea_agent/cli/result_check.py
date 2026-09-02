@@ -5,7 +5,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from pangea_agent.agent_io import read_json
-from pangea_agent.graph.degraded_results import normalize_analysis_result
+from pangea_agent.graph.analysis_normalizer import normalize_analysis_result
 from pangea_agent.graph.planning import (
     accept_planning_result,
     normalize_planning_result,
@@ -132,6 +132,6 @@ def check_result_json(task_path: str) -> dict:
         response["status"] = "WARN"
         response["agent_next_step"] = (
             "当前 Agent 检查 advisories；确认语义结果后可以结束当前回合，"
-            "settle 会保留原结果并记录降级提示"
+            "settle 会保留原结果并记录警告"
         )
     return response

@@ -17,6 +17,23 @@ class RepositoryRef(StrictModel):
     git: dict = Field(default_factory=dict)
 
 
+class FrozenSkillRef(StrictModel):
+    skill_id: Literal["codetalks-skill"] = "codetalks-skill"
+    version: Literal["1.0.0"] = "1.0.0"
+    derived_from: Literal["codetalks-fused-v2.4"] = "codetalks-fused-v2.4"
+    digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    root_path: str = Field(min_length=1)
+    manifest_path: str = Field(min_length=1)
+    integration_path: str = Field(min_length=1)
+
+
+class SkillTaskContext(FrozenSkillRef):
+    stage: Literal["planning", "analysis", "review", "closure", "reporting"]
+    step_ids: list[str] = Field(min_length=1)
+    step_paths: list[str] = Field(min_length=1)
+    reference_paths: list[str] = Field(min_length=1)
+
+
 class SourceEvidence(StrictModel):
     repo_id: str = Field(min_length=1)
     path: str = Field(min_length=1)
@@ -61,6 +78,7 @@ class PlanningTask(StrictModel):
     run_id: str = Field(min_length=1)
     target: str = Field(min_length=1)
     analysis_language: AnalysisLanguage = "c_cpp"
+    skill: SkillTaskContext
     repositories: list[RepositoryRef] = Field(min_length=1)
     requested_scope: list[str] = Field(min_length=1)
     compact_metadata_path: str = Field(min_length=1)
@@ -246,6 +264,7 @@ class AnalysisTask(StrictModel):
     run_id: str = Field(min_length=1)
     target: str = Field(min_length=1)
     analysis_language: AnalysisLanguage = "c_cpp"
+    skill: SkillTaskContext
     unit: AnalysisUnit
     evidence_scope: EvidenceScopeContract | None = None
     repository: RepositoryRef
@@ -295,6 +314,7 @@ class IndependentReviewTask(StrictModel):
     run_id: str = Field(min_length=1)
     target: str = Field(min_length=1)
     analysis_language: AnalysisLanguage = "c_cpp"
+    skill: SkillTaskContext
     repositories: list[RepositoryRef] = Field(min_length=1)
     evidence_scope_by_unit: dict[str, EvidenceScopeContract] = Field(
         default_factory=dict
@@ -369,6 +389,7 @@ class ComparisonReviewTask(StrictModel):
     run_id: str = Field(min_length=1)
     target: str = Field(min_length=1)
     analysis_language: AnalysisLanguage = "c_cpp"
+    skill: SkillTaskContext
     evidence_scope_by_unit: dict[str, EvidenceScopeContract] = Field(
         default_factory=dict
     )
@@ -395,6 +416,7 @@ class ClosureTask(StrictModel):
     run_id: str = Field(min_length=1)
     target: str = Field(min_length=1)
     analysis_language: AnalysisLanguage = "c_cpp"
+    skill: SkillTaskContext
     unit: AnalysisUnit
     evidence_scope: EvidenceScopeContract | None = None
     repository: RepositoryRef
@@ -461,6 +483,8 @@ class WorkflowProgress(StrictModel):
         "complete",
     ] = "preparing"
     quality_status: Literal["PASS", "UNRESOLVED"] | None = None
+    skill: FrozenSkillRef
+    skill_step_ids: list[str] = Field(default_factory=list)
     analysis_units: list[AnalysisUnit] = Field(default_factory=list)
     completed_analysis_units: list[str] = Field(default_factory=list)
     completed_closure_units: list[str] = Field(default_factory=list)
