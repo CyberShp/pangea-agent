@@ -16,7 +16,7 @@
 
 Flow 表达这类源码时也必须保持语言语义：`if (value < 0) return -1; return value + 1;` 的负值分支直接返回 `-1`；非负分支只有在 `0 <= value < INT_MAX` 时能保证正常返回 `value + 1`，`value == INT_MAX` 应保留为无定义 successor/无稳定结果的 outcome。必须能从 `flows[].edges[]` 直接指出 `value == INT_MAX` 的 source、target 和 condition；只有 `0 <= value < INT_MAX` 的安全域 edge 不算已经表达无定义 outcome。安全返回与无定义结果不能指向同一个写成“正常返回或未定义”的混合 terminal step；trigger edge 必须指向独立的 undefined/no-stable-result step。不得用一条无条件 `value >= 0` 正常返回 edge 覆盖该 Risk trigger，也不得用 Risk 自己的 `exclusion_condition` 代替 Flow 中缺失的安全域条件和无定义 outcome。
 
-`SourceEvidence.observation` 只记录 cited range 本身的源码事实。若表达式行不含操作数的类型声明，应扩大引用到真实声明行，或只在 observation 描述表达式；usual arithmetic conversions、C 标准 UB 结论和 Risk 分类写入 trigger/system_result/summary，不伪装成单行源码观察。
+`SourceEvidence.observation` 逐字复制 cited range 中足以定位事实的最小源码片段，不追加解释；类型需要证据就另引真实声明行。usual arithmetic conversions、C 标准 UB 结论和 Risk 分类写入 trigger/system_result/summary。
 
 没有冻结目标 ABI、编译器参数或构建契约时，按 usual arithmetic conversions 后的真实有符号运算类型使用对应 `TYPE_MAX` 等边界符号，不把 `int` 擅自写成固定 32 位数值，也不把 `long`、整数提升后的 `short/signed char` 或 unsigned 运算套成 `INT_MAX` signed overflow。精确边界不能扩写成“其他极大值”“附近值”或更宽输入域；只有运算类型确为 `int` 的 `value + 1` 才在 `value == INT_MAX` 触发 signed overflow。signed overflow 的受控观测可依赖 UBSan 或对应 sanitizer 构建；ASan 单独不是该算术错误的检测依据。未冻结 UBSan recover/trap 配置时只能说“可报告该错误”，不能断言必然中止。普通构建必须明确不存在稳定产品 Oracle；任何返回值、终止状态或其他表现都不能被约定为必然，可列举但不得把可能后果写成穷举式“只能”。启用 sanitizer 只能增加观测，不是 Risk 的 exclusion condition；排除条件必须由冻结证据证明能阻止完整 trigger、证明该 Risk 路径不可达，或让相关操作具有受定义语义；应用后 Risk 所述失效结果必须不可能发生。对 `int value + 1` 的单点 `value == INT_MAX` signed-overflow 风险，拒绝 `value == INT_MAX`、保证 `value != INT_MAX`，或把全部允许输入限制在 `value < INT_MAX`（更窄的已证安全域也可）都能阻止触发；若文字实际排除安全输入却仍允许 `INT_MAX` 且未改变算术语义，则不成立。Risk severity 必须结合受支持入口和产品影响证据，不得只因源码存在 UB 就自动判 High/Critical。
 
