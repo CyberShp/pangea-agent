@@ -85,6 +85,8 @@ caller truncation 不只约束 `not_test_relevant|developer_confirm|unreachable`
 
 Coverage 只指出需要补覆盖的函数或路径，不等于测试步骤。对于低覆盖或未覆盖函数，必须寻找真实测试入口和业务触发条件，再决定如何处置。**如果目标只是内部实现函数，不得为了补覆盖直接调用它；如果目标本身已经由冻结证据确认是稳定公开 API，则直接调用该公开 API 是合法测试入口，不需要为了形式再向上追一层。**
 
+每条真实 Coverage record 始终各自形成冻结 obligation。只有冻结证据正向证明 records 属于同一次采集并具有可直接比较的计数语义时，才另行判断计数一致性；一致性问题不能替代每条 record 自己的 CoverageDecision。
+
 每个当前任务的 `coverage_id` 必须有且只有一个 `coverage_decisions[]`：
 
 - `scenario_mapped`：已经映射到真实 Scenario。

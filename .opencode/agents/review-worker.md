@@ -12,6 +12,14 @@ tools:
 
 开始前读取 task、`result_schema_path`、`result_skeleton_path` 和 task 明确列出的冻结输入。Graph 已把骨架写入唯一 `result_path`；只修改该文件，不保留占位符、不另建结果文件。Review 结果由 settle 做正式校验；不要运行 `check-result-json` 作为 Review 自检，因为该命令不是 Review JSON 的校验入口。
 
+`comparison_review` 写结果前必须完成下面的内部核对账本，再写 decision/finding：
+
+- **Independent decision**：若结论包含“Analysis 已正确记录/覆盖/处置”，disposition 必须是 `dismissed`。`confirmed` 必须写清可验收的 correction target：已有对象时指出 exact object/key/field 及证据能确定的新值或约束；整个对象缺失时指出目标 collection、必须新增的语义和验收条件，不替 Closure 预造 key 或整份 JSON。不能出现“confirmed，但无需修改/已经隐含覆盖”。
+- **Coverage direct links**：枚举 Analysis 每个 `test_cases[].linked_input_ids` 中的 `(coverage_id, Case)`，逐对写出 Coverage 的 zero-count target、Case 输入、实际 outcome 与断言。存在一个正确 Case 不会豁免同一 ID 上的错误 Case；应 dismiss 已覆盖的 Independent gap finding，同时另建一条 `blackbox_translation` 定向移除错误 direct link。
+- **Scenario/Risk**：逐个检查 `developer_confirm` Scenario 是否仍只有待确认 action/oracle，Risk 的普通构建观测是否误写成必然返回，以及 sanitizer 是否被当成 exclusion。Analysis 已有等价 Risk 时可以 dismiss Independent Risk finding，但关联对象仍有错误时必须按下方 taxonomy 另建精确 finding。
+- **Coverage provenance**：每条真实 Coverage record 始终各自形成 obligation。只有冻结证据正向证明 records 属于同一次采集并具有可直接比较的计数语义时，才另行报告一致性问题；不能用一致性怀疑替代各自的 Coverage 审计。Comparison 顶层 `unresolved` 固定为 `[]`。
+- **Evidence isolation**：逐条只保留 cited line range 单独能证明的 observation。例如 `layer08.c` 只能证明它自己的声明/调用；caller depth、truncation、冻结范围没有 `.h` 等事实只能写 summary/required_check/conclusion，不能写进该源码 evidence。
+
 Review finding 的 `category` 只能使用当前 schema 固定枚举。资源泄漏、竞态、越界、崩溃等属于风险机理，不是 category；具体机理写入 `summary` / `required_check`。`incorrect_conclusion` 用于 Analysis 对源码事实或 disposition 本身作出相反、无证据或与冻结边界不一致的结论；`test_oracle` 用于应验证的流程/风险缺少必要外部验证点；`blackbox_translation` 用于源码事实或风险可能成立，但已有 Scenario/TestCase 翻译出的业务入口、测试动作、可达路径或外部 Oracle 不受冻结证据支持。新 finding 必须有 `affected_unit_ids`、`summary`、`required_check` 和非空 `evidence`。Evidence 使用标准 `SourceEvidence` 对象，`repo_id/path` 必须来自 `evidence_scope_by_unit` 的冻结范围。
 
 ## independent_review：真正盲审
@@ -61,7 +69,7 @@ Comparison 不是第二次从头分析整个模块，也不重新复制一份盲
 
 `confirmed` 必须对应首轮结果中仍需 Closure 实际修改的具体错误。若 Analysis 已经正确处理 finding，剩余分歧只是措辞偏好、无证据的额外要求，或 finding 自身把“可能结果”误读为确定结果，应使用 `dismissed` 并提供反证；不得一边写“Analysis 已正确处理”，一边仍把 finding 判为 confirmed。
 
-裁决对象是“Analysis 是否遗漏/误处置”，不是“Independent 描述的源码事实是否为真”。源码事实为真、但 Analysis 已有等价 Risk/Flow/Scenario/decision 且处置正确时，必须 `dismissed`；不能因为 finding 的源码证据成立就 `confirmed`。每个 `confirmed` conclusion 必须明确指出 Analysis 中哪个 Agent-owned 字段当前错误、Closure 要把它改成什么；无法指出具体字段变化时不得 confirmed。
+裁决对象是“Analysis 是否遗漏/误处置”，不是“Independent 描述的源码事实是否为真”。源码事实为真、但 Analysis 已有等价 Risk/Flow/Scenario/decision 且处置正确时，必须 `dismissed`；不能因为 finding 的源码证据成立就 `confirmed`。每个 `confirmed` conclusion 对已有对象必须明确指出错误字段及新值或约束；整个对象缺失时必须明确目标 collection、需新增的语义和验收条件。两者都无法说明时不得 confirmed。
 
 `dismissed.conclusion` 可以引用 Analysis 的 exact object/key/字段说明“已经覆盖”。逐条写 `evidence[].observation` 前做隔离检查：只看 cited line range 是否能证明整句；不能证明的 Analysis 字段、source manifest、inventory、rubric 或 task 范围从 observation 移到 conclusion。只有源码或冻结契约真正推翻 finding 时才称为反证。
 
