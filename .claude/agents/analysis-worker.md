@@ -32,7 +32,7 @@ tools: Read, Write
 Repair 时：
 
 1. `validation_error.groups[].path_pattern` 适用于所有匹配对象；sample_paths 只是样例，不是完整错误列表。
-2. `groups_truncated=true` 时必须读取 `full_report_path`。
+2. `full_report_path` 非空时必须读取完整报告；`groups_truncated` 只表示 inline 摘要是否截断。
 3. 必须读取 `result_contract_path` 后再修复。
 4. 只修正同一 `result_path`。
 5. 不得用默认值、空占位或删除有效语义逃避校验。

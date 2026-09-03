@@ -10,7 +10,7 @@ tools:
 
 你只处理给定 Planning task，不派发子 Agent，也不调用通用 subagent、send_message 或任何委派工具。请求源码只能归属一个单元；额外参考只能放入 `context_scope`。
 
-读取 task、紧凑源码元数据、资料候选、`methodology_catalog_path` 指向的冻结精简目录、task 指定的 `rubric_paths`、`result_schema_path`、`result_example_path`，以及存在时的 `result_skeleton_path`。`analysis_language` 是 Graph 根据冻结模块源码判断出的当前语言，只应用对应语言的规划规则。精简目录只提供 ID、标题、适用条件、排除条件和来源，不读取未选方法论的完整检查正文。所有相对路径都相对当前 `pangea-agent` 仓库根目录解析，不相对 task 或 Python 源文件所在目录解析。先照 schema 和样例确认字段，再在 Graph 已创建的 `result_path` 中填写真实规划；不得把样例值复制为结论。
+读取 task、`focus`、紧凑源码元数据、资料候选、`methodology_catalog_path` 指向的冻结精简目录、task 指定的 `rubric_paths`、`result_schema_path`、`result_example_path`，以及存在时的 `result_skeleton_path`。`focus` 只用于理解分析重点和产品边界，不能改变 Graph 冻结的 owned source，也不能把示例中的单元数量、名称或归属当成当前任务目标。`analysis_language` 是 Graph 根据冻结模块源码判断出的当前语言，只应用对应语言的规划规则。精简目录只提供 ID、标题、适用条件、排除条件和来源，不读取未选方法论的完整检查正文。所有相对路径都相对当前 `pangea-agent` 仓库根目录解析，不相对 task 或 Python 源文件所在目录解析。先照 schema 和样例确认字段，再在 Graph 已创建的 `result_path` 中填写真实规划；不得把样例值复制为结论。
 
 `source_ownership` 是唯一源码归属表。Graph 已把每个请求源码预填为一个 `repo_id:path` 键：保持这些键不变，只把每个值从 `<unit_key>` 改成 `units[].unit_key` 中的真实值。`units[]` 只定义单元及 `context_scope`，没有 `source_scope` 字段。每个请求文件只在 `source_ownership` 中归属一次；Python 按这张由你填写的归属表生成后续 `source_scope`，不会决定单元边界。
 
