@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Codetalks Skill 1.2.0 Markdown-first workflow and directory-layout guard."""
+"""Codetalks Skill 1.3.0 Markdown-first workflow and directory-layout guard."""
 
 from __future__ import annotations
 import argparse
@@ -331,7 +331,7 @@ def command_init(args) -> None:
         (root / relative).mkdir(parents=True, exist_ok=True)
 
     state = {
-        "version": "1.2.0",
+        "version": "1.3.0",
         "created_at": now(),
         "updated_at": now(),
         "skill_root": str(skill_root),
@@ -351,8 +351,8 @@ def command_init(args) -> None:
         "verdict": None,
     }
     save_json(state_path(root), state)
-    save_json(root / "内部索引/运行计划.json", {"version": "1.2.0", "passes": []})
-    save_json(root / "内部索引/输入材料索引.json", {"version": "1.2.0", "items": []})
+    save_json(root / "内部索引/运行计划.json", {"version": "1.3.0", "passes": []})
+    save_json(root / "内部索引/输入材料索引.json", {"version": "1.3.0", "items": []})
 
     layout_errors = validate_layout(root, final_phase=False)
     if layout_errors:

@@ -11,7 +11,14 @@ from pangea_agent.assets import freeze_asset_inputs, load_asset
 from pangea_agent.inventory.languages import C_CPP_SUFFIXES, IGNORED_PARTS, LUA_SUFFIXES
 from pangea_agent.methodology import freeze_enabled_methodologies
 from pangea_agent.repositories.resolver import resolve_repository
-from pangea_agent.skills import SOURCE_ROOT, freeze_skill_package, validate_skill_package
+from pangea_agent.skills import (
+    SKILL_ID,
+    SKILL_VERSION,
+    SOURCE_ROOT,
+    freeze_skill_package,
+    skill_package_digest,
+    validate_skill_package,
+)
 
 
 def _safe_run_id(value: str) -> str:
@@ -152,6 +159,8 @@ def _language_profiles(repository_root: Path, scope: list[dict[str, str]]) -> di
             "status": "unresolved",
             "reason": "用户范围没有检测到 C/C++ 或 Lua 源码；由 Agent 在 Step 01 给出可修正诊断。",
         }
+    if found == {"c_cpp", "lua"}:
+        raise ValueError("当前版本不支持同一分析范围同时包含 C/C++ 与 Lua 源码")
     languages = (["c_cpp"] if "c_cpp" in found else []) + (["lua"] if "lua" in found else [])
     profiles = languages.copy()
     if "lua" in found and openubmc:
@@ -211,7 +220,7 @@ def _request_markdown(
         "先完整读取 SKILL.md。随后第一条执行命令必须是该 Skill 规定的 `run_guard.py init`，再按 JIT 规则逐步执行 01–09。",
         "Producer 完成 Step 07 后必须启动一个与 Producer 分离的独立 Judge 执行 Step 08；Judge 只以运行计划、活文档、源码和证据为依据。",
         "只有 `run_guard.py finalize` 成功后才可宣称完成。",
-        "根据上面的语言 Profile 读取对应参考：检测到 Lua 必须读取 `references/language-lua.md`；检测到 openUBMC 目录时还必须读取 `references/openubmc-lua.md`。混合 C/C++ 与 Lua 时同时遵守两套语言语义，但仍只生成一套统一的 Markdown 交付。",
+        "根据上面的语言 Profile 读取对应参考：检测到 Lua 必须读取 `references/language-lua.md`；检测到 openUBMC 目录时还必须读取 `references/openubmc-lua.md`。当前版本不接受同一分析范围同时包含 C/C++ 与 Lua 源码。",
         "",
         "## 分析对象",
         "",
@@ -262,6 +271,7 @@ def create_skill_run(request_path_value: str) -> dict:
         run_root.mkdir(parents=True)
         request_root.mkdir(parents=True)
         frozen_skill = freeze_skill_package(request_root / "skill")
+        frozen_skill_digest = skill_package_digest(frozen_skill)
         asset_manifest = freeze_asset_inputs(
             data_root,
             run_root,
@@ -294,6 +304,11 @@ def create_skill_run(request_path_value: str) -> dict:
             "methodology_catalog_path": str(run_root / "inputs" / "methodologies" / "catalog.json"),
             "run_root": str(run_root),
             "skill_root": str(frozen_skill),
+            "skill": {
+                "skill_id": SKILL_ID,
+                "version": SKILL_VERSION,
+                "digest": frozen_skill_digest,
+            },
             "request_path": str(request_path),
         }
         write_json(_metadata_path(data_root, run_id), metadata)
@@ -340,11 +355,14 @@ def skill_run_detail(data_root: str, run_id: str) -> dict:
     # Runs created by codetalks-skill 1.0.0 predate the metadata field used
     # by 1.1.0. Read the frozen manifest so historical Run pages retain the
     # version that actually created them instead of being relabelled.
-    skill_version = "1.0.0"
-    try:
-        skill_version = str(read_json(Path(metadata["skill_root"]) / "workflow-manifest.json")["version"])
-    except (KeyError, OSError, TypeError, ValueError):
+    frozen_skill = metadata.get("skill") if isinstance(metadata.get("skill"), dict) else {}
+    skill_version = frozen_skill.get("version")
+    if not isinstance(skill_version, str) or not skill_version:
         skill_version = "1.0.0"
+        try:
+            skill_version = str(read_json(Path(metadata["skill_root"]) / "workflow-manifest.json")["version"])
+        except (KeyError, OSError, TypeError, ValueError):
+            pass
     return {
         "run_id": run_id,
         "lifecycle_status": lifecycle,
@@ -353,8 +371,9 @@ def skill_run_detail(data_root: str, run_id: str) -> dict:
         "verdict": verdict,
         "quality_status": verdict,
         "skill": {
-            "skill_id": "codetalks-skill",
+            "skill_id": frozen_skill.get("skill_id", "codetalks-skill"),
             "version": skill_version,
+            "digest": frozen_skill.get("digest"),
             "root_path": metadata["skill_root"],
         },
         "completed_steps": state.get("completed_steps", []) if state else [],
@@ -428,7 +447,8 @@ def validate_runtime_skill() -> dict:
     validate_skill_package(SOURCE_ROOT)
     return {
         "skill_id": "codetalks-skill",
-        "version": "1.2.0",
+        "version": SKILL_VERSION,
+        "digest": skill_package_digest(SOURCE_ROOT),
         "derived_from": "codetalks-fused-v2.4",
         "root_path": str(SOURCE_ROOT),
     }

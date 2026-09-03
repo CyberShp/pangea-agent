@@ -1,10 +1,10 @@
 # pangea-agent
 
-`pangea-agent` 是部署在测试人员 Windows 电脑上的 Codetalks Skill 运行时与本地资料管理组件。源码、需求/设计资料、Coverage 和历史问题都由 `codetalks-skill 1.2.0` 直接消费并形成 Markdown 活文档与正式输出。
+`pangea-agent` 是部署在测试人员 Windows 电脑上的 Codetalks Skill 运行时与本地资料管理组件。源码、需求/设计资料、Coverage 和历史问题都由 `codetalks-skill 1.3.0` 直接消费并形成 Markdown 活文档与正式输出。
 
 Python 只负责仓库/资料登记、创建 Skill Run、冻结 Skill 包和只读解释 `run_guard.py` 状态。Python 不规划分析单元、不编排 Agent、不校验语义结果，也不生成报告。
 
-每个新 Run 都冻结一份完整 `codetalks-skill 1.2.0`，并在 Run 内冻结所选 Asset Management 2.0 资产和启用的方法论。DSH 分析会话读取该 Skill 后，使用它自己的 Step 01–09、`run_guard.py`、Producer/Judge 分工和正式输出契约走完整流程；语言 Profile 会根据已验证源码范围自动选择 C/C++、Lua 或混合模式。`内部索引/运行状态.json` 是唯一生命周期真相。
+每个新 Run 都冻结一份完整 `codetalks-skill 1.3.0` 及其 SHA-256 摘要，并在 Run 内冻结所选 Asset Management 2.0 资产和启用的方法论。DSH 分析会话读取该 Skill 后，使用它自己的 Step 01–09、`run_guard.py`、Producer/Judge 分工和正式输出契约走完整流程；语言 Profile 会根据已验证源码范围自动选择 C/C++ 或 Lua。`内部索引/运行状态.json` 是唯一分析步骤真相。
 
 ## 初始化
 
@@ -117,4 +117,4 @@ CLI 每次只向 stdout 输出一个 JSON envelope。主要能力分为：
 pangea-data/runs/<run-id>/正式输出/完整分析报告.md
 ```
 
-HTML 是无外链单文件，并直接渲染主干、分支、异常传播和恢复流程图。报告只展示与当前范围相关并已经处理的输入。
+当前只提供 Markdown 正式报告；不生成 HTML 报告。

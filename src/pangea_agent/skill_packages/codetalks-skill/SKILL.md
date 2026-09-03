@@ -5,15 +5,15 @@ description: >
   问题+日志+代码根因辅助定位及专项风险分析。通过确定性步骤门禁、证据消费台账、
   分支/状态/资源/协议/覆盖率多源场景增殖、开发实现讲解、黑盒测试转换、SFMEA
   和独立 Coverage Judge，避免浅层扫描、遗漏分支和 compact 后信息丢失。
-version: 1.2.0
+version: 1.3.0
 derived_from: codetalks-fused-v2.4
 license: CC-BY-SA-4.0
 allowed-tools: Read Search Grep Glob Bash Write Edit Agent AskUserQuestion
 ---
 
-# Codetalks Skill 1.2.0：源码驱动黑盒测试分析
+# Codetalks Skill 1.3.0：源码驱动黑盒测试分析
 
-本版本沿用 `codetalks-fused-v2.4` 的九步门禁，并增加语言 Profile：Agent 根据冻结的已验证源码范围自动识别 C/C++、Lua 或混合范围。检测到 Lua 时必须读取 `references/language-lua.md`；检测到 openUBMC Lua 组件时再读取 `references/openubmc-lua.md`。用户无需手动选择语言，只有识别失败或范围有歧义时才请求用户修正范围。
+本版本沿用 `codetalks-fused-v2.4` 的九步门禁，并增加语言 Profile：Agent 根据冻结的已验证源码范围自动识别 C/C++ 或 Lua。检测到 Lua 时必须读取 `references/language-lua.md`；检测到 openUBMC Lua 组件时再读取 `references/openubmc-lua.md`。当前版本不接受同一分析范围同时包含 C/C++ 与 Lua；命中时必须在创建 Run 前明确停止。
 
 ## 0. 本 Skill 解决的问题
 
@@ -39,7 +39,7 @@ V1 的主要缺陷不是“规则不够多”，而是规则只有文字约束�
 
 早期流程将大量 JSON 设置为步骤完成工件，容易诱导 Agent 把结构化填表当作分析本身。
 
-当前 1.2.0 基线固定为：
+当前 1.3.0 基线固定为：
 
 ```text
 源码和证据

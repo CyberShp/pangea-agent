@@ -35,7 +35,7 @@ def system_capabilities(data_root: str) -> dict:
     return {
         "analysis_skill": validate_runtime_skill(),
         "analysis_runtime": "direct-skill",
-        "analysis_languages": ["c_cpp", "lua", "mixed"],
+        "analysis_languages": ["c_cpp", "lua"],
         "asset_types": [
             "requirement",
             "design",

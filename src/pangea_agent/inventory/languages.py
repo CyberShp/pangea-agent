@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
-AnalysisLanguage = Literal["c_cpp", "lua", "mixed"]
+AnalysisLanguage = Literal["c_cpp", "lua"]
 
 C_CPP_SUFFIXES = {".c", ".h", ".cc", ".cpp", ".cxx", ".hpp", ".hh"}
 LUA_SUFFIXES = {".lua"}
@@ -42,7 +42,7 @@ def detect_analysis_language(
     if not found:
         raise ValueError("用户指定范围没有可分析的 C/C++ 或 Lua 源码")
     if found == {"c_cpp", "lua"}:
-        return "mixed"
+        raise ValueError("当前版本不支持同一分析范围同时包含 C/C++ 与 Lua 源码")
     return next(iter(found))
 
 
