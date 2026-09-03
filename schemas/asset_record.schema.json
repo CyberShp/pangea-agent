@@ -108,6 +108,7 @@
         "not_required",
         "pending",
         "approved",
+        "partially_approved",
         "rejected"
       ],
       "title": "Review Status",

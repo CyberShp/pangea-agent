@@ -50,6 +50,52 @@ def _record_path(data_root: str, asset_id: str) -> Path:
     return _asset_dir(data_root, asset_id) / "asset.json"
 
 
+def _review_path(data_root: str, asset_id: str) -> Path:
+    return _asset_dir(data_root, asset_id) / "review.json"
+
+
+def _load_review(data_root: str, asset_id: str, revision: int, result_sha256: str) -> dict:
+    path = _review_path(data_root, asset_id)
+    if path.is_file():
+        value = read_json(path)
+        if value.get("revision") == revision and value.get("result_sha256") == result_sha256:
+            return value
+    return {
+        "schema_version": "1.0",
+        "asset_id": asset_id,
+        "revision": revision,
+        "result_sha256": result_sha256,
+        "updated_at": _now(),
+        "items": [],
+    }
+
+
+def _review_summary(result: dict | None, review: dict | None) -> dict:
+    items = result.get("items", []) if isinstance(result, dict) else []
+    decisions = {item.get("item_id"): item for item in (review or {}).get("items", [])}
+    counts = {"pending": 0, "accepted": 0, "rejected": 0}
+    for item in items:
+        decision = decisions.get(item.get("item_id"), {}).get("decision", "pending")
+        counts[decision if decision in counts else "pending"] += 1
+    if counts["pending"]:
+        status = "pending"
+    elif counts["accepted"] and counts["rejected"]:
+        status = "partially_approved"
+    elif counts["accepted"]:
+        status = "approved"
+    else:
+        status = "rejected"
+    return {"status": status, "counts": counts, "items": list(decisions.values())}
+
+
+def _accepted_result(result: dict, review: dict) -> dict:
+    accepted = {
+        item.get("item_id") for item in review.get("items", [])
+        if item.get("decision") == "accepted"
+    }
+    return {**result, "items": [item for item in result.get("items", []) if item.get("item_id") in accepted]}
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -187,6 +233,8 @@ def _normalize_document(data_root: str, record: AssetRecord) -> AssetRecord:
     record.parser_version = PARSER_VERSION
     record.extraction_task_path = None
     record.result_path = None
+    if record.asset_type == "historical_defect":
+        _review_path(data_root, record.asset_id).unlink(missing_ok=True)
     record.structured_item_count = 0
     record.warnings = extraction.warnings
     record.last_error = None
@@ -300,6 +348,11 @@ def import_asset_revision(
     current_source = Path(record.source_path)
     if current_source.is_file():
         shutil.copy2(current_source, current_revision_root / (record.source_name or current_source.name))
+    current_review = _review_path(data_root, asset_id)
+    if current_review.is_file():
+        review_archive = _asset_dir(data_root, asset_id) / "revisions" / f"r{record.revision:04d}" / "review.json"
+        review_archive.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(current_review, review_archive)
     new_revision = record.revision + 1
     destination = _asset_dir(data_root, asset_id) / "revisions" / f"r{new_revision:04d}" / "source" / source_path.name
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -317,6 +370,7 @@ def import_asset_revision(
     record.warnings = []
     record.last_error = None
     record.status = "imported"
+    _review_path(data_root, asset_id).unlink(missing_ok=True)
     _save_record(data_root, record)
     if record.asset_type == "coverage":
         prepare_asset_extraction(data_root, asset_id)
@@ -400,11 +454,17 @@ def asset_detail(data_root: str, asset_id: str) -> dict:
             and _sha256(Path(record.source_path)) == record.source_sha256
         ),
     }
+    review = None
+    if record.asset_type == "historical_defect" and isinstance(result, dict):
+        result_sha256 = _sha256(Path(record.result_path)) if record.result_path and Path(record.result_path).is_file() else ""
+        review = _load_review(data_root, asset_id, record.revision, result_sha256)
+        review = {**review, **_review_summary(result, review)}
     return {
         "asset": record.model_dump(mode="json"),
         "result": result,
         "normalized_preview": normalized_preview,
         "integrity": integrity,
+        "review": review,
         "allowed_steps": ASSET_ALLOWED_STEPS[record.asset_type],
         "failure_record": {
             "asset_id": record.asset_id,
@@ -436,7 +496,7 @@ def freeze_asset_inputs(
             record = _ensure_normalized_text(str(root), record)
         if record.status != "available":
             raise ValueError(f"资产不可用于新分析：{asset_id}（status={record.status}）")
-        if record.review_status not in {"not_required", "approved"}:
+        if record.review_status not in {"not_required", "approved", "partially_approved"}:
             raise ValueError(f"资产尚未通过审核：{asset_id}")
         source = Path(record.source_path)
         if not source.is_file():
@@ -457,9 +517,18 @@ def freeze_asset_inputs(
         normalized_destination = item_root / "normalized.txt"
         shutil.copy2(Path(record.normalized_text_path), normalized_destination)
         frozen_result = None
+        result = None
         if record.result_path and Path(record.result_path).is_file():
             frozen_result = item_root / "structured.json"
-            shutil.copy2(Path(record.result_path), frozen_result)
+            result = read_json(Path(record.result_path))
+            review = None
+            if record.asset_type == "historical_defect":
+                result_sha256 = _sha256(Path(record.result_path))
+                review = _load_review(str(root), record.asset_id, record.revision, result_sha256)
+                if _review_summary(result, review)["status"] == "pending":
+                    raise ValueError(f"资产仍有未审核的历史缺陷：{asset_id}")
+                result = _accepted_result(result, review)
+            write_json(frozen_result, result)
         manifest_items.append({
             "asset_id": record.asset_id,
             "revision": record.revision,
@@ -471,6 +540,8 @@ def freeze_asset_inputs(
             "frozen_source_path": str(source_destination),
             "frozen_normalized_text_path": str(normalized_destination),
             "frozen_result_path": str(frozen_result) if frozen_result else None,
+            "review_status": record.review_status,
+            "accepted_item_count": len(result.get("items", [])) if isinstance(result, dict) else None,
             "allowed_steps": ASSET_ALLOWED_STEPS[record.asset_type],
         })
     manifest = {
@@ -512,6 +583,14 @@ def analysis_asset_inputs(data_root: str, asset_ids: list[str] | None = None) ->
                     "asset_id": record.asset_id,
                 })
             continue
+        if record.asset_type == "historical_defect":
+            review = _load_review(
+                data_root,
+                record.asset_id,
+                record.revision,
+                _sha256(Path(record.result_path)),
+            )
+            result = _accepted_result(result, review)
         extraction = AssetExtractionResult.model_validate(result)
         for item in extraction.items:
             candidate_id = f"{record.asset_id}:{item.item_id}"
@@ -613,6 +692,7 @@ def _accept_extraction_result(
     )
     record.result_path = str(result_path)
     write_json(result_path, result.model_dump(mode="json"))
+    _review_path(data_root, record.asset_id).unlink(missing_ok=True)
     record.structured_item_count = len(result.items)
     record.warnings = [*record.warnings, *result.warnings]
     if record.asset_type == "historical_defect":
@@ -638,22 +718,75 @@ def update_asset_result(data_root: str, asset_id: str, source: str) -> AssetReco
     return _accept_extraction_result(data_root, record, result)
 
 
-def review_asset(data_root: str, asset_id: str, decision: str) -> AssetRecord:
+def review_asset_items(
+    data_root: str,
+    asset_id: str,
+    revision: int,
+    result_sha256: str,
+    decisions: list[dict],
+) -> AssetRecord:
     record = load_asset(data_root, asset_id)
-    if record.asset_type != "historical_defect" or record.review_status != "pending":
-        raise ValueError("当前资产没有等待审核的历史缺陷结果")
-    if decision == "approve":
-        record.review_status = "approved"
-        record.status = "available" if (
-            record.structured_item_count or record.normalized_text_path
-        ) else "no_items"
-    elif decision == "reject":
-        record.review_status = "rejected"
+    if record.asset_type != "historical_defect":
+        raise ValueError("只有历史缺陷支持逐条审核")
+    if record.revision != revision:
+        raise ValueError("资产 revision 已变化，请刷新后重新审核")
+    if not record.result_path or not Path(record.result_path).is_file():
+        raise ValueError("资产没有可审核的结构化结果")
+    actual_sha256 = _sha256(Path(record.result_path))
+    if actual_sha256 != result_sha256:
+        raise ValueError("结构化结果已变化，请刷新后重新审核")
+    result = read_json(Path(record.result_path))
+    item_ids = {item.get("item_id") for item in result.get("items", [])}
+    review = _load_review(data_root, asset_id, revision, actual_sha256)
+    current = {item.get("item_id"): item for item in review.get("items", [])}
+    for decision in decisions:
+        if not isinstance(decision, dict):
+            raise ValueError("审核条目必须是对象")
+        item_id = decision.get("item_id")
+        value = decision.get("decision")
+        if item_id not in item_ids:
+            raise ValueError(f"审核条目不存在：{item_id}")
+        if value not in {"pending", "accepted", "rejected"}:
+            raise ValueError(f"审核状态非法：{value}")
+        current[item_id] = {
+            "item_id": item_id,
+            "decision": value,
+            "note": str(decision.get("note") or "").strip(),
+            "reviewed_at": _now(),
+        }
+    review["items"] = [current[item_id] for item_id in sorted(current)]
+    review["updated_at"] = _now()
+    write_json(_review_path(data_root, asset_id), review)
+    summary = _review_summary(result, review)
+    record.review_status = summary["status"]
+    if summary["status"] == "pending":
+        record.status = "awaiting_review"
+    elif summary["status"] == "rejected":
         record.status = "rejected"
     else:
-        raise ValueError("decision 必须是 approve 或 reject")
+        record.status = "available"
     _save_record(data_root, record)
     return record
+
+
+def review_asset(data_root: str, asset_id: str, decision: str) -> AssetRecord:
+    record = load_asset(data_root, asset_id)
+    if record.asset_type != "historical_defect" or not record.result_path:
+        raise ValueError("当前资产没有可审核的历史缺陷结果")
+    result_path = Path(record.result_path)
+    if not result_path.is_file():
+        raise ValueError("当前资产没有可审核的结构化结果")
+    if decision not in {"approve", "reject"}:
+        raise ValueError("decision 必须是 approve 或 reject")
+    value = "accepted" if decision == "approve" else "rejected"
+    result = read_json(result_path)
+    return review_asset_items(
+        data_root,
+        asset_id,
+        record.revision,
+        _sha256(result_path),
+        [{"item_id": item["item_id"], "decision": value} for item in result.get("items", [])],
+    )
 
 
 def archive_asset(data_root: str, asset_id: str) -> AssetRecord:

@@ -8,6 +8,7 @@ from pathlib import Path
 
 from pangea_agent.agent_io import read_json, write_json
 from pangea_agent.assets import freeze_asset_inputs, load_asset
+from pangea_agent.documents.source_snapshot import create_source_snapshot, verify_source_snapshot
 from pangea_agent.inventory.languages import C_CPP_SUFFIXES, IGNORED_PARTS, LUA_SUFFIXES
 from pangea_agent.methodology import freeze_enabled_methodologies
 from pangea_agent.repositories.resolver import resolve_repository
@@ -88,6 +89,8 @@ def _metadata_path(data_root: Path, run_id: str) -> Path:
 
 
 def _resolve_scope(repository_root: Path, source_scope: list[str]) -> list[dict[str, str]]:
+    if not source_scope:
+        raise ValueError("source_scope 不能为空；创建 Run 前必须明确选择源码范围")
     resolved = []
     repository_root = repository_root.resolve()
     for raw in source_scope:
@@ -198,7 +201,7 @@ def _request_markdown(
 ) -> str:
     scope_lines = [
         f"- raw=`{item['raw']}`\n  verified=`{item['verified']}`" for item in scope
-    ] or ["- 用户未限定子路径；以已验证仓库根目录为范围起点，在 Step 01 内收敛范围。"]
+    ]
     return "\n".join([
         "# Codetalks Skill 运行请求",
         "",
@@ -226,18 +229,20 @@ def _request_markdown(
         "",
         f"- target：{request['target']}",
         f"- repository：`{request['repository']}`",
-        f"- source_raw：`{repository_root}`",
-        f"- source_verified：`{repository_root.resolve()}`",
+        f"- source_raw：`{repository_root}`（仅用于记录来源）",
+        f"- source_verified：`{run_root / 'inputs' / 'source' / 'repository'}`",
         "",
         "### 用户范围",
         "",
         *scope_lines,
         "",
+        "源码快照清单：`inputs/source/manifest.json`。只读取 `inputs/source/repository/`，不得回读 source_raw；若清单或文件哈希校验失败，停止当前 Run 并报告 source_snapshot_corrupt。",
+        "",
         "### 输入材料",
         "",
         *asset_lines,
         "",
-        "资产内容已复制到运行根目录 `inputs/assets/`；只能读取冻结副本。每类资产的允许步骤由 `inputs/assets/manifest.json` 给出，禁止跨步骤消费。",
+        "源码和资产内容已复制到运行根目录 `inputs/`；只能读取冻结副本。每类资产的允许步骤由对应 manifest 给出，禁止跨步骤消费。",
         "",
         "### 方法论",
         "",
@@ -272,6 +277,15 @@ def create_skill_run(request_path_value: str) -> dict:
         request_root.mkdir(parents=True)
         frozen_skill = freeze_skill_package(request_root / "skill")
         frozen_skill_digest = skill_package_digest(frozen_skill)
+        source_snapshot = create_source_snapshot(
+            repository_root,
+            scope,
+            run_root / "inputs" / "source",
+            repo_id=request["repository"],
+            run_id=run_id,
+            git=repository.get("git"),
+        )
+        verify_source_snapshot(run_root / "inputs" / "source")
         asset_manifest = freeze_asset_inputs(
             data_root,
             run_root,
@@ -297,6 +311,7 @@ def create_skill_run(request_path_value: str) -> dict:
             "request": request,
             "repository_root": str(repository_root),
             "source_scope": scope,
+            "source_snapshot": source_snapshot,
             "language_profiles": language_profiles,
             "asset_manifest_path": str(run_root / "inputs" / "assets" / "manifest.json"),
             "asset_snapshot": asset_manifest,
@@ -348,6 +363,20 @@ def skill_run_detail(data_root: str, run_id: str) -> dict:
     metadata, state = _state(root, run_id)
     lifecycle, phase, verdict = _lifecycle(metadata, state)
     run_root = Path(metadata["run_root"])
+    snapshot_path = run_root / "inputs" / "source"
+    snapshot_status = "legacy_unavailable"
+    snapshot_error = None
+    if (snapshot_path / "manifest.json").is_file():
+        try:
+            verify_source_snapshot(
+                snapshot_path,
+                run_id=run_id,
+                repo_id=metadata.get("request", {}).get("repository"),
+            )
+            snapshot_status = "verified"
+        except ValueError as exc:
+            snapshot_status = "corrupt"
+            snapshot_error = str(exc)
     formal_root = run_root / "正式输出"
     formal_outputs = sorted(str(path) for path in formal_root.glob("*.md")) if formal_root.is_dir() else []
     live_documents = sorted(str(path) for path in (run_root / "活文档").rglob("*.md")) if (run_root / "活文档").is_dir() else []
@@ -378,11 +407,20 @@ def skill_run_detail(data_root: str, run_id: str) -> dict:
         },
         "completed_steps": state.get("completed_steps", []) if state else [],
         "current_step": state.get("current_step") if state else None,
+        "step_progress": state.get("step_progress") if state else None,
+        "validation": state.get("validation", {"status": "not_checked", "error_count": 0, "errors": []}) if state else {"status": "not_checked", "error_count": 0, "errors": []},
         "run_root": str(run_root),
         "request_path": metadata["request_path"],
         "target": metadata["request"]["target"],
         "repository": metadata["request"]["repository"],
         "source_scope": metadata["source_scope"],
+        "source_snapshot": metadata.get("source_snapshot", {
+            "status": "legacy_unavailable",
+            "snapshot_digest": None,
+            "file_count": None,
+        }),
+        "source_snapshot_status": snapshot_status,
+        "source_snapshot_error": snapshot_error,
         "assets": metadata.get(
             "asset_snapshot",
             {"schema_version": "2.0", "run_id": run_id, "assets": []},
@@ -403,6 +441,7 @@ def skill_run_detail(data_root: str, run_id: str) -> dict:
             "live_documents": live_documents,
             "formal_outputs": formal_outputs,
             "report_markdown": str(report) if report.is_file() else None,
+            "source_snapshot_manifest": str(run_root / "inputs" / "source" / "manifest.json") if (run_root / "inputs" / "source" / "manifest.json").is_file() else None,
         },
         "report_available": report.is_file() and lifecycle == "complete",
         "attention_required": lifecycle == "attention_required",

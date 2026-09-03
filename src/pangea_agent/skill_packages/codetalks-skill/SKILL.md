@@ -662,6 +662,21 @@ python3 {skill-root}/scripts/run_guard.py complete-step \
 
 只有校验通过，才能进入下一步。
 
+步骤内部如有可数的业务项目（流程、风险或测试用例），在处理过程中使用以下命令登记进度；它只记录 Agent 已明确的项目，不替代步骤完成门禁：
+
+```bash
+python3 {skill-root}/scripts/run_guard.py progress \
+  --workspace "{workspace_root}" \
+  --step "04" \
+  --unit-label "流程" \
+  --total 8 \
+  --completed 3 \
+  --item-id "FLOW-003" \
+  --item-title "TCP 重连流程"
+```
+
+`completed` 不能倒退或超过 `total`；只有 `complete-step` 成功后步骤才算完成。
+
 不得：
 
 - 不读取步骤文件直接执行；
@@ -974,6 +989,10 @@ Step 01–08 只维护 `活文档/` 和 `内部索引/`。
 6. `黑盒测试用例.md`
 7. `覆盖审计与分析限制.md`
 8. `完整分析报告.md`
+
+同时必须写入 `内部索引/工作台投影.json`。该文件只提供工作台结构化展示，语义内容必须来自 Agent 已完成的分析，不能由 Python 自动推导。
+
+投影必须包含 `schema_version=1.0`、`run_id` 以及以下数组：`business_flows`、`risks`、`test_cases`、`evidence`、`review_issues`。各数组中的 ID 必须唯一；风险通过 `linked_test_case_ids` 和 `evidence_ids` 关联已有条目，测试用例通过 `linked_risk_ids` 关联已有风险。证据位置继续使用 `repo_id:path:line`，不得写入快照物理绝对路径。缺少投影或引用不存在时，`run_guard complete-step` 会返回可修复的确定性错误，不能把结构化数量默认为零。
 
 正式输出不得包含步骤编号文件，不得要求用户阅读内部 JSON 才能理解结果。
 

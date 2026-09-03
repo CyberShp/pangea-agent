@@ -220,6 +220,99 @@ def validate_methodology_selection(root: Path) -> list[str]:
         errors.append("内置 Codetalks Skill 必须出现在 selected")
     return errors
 
+def validate_workbench_projection(root: Path) -> list[str]:
+    """Validate only the machine-readable shape and cross-references."""
+    path = root / "内部索引/工作台投影.json"
+    if not path.exists():
+        return [f"缺少工作台结构化投影：{path}"]
+    try:
+        data = load_json(path)
+    except Exception as exc:
+        return [f"工作台结构化投影无法解析：{exc}"]
+    if not isinstance(data, dict):
+        return ["工作台结构化投影必须是 JSON 对象"]
+    errors: list[str] = []
+    if data.get("schema_version") != "1.0":
+        errors.append("工作台结构化投影 schema_version 必须是 1.0")
+    if data.get("run_id") != root.name:
+        errors.append("工作台结构化投影 run_id 必须与当前 Run 一致")
+    for key in ("business_flows", "risks", "test_cases", "evidence", "review_issues"):
+        if not isinstance(data.get(key), list):
+            errors.append(f"工作台结构化投影缺少数组：{key}")
+    ids: dict[str, set[str]] = {}
+    for key, id_key in (("business_flows", "flow_id"), ("risks", "risk_id"),
+                        ("test_cases", "test_case_id"), ("evidence", "evidence_id"),
+                        ("review_issues", "issue_id")):
+        values = data.get(key, [])
+        seen: set[str] = set()
+        for index, item in enumerate(values, 1):
+            if not isinstance(item, dict):
+                errors.append(f"{key}[{index}] 必须是对象")
+                continue
+            identifier = item.get(id_key)
+            if not isinstance(identifier, str) or not identifier.strip():
+                errors.append(f"{key}[{index}] 缺少 {id_key}")
+            elif identifier in seen:
+                errors.append(f"{key} 存在重复 ID：{identifier}")
+            else:
+                seen.add(identifier)
+        ids[key] = seen
+    risk_ids = ids.get("risks", set())
+    case_ids = ids.get("test_cases", set())
+    evidence_ids = ids.get("evidence", set())
+    for index, item in enumerate(data.get("risks", []), 1):
+        if not isinstance(item, dict):
+            continue
+        for linked in item.get("linked_test_case_ids", []):
+            if linked not in case_ids:
+                errors.append(f"risks[{index}] 引用了不存在的 test_case_id：{linked}")
+        for linked in item.get("evidence_ids", []):
+            if linked not in evidence_ids:
+                errors.append(f"risks[{index}] 引用了不存在的 evidence_id：{linked}")
+    for index, item in enumerate(data.get("test_cases", []), 1):
+        if not isinstance(item, dict):
+            continue
+        for linked in item.get("linked_risk_ids", []):
+            if linked not in risk_ids:
+                errors.append(f"test_cases[{index}] 引用了不存在的 risk_id：{linked}")
+    for index, item in enumerate(data.get("evidence", []), 1):
+        if not isinstance(item, dict):
+            continue
+        location = item.get("location") or item.get("path")
+        if isinstance(location, str) and (Path(location).is_absolute() or ".." in Path(location).parts):
+            errors.append(f"evidence[{index}] location 越过受控边界：{location}")
+    return errors
+
+def validation_records(errors: list[str], *, command: str, step: str | None = None) -> list[dict[str, str]]:
+    records = []
+    for message in errors:
+        lowered = message.lower()
+        if "缺少" in message or "不存在" in message:
+            code = "missing_artifact"
+        elif "无法解析" in message or "json" in lowered:
+            code = "invalid_layout"
+        elif "过短" in message or "叙述不足" in message:
+            code = "minimum_content_not_met"
+        elif "投影" in message:
+            code = "projection_invalid"
+        elif "审查" in message:
+            code = "judge_incomplete"
+        else:
+            code = "validation_error"
+        records.append({"code": code, "step": step or "", "message": message, "command": command})
+    return records
+
+def save_validation(state: dict, errors: list[str], *, command: str, step: str | None = None) -> None:
+    state["validation"] = {
+        "status": "failed" if errors else "passed",
+        "checked_at": now(),
+        "command": command,
+        "step": step,
+        "error_count": len(errors),
+        "errors": validation_records(errors, command=command, step=step),
+    }
+    state["updated_at"] = now()
+
 def validate_layout(root: Path, *, final_phase: bool = False) -> list[str]:
     errors = []
 
@@ -279,6 +372,8 @@ def validate_step(root: Path, step: dict, manifest: dict) -> list[str]:
                 errors.extend(validate_coverage(path, manifest))
             else:
                 errors.extend(validate_markdown(path, minimum))
+        elif relative == "内部索引/工作台投影.json":
+            errors.extend(validate_workbench_projection(root))
 
     for pattern in step.get("requires_glob", []):
         matches = list(root.glob(pattern))
@@ -349,6 +444,8 @@ def command_init(args) -> None:
             "status": "pending",
         },
         "verdict": None,
+        "step_progress": None,
+        "validation": {"status": "not_checked", "error_count": 0, "errors": []},
     }
     save_json(state_path(root), state)
     save_json(root / "内部索引/运行计划.json", {"version": "1.3.0", "passes": []})
@@ -409,6 +506,18 @@ def command_start(args) -> None:
 
     state["current_step"] = args.step
     state["status"] = "in_progress"
+    state["step_progress"] = {
+        "version": 1,
+        "step": args.step,
+        "status": "running",
+        "unit_label": "步骤",
+        "total": None,
+        "completed": 0,
+        "current": None,
+        "started_at": now(),
+        "updated_at": now(),
+    }
+    state["validation"] = {"status": "not_checked", "error_count": 0, "errors": []}
     state["updated_at"] = now()
     save_json(state_path(root), state)
     print(json.dumps({
@@ -426,12 +535,19 @@ def command_complete(args) -> None:
         raise SystemExit(f"当前步骤为 {state.get('current_step')}，不是 {args.step}")
     errors = validate_step(root, find_step(manifest, args.step), manifest)
     if errors:
+        save_validation(state, errors, command="complete-step", step=args.step)
+        save_json(state_path(root), state)
         print(json.dumps({"ok": False, "errors": errors}, ensure_ascii=False, indent=2))
         raise SystemExit(2)
 
     if args.step not in state["completed_steps"]:
         state["completed_steps"].append(args.step)
     state["current_step"] = None
+    if isinstance(state.get("step_progress"), dict):
+        state["step_progress"]["status"] = "completed"
+        state["step_progress"]["completed"] = state["step_progress"].get("total") or state["step_progress"].get("completed", 0)
+        state["step_progress"]["updated_at"] = now()
+    save_validation(state, [], command="complete-step", step=args.step)
     state["updated_at"] = now()
     if args.step == "08":
         state["judge"]["status"] = "complete"
@@ -446,6 +562,8 @@ def command_validate(args) -> None:
     errors = []
     for step_id in state.get("completed_steps", []):
         errors.extend(validate_step(root, find_step(manifest, step_id), manifest))
+    save_validation(state, errors, command="validate")
+    save_json(state_path(root), state)
     print(json.dumps({
         "ok": not errors,
         "errors": errors,
@@ -454,6 +572,43 @@ def command_validate(args) -> None:
     }, ensure_ascii=False, indent=2))
     if errors:
         raise SystemExit(2)
+
+def command_progress(args) -> None:
+    root = resolve_run_root(args.workspace)
+    state = ensure_state(root)
+    if state.get("current_step") != args.step:
+        raise SystemExit(f"当前步骤为 {state.get('current_step')}，不是 {args.step}")
+    progress = state.get("step_progress")
+    if not isinstance(progress, dict):
+        progress = {"version": 1, "step": args.step, "status": "running", "completed": 0, "current": None}
+    if args.total is not None:
+        if args.total < 0:
+            raise SystemExit("total 不能小于 0")
+        progress["total"] = args.total
+    if args.completed is not None:
+        previous = int(progress.get("completed") or 0)
+        if args.completed < previous:
+            raise SystemExit("completed 不能倒退")
+        total = progress.get("total")
+        if isinstance(total, int) and args.completed > total:
+            raise SystemExit("completed 不能超过 total")
+        progress["completed"] = args.completed
+    if args.unit_label:
+        progress["unit_label"] = args.unit_label
+    if args.item_id or args.item_title:
+        if not args.item_id or not args.item_title:
+            raise SystemExit("item-id 和 item-title 必须同时提供")
+        progress["current"] = {"id": args.item_id, "title": args.item_title}
+    if args.status:
+        progress["status"] = args.status
+    progress["step"] = args.step
+    progress.setdefault("version", 1)
+    progress.setdefault("started_at", now())
+    progress["updated_at"] = now()
+    state["step_progress"] = progress
+    state["updated_at"] = now()
+    save_json(state_path(root), state)
+    print(json.dumps({"ok": True, "step_progress": progress}, ensure_ascii=False))
 
 def command_handoff(args) -> None:
     root = resolve_run_root(args.workspace)
@@ -508,6 +663,7 @@ def command_finalize(args) -> None:
     if errors:
         state["status"] = "validation_failed"
         state["verdict"] = "PARTIAL"
+        save_validation(state, errors, command="finalize")
         save_json(state_path(root), state)
         print(json.dumps({"ok": False, "verdict": "PARTIAL", "errors": errors},
                          ensure_ascii=False, indent=2))
@@ -515,6 +671,7 @@ def command_finalize(args) -> None:
 
     state["status"] = "complete"
     state["verdict"] = "READY"
+    save_validation(state, [], command="finalize")
     state["updated_at"] = now()
     save_json(state_path(root), state)
     print(json.dumps({
@@ -560,6 +717,17 @@ def main() -> None:
     validate = commands.add_parser("validate")
     validate.add_argument("--workspace", required=True)
     validate.set_defaults(function=command_validate)
+
+    progress = commands.add_parser("progress")
+    progress.add_argument("--workspace", required=True)
+    progress.add_argument("--step", required=True)
+    progress.add_argument("--total", type=int)
+    progress.add_argument("--completed", type=int)
+    progress.add_argument("--unit-label")
+    progress.add_argument("--item-id")
+    progress.add_argument("--item-title")
+    progress.add_argument("--status", choices=("running", "completed", "waiting"))
+    progress.set_defaults(function=command_progress)
 
     handoff = commands.add_parser("handoff")
     handoff.add_argument("--workspace", required=True)

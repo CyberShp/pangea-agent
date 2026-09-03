@@ -12,6 +12,7 @@ from pangea_agent.assets import (
     prepare_asset_extraction,
     restore_asset,
     review_asset,
+    review_asset_items,
     update_asset_metadata,
     update_asset_result,
 )
@@ -116,6 +117,7 @@ __all__ = [
     "preview_asset_import",
     "prepare_methodology_derivation",
     "review_asset",
+    "review_asset_items",
     "restore_asset",
     "run_detail",
     "run_report",

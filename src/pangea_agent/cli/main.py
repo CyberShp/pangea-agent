@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import json
+from pathlib import Path
 
 from .init_data import init_data
 from .json_api import print_error, print_success
@@ -20,6 +22,7 @@ from .public_api import (
     restore_asset,
     prepare_methodology_derivation,
     review_asset,
+    review_asset_items,
     run_detail,
     run_report,
     set_methodology_status,
@@ -80,6 +83,13 @@ def main() -> None:
     asset_review.add_argument("--data-root", default="pangea-data")
     asset_review.add_argument("--asset-id", required=True)
     asset_review.add_argument("--decision", required=True, choices=("approve", "reject"))
+    asset_review_items = asset_commands.add_parser("review-items")
+    asset_review_items.add_argument("--data-root", default="pangea-data")
+    asset_review_items.add_argument("--asset-id", required=True)
+    asset_review_items.add_argument("--revision", required=True, type=int)
+    asset_review_items.add_argument("--result-sha256", required=True)
+    asset_review_items.add_argument("--decisions", required=True,
+                                    help="JSON 文件，内容为 [{item_id, decision, note}]")
     asset_update = asset_commands.add_parser("update-result")
     asset_update.add_argument("--data-root", default="pangea-data")
     asset_update.add_argument("--asset-id", required=True)
@@ -203,6 +213,16 @@ def main() -> None:
                 print_success(prepare_asset_extraction(args.data_root, args.asset_id))
             elif args.asset_command == "review":
                 result = review_asset(args.data_root, args.asset_id, args.decision)
+                print_success(result.model_dump(mode="json"))
+            elif args.asset_command == "review-items":
+                decisions = json.loads(Path(args.decisions).read_text(encoding="utf-8"))
+                result = review_asset_items(
+                    args.data_root,
+                    args.asset_id,
+                    args.revision,
+                    args.result_sha256,
+                    decisions,
+                )
                 print_success(result.model_dump(mode="json"))
             elif args.asset_command == "update-result":
                 result = update_asset_result(args.data_root, args.asset_id, args.result)

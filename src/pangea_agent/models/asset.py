@@ -108,7 +108,9 @@ class AssetRecord(StrictModel):
     updated_at: str = Field(min_length=1)
     status: AssetStatus = "imported"
     archived_from_status: AssetStatus | None = None
-    review_status: Literal["not_required", "pending", "approved", "rejected"] = (
+    review_status: Literal[
+        "not_required", "pending", "approved", "partially_approved", "rejected"
+    ] = (
         "not_required"
     )
     structured_item_count: int = Field(default=0, ge=0)
