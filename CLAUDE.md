@@ -7,8 +7,9 @@
 - 新模块分析先在 `pangea-data/repositories/` 自动搜索目标模块并确定最小 `source_scope`，再通过当前客户端的稳定入口启动；`.c` / `.h` / `.cc` / `.cpp` / `.cxx` / `.hpp` / `.hh` 识别为 `c_cpp`，`.lua` 识别为 `lua`，用户不需要另填语言。没有当前会话明确 `run_id` 时不扫描历史 Run。
 - 同时派发最多 8 个 action；8 是并发上限，不是整个 Run 的单元总数。
 - `dispatch_agent` 按 role 创建专用 Agent；`continue_agent` 恢复 action 自带的同一 `task_id`，不得创建替代任务。
-- 子 Agent 返回后先执行 adapter validate。`status=invalid` 时按 `repair_action` 把错误交回同一任务，只修正同一 `result_path`；通过后再 settle。
+- 子 Agent 返回后对完成报告中的 exact `action_id` 直接执行 adapter settle。`status=invalid` 时，settle 会把同一 Action 持久化为 `continue_agent + pending + repair_status=required`；按 `repair_action` 恢复同一任务，只修正同一 `result_path`，通过后再次 settle。
 - 普通结果校验失败不推进 Action，也不停止 Run。Run/action/task、冻结输入或约定 task_id 损坏才属于流程错误。
+- Schema 非法结果不得自动降级或推进 Graph；达到 attention 阈值只停止盲试并保留完整 Validation Report。
 - 只按 CLI JSON action 继续，不根据 Agent 回复文字推断阶段。
 
 角色映射只用于 `dispatch_agent`：`planning`、`analysis`、`review`、`asset_extraction`。

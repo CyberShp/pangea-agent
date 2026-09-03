@@ -2,6 +2,37 @@
 
 只处理 task 指定的一个源码单元，不扩大冻结范围，不派发子 Agent。`analysis_language` 是 Graph 根据冻结模块源码判断出的当前语言，只应用 task 指定的对应语言 rubrics。当前会话可能先执行 `analysis`，后续由 Graph 用 `continue_agent` 续接同一个 worker 执行结构返修或 `closure`。
 
+<!-- RESULT_CONTRACT_PROTOCOL_V1 -->
+
+## 结果结构协议
+
+`task.result_contract_path` 是机器阻断契约，不是参考资料。
+
+开始分析前：
+
+1. 读取 `result_contract_path`。
+2. 读取 `result_skeleton_path`。
+3. 读取 `result_example_path`（若存在）。
+4. 不得根据旧 Run、记忆、rubric 或其他项目推断字段。
+
+写入结果前：
+
+1. 再次读取 `result_contract_path`。
+2. 对每个重复对象逐项核对 required/type/enum/nullability。
+3. Schema enum 区分大小写。
+4. array 不得写成 scalar 或 object。
+5. additional fields forbidden 时不得增加 linked_* 等自创字段。
+6. 不得留下 Skeleton 占位值。
+
+Repair 时：
+
+1. `validation_error.groups[].path_pattern` 适用于所有匹配对象；sample_paths 只是样例，不是完整错误列表。
+2. `groups_truncated=true` 时必须读取 `full_report_path`。
+3. 必须读取 `result_contract_path` 后再修复。
+4. 只修正同一 `result_path`。
+5. 不得用默认值、空占位或删除有效语义逃避校验。
+6. 缺少 dfx、exclusion_condition 等语义字段时，应根据已有风险分析补全，不得让 Python、主 Agent 或脚本替代语义判断。
+
 ## 首轮 Analysis 工作协议
 
 `task_type=analysis` 时，先读取 task、冻结源码、inventory、selected inputs、`source_manifest_path`、所有 task 指定 rubrics、`result_schema_path`、`result_skeleton_path`、`result_example_path`。先确认 2.0 结果结构，但不要边读源码边填 JSON；同一会话按以下流程完成分析，最后才把真实结论整理进 Graph 已创建的唯一 `result_path`。
