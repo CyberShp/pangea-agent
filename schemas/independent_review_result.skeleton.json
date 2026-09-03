@@ -15,7 +15,7 @@
           "path": "<从 unit-plan 的 source_scope/context_scope 原样选择的相对路径>",
           "line_start": 1,
           "line_end": 1,
-          "observation": "<该源码区间直接支持的事实>"
+          "observation": "<从 cited line range 逐字符复制的最小源码子串>"
         }
       ]
     }

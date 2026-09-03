@@ -17,7 +17,7 @@
               "path": "src/example.c",
               "line_start": 10,
               "line_end": 12,
-              "observation": "公开连接入口开始处理请求"
+              "observation": "handle_connect(request);"
             }
           ]
         },
@@ -30,7 +30,7 @@
               "path": "src/example.c",
               "line_start": 20,
               "line_end": 24,
-              "observation": "认证材料是否匹配决定继续建链或返回失败"
+              "observation": "if (auth_matches) {"
             }
           ]
         },
@@ -43,7 +43,7 @@
               "path": "src/example.c",
               "line_start": 30,
               "line_end": 31,
-              "observation": "入口向调用方返回连接结果"
+              "observation": "return status;"
             }
           ]
         }
@@ -97,7 +97,7 @@
           "path": "src/example.c",
           "line_start": 20,
           "line_end": 31,
-          "observation": "认证失败路径与连接状态清理发生在该区间"
+          "observation": "cleanup_connection();"
         }
       ],
       "test_disposition": "test_required",
@@ -135,7 +135,7 @@
           "path": "src/example.c",
           "line_start": 10,
           "line_end": 31,
-          "observation": "公开连接入口、认证分支和失败返回共同支持该业务场景"
+          "observation": "connect(request);"
         }
       ]
     }

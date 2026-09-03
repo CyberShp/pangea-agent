@@ -6,6 +6,8 @@ from pathlib import Path
 from pangea_agent.agent_io import read_json, write_json
 from pangea_agent.graph.planning import accept_planning_result, planning_result_model
 from pangea_agent.graph.result_contract import (
+    ResultContractIssue,
+    ResultContractValidationError,
     correction_target_identity_errors,
     risk_test_obligations,
     snapshot_correction_target,
@@ -956,6 +958,7 @@ def _validate_review(
     source_roots: dict[str, str] | None = None,
 ) -> list[str]:
     warnings: list[str] = []
+    contract_errors: list[ResultContractIssue] = []
     known_units = {unit.unit_id for unit in progress.analysis_units}
     coverage_ids = {
         item["coverage_id"] for item in selected_inputs.get("coverage_gaps", [])
@@ -970,50 +973,76 @@ def _validate_review(
     }
     finding_keys = [finding.finding_key for finding in result.findings]
     if len(finding_keys) != len(set(finding_keys)):
-        if isinstance(result, IndependentReviewResult):
-            raise ValueError("Independent Review finding_key 包含重复编号")
-        warnings.append("复核 finding_key 包含重复编号")
+        contract_errors.append(ResultContractIssue(
+            family="review.finding_identity",
+            path="$.findings[*].finding_key",
+            message="Review finding_key 包含重复编号",
+            context={"finding_keys": finding_keys},
+        ))
     for finding in result.findings:
         if len(finding.affected_unit_ids) != len(set(finding.affected_unit_ids)):
-            raise ValueError(
-                f"Review finding {finding.finding_key} 的 affected_unit_ids 包含重复单元"
-            )
+            contract_errors.append(ResultContractIssue(
+                family="review.affected_unit_identity",
+                path=f"$.findings[{finding.finding_key}].affected_unit_ids",
+                message=f"Review finding {finding.finding_key} 的 affected_unit_ids 包含重复单元",
+                context={"finding_key": finding.finding_key},
+            ))
         if (
             isinstance(result, IndependentReviewResult)
             and finding.correction_targets
         ):
-            raise ValueError(
-                f"Independent finding {finding.finding_key} 看不到 Analysis，"
-                "不得预填 correction_targets"
-            )
+            contract_errors.append(ResultContractIssue(
+                family="review.independent_correction_targets",
+                path=f"$.findings[{finding.finding_key}].correction_targets",
+                message=(
+                    f"Independent finding {finding.finding_key} 看不到 Analysis，"
+                    "不得预填 correction_targets"
+                ),
+                context={"finding_key": finding.finding_key},
+            ))
         unknown = set(finding.affected_unit_ids) - known_units
         if unknown:
             warnings.append(f"复核引用了未知单元：{sorted(unknown)}")
         if finding.category == "coverage_gap":
             unknown_inputs = set(finding.linked_input_ids) - known_input_ids
             if unknown_inputs:
-                raise ValueError(
-                    f"Coverage finding {finding.finding_key} 引用了未知输入："
-                    f"{sorted(unknown_inputs)}"
-                )
+                contract_errors.append(ResultContractIssue(
+                    family="review.coverage_input_identity",
+                    path=f"$.findings[{finding.finding_key}].linked_input_ids",
+                    message=(
+                        f"Coverage finding {finding.finding_key} 引用了未知输入："
+                        f"{sorted(unknown_inputs)}"
+                    ),
+                    context={"finding_key": finding.finding_key},
+                ))
             linked_coverage_ids = set(finding.linked_input_ids) & coverage_ids
             if not linked_coverage_ids:
-                raise ValueError(
-                    f"Coverage finding {finding.finding_key} 必须引用 "
-                    "selected_inputs.coverage_gaps 中的真实 coverage_id；"
-                    "coverage_diagnostics 计数不能代替 Coverage ID"
-                )
+                contract_errors.append(ResultContractIssue(
+                    family="review.coverage_id_required",
+                    path=f"$.findings[{finding.finding_key}].linked_input_ids",
+                    message=(
+                        f"Coverage finding {finding.finding_key} 必须引用 "
+                        "selected_inputs.coverage_gaps 中的真实 coverage_id；"
+                        "coverage_diagnostics 计数不能代替 Coverage ID"
+                    ),
+                    context={"finding_key": finding.finding_key},
+                ))
             owned_coverage_ids = set().union(*(
                 coverage_ids_by_unit.get(unit_id, set())
                 for unit_id in finding.affected_unit_ids
             ))
             foreign_coverage_ids = linked_coverage_ids - owned_coverage_ids
             if foreign_coverage_ids:
-                raise ValueError(
-                    f"Coverage finding {finding.finding_key} 的 coverage_id "
-                    "不属于 affected_unit_ids："
-                    f"{sorted(foreign_coverage_ids)}"
-                )
+                contract_errors.append(ResultContractIssue(
+                    family="review.coverage_unit_identity",
+                    path=f"$.findings[{finding.finding_key}].affected_unit_ids",
+                    message=(
+                        f"Coverage finding {finding.finding_key} 的 coverage_id "
+                        "不属于 affected_unit_ids："
+                        f"{sorted(foreign_coverage_ids)}"
+                    ),
+                    context={"finding_key": finding.finding_key},
+                ))
         warnings.extend(_validate_evidence_for_units(
             progress,
             finding.evidence,
@@ -1026,7 +1055,12 @@ def _validate_review(
             f"复核 finding {finding.finding_key}",
         )
         if excerpt_errors:
-            raise ValueError(" | ".join(excerpt_errors[:24]))
+            warnings.extend(excerpt_errors)
+    if contract_errors:
+        raise ResultContractValidationError(
+            "Review 结果结构合同不完整",
+            contract_errors,
+        )
     return warnings
 
 
@@ -1084,7 +1118,7 @@ def _validate_comparison_review(
             f"盲审裁决 {decision.finding_key}",
         )
         if excerpt_errors:
-            raise ValueError(" | ".join(excerpt_errors[:24]))
+            warnings.extend(excerpt_errors)
     comparison_keys = {finding.finding_key for finding in comparison.findings}
     duplicates = independent_keys & comparison_keys
     if duplicates:
@@ -1552,7 +1586,15 @@ def _validate_v2_comparison_contract(
             )
 
     if errors:
-        raise ValueError("Comparison v2 结构合同不完整：" + " | ".join(errors[:32]))
+        raise ResultContractValidationError(
+            "Comparison v2 结构合同不完整",
+            [ResultContractIssue(
+                family="comparison.contract",
+                path="$.comparison",
+                message=message,
+                context={},
+            ) for message in errors],
+        )
 
 
 def _accept_independent_review(state: PangeaState, progress, action) -> PangeaState:

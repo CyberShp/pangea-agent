@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from copy import deepcopy
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +25,25 @@ _CORRECTION_COLLECTION_KEYS = {
     "scenarios": "scenario_key",
     "test_cases": "case_key",
 }
+
+
+@dataclass(frozen=True)
+class ResultContractIssue:
+    """One deterministic contract issue that prevents safe downstream routing."""
+
+    family: str
+    path: str
+    message: str
+    context: dict[str, Any]
+
+
+class ResultContractValidationError(ValueError):
+    """Aggregated structural issues that require same-session Agent repair."""
+
+    def __init__(self, title: str, issues: list[ResultContractIssue]):
+        self.title = title
+        self.issues = tuple(issues)
+        super().__init__(title)
 
 
 def source_evidence_excerpt_errors(

@@ -17,7 +17,7 @@
               "path": "<从 unit.source_scope/context_scope 原样选择>",
               "line_start": 1,
               "line_end": 1,
-              "observation": "<源码直接支持的事实>"
+              "observation": "<从 cited line range 逐字符复制的最小源码子串>"
             }
           ]
         }

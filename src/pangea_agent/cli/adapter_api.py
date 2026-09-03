@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from pydantic import ValidationError
@@ -14,6 +15,7 @@ from pangea_agent.assets import (
 from pangea_agent.cli.run_module_analysis import resume_module_analysis
 from pangea_agent.cli.validation_diagnostics import (
     compact_diagnostic,
+    diagnostics_from_contract_issues,
     diagnostics_from_validation_error,
     validation_report,
     write_validation_report,
@@ -28,6 +30,8 @@ from pangea_agent.graph.planning import (
     normalize_planning_result,
 )
 from pangea_agent.graph.result_contract import (
+    ResultContractIssue,
+    ResultContractValidationError,
     validate_closure_corrections,
     validate_unit_result,
 )
@@ -87,7 +91,7 @@ def _repair_action(action: ActionState) -> dict:
     # This is a next-action descriptor, not evidence that the continuation
     # has already been sent to the bound Agent session.
     payload["status"] = "pending"
-    payload["dispatch_required"] = True
+    payload["dispatch_required"] = not action.attention_required
     payload["repair_dispatched"] = False
     return payload
 
@@ -174,9 +178,10 @@ def _invalid_result(
         action.action_id,
         attempt,
     )
-    diagnostic = None
-    validation_details: list[dict] = []
+    validation_kind = "result_contract_validation"
+    error_code = exc.__class__.__name__
     if isinstance(exc, ValidationError):
+        validation_kind = "schema_validation"
         diagnostic, all_details = diagnostics_from_validation_error(
             exc,
             full_report_path=str(report_path),
@@ -185,31 +190,60 @@ def _invalid_result(
             f"{diagnostic.total_error_count} schema errors in "
             f"{diagnostic.group_count} error groups for {exc.title}"
         )
-        validation_details = [
-            {
-                "path": detail.path,
-                "type": detail.error_type,
-                "message": detail.message,
-            }
-            for detail in diagnostic.representative_details
-        ]
-        write_validation_report(
-            report_path,
-            validation_report(
-                diagnostic,
-                all_details,
-                action_id=action.action_id,
-                task_id=action.task_id or "",
-                attempt=attempt,
-                task_path=action.task_path,
-                result_path=str(task.get("result_path", "")),
-                result_sha256=result_sha256,
-                contract_manifest_path=task.get("result_contract_manifest_path"),
-                contract_card_sha256=_contract_card_sha256(task),
-            ),
+    elif isinstance(exc, ResultContractValidationError):
+        diagnostic, all_details = diagnostics_from_contract_issues(
+            list(exc.issues),
+            full_report_path=str(report_path),
         )
-    else:
         message = str(exc)
+    elif isinstance(exc, json.JSONDecodeError):
+        validation_kind = "schema_validation"
+        error_code = "InvalidJSON"
+        diagnostic, all_details = diagnostics_from_contract_issues(
+            [ResultContractIssue(
+                family="json.invalid",
+                path="$",
+                message=str(exc),
+                context={"line": exc.lineno, "column": exc.colno},
+            )],
+            full_report_path=str(report_path),
+        )
+        message = "InvalidJSON: 结果文件不是合法 JSON"
+    else:
+        diagnostic, all_details = diagnostics_from_contract_issues(
+            [ResultContractIssue(
+                family="result_contract.error",
+                path="$",
+                message=str(exc),
+                context={},
+            )],
+            full_report_path=str(report_path),
+        )
+        message = str(exc)
+    validation_details = [
+        {
+            "path": detail.path,
+            "type": detail.error_type,
+            "message": detail.message,
+        }
+        for detail in all_details
+    ]
+    write_validation_report(
+        report_path,
+        validation_report(
+            diagnostic,
+            all_details,
+            action_id=action.action_id,
+            task_id=action.task_id or "",
+            attempt=attempt,
+            task_path=action.task_path,
+            result_path=str(task.get("result_path", "")),
+            result_sha256=result_sha256,
+            contract_manifest_path=task.get("result_contract_manifest_path"),
+            contract_card_sha256=_contract_card_sha256(task),
+            validation_kind=validation_kind,
+        ),
+    )
     action.validation_failures += 1
     if diagnostic and action.last_validation_family_fingerprint == diagnostic.family_fingerprint:
         action.repeated_validation_failures += 1
@@ -217,24 +251,18 @@ def _invalid_result(
         action.repeated_validation_failures = 1
     action.error = message
     error = {
-        "code": exc.__class__.__name__,
+        "code": error_code,
         "message": message,
+        "validation_kind": validation_kind,
     }
-    if diagnostic:
-        error.update(compact_diagnostic(diagnostic))
-        error["code"] = exc.__class__.__name__
-        error["message"] = message
-        detail_count = diagnostic.total_error_count
-        group_count = diagnostic.group_count
-        family_fingerprint = diagnostic.family_fingerprint
-        groups = diagnostic.groups
-        report_path_value = str(report_path)
-    else:
-        detail_count = 0
-        group_count = 0
-        family_fingerprint = None
-        groups = []
-        report_path_value = None
+    error.update(compact_diagnostic(diagnostic))
+    error["code"] = error_code
+    error["message"] = message
+    detail_count = diagnostic.total_error_count
+    group_count = diagnostic.group_count
+    family_fingerprint = diagnostic.family_fingerprint
+    groups = diagnostic.groups
+    report_path_value = str(report_path)
     _update_no_progress(
         action,
         error_count=detail_count,
@@ -253,17 +281,14 @@ def _invalid_result(
         report_path=report_path_value,
         groups=groups,
         details=validation_details,
-        details_truncated=(
-            diagnostic is not None
-            and diagnostic.total_error_count > len(validation_details)
-        ),
+        details_truncated=False,
     ))
     action.action = "continue_agent"
     action.status = "pending"
     action.repair_status = "required"
     action.pending_repair = RepairRequest.model_validate({
         "attempt": attempt,
-        "kind": "schema_validation",
+        "kind": validation_kind,
         "validation_report_path": report_path_value,
         "result_contract_path": _optional_path(task.get("result_contract_path")),
         "result_sha256": result_sha256,
@@ -276,8 +301,10 @@ def _invalid_result(
         "action_id": action.action_id,
         "status": "invalid",
         "recoverable": True,
-        "next_required_tool": "pangea_action_dispatch",
-        "next_required_action_id": action.action_id,
+        **({
+            "next_required_tool": "pangea_action_dispatch",
+            "next_required_action_id": action.action_id,
+        } if not action.attention_required else {}),
         "repair_dispatched": False,
         "error": error,
         "validation_failures": action.validation_failures,
@@ -379,8 +406,10 @@ def _incomplete_result(
         "action_id": action.action_id,
         "status": "incomplete",
         "recoverable": True,
-        "next_required_tool": "pangea_action_dispatch",
-        "next_required_action_id": action.action_id,
+        **({
+            "next_required_tool": "pangea_action_dispatch",
+            "next_required_action_id": action.action_id,
+        } if not action.attention_required else {}),
         "repair_dispatched": False,
         "error": error,
         "validation_failures": action.validation_failures,
@@ -599,7 +628,6 @@ def _validate_action(data_root: str, run_id: str, action_id: str) -> dict:
                 selected_inputs,
                 warnings,
             )
-            warnings.extend(validate_unit_result(task, result, selected_inputs))
         except (FileNotFoundError, ValueError) as exc:
             return _invalid_result(state, progress, action, exc)
     elif action.role == "review":
@@ -655,19 +683,21 @@ def _validate_action(data_root: str, run_id: str, action_id: str) -> dict:
                 selected_inputs,
                 warnings,
             )
-            warnings.extend(validate_unit_result(
-                original,
-                result,
-                selected_inputs,
-                task.review_findings,
-            ))
             correction_errors = validate_closure_corrections(
                 task,
                 original_result,
                 result,
             )
             if correction_errors:
-                raise ValueError(" | ".join(correction_errors[:24]))
+                raise ResultContractValidationError(
+                    "Closure v2 结构合同不完整",
+                    [ResultContractIssue(
+                        family="closure.correction",
+                        path="$.correction_targets",
+                        message=message,
+                        context={},
+                    ) for message in correction_errors],
+                )
         except (FileNotFoundError, ValueError) as exc:
             return _invalid_result(state, progress, action, exc)
     else:
@@ -741,15 +771,19 @@ def settle_action(data_root: str, run_id: str, action_id: str) -> dict:
             "lifecycle_status": current.lifecycle_status,
             "stage": current.stage,
             "validation": validation,
-            "next_required_tool": "pangea_action_dispatch",
-            "next_required_action_id": action_id,
             "repair_dispatched": False,
+            "attention_required": bool(validation.get("attention_required")),
         }
-        payload["agent_actions"] = (
-            [validation["repair_action"]]
-            if validation.get("repair_action")
-            else []
-        )
+        if validation.get("attention_required"):
+            payload["agent_actions"] = []
+        else:
+            payload["next_required_tool"] = "pangea_action_dispatch"
+            payload["next_required_action_id"] = action_id
+            payload["agent_actions"] = (
+                [validation["repair_action"]]
+                if validation.get("repair_action")
+                else []
+            )
         return payload
 
     progress = load_progress(state)

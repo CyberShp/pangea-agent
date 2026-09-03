@@ -409,8 +409,14 @@ def accept_planning_result(
             len(files[key].get("functions", [])) for key in source_keys
         )
         if line_count > task.max_unit_lines or function_count > task.max_unit_functions:
+            warning_kind = (
+                "PlanningMultiFileUnitBudgetExceeded"
+                if len(source_scope) > 1
+                else "PlanningSingleFileUnitBudgetExceeded"
+            )
             advisory.append(
-                f"单元 U{unit_index:02d} 超过工作量建议上限："
+                f"{warning_kind}: 单元 U{unit_index:02d} 超过工作量建议上限："
+                f"owned_sources={len(source_scope)}, "
                 f"lines={line_count}/{task.max_unit_lines}, "
                 f"functions={function_count}/{task.max_unit_functions}"
             )

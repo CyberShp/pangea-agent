@@ -15,6 +15,7 @@ from pangea_agent.models.analysis import (
     ValidationErrorGroup,
     ValidationErrorSample,
 )
+from pangea_agent.graph.result_contract import ResultContractIssue
 
 
 MAX_INLINE_DIGEST_BYTES = 12 * 1024
@@ -146,6 +147,55 @@ def diagnostics_from_validation_error(
     return diagnostic, details
 
 
+def diagnostics_from_contract_issues(
+    issues: list[ResultContractIssue] | tuple[ResultContractIssue, ...],
+    *,
+    full_report_path: str = "",
+) -> tuple[ValidationDiagnostic, list[ValidationErrorSample]]:
+    """Build the same complete diagnostic shape for structural contract errors."""
+
+    details = [
+        ValidationErrorSample(
+            path=issue.path,
+            error_type=issue.family,
+            message=issue.message,
+            context=_json_safe(issue.context),
+        )
+        for issue in issues
+    ]
+    groups: OrderedDict[str, dict[str, Any]] = OrderedDict()
+    for detail in details:
+        group_key = _group_error_key(detail.error_type, detail.path)
+        group = groups.setdefault(
+            group_key,
+            {
+                "group_key": group_key,
+                "path_pattern": detail.path,
+                "error_type": detail.error_type,
+                "count": 0,
+                "sample_paths": [],
+                "expected": None,
+                "unexpected_fields": [],
+            },
+        )
+        group["count"] += 1
+        if detail.path not in group["sample_paths"] and len(group["sample_paths"]) < MAX_GROUP_SAMPLE_PATHS:
+            group["sample_paths"].append(detail.path)
+    group_models = [ValidationErrorGroup.model_validate(group) for group in groups.values()]
+    fingerprint = hashlib.sha256(
+        "\n".join(sorted(group.group_key for group in group_models)).encode("utf-8")
+    ).hexdigest()
+    diagnostic = ValidationDiagnostic(
+        total_error_count=len(details),
+        group_count=len(group_models),
+        family_fingerprint=fingerprint,
+        groups=group_models,
+        representative_details=details[: min(len(details), 24)],
+        full_report_path=full_report_path,
+    )
+    return diagnostic, details
+
+
 def compact_diagnostic(diagnostic: ValidationDiagnostic) -> dict[str, Any]:
     """Return an inline digest bounded independently from the full report."""
     groups = [group.model_copy(deep=True) for group in diagnostic.groups]
@@ -199,6 +249,7 @@ def validation_report(
     result_sha256: str | None,
     contract_manifest_path: str | None,
     contract_card_sha256: str | None,
+    validation_kind: str = "schema_validation",
 ) -> dict[str, Any]:
     return {
         "schema_version": "1.0",
@@ -210,6 +261,7 @@ def validation_report(
         "result_sha256": result_sha256,
         "contract_manifest_path": contract_manifest_path,
         "contract_card_sha256": contract_card_sha256,
+        "validation_kind": validation_kind,
         "total_error_count": diagnostic.total_error_count,
         "group_count": diagnostic.group_count,
         "family_fingerprint": diagnostic.family_fingerprint,

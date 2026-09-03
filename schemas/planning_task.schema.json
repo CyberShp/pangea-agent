@@ -64,6 +64,13 @@
       "title": "Target",
       "type": "string"
     },
+    "focus": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Focus",
+      "type": "array"
+    },
     "analysis_language": {
       "default": "c_cpp",
       "enum": [

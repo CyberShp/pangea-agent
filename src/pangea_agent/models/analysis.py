@@ -25,9 +25,8 @@ class SourceEvidence(StrictModel):
     observation: str = Field(
         min_length=1,
         description=(
-            "只陈述当前 repo/path/line_start..line_end 引用范围本身直接证明的源码事实；"
-            "类型声明若不在引用范围内不得补入，语言标准、Risk 分类、manifest、调用链深度、"
-            "跨文件缺失、ABI、构建配置和产品入口结论不得伪装成 SourceEvidence observation"
+            "必须从当前 repo/path/line_start..line_end 引用范围复制一个连续、逐字符相同的最小源码子串；"
+            "只放源码文本，不附加解释、推导或范围结论。"
         ),
     )
 
@@ -67,6 +66,7 @@ class PlanningTask(StrictModel):
     action_id: str | None = Field(default=None, min_length=1)
     run_id: str = Field(min_length=1)
     target: str = Field(min_length=1)
+    focus: list[str] = Field(default_factory=list)
     analysis_language: AnalysisLanguage = "c_cpp"
     repositories: list[RepositoryRef] = Field(min_length=1)
     requested_scope: list[str] = Field(min_length=1)
@@ -595,7 +595,11 @@ class ValidationErrorGroup(StrictModel):
 
 class RepairRequest(StrictModel):
     attempt: int = Field(gt=0)
-    kind: Literal["schema_validation", "incomplete_result"]
+    kind: Literal[
+        "schema_validation",
+        "result_contract_validation",
+        "incomplete_result",
+    ]
     validation_report_path: str | None = Field(default=None, min_length=1)
     result_contract_path: str | None = Field(default=None, min_length=1)
     result_sha256: str | None = Field(default=None, min_length=1)

@@ -4,7 +4,7 @@
 
 如果工作区规则要求读取 Private House Code Skill，只读取工作区根目录 `.agents/skills/private-house-code/SKILL.md`；不要相对 rubric 目录拼接 Skill 路径。
 
-开始前读取 task、`result_schema_path`、`result_skeleton_path` 和 task 明确列出的冻结输入。Graph 已把骨架写入唯一 `result_path`；只修改该文件，不保留占位符、不另建结果文件。Review 结果由 settle 做正式校验；不要运行 `check-result-json` 作为 Review 自检，因为该命令不是 Review JSON 的校验入口。
+开始前读取 task、`result_schema_path`、`result_skeleton_path` 和 task 明确列出的冻结输入。Graph 已把骨架写入唯一 `result_path`；只修改该文件，不保留占位符、不另建结果文件。结束前运行 `.venv/bin/python -m pangea_agent.cli.main check-result-json --task '<当前 task JSON 路径>'`；Windows 使用 `.venv\Scripts\python.exe`。该命令只读检查 Review 结果，`submission_ready=false` 才修正结构问题，`submission_ready=true` 时可结束当前回合，WARN 由 settle 记录为降级。
 
 `comparison_review` 写结果前必须完成下面的内部核对账本，再写 decision/finding：
 

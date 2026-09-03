@@ -19,9 +19,9 @@ def normalize_analysis_result(
 ) -> UnitSemanticResult:
     """Add only Workflow-owned fields, then validate the Agent result unchanged."""
 
-    del warnings
     if not isinstance(raw_result, Mapping):
-        raise ValueError("Analysis 结果必须是一个 JSON 对象")
+        # Let Pydantic produce the structured schema diagnostic for a non-object.
+        return UnitSemanticResult.model_validate(raw_result)
 
     payload = deepcopy(dict(raw_result))
     _inject_evidence_repo_ids(payload, task.unit.repo_id)
@@ -30,21 +30,16 @@ def normalize_analysis_result(
 
     result = _derive_test_case_links(UnitSemanticResult.model_validate(payload))
     issues = analysis_obligations(task, result, inventory, selected_inputs)
-    if issues:
-        detail = "\n".join(
-            f"- {item['code']} [{item['item_id']}]: {item['message']}"
-            for item in issues[:24]
-        )
-        if len(issues) > 24:
-            detail += f"\n- ... 另有 {len(issues) - 24} 项"
-        raise ValueError(f"Analysis obligations incomplete:\n{detail}")
+    warnings.extend(
+        f"Analysis obligation {item['code']} [{item['item_id']}]: {item['message']}"
+        for item in issues
+    )
 
     integrity_issues = validate_unit_result(task, result, dict(selected_inputs))
-    if integrity_issues:
-        detail = "\n".join(f"- {item}" for item in integrity_issues[:24])
-        if len(integrity_issues) > 24:
-            detail += f"\n- ... 另有 {len(integrity_issues) - 24} 项"
-        raise ValueError(f"Analysis deterministic integrity incomplete:\n{detail}")
+    warnings.extend(
+        f"Analysis deterministic integrity warning: {item}"
+        for item in integrity_issues
+    )
     return result
 
 

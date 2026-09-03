@@ -268,6 +268,7 @@ def prepare_inputs(state: PangeaState) -> PangeaState:
         action_id=action_id,
         run_id=state["run_id"],
         target=contract["target"],
+        focus=list(contract.get("focus", [])),
         analysis_language=analysis_language,
         repositories=[RepositoryRef.model_validate(item) for item in frozen_repositories],
         requested_scope=requested_scope,

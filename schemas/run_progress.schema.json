@@ -292,6 +292,7 @@
         "kind": {
           "enum": [
             "schema_validation",
+            "result_contract_validation",
             "incomplete_result"
           ],
           "title": "Kind",

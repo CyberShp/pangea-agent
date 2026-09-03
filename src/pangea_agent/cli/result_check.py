@@ -7,7 +7,12 @@ from pydantic import ValidationError
 from pangea_agent.agent_io import read_json
 from pangea_agent.cli.validation_diagnostics import (
     compact_diagnostic,
+    diagnostics_from_contract_issues,
     diagnostics_from_validation_error,
+)
+from pangea_agent.graph.nodes.advance_workflow import (
+    _validate_comparison_review,
+    _validate_review,
 )
 from pangea_agent.graph.analysis_normalizer import normalize_analysis_result
 from pangea_agent.graph.planning import (
@@ -15,14 +20,20 @@ from pangea_agent.graph.planning import (
     normalize_planning_result,
 )
 from pangea_agent.graph.result_contract import (
-    unit_submission_warnings,
+    ResultContractValidationError,
     validate_closure_corrections,
 )
 from pangea_agent.models.analysis import (
+    AnalysisUnit,
     AnalysisTask,
+    ComparisonReviewResult,
+    ComparisonReviewTask,
     ClosureTask,
+    IndependentReviewResult,
+    IndependentReviewTask,
     PlanningTask,
     UnitSemanticResult,
+    WorkflowProgress,
 )
 
 
@@ -41,6 +52,27 @@ def _set_schema_diagnostic(response: dict, exc: ValidationError) -> None:
         f"{group.group_key}: {group.count} errors"
         for group in diagnostic.groups
     ]
+
+
+def _set_contract_diagnostic(response: dict, exc: ResultContractValidationError) -> None:
+    diagnostic, _ = diagnostics_from_contract_issues(exc.issues)
+    response["validation_error"] = compact_diagnostic(diagnostic)
+    response["advisories"] = [
+        f"{group.group_key}: {group.count} errors"
+        for group in diagnostic.groups
+    ]
+
+
+def _review_progress(task_data: dict) -> WorkflowProgress:
+    unit_plan = read_json(Path(task_data["unit_plan_path"]))
+    units = [
+        AnalysisUnit.model_validate(item)
+        for item in unit_plan.get("units", [])
+    ]
+    return WorkflowProgress(
+        run_id=task_data["run_id"],
+        analysis_units=units,
+    )
 
 
 def check_result_json(task_path: str) -> dict:
@@ -92,6 +124,63 @@ def check_result_json(task_path: str) -> dict:
                 "可归一化提示会由 settle 记录并继续流程"
             )
         return response
+    if task_type in {"independent_review", "comparison_review"}:
+        try:
+            progress = _review_progress(task_data)
+            selected_inputs = read_json(Path(task_data["selected_inputs_path"]))
+            if task_type == "independent_review":
+                task = IndependentReviewTask.model_validate(task_data)
+                result = IndependentReviewResult.model_validate(result_data)
+                warnings = _validate_review(
+                    progress,
+                    result,
+                    selected_inputs,
+                    {item.repo_id: item.source_root for item in task.repositories},
+                )
+            else:
+                task = ComparisonReviewTask.model_validate(task_data)
+                result = ComparisonReviewResult.model_validate(result_data)
+                independent = IndependentReviewResult.model_validate(
+                    read_json(Path(task.independent_review_result_path))
+                )
+                analysis_results = {
+                    unit_id: UnitSemanticResult.model_validate(
+                        read_json(Path(result_path))
+                    )
+                    for unit_id, result_path in task.analysis_result_paths.items()
+                }
+                warnings = _validate_comparison_review(
+                    progress,
+                    independent,
+                    result,
+                    selected_inputs,
+                    task,
+                    analysis_results,
+                )
+        except ValidationError as exc:
+            _set_schema_diagnostic(response, exc)
+            response["status"] = "WARN"
+            response["submission_ready"] = False
+            response["advisory_count"] = len(response["advisories"])
+            return response
+        except ResultContractValidationError as exc:
+            _set_contract_diagnostic(response, exc)
+            response["status"] = "WARN"
+            response["submission_ready"] = False
+            response["advisory_count"] = len(response["advisories"])
+            return response
+        except (OSError, ValueError) as exc:
+            response["advisories"] = [str(exc)]
+            response["status"] = "WARN"
+            response["submission_ready"] = False
+            response["advisory_count"] = 1
+            return response
+        response["advisories"] = warnings
+        response["advisory_count"] = len(warnings)
+        if warnings:
+            response["status"] = "WARN"
+        return response
+
     if task_type not in {"analysis", "closure"}:
         return response
 
@@ -138,12 +227,7 @@ def check_result_json(task_path: str) -> dict:
         response["agent_next_step"] = "补充可消费的分析摘要、流程和源码证据后重跑"
         return response
 
-    response["advisories"] = normalization_warnings + unit_submission_warnings(
-        task,
-        result,
-        selected_inputs,
-        review_findings,
-    )
+    response["advisories"] = normalization_warnings
     correction_errors: list[str] = []
     if task_type == "closure":
         try:
