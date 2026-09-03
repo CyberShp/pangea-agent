@@ -12,6 +12,7 @@ from pangea_agent.documents.extract import extract_document
 from pangea_agent.models.asset import (
     AssetExtractionResult,
     AssetRecord,
+    AssetStatus,
     AssetType,
 )
 
@@ -29,6 +30,8 @@ ASSET_ALLOWED_STEPS: dict[str, list[str]] = {
     "reference": ["02", "03", "04", "05", "06", "07"],
     "test_case_example": ["07"],
 }
+SEMANTIC_ASSET_TYPES = {"requirement", "design", "historical_defect", "reference"}
+EVIDENCE_ASSET_TYPES = {"coverage", "test_case_example"}
 
 
 def _now() -> str:
@@ -118,6 +121,52 @@ def _duplicate_asset(data_root: str, source_sha256: str) -> AssetRecord | None:
     return None
 
 
+def _validate_asset_source(source_path: Path, asset_type: AssetType) -> None:
+    if not source_path.is_file():
+        raise ValueError(f"资产来源不是文件：{source_path}")
+    if asset_type == "coverage":
+        if source_path.suffix.lower() != ".xlsx":
+            raise ValueError("Coverage 当前只支持 XLSX")
+    elif source_path.suffix.lower() not in DOCUMENT_SUFFIXES:
+        raise ValueError(f"不支持的资料类型：{source_path.suffix or '<none>'}")
+
+
+def preview_asset_import(
+    data_root: str,
+    source: str,
+    asset_type: AssetType,
+    title: str | None = None,
+) -> dict:
+    source_path = Path(source)
+    _validate_asset_source(source_path, asset_type)
+    source_sha256 = _sha256(source_path)
+    duplicate = _duplicate_asset(data_root, source_sha256)
+    normalized_title = (title or source_path.stem).strip()
+    conflicts = [
+        record for record in _all_asset_records(data_root)
+        if record.status != "archived"
+        and record.source_sha256 != source_sha256
+        and (
+            (record.source_name or "").casefold() == source_path.name.casefold()
+            or record.title.casefold() == normalized_title.casefold()
+        )
+    ]
+    return {
+        "source_name": source_path.name,
+        "source_size": source_path.stat().st_size,
+        "source_sha256": source_sha256,
+        "asset_type": asset_type,
+        "title": normalized_title,
+        "knowledge_kind": "semantic" if asset_type in SEMANTIC_ASSET_TYPES else "evidence",
+        "duplicate": duplicate.model_dump(mode="json") if duplicate else None,
+        "conflicts": [record.model_dump(mode="json") for record in conflicts],
+        "allowed_strategies": [] if duplicate else [
+            "create_new",
+            *(["new_revision"] if conflicts else []),
+        ],
+    }
+
+
 def _normalize_document(data_root: str, record: AssetRecord) -> AssetRecord:
     source = Path(record.source_path)
     if not source.is_file():
@@ -189,8 +238,7 @@ def import_asset(
     }:
         raise ValueError(f"不支持的资产类型：{asset_type}")
     source_path = Path(source)
-    if not source_path.is_file():
-        raise ValueError(f"资产来源不是文件：{source_path}")
+    _validate_asset_source(source_path, asset_type)
     source_sha256 = _sha256(source_path)
     duplicate = _duplicate_asset(data_root, source_sha256)
     if duplicate is not None:
@@ -198,12 +246,8 @@ def import_asset(
             f"检测到重复资产：内容 SHA256 已存在于 {duplicate.asset_id}（revision {duplicate.revision}）"
         )
     if asset_type == "coverage":
-        if source_path.suffix.lower() != ".xlsx":
-            raise ValueError("Coverage 当前只支持 XLSX")
         destination_root = Path(data_root) / "coverage"
     else:
-        if source_path.suffix.lower() not in DOCUMENT_SUFFIXES:
-            raise ValueError(f"不支持的资料类型：{source_path.suffix or '<none>'}")
         destination_root = Path(data_root) / "inbox"
 
     asset_id = _next_asset_id(data_root)
@@ -244,10 +288,7 @@ def import_asset_revision(
     if record.status == "archived":
         raise ValueError("已归档资产不能创建新修订")
     source_path = Path(source)
-    if not source_path.is_file():
-        raise ValueError(f"资产来源不是文件：{source_path}")
-    if source_path.suffix.lower() not in DOCUMENT_SUFFIXES:
-        raise ValueError(f"不支持的资料类型：{source_path.suffix or '<none>'}")
+    _validate_asset_source(source_path, record.asset_type)
     source_sha256 = _sha256(source_path)
     if source_sha256 == record.source_sha256:
         raise ValueError("新修订与当前资产内容相同")
@@ -291,28 +332,45 @@ def list_assets(
     asset_type: str | None = None,
     status: str | None = None,
     query: str | None = None,
+    knowledge_kind: str | None = None,
 ) -> dict:
     if cursor < 0:
         raise ValueError("cursor 不能小于 0")
     if limit < 1 or limit > 200:
         raise ValueError("limit 必须在 1 到 200 之间")
+    if knowledge_kind not in {None, "", "semantic", "evidence"}:
+        raise ValueError("knowledge_kind 必须是 semantic 或 evidence")
+    all_records = _all_asset_records(data_root)
+    summary = {
+        "total": len(all_records),
+        "semantic": sum(record.asset_type in SEMANTIC_ASSET_TYPES for record in all_records),
+        "evidence": sum(record.asset_type in EVIDENCE_ASSET_TYPES for record in all_records),
+        "available": sum(record.status == "available" for record in all_records),
+        "review": sum(record.status == "awaiting_review" for record in all_records),
+        "failed": sum(record.status == "failed" for record in all_records),
+        "archived": sum(record.status == "archived" for record in all_records),
+    }
     records = []
     normalized_query = (query or "").strip().casefold()
-    root = _assets_root(data_root)
-    if root.exists():
-        for path in root.glob("*/asset.json"):
-            record = load_asset(data_root, path.parent.name)
-            if asset_type and record.asset_type != asset_type:
-                continue
-            if status and record.status != status:
-                continue
-            if normalized_query and normalized_query not in "\n".join((
-                record.asset_id,
-                record.title,
-                record.source_path,
-            )).casefold():
-                continue
-            records.append(record)
+    allowed_types = (
+        SEMANTIC_ASSET_TYPES if knowledge_kind == "semantic"
+        else EVIDENCE_ASSET_TYPES if knowledge_kind == "evidence"
+        else None
+    )
+    for record in all_records:
+        if allowed_types is not None and record.asset_type not in allowed_types:
+            continue
+        if asset_type and record.asset_type != asset_type:
+            continue
+        if status and record.status != status:
+            continue
+        if normalized_query and normalized_query not in "\n".join((
+            record.asset_id,
+            record.title,
+            record.source_path,
+        )).casefold():
+            continue
+        records.append(record)
     records.sort(key=lambda item: (item.created_at, item.asset_id), reverse=True)
     page = records[cursor : cursor + limit]
     next_cursor = cursor + len(page)
@@ -320,6 +378,7 @@ def list_assets(
         "items": [item.model_dump(mode="json") for item in page],
         "next_cursor": next_cursor if next_cursor < len(records) else None,
         "total": len(records),
+        "summary": summary,
     }
 
 
@@ -347,6 +406,16 @@ def asset_detail(data_root: str, asset_id: str) -> dict:
         "normalized_preview": normalized_preview,
         "integrity": integrity,
         "allowed_steps": ASSET_ALLOWED_STEPS[record.asset_type],
+        "failure_record": {
+            "asset_id": record.asset_id,
+            "title": record.title,
+            "revision": record.revision,
+            "source_name": record.source_name,
+            "source_sha256": record.source_sha256,
+            "last_error": record.last_error,
+            "warnings": record.warnings,
+            "updated_at": record.updated_at,
+        } if record.status == "failed" else None,
     }
 
 
@@ -589,6 +658,60 @@ def review_asset(data_root: str, asset_id: str, decision: str) -> AssetRecord:
 
 def archive_asset(data_root: str, asset_id: str) -> AssetRecord:
     record = load_asset(data_root, asset_id)
+    if record.status == "archived":
+        raise ValueError("资产已经归档")
+    record.archived_from_status = record.status
     record.status = "archived"
+    _save_record(data_root, record)
+    return record
+
+
+def restore_asset(data_root: str, asset_id: str) -> AssetRecord:
+    record = load_asset(data_root, asset_id)
+    if record.status != "archived":
+        raise ValueError("只有已归档资产可以恢复")
+    restored: AssetStatus | None = record.archived_from_status
+    if restored in {None, "archived", "extracting"}:
+        if record.last_error:
+            restored = "failed"
+        elif record.review_status == "pending":
+            restored = "awaiting_review"
+        elif record.review_status == "rejected":
+            restored = "rejected"
+        elif record.normalized_text_path:
+            restored = "available" if Path(record.normalized_text_path).read_text(
+                encoding="utf-8", errors="replace"
+            ).strip() else "no_items"
+        else:
+            restored = "imported"
+    record.status = restored
+    record.archived_from_status = None
+    _save_record(data_root, record)
+    return record
+
+
+def update_asset_metadata(
+    data_root: str,
+    asset_id: str,
+    *,
+    title: str,
+    repository_ids: list[str] | None = None,
+    module_tags: list[str] | None = None,
+    language_tags: list[str] | None = None,
+) -> AssetRecord:
+    record = load_asset(data_root, asset_id)
+    if record.status == "archived":
+        raise ValueError("已归档资产不能编辑")
+    normalized_title = title.strip()
+    if not normalized_title:
+        raise ValueError("资产标题不能为空")
+
+    def clean(values: list[str] | None) -> list[str]:
+        return list(dict.fromkeys(value.strip() for value in values or [] if value.strip()))
+
+    record.title = normalized_title
+    record.repository_ids = clean(repository_ids)
+    record.module_tags = clean(module_tags)
+    record.language_tags = clean(language_tags)
     _save_record(data_root, record)
     return record

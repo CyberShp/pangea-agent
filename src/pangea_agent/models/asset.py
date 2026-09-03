@@ -14,6 +14,17 @@ AssetType = Literal[
     "test_case_example",
 ]
 
+AssetStatus = Literal[
+    "imported",
+    "extracting",
+    "awaiting_review",
+    "available",
+    "no_items",
+    "rejected",
+    "failed",
+    "archived",
+]
+
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -95,16 +106,8 @@ class AssetRecord(StrictModel):
     language_tags: list[str] = Field(default_factory=list)
     created_at: str = Field(min_length=1)
     updated_at: str = Field(min_length=1)
-    status: Literal[
-        "imported",
-        "extracting",
-        "awaiting_review",
-        "available",
-        "no_items",
-        "rejected",
-        "failed",
-        "archived",
-    ] = "imported"
+    status: AssetStatus = "imported"
+    archived_from_status: AssetStatus | None = None
     review_status: Literal["not_required", "pending", "approved", "rejected"] = (
         "not_required"
     )

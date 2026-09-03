@@ -16,6 +16,8 @@ from .public_api import (
     list_methodologies,
     list_runs,
     prepare_asset_extraction,
+    preview_asset_import,
+    restore_asset,
     prepare_methodology_derivation,
     review_asset,
     run_detail,
@@ -25,6 +27,7 @@ from .public_api import (
     show_methodology,
     system_capabilities,
     stop_run,
+    update_asset_metadata,
     update_asset_result,
 )
 from pangea_agent.skill_runs import create_skill_run
@@ -45,6 +48,15 @@ def main() -> None:
         choices=("requirement", "design", "historical_defect", "reference", "coverage", "test_case_example"),
     )
     asset_import.add_argument("--title")
+    asset_preview = asset_commands.add_parser("preview")
+    asset_preview.add_argument("--data-root", default="pangea-data")
+    asset_preview.add_argument("--path", required=True)
+    asset_preview.add_argument(
+        "--type",
+        required=True,
+        choices=("requirement", "design", "historical_defect", "reference", "coverage", "test_case_example"),
+    )
+    asset_preview.add_argument("--title")
     asset_revision = asset_commands.add_parser("revise")
     asset_revision.add_argument("--data-root", default="pangea-data")
     asset_revision.add_argument("--asset-id", required=True)
@@ -57,6 +69,7 @@ def main() -> None:
     asset_list.add_argument("--type")
     asset_list.add_argument("--status")
     asset_list.add_argument("--query")
+    asset_list.add_argument("--kind", choices=("semantic", "evidence"))
     asset_get = asset_commands.add_parser("get")
     asset_get.add_argument("--data-root", default="pangea-data")
     asset_get.add_argument("--asset-id", required=True)
@@ -74,6 +87,16 @@ def main() -> None:
     asset_archive = asset_commands.add_parser("archive")
     asset_archive.add_argument("--data-root", default="pangea-data")
     asset_archive.add_argument("--asset-id", required=True)
+    asset_restore = asset_commands.add_parser("restore")
+    asset_restore.add_argument("--data-root", default="pangea-data")
+    asset_restore.add_argument("--asset-id", required=True)
+    asset_metadata = asset_commands.add_parser("update-metadata")
+    asset_metadata.add_argument("--data-root", default="pangea-data")
+    asset_metadata.add_argument("--asset-id", required=True)
+    asset_metadata.add_argument("--title", required=True)
+    asset_metadata.add_argument("--repository-id", action="append")
+    asset_metadata.add_argument("--module-tag", action="append")
+    asset_metadata.add_argument("--language-tag", action="append")
 
     methodologies = sub.add_parser("methodologies")
     methodology_commands = methodologies.add_subparsers(
@@ -157,6 +180,10 @@ def main() -> None:
             if args.asset_command == "import":
                 result = import_asset(args.data_root, args.path, args.type, args.title)
                 print_success(result.model_dump(mode="json"))
+            elif args.asset_command == "preview":
+                print_success(preview_asset_import(
+                    args.data_root, args.path, args.type, args.title,
+                ))
             elif args.asset_command == "revise":
                 result = import_asset_revision(args.data_root, args.asset_id, args.path, args.title)
                 print_success(result.model_dump(mode="json"))
@@ -168,6 +195,7 @@ def main() -> None:
                     asset_type=args.type,
                     status=args.status,
                     query=args.query,
+                    knowledge_kind=args.kind,
                 ))
             elif args.asset_command == "get":
                 print_success(asset_detail(args.data_root, args.asset_id))
@@ -181,6 +209,19 @@ def main() -> None:
                 print_success(result.model_dump(mode="json"))
             elif args.asset_command == "archive":
                 result = archive_asset(args.data_root, args.asset_id)
+                print_success(result.model_dump(mode="json"))
+            elif args.asset_command == "restore":
+                result = restore_asset(args.data_root, args.asset_id)
+                print_success(result.model_dump(mode="json"))
+            elif args.asset_command == "update-metadata":
+                result = update_asset_metadata(
+                    args.data_root,
+                    args.asset_id,
+                    title=args.title,
+                    repository_ids=args.repository_id,
+                    module_tags=args.module_tag,
+                    language_tags=args.language_tag,
+                )
                 print_success(result.model_dump(mode="json"))
         except Exception as exc:
             print_error(exc)
