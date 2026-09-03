@@ -357,6 +357,23 @@ def frozen_contract_paths(run_directory: str | Path, contract_id: str) -> dict[s
     manifest_path = root / "manifest.json"
     if not manifest_path.is_file():
         raise ValueError(f"Run 缺少冻结结果契约：{manifest_path}")
+    manifest = read_json(manifest_path)
+    if not isinstance(manifest, dict) or manifest.get("contract_id") != contract_id:
+        raise ValueError(f"Run 结果契约 manifest 不匹配：{manifest_path}")
+    for filename, hash_key in (
+        ("schema.json", "schema_sha256"),
+        ("skeleton.json", "skeleton_sha256"),
+        ("example.json", "example_sha256"),
+        ("contract-card.md", "contract_card_sha256"),
+    ):
+        expected_hash = manifest.get(hash_key)
+        artifact = root / filename
+        if expected_hash is None:
+            if artifact.exists():
+                raise ValueError(f"Run 结果契约 manifest 多出 Artifact：{artifact}")
+            continue
+        if not artifact.is_file() or sha256_file(artifact) != expected_hash:
+            raise ValueError(f"Run 冻结结果契约完整性校验失败：{artifact}")
     return {
         "result_schema_path": str(root / "schema.json"),
         "result_skeleton_path": str(root / "skeleton.json") if (root / "skeleton.json").is_file() else None,
