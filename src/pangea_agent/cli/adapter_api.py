@@ -12,6 +12,12 @@ from pangea_agent.assets import (
     save_asset_action,
 )
 from pangea_agent.cli.run_module_analysis import resume_module_analysis
+from pangea_agent.cli.validation_diagnostics import (
+    compact_diagnostic,
+    diagnostics_from_validation_error,
+    validation_report,
+    write_validation_report,
+)
 from pangea_agent.graph.nodes.advance_workflow import (
     _validate_comparison_review,
     _validate_review,
@@ -30,6 +36,7 @@ from pangea_agent.graph.workflow_store import (
     pending_actions,
     run_directory,
     save_progress,
+    validation_report_path,
     validated_result_path,
 )
 from pangea_agent.models.analysis import (
@@ -43,19 +50,27 @@ from pangea_agent.models.analysis import (
     PlanningResult,
     PlanningResultV2,
     PlanningTask,
+    RepairRequest,
     UnitSemanticResult,
     ValidationFailureRecord,
 )
+from pangea_agent.graph.schema_contract import sha256_file
 from pangea_agent.models.asset import AssetExtractionResult
 
 
 REPEATED_REPAIR_ATTENTION_AFTER = 3
 TOTAL_REPAIR_ATTENTION_AFTER = 6
-MAX_VALIDATION_ERROR_DETAILS = 24
 
 
 def _repair_attempts(action: ActionState) -> int:
     return action.validation_failures + action.incomplete_attempts
+
+
+def _last_failure_record(action: ActionState) -> ValidationFailureRecord | None:
+    records = [*action.validation_history, *action.incomplete_history]
+    if not records:
+        return None
+    return max(records, key=lambda record: record.attempt)
 
 
 def _state(data_root: str, run_id: str) -> dict:
@@ -77,28 +92,126 @@ def _repair_action(action: ActionState) -> dict:
     return payload
 
 
+def _task_data(action: ActionState) -> dict:
+    try:
+        value = read_json(Path(action.task_path))
+    except (OSError, ValueError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _result_sha256(task: dict) -> str | None:
+    result_path = task.get("result_path")
+    if not result_path:
+        return None
+    try:
+        return sha256_file(result_path)
+    except OSError:
+        return None
+
+
+def _contract_card_sha256(task: dict) -> str | None:
+    contract_path = task.get("result_contract_path")
+    if not contract_path:
+        return None
+    try:
+        return sha256_file(contract_path)
+    except OSError:
+        return None
+
+
+def _optional_path(value: object) -> str | None:
+    return value if isinstance(value, str) and value else None
+
+
+def _update_no_progress(
+    action: ActionState,
+    *,
+    error_count: int,
+    family_fingerprint: str | None,
+    result_sha256: str | None,
+    group_keys: set[str] | None = None,
+) -> bool:
+    previous_count = action.last_validation_detail_count
+    previous_family = action.last_validation_family_fingerprint
+    previous_record = _last_failure_record(action)
+    previous_sha = previous_record.result_sha256 if previous_record else None
+    if previous_record is None and previous_count == 0 and previous_family is None:
+        progress_made = True
+    else:
+        previous_groups = {
+            group.group_key for group in previous_record.groups
+        } if previous_record else set()
+        current_groups = group_keys or set()
+        if family_fingerprint == previous_family and result_sha256 == previous_sha:
+            progress_made = False
+        else:
+            progress_made = error_count < previous_count or current_groups < previous_groups
+    if progress_made:
+        action.consecutive_no_progress_failures = 0
+    else:
+        action.consecutive_no_progress_failures += 1
+    action.last_validation_family_fingerprint = family_fingerprint
+    action.last_validation_detail_count = error_count
+    action.attention_required = (
+        action.consecutive_no_progress_failures >= REPEATED_REPAIR_ATTENTION_AFTER
+        or _repair_attempts(action) >= TOTAL_REPAIR_ATTENTION_AFTER
+    )
+    return progress_made
+
+
 def _invalid_result(
     state: dict,
     progress,
     action: ActionState,
     exc: Exception,
 ) -> dict:
+    task = _task_data(action)
+    attempt = _repair_attempts(action) + 1
+    result_sha256 = _result_sha256(task)
+    report_path = validation_report_path(
+        state,
+        action.action_id,
+        attempt,
+    )
+    diagnostic = None
     validation_details: list[dict] = []
     if isinstance(exc, ValidationError):
-        all_errors = exc.errors(include_url=False)
-        message = f"{len(all_errors)} schema validation errors for {exc.title}"
+        diagnostic, all_details = diagnostics_from_validation_error(
+            exc,
+            full_report_path=str(report_path),
+        )
+        message = (
+            f"{diagnostic.total_error_count} schema errors in "
+            f"{diagnostic.group_count} error groups for {exc.title}"
+        )
         validation_details = [
             {
-                "path": ".".join(str(part) for part in item["loc"]),
-                "type": item["type"],
-                "message": item["msg"],
+                "path": detail.path,
+                "type": detail.error_type,
+                "message": detail.message,
             }
-            for item in all_errors[:MAX_VALIDATION_ERROR_DETAILS]
+            for detail in diagnostic.representative_details
         ]
+        write_validation_report(
+            report_path,
+            validation_report(
+                diagnostic,
+                all_details,
+                action_id=action.action_id,
+                task_id=action.task_id or "",
+                attempt=attempt,
+                task_path=action.task_path,
+                result_path=str(task.get("result_path", "")),
+                result_sha256=result_sha256,
+                contract_manifest_path=task.get("result_contract_manifest_path"),
+                contract_card_sha256=_contract_card_sha256(task),
+            ),
+        )
     else:
         message = str(exc)
     action.validation_failures += 1
-    if action.error == message:
+    if diagnostic and action.last_validation_family_fingerprint == diagnostic.family_fingerprint:
         action.repeated_validation_failures += 1
     else:
         action.repeated_validation_failures = 1
@@ -107,18 +220,55 @@ def _invalid_result(
         "code": exc.__class__.__name__,
         "message": message,
     }
-    if validation_details:
-        error["details"] = validation_details
-        error["detail_count"] = len(all_errors)
-        error["details_truncated"] = len(all_errors) > len(validation_details)
+    if diagnostic:
+        error.update(compact_diagnostic(diagnostic))
+        error["code"] = exc.__class__.__name__
+        error["message"] = message
+        detail_count = diagnostic.total_error_count
+        group_count = diagnostic.group_count
+        family_fingerprint = diagnostic.family_fingerprint
+        groups = diagnostic.groups
+        report_path_value = str(report_path)
+    else:
+        detail_count = 0
+        group_count = 0
+        family_fingerprint = None
+        groups = []
+        report_path_value = None
+    _update_no_progress(
+        action,
+        error_count=detail_count,
+        family_fingerprint=family_fingerprint,
+        result_sha256=result_sha256,
+        group_keys={group.group_key for group in groups},
+    )
     action.validation_history.append(ValidationFailureRecord(
-        attempt=action.validation_failures,
+        attempt=attempt,
         code=error["code"],
         message=message,
-        detail_count=error.get("detail_count", 0),
+        detail_count=detail_count,
+        group_count=group_count,
+        family_fingerprint=family_fingerprint,
+        result_sha256=result_sha256,
+        report_path=report_path_value,
+        groups=groups,
         details=validation_details,
-        details_truncated=error.get("details_truncated", False),
+        details_truncated=(
+            diagnostic is not None
+            and diagnostic.total_error_count > len(validation_details)
+        ),
     ))
+    action.action = "continue_agent"
+    action.status = "pending"
+    action.repair_status = "required"
+    action.pending_repair = RepairRequest.model_validate({
+        "attempt": attempt,
+        "kind": "schema_validation",
+        "validation_report_path": report_path_value,
+        "result_contract_path": _optional_path(task.get("result_contract_path")),
+        "result_sha256": result_sha256,
+        "error": error,
+    })
     save_progress(state, progress)
     repair_action = _repair_action(action)
     repair_action["validation_error"] = error
@@ -132,10 +282,7 @@ def _invalid_result(
         "error": error,
         "validation_failures": action.validation_failures,
         "repeated_validation_failures": action.repeated_validation_failures,
-        "attention_required": (
-            action.repeated_validation_failures >= REPEATED_REPAIR_ATTENTION_AFTER
-            or _repair_attempts(action) >= TOTAL_REPAIR_ATTENTION_AFTER
-        ),
+        "attention_required": action.attention_required,
         "repair_action": repair_action,
     }
 
@@ -188,14 +335,39 @@ def _incomplete_result(
     action: ActionState,
 ) -> dict:
     message = "Agent 未写入结果：result_path 仍是 Graph 创建的原始骨架"
+    task = _task_data(action)
+    attempt = _repair_attempts(action) + 1
+    result_sha256 = _result_sha256(task)
     action.incomplete_attempts += 1
     action.error = message
+    _update_no_progress(
+        action,
+        error_count=0,
+        family_fingerprint=None,
+        result_sha256=result_sha256,
+    )
     record = ValidationFailureRecord(
-        attempt=action.incomplete_attempts,
+        attempt=attempt,
         code="IncompleteAgentResult",
         message=message,
+        result_sha256=result_sha256,
     )
     action.incomplete_history.append(record)
+    action.action = "continue_agent"
+    action.status = "pending"
+    action.repair_status = "required"
+    action.pending_repair = RepairRequest.model_validate({
+        "attempt": attempt,
+        "kind": "incomplete_result",
+        "validation_report_path": None,
+        "result_contract_path": _optional_path(task.get("result_contract_path")),
+        "result_sha256": result_sha256,
+        "error": {
+            "code": record.code,
+            "message": record.message,
+            "result_sha256": result_sha256,
+        },
+    })
     save_progress(state, progress)
     repair_action = _repair_action(action)
     error = {
@@ -213,10 +385,7 @@ def _incomplete_result(
         "error": error,
         "validation_failures": action.validation_failures,
         "incomplete_attempts": action.incomplete_attempts,
-        "attention_required": (
-            action.incomplete_attempts >= REPEATED_REPAIR_ATTENTION_AFTER
-            or _repair_attempts(action) >= TOTAL_REPAIR_ATTENTION_AFTER
-        ),
+        "attention_required": action.attention_required,
         "repair_action": repair_action,
     }
 
@@ -337,6 +506,9 @@ def bind_action(data_root: str, run_id: str, action_id: str, task_id: str) -> di
     else:
         action.task_id = task_id
     action.status = "dispatched"
+    if action.action == "continue_agent" and action.pending_repair is not None:
+        action.repair_status = "dispatched"
+        action.repair_dispatches += 1
     save_progress(state, progress)
     return action.model_dump(mode="json")
 
@@ -506,9 +678,17 @@ def _validate_action(data_root: str, run_id: str, action_id: str) -> dict:
         result.model_dump(mode="json"),
     )
     _record_degradations(progress, action_id, warnings)
-    if action.error is not None:
+    if (
+        action.error is not None
+        or action.repair_status != "none"
+        or action.pending_repair is not None
+    ):
         action.error = None
         action.repeated_validation_failures = 0
+        action.repair_status = "none"
+        action.pending_repair = None
+        action.consecutive_no_progress_failures = 0
+        action.attention_required = False
     save_progress(state, progress)
     payload = {"action_id": action_id, "status": "valid"}
     if warnings:

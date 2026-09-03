@@ -5,6 +5,10 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from pangea_agent.agent_io import read_json
+from pangea_agent.cli.validation_diagnostics import (
+    compact_diagnostic,
+    diagnostics_from_validation_error,
+)
 from pangea_agent.graph.analysis_normalizer import normalize_analysis_result
 from pangea_agent.graph.planning import (
     accept_planning_result,
@@ -28,6 +32,15 @@ def _schema_advisories(exc: ValidationError) -> list[str]:
         location = ".".join(str(part) for part in error["loc"])
         advisories.append(f"{location}: {error['msg']}")
     return advisories
+
+
+def _set_schema_diagnostic(response: dict, exc: ValidationError) -> None:
+    diagnostic, _ = diagnostics_from_validation_error(exc)
+    response["validation_error"] = compact_diagnostic(diagnostic)
+    response["advisories"] = [
+        f"{group.group_key}: {group.count} errors"
+        for group in diagnostic.groups
+    ]
 
 
 def check_result_json(task_path: str) -> dict:
@@ -64,7 +77,7 @@ def check_result_json(task_path: str) -> dict:
                 warnings,
             )
         except ValidationError as exc:
-            response["advisories"] = _schema_advisories(exc)
+            _set_schema_diagnostic(response, exc)
             response["submission_ready"] = False
         except (OSError, ValueError) as exc:
             response["advisories"] = [str(exc)]
@@ -108,7 +121,7 @@ def check_result_json(task_path: str) -> dict:
             normalization_warnings,
         )
     except ValidationError as exc:
-        response["advisories"] = _schema_advisories(exc)
+        _set_schema_diagnostic(response, exc)
         response["advisory_count"] = len(response["advisories"])
         response["status"] = "WARN"
         response["submission_ready"] = False
@@ -143,7 +156,11 @@ def check_result_json(task_path: str) -> dict:
                 result,
             )
         except ValidationError as exc:
-            correction_errors = _schema_advisories(exc)
+            diagnostic, _ = diagnostics_from_validation_error(exc)
+            correction_errors = [
+                f"{group.group_key}: {group.count} errors"
+                for group in diagnostic.groups
+            ]
         except (OSError, ValueError) as exc:
             correction_errors = [str(exc)]
         response["advisories"].extend(correction_errors)

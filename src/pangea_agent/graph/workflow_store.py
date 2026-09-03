@@ -84,6 +84,17 @@ def validated_result_path(state: dict, action_id: str) -> Path:
     return run_directory(state) / "validated-results" / filename
 
 
+def validation_report_path(state: dict, action_id: str, attempt: int) -> Path:
+    """Return one immutable, Windows-safe Validation Report path."""
+    safe_action_id = action_id.replace(":", "__")
+    return (
+        run_directory(state)
+        / "validation"
+        / safe_action_id
+        / f"attempt-{attempt:04d}.json"
+    )
+
+
 def pending_actions(progress: WorkflowProgress, limit: int = 8) -> list[dict]:
     from pangea_agent.methodology import methodology_manifest
 
