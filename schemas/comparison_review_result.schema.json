@@ -3,38 +3,48 @@
     "AtomicCorrectionTarget": {
       "additionalProperties": false,
       "properties": {
-        "correction_id": {"minLength": 1, "title": "Correction Id", "type": "string"},
-        "target": {"$ref": "#/$defs/CorrectionTargetRef"},
-        "required_state": {"minLength": 1, "title": "Required State", "type": "string"}
+        "correction_id": {
+          "minLength": 1,
+          "title": "Correction Id",
+          "type": "string"
+        },
+        "target": {
+          "$ref": "#/$defs/CorrectionTargetRef"
+        },
+        "required_state": {
+          "minLength": 1,
+          "title": "Required State",
+          "type": "string"
+        }
       },
-      "required": ["correction_id", "target", "required_state"],
+      "required": [
+        "correction_id",
+        "target",
+        "required_state"
+      ],
       "title": "AtomicCorrectionTarget",
       "type": "object"
     },
     "ComparisonAuditDecision": {
       "additionalProperties": false,
-      "allOf": [
-        {
-          "if": {
-            "properties": {"disposition": {"const": "accepted"}},
-            "required": ["disposition"]
-          },
-          "then": {"properties": {"finding_keys": {"maxItems": 0}}},
-          "else": {
-            "properties": {"finding_keys": {"minItems": 1}},
-            "required": ["finding_keys"]
-          }
-        }
-      ],
       "properties": {
-        "audit_id": {"minLength": 1, "title": "Audit Id", "type": "string"},
+        "audit_id": {
+          "minLength": 1,
+          "title": "Audit Id",
+          "type": "string"
+        },
         "disposition": {
-          "enum": ["accepted", "finding"],
+          "enum": [
+            "accepted",
+            "finding"
+          ],
           "title": "Disposition",
           "type": "string"
         },
         "finding_keys": {
-          "items": {"type": "string"},
+          "items": {
+            "type": "string"
+          },
           "title": "Finding Keys",
           "type": "array"
         },
@@ -45,89 +55,72 @@
           "type": "string"
         }
       },
-      "required": ["audit_id", "disposition"],
+      "required": [
+        "audit_id",
+        "disposition"
+      ],
       "title": "ComparisonAuditDecision",
       "type": "object"
     },
     "CorrectionTargetRef": {
       "additionalProperties": false,
-      "allOf": [
-        {
-          "if": {
-            "properties": {"collection": {"const": "result"}},
-            "required": ["collection"]
-          },
-          "then": {
-            "properties": {
-              "object_key": {"type": "null"},
-              "field_path": {"enum": ["/summary", "/unresolved"]}
-            },
-            "required": ["field_path"]
-          },
-          "else": {
-            "if": {"properties": {"object_key": {"type": "null"}}},
-            "then": {"properties": {"field_path": {"type": "null"}}},
-            "else": {
-              "properties": {
-                "field_path": {
-                  "anyOf": [
-                    {"pattern": "^/", "type": "string"},
-                    {"type": "null"}
-                  ]
-                }
-              }
-            }
-          }
-        }
-      ],
       "properties": {
-        "unit_id": {"minLength": 1, "title": "Unit Id", "type": "string"},
+        "unit_id": {
+          "minLength": 1,
+          "title": "Unit Id",
+          "type": "string"
+        },
         "collection": {
-          "enum": ["result", "flows", "input_decisions", "branch_decisions", "coverage_decisions", "mechanism_decisions", "risks", "scenarios", "test_cases"],
+          "enum": [
+            "result",
+            "flows",
+            "input_decisions",
+            "branch_decisions",
+            "coverage_decisions",
+            "mechanism_decisions",
+            "risks",
+            "scenarios",
+            "test_cases"
+          ],
           "title": "Collection",
           "type": "string"
         },
         "object_key": {
-          "anyOf": [{"minLength": 1, "type": "string"}, {"type": "null"}],
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
           "default": null,
           "title": "Object Key"
         },
         "field_path": {
-          "anyOf": [{"minLength": 1, "type": "string"}, {"type": "null"}],
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
           "default": null,
           "title": "Field Path"
         }
       },
-      "required": ["unit_id", "collection"],
+      "required": [
+        "unit_id",
+        "collection"
+      ],
       "title": "CorrectionTargetRef",
       "type": "object"
     },
     "IndependentFindingDecision": {
       "additionalProperties": false,
-      "allOf": [
-        {
-          "if": {
-            "properties": {"disposition": {"const": "dismissed"}},
-            "required": ["disposition"]
-          },
-          "then": {
-            "properties": {"evidence": {"minItems": 1}},
-            "required": ["evidence"]
-          }
-        },
-        {
-          "if": {"properties": {"assessment": {"enum": ["missing", "incorrect"]}}, "required": ["assessment"]},
-          "then": {"properties": {"disposition": {"const": "confirmed"}}}
-        },
-        {
-          "if": {"properties": {"assessment": {"enum": ["equivalent_correct", "finding_refuted"]}}, "required": ["assessment"]},
-          "then": {"properties": {"disposition": {"const": "dismissed"}}}
-        },
-        {
-          "if": {"properties": {"assessment": {"const": "insufficient_evidence"}}, "required": ["assessment"]},
-          "then": {"properties": {"disposition": {"const": "unresolved"}}}
-        }
-      ],
       "properties": {
         "finding_key": {
           "description": "必须且只能引用 independent_review_result_path 顶层 findings[] 中已有的 finding_key；不得引用 Worker risk、flow、test case 或 Coverage 编号",
@@ -137,8 +130,19 @@
         },
         "assessment": {
           "anyOf": [
-            {"enum": ["missing", "incorrect", "equivalent_correct", "finding_refuted", "insufficient_evidence"], "type": "string"},
-            {"type": "null"}
+            {
+              "enum": [
+                "missing",
+                "incorrect",
+                "equivalent_correct",
+                "finding_refuted",
+                "insufficient_evidence"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
           ],
           "default": null,
           "description": "对 Analysis 与 Independent finding 关系的结构化判断；旧 artifact 可省略，review_contract_version=2.0 的 Comparison 必填",
@@ -146,86 +150,213 @@
         },
         "disposition": {
           "description": "只表示对盲审 finding 的裁决；不得填写 risk、incorrect_conclusion 等 category",
-          "enum": ["confirmed", "dismissed", "unresolved"],
+          "enum": [
+            "confirmed",
+            "dismissed",
+            "unresolved"
+          ],
           "title": "Disposition",
           "type": "string"
         },
-        "conclusion": {"minLength": 1, "title": "Conclusion", "type": "string"},
+        "conclusion": {
+          "minLength": 1,
+          "title": "Conclusion",
+          "type": "string"
+        },
         "evidence": {
-          "description": "confirmed/unresolved 可省略并复用原 independent finding evidence；dismissed 必须提供用于核对 Analysis 等价覆盖或推翻 finding 的非空源码/契约 evidence，Analysis 字段只写 conclusion",
-          "items": {"$ref": "#/$defs/SourceEvidence"},
+          "description": "dismissed 必须提供用于核对 Analysis 等价覆盖或推翻 finding 的非空源码/契约证据；Analysis object/key/字段只写在 conclusion，不写进 SourceEvidence.observation",
+          "items": {
+            "$ref": "#/$defs/SourceEvidence"
+          },
           "title": "Evidence",
           "type": "array"
         },
         "correction_targets": {
-          "items": {"$ref": "#/$defs/AtomicCorrectionTarget"},
+          "items": {
+            "$ref": "#/$defs/AtomicCorrectionTarget"
+          },
           "title": "Correction Targets",
           "type": "array"
         }
       },
-      "required": ["finding_key", "disposition", "conclusion"],
+      "required": [
+        "finding_key",
+        "disposition",
+        "conclusion"
+      ],
       "title": "IndependentFindingDecision",
       "type": "object"
     },
     "ReviewFinding": {
       "additionalProperties": false,
       "properties": {
-        "finding_key": {"minLength": 1, "title": "Finding Key", "type": "string"},
+        "finding_key": {
+          "minLength": 1,
+          "title": "Finding Key",
+          "type": "string"
+        },
         "category": {
           "description": "新增 finding 的类别；blackbox_translation 表示源码事实/风险可能成立，但 Scenario/TestCase 翻译出的业务入口、测试动作、可达路径、Coverage/Risk 追溯或外部 Oracle 不受冻结证据支持；不得写入 independent_finding_decisions.disposition",
-          "enum": ["missed_flow", "document_delta", "coverage_gap", "defect_mechanism", "risk", "test_oracle", "incorrect_conclusion", "blackbox_translation"],
+          "enum": [
+            "missed_flow",
+            "document_delta",
+            "coverage_gap",
+            "defect_mechanism",
+            "risk",
+            "test_oracle",
+            "incorrect_conclusion",
+            "blackbox_translation"
+          ],
           "title": "Category",
           "type": "string"
         },
-        "affected_unit_ids": {"items": {"type": "string"}, "minItems": 1, "title": "Affected Unit Ids", "type": "array"},
-        "linked_input_ids": {"items": {"type": "string"}, "title": "Linked Input Ids", "type": "array"},
-        "summary": {"minLength": 1, "title": "Summary", "type": "string"},
-        "required_check": {"minLength": 1, "title": "Required Check", "type": "string"},
-        "evidence": {"items": {"$ref": "#/$defs/SourceEvidence"}, "minItems": 1, "title": "Evidence", "type": "array"}
-        ,"correction_targets": {"items": {"$ref": "#/$defs/AtomicCorrectionTarget"}, "title": "Correction Targets", "type": "array"}
+        "affected_unit_ids": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Affected Unit Ids",
+          "type": "array"
+        },
+        "linked_input_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Linked Input Ids",
+          "type": "array"
+        },
+        "summary": {
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        },
+        "required_check": {
+          "minLength": 1,
+          "title": "Required Check",
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/SourceEvidence"
+          },
+          "minItems": 1,
+          "title": "Evidence",
+          "type": "array"
+        },
+        "correction_targets": {
+          "items": {
+            "$ref": "#/$defs/AtomicCorrectionTarget"
+          },
+          "title": "Correction Targets",
+          "type": "array"
+        }
       },
-      "required": ["finding_key", "category", "affected_unit_ids", "summary", "required_check", "evidence"],
+      "required": [
+        "finding_key",
+        "category",
+        "affected_unit_ids",
+        "summary",
+        "required_check",
+        "evidence"
+      ],
       "title": "ReviewFinding",
       "type": "object"
     },
     "SourceEvidence": {
       "additionalProperties": false,
       "properties": {
-        "repo_id": {"minLength": 1, "title": "Repo Id", "type": "string"},
-        "path": {"minLength": 1, "title": "Path", "type": "string"},
-        "line_start": {"exclusiveMinimum": 0, "title": "Line Start", "type": "integer"},
-        "line_end": {"anyOf": [{"exclusiveMinimum": 0, "type": "integer"}, {"type": "null"}], "default": null, "title": "Line End"},
-        "observation": {"description": "只陈述当前 repo/path/line_start..line_end 引用范围本身直接证明的源码事实；类型声明若不在引用范围内不得补入，语言标准、Risk 分类、manifest、调用链深度、跨文件缺失、ABI、构建配置和产品入口结论不得伪装成 SourceEvidence observation", "minLength": 1, "title": "Observation", "type": "string"}
+        "repo_id": {
+          "minLength": 1,
+          "title": "Repo Id",
+          "type": "string"
+        },
+        "path": {
+          "minLength": 1,
+          "title": "Path",
+          "type": "string"
+        },
+        "line_start": {
+          "exclusiveMinimum": 0,
+          "title": "Line Start",
+          "type": "integer"
+        },
+        "line_end": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Line End"
+        },
+        "observation": {
+          "description": "只陈述当前 repo/path/line_start..line_end 引用范围本身直接证明的源码事实；类型声明若不在引用范围内不得补入，语言标准、Risk 分类、manifest、调用链深度、跨文件缺失、ABI、构建配置和产品入口结论不得伪装成 SourceEvidence observation",
+          "minLength": 1,
+          "title": "Observation",
+          "type": "string"
+        }
       },
-      "required": ["repo_id", "path", "line_start", "observation"],
+      "required": [
+        "repo_id",
+        "path",
+        "line_start",
+        "observation"
+      ],
       "title": "SourceEvidence",
       "type": "object"
     }
   },
   "additionalProperties": false,
   "properties": {
-    "schema_version": {"const": "1.0", "default": "1.0", "title": "Schema Version", "type": "string"},
-    "summary": {"minLength": 1, "title": "Summary", "type": "string"},
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "summary": {
+      "minLength": 1,
+      "title": "Summary",
+      "type": "string"
+    },
     "independent_finding_decisions": {
       "description": "编号集合必须与 independent review 顶层 findings[].finding_key 完全相等；盲审 findings 为空时本列表也必须为空",
-      "items": {"$ref": "#/$defs/IndependentFindingDecision"},
+      "items": {
+        "$ref": "#/$defs/IndependentFindingDecision"
+      },
       "title": "Independent Finding Decisions",
       "type": "array"
     },
-    "findings": {"items": {"$ref": "#/$defs/ReviewFinding"}, "title": "Findings", "type": "array"},
+    "findings": {
+      "items": {
+        "$ref": "#/$defs/ReviewFinding"
+      },
+      "title": "Findings",
+      "type": "array"
+    },
     "analysis_audit_decisions": {
-      "items": {"$ref": "#/$defs/ComparisonAuditDecision"},
+      "items": {
+        "$ref": "#/$defs/ComparisonAuditDecision"
+      },
       "title": "Analysis Audit Decisions",
       "type": "array"
     },
     "unresolved": {
       "description": "通常必须为空。盲审 finding 无法裁决时只写对应 independent_finding_decisions 的 unresolved；范围外实现、外部文档、后续研究、低置信度和已交给 closure 的事项不得写入顶层。",
-      "items": {"type": "string"},
+      "items": {
+        "type": "string"
+      },
       "title": "Unresolved",
       "type": "array"
     }
   },
-  "required": ["summary"],
+  "required": [
+    "summary"
+  ],
   "title": "ComparisonReviewResult",
   "type": "object"
 }

@@ -1,5 +1,87 @@
 {
   "$defs": {
+    "AtomicCorrectionTarget": {
+      "additionalProperties": false,
+      "properties": {
+        "correction_id": {
+          "minLength": 1,
+          "title": "Correction Id",
+          "type": "string"
+        },
+        "target": {
+          "$ref": "#/$defs/CorrectionTargetRef"
+        },
+        "required_state": {
+          "minLength": 1,
+          "title": "Required State",
+          "type": "string"
+        }
+      },
+      "required": [
+        "correction_id",
+        "target",
+        "required_state"
+      ],
+      "title": "AtomicCorrectionTarget",
+      "type": "object"
+    },
+    "CorrectionTargetRef": {
+      "additionalProperties": false,
+      "properties": {
+        "unit_id": {
+          "minLength": 1,
+          "title": "Unit Id",
+          "type": "string"
+        },
+        "collection": {
+          "enum": [
+            "result",
+            "flows",
+            "input_decisions",
+            "branch_decisions",
+            "coverage_decisions",
+            "mechanism_decisions",
+            "risks",
+            "scenarios",
+            "test_cases"
+          ],
+          "title": "Collection",
+          "type": "string"
+        },
+        "object_key": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Object Key"
+        },
+        "field_path": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Field Path"
+        }
+      },
+      "required": [
+        "unit_id",
+        "collection"
+      ],
+      "title": "CorrectionTargetRef",
+      "type": "object"
+    },
     "ReviewFinding": {
       "additionalProperties": false,
       "properties": {
@@ -9,7 +91,7 @@
           "type": "string"
         },
         "category": {
-          "description": "盲审 finding 类别。independent_review 看不到 Analysis Result，因此不能使用 comparison_review 专属的 blackbox_translation",
+          "description": "新增 finding 的类别；blackbox_translation 表示源码事实/风险可能成立，但 Scenario/TestCase 翻译出的业务入口、测试动作、可达路径、Coverage/Risk 追溯或外部 Oracle 不受冻结证据支持；不得写入 independent_finding_decisions.disposition",
           "enum": [
             "missed_flow",
             "document_delta",
@@ -17,7 +99,8 @@
             "defect_mechanism",
             "risk",
             "test_oracle",
-            "incorrect_conclusion"
+            "incorrect_conclusion",
+            "blackbox_translation"
           ],
           "title": "Category",
           "type": "string"
@@ -56,9 +139,9 @@
           "type": "array"
         },
         "correction_targets": {
-          "description": "Independent Review 看不到 Analysis Result，必须为空；由 Comparison Review 对 retained finding 填写原子修正目标",
-          "items": {},
-          "maxItems": 0,
+          "items": {
+            "$ref": "#/$defs/AtomicCorrectionTarget"
+          },
           "title": "Correction Targets",
           "type": "array"
         }

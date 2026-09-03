@@ -1,16 +1,5 @@
 {
   "$defs": {
-    "AtomicCorrectionTarget": {
-      "additionalProperties": false,
-      "properties": {
-        "correction_id": {"minLength": 1, "title": "Correction Id", "type": "string"},
-        "target": {"$ref": "#/$defs/CorrectionTargetRef"},
-        "required_state": {"minLength": 1, "title": "Required State", "type": "string"}
-      },
-      "required": ["correction_id", "target", "required_state"],
-      "title": "AtomicCorrectionTarget",
-      "type": "object"
-    },
     "AnalysisUnit": {
       "additionalProperties": false,
       "properties": {
@@ -107,6 +96,123 @@
       "title": "AnalysisUnit",
       "type": "object"
     },
+    "AtomicCorrectionTarget": {
+      "additionalProperties": false,
+      "properties": {
+        "correction_id": {
+          "minLength": 1,
+          "title": "Correction Id",
+          "type": "string"
+        },
+        "target": {
+          "$ref": "#/$defs/CorrectionTargetRef"
+        },
+        "required_state": {
+          "minLength": 1,
+          "title": "Required State",
+          "type": "string"
+        }
+      },
+      "required": [
+        "correction_id",
+        "target",
+        "required_state"
+      ],
+      "title": "AtomicCorrectionTarget",
+      "type": "object"
+    },
+    "ClosureCorrectionTarget": {
+      "additionalProperties": false,
+      "properties": {
+        "correction_id": {
+          "minLength": 1,
+          "title": "Correction Id",
+          "type": "string"
+        },
+        "target": {
+          "$ref": "#/$defs/CorrectionTargetRef"
+        },
+        "required_state": {
+          "minLength": 1,
+          "title": "Required State",
+          "type": "string"
+        },
+        "finding_key": {
+          "minLength": 1,
+          "title": "Finding Key",
+          "type": "string"
+        },
+        "before": {
+          "$ref": "#/$defs/ValueSnapshot"
+        }
+      },
+      "required": [
+        "correction_id",
+        "target",
+        "required_state",
+        "finding_key",
+        "before"
+      ],
+      "title": "ClosureCorrectionTarget",
+      "type": "object"
+    },
+    "CorrectionTargetRef": {
+      "additionalProperties": false,
+      "properties": {
+        "unit_id": {
+          "minLength": 1,
+          "title": "Unit Id",
+          "type": "string"
+        },
+        "collection": {
+          "enum": [
+            "result",
+            "flows",
+            "input_decisions",
+            "branch_decisions",
+            "coverage_decisions",
+            "mechanism_decisions",
+            "risks",
+            "scenarios",
+            "test_cases"
+          ],
+          "title": "Collection",
+          "type": "string"
+        },
+        "object_key": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Object Key"
+        },
+        "field_path": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Field Path"
+        }
+      },
+      "required": [
+        "unit_id",
+        "collection"
+      ],
+      "title": "CorrectionTargetRef",
+      "type": "object"
+    },
     "EvidenceScopeContract": {
       "additionalProperties": false,
       "properties": {
@@ -129,72 +235,6 @@
         "allowed_paths"
       ],
       "title": "EvidenceScopeContract",
-      "type": "object"
-    },
-    "CorrectionTargetRef": {
-      "additionalProperties": false,
-      "allOf": [
-        {
-          "if": {
-            "properties": {"collection": {"const": "result"}},
-            "required": ["collection"]
-          },
-          "then": {
-            "properties": {
-              "object_key": {"type": "null"},
-              "field_path": {"enum": ["/summary", "/unresolved"]}
-            },
-            "required": ["field_path"]
-          },
-          "else": {
-            "if": {"properties": {"object_key": {"type": "null"}}},
-            "then": {"properties": {"field_path": {"type": "null"}}},
-            "else": {
-              "properties": {
-                "field_path": {
-                  "anyOf": [
-                    {"pattern": "^/", "type": "string"},
-                    {"type": "null"}
-                  ]
-                }
-              }
-            }
-          }
-        }
-      ],
-      "properties": {
-        "unit_id": {"minLength": 1, "title": "Unit Id", "type": "string"},
-        "collection": {
-          "enum": ["result", "flows", "input_decisions", "branch_decisions", "coverage_decisions", "mechanism_decisions", "risks", "scenarios", "test_cases"],
-          "title": "Collection",
-          "type": "string"
-        },
-        "object_key": {
-          "anyOf": [{"minLength": 1, "type": "string"}, {"type": "null"}],
-          "default": null,
-          "title": "Object Key"
-        },
-        "field_path": {
-          "anyOf": [{"minLength": 1, "type": "string"}, {"type": "null"}],
-          "default": null,
-          "title": "Field Path"
-        }
-      },
-      "required": ["unit_id", "collection"],
-      "title": "CorrectionTargetRef",
-      "type": "object"
-    },
-    "ClosureCorrectionTarget": {
-      "additionalProperties": false,
-      "properties": {
-        "correction_id": {"minLength": 1, "title": "Correction Id", "type": "string"},
-        "target": {"$ref": "#/$defs/CorrectionTargetRef"},
-        "required_state": {"minLength": 1, "title": "Required State", "type": "string"},
-        "finding_key": {"minLength": 1, "title": "Finding Key", "type": "string"},
-        "before": {"$ref": "#/$defs/ValueSnapshot"}
-      },
-      "required": ["correction_id", "target", "required_state", "finding_key", "before"],
-      "title": "ClosureCorrectionTarget",
       "type": "object"
     },
     "RepositoryRef": {
@@ -280,7 +320,9 @@
           "type": "array"
         },
         "correction_targets": {
-          "items": {"$ref": "#/$defs/AtomicCorrectionTarget"},
+          "items": {
+            "$ref": "#/$defs/AtomicCorrectionTarget"
+          },
           "title": "Correction Targets",
           "type": "array"
         }
@@ -346,10 +388,18 @@
     "ValueSnapshot": {
       "additionalProperties": false,
       "properties": {
-        "exists": {"title": "Exists", "type": "boolean"},
-        "value": {"title": "Value"}
+        "exists": {
+          "title": "Exists",
+          "type": "boolean"
+        },
+        "value": {
+          "title": "Value"
+        }
       },
-      "required": ["exists", "value"],
+      "required": [
+        "exists",
+        "value"
+      ],
       "title": "ValueSnapshot",
       "type": "object"
     }
@@ -383,7 +433,10 @@
     },
     "review_contract_version": {
       "default": "1.0",
-      "enum": ["1.0", "2.0"],
+      "enum": [
+        "1.0",
+        "2.0"
+      ],
       "title": "Review Contract Version",
       "type": "string"
     },
@@ -441,7 +494,9 @@
       "type": "array"
     },
     "correction_targets": {
-      "items": {"$ref": "#/$defs/ClosureCorrectionTarget"},
+      "items": {
+        "$ref": "#/$defs/ClosureCorrectionTarget"
+      },
       "title": "Correction Targets",
       "type": "array"
     },
@@ -463,6 +518,32 @@
       "minLength": 1,
       "title": "Result Example Path",
       "type": "string"
+    },
+    "result_contract_path": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Result Contract Path"
+    },
+    "result_contract_manifest_path": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Result Contract Manifest Path"
     },
     "result_path": {
       "minLength": 1,

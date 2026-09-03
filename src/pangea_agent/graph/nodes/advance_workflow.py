@@ -13,6 +13,7 @@ from pangea_agent.graph.result_contract import (
     validate_closure_corrections,
     validate_unit_result,
 )
+from pangea_agent.graph.schema_contract import frozen_contract_paths
 from pangea_agent.graph.state import PangeaState
 from pangea_agent.graph.workflow_store import (
     add_action,
@@ -52,6 +53,7 @@ from pangea_agent.models.analysis import (
     PlanningResult,
     PlanningTask,
     RepositoryRef,
+    RepairRequest,
     SourceEvidence,
     UnitSemanticResult,
 )
@@ -713,6 +715,21 @@ def _read_validated_result(state, progress, action: ActionState, result_type):
             "Workflow 保存的已校验结果不可读取；请原 Agent 重新写入当前 task 的 "
             f"result_path 后再次提交：{exc}"
         )
+        action.repair_status = "required"
+        task_payload = read_json(Path(action.task_path))
+        if not isinstance(task_payload, dict):
+            task_payload = {}
+        action.pending_repair = RepairRequest.model_validate({
+            "attempt": action.validation_failures + action.incomplete_attempts + 1,
+            "kind": "incomplete_result",
+            "validation_report_path": None,
+            "result_contract_path": task_payload.get("result_contract_path"),
+            "result_sha256": None,
+            "error": {
+                "code": "ValidatedResultUnreadable",
+                "message": action.error,
+            },
+        })
         save_progress(state, progress)
         return None
 
@@ -784,6 +801,7 @@ def _prepare_analysis(state: PangeaState, progress) -> PangeaState:
         Path(path).stem: path for path in frozen_methodology_paths(run_dir)
     }
     selectable_rubric_paths = {**SPECIALIZED_RUBRICS, **user_rubric_paths}
+    analysis_contract = frozen_contract_paths(run_dir, "analysis-result-v2")
     for unit in units:
         action_id = f"{state['run_id']}:analysis:{unit.unit_id}"
         unit_inputs = {
@@ -813,12 +831,12 @@ def _prepare_analysis(state: PangeaState, progress) -> PangeaState:
             source_manifest_path=str(run_dir / "inputs" / "source-manifest.json"),
             selected_inputs_path=str(selected_path),
             coverage_context=unit_inputs["coverage_gaps"],
-            result_schema_path=str(project_path("schemas", "analysis_result.schema.json")),
-            result_skeleton_path=str(
-                project_path("schemas", "analysis_result.skeleton.json")
-            ),
-            result_example_path=str(
-                project_path("schemas", "analysis_result.example.json")
+            result_schema_path=str(analysis_contract["result_schema_path"]),
+            result_skeleton_path=str(analysis_contract["result_skeleton_path"]),
+            result_example_path=str(analysis_contract["result_example_path"]),
+            result_contract_path=str(analysis_contract["result_contract_path"]),
+            result_contract_manifest_path=str(
+                analysis_contract["result_contract_manifest_path"]
             ),
             result_path=str(analysis_result_path(state, unit.unit_id)),
             rubric_paths=[
@@ -879,6 +897,10 @@ def _accept_analysis(state: PangeaState, progress) -> PangeaState:
         for unit in progress.analysis_units
         for methodology_id in unit.methodology_ids
     }
+    review_contract = frozen_contract_paths(
+        run_dir,
+        "independent-review-result-v1",
+    )
     task = IndependentReviewTask(
         action_id=action_id,
         run_id=state["run_id"],
@@ -900,9 +922,12 @@ def _accept_analysis(state: PangeaState, progress) -> PangeaState:
                 if methodology_id in selected_methodology_ids
             ],
         ],
-        result_schema_path=str(project_path("schemas", "independent_review_result.schema.json")),
-        result_skeleton_path=str(
-            project_path("schemas", "independent_review_result.skeleton.json")
+        result_schema_path=str(review_contract["result_schema_path"]),
+        result_skeleton_path=str(review_contract["result_skeleton_path"]),
+        result_example_path=review_contract["result_example_path"],
+        result_contract_path=str(review_contract["result_contract_path"]),
+        result_contract_manifest_path=str(
+            review_contract["result_contract_manifest_path"]
         ),
         result_path=str(review_result_path(state)),
     )
@@ -1553,6 +1578,9 @@ def _accept_independent_review(state: PangeaState, progress, action) -> PangeaSt
     action.status = "accepted"
 
     action_id = f"{state['run_id']}:comparison-review"
+    comparison_contract = frozen_contract_paths(
+        run_directory(state), "comparison-review-result-v1"
+    )
     analysis_result_paths = {
         unit.unit_id: str(validated_result_path(
             state,
@@ -1591,9 +1619,12 @@ def _accept_independent_review(state: PangeaState, progress, action) -> PangeaSt
         ),
         selected_inputs_path=task.selected_inputs_path,
         rubric_paths=task.rubric_paths,
-        result_schema_path=str(project_path("schemas", "comparison_review_result.schema.json")),
-        result_skeleton_path=str(
-            project_path("schemas", "comparison_review_result.skeleton.json")
+        result_schema_path=str(comparison_contract["result_schema_path"]),
+        result_skeleton_path=str(comparison_contract["result_skeleton_path"]),
+        result_example_path=comparison_contract["result_example_path"],
+        result_contract_path=str(comparison_contract["result_contract_path"]),
+        result_contract_manifest_path=str(
+            comparison_contract["result_contract_manifest_path"]
         ),
         result_path=str(comparison_review_result_path(state)),
     )
@@ -1681,6 +1712,9 @@ def _accept_comparison_review(state: PangeaState, progress, action) -> PangeaSta
         for item in independent_task.repositories
     }
     progress.stage = "closing"
+    analysis_contract = frozen_contract_paths(
+        run_directory(state), "analysis-result-v2"
+    )
     closure_created = False
     for unit in progress.analysis_units:
         findings = findings_by_unit.get(unit.unit_id, [])
@@ -1734,9 +1768,11 @@ def _accept_comparison_review(state: PangeaState, progress, action) -> PangeaSta
             review_findings=findings,
             correction_targets=correction_targets,
             risk_test_obligations=risk_obligations,
-            result_schema_path=str(project_path("schemas", "analysis_result.schema.json")),
-            result_example_path=str(
-                project_path("schemas", "analysis_result.example.json")
+            result_schema_path=str(analysis_contract["result_schema_path"]),
+            result_example_path=str(analysis_contract["result_example_path"]),
+            result_contract_path=str(analysis_contract["result_contract_path"]),
+            result_contract_manifest_path=str(
+                analysis_contract["result_contract_manifest_path"]
             ),
             result_path=str(closure_result_path(state, unit.unit_id)),
             rubric_paths=original_task.rubric_paths,

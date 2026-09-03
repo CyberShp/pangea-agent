@@ -152,6 +152,45 @@
       "title": "Result Skeleton Path",
       "type": "string"
     },
+    "result_example_path": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Result Example Path"
+    },
+    "result_contract_path": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Result Contract Path"
+    },
+    "result_contract_manifest_path": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Result Contract Manifest Path"
+    },
     "result_path": {
       "minLength": 1,
       "title": "Result Path",

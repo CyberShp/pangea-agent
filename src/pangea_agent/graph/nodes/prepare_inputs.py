@@ -16,6 +16,7 @@ from pangea_agent.graph.workflow_store import (
     run_directory,
     save_progress,
 )
+from pangea_agent.graph.schema_contract import freeze_run_contracts
 from pangea_agent.inventory.scope_expander import expand_analysis_scope
 from pangea_agent.inventory.languages import detect_analysis_language
 from pangea_agent.inventory.lua_scope_expander import expand_lua_analysis_scope
@@ -240,6 +241,27 @@ def prepare_inputs(state: PangeaState) -> PangeaState:
         },
         "unresolved": [],
     })
+    try:
+        frozen_contracts = freeze_run_contracts(
+            run_dir,
+            state["run_id"],
+            planning_skeleton_path=planning_skeleton_path,
+        )
+    except ValueError as exc:
+        # Contract parity is a Workflow-owned input gate. Persist the exact
+        # failure before dispatch so callers can inspect why the Run stopped.
+        progress = WorkflowProgress(
+            run_id=state["run_id"],
+            lifecycle_status="failed",
+            stage="preparing",
+            errors=[{
+                "kind": "workflow_input_invalid",
+                "reason": str(exc),
+            }],
+        )
+        save_progress(state, progress)
+        raise
+    planning_contract = frozen_contracts["planning-result-v1"]
 
     action_id = f"{state['run_id']}:planning"
     task = PlanningTask(
@@ -254,9 +276,13 @@ def prepare_inputs(state: PangeaState) -> PangeaState:
         methodology_catalog_path=str(
             run_dir / "inputs" / "methodologies" / "catalog.json"
         ),
-        result_schema_path=str(project_path("schemas", "planning_result.schema.json")),
-        result_skeleton_path=str(planning_skeleton_path),
-        result_example_path=str(project_path("schemas", "planning_result.example.json")),
+        result_schema_path=str(planning_contract["result_schema_path"]),
+        result_skeleton_path=str(planning_contract["result_skeleton_path"]),
+        result_example_path=str(planning_contract["result_example_path"]),
+        result_contract_path=str(planning_contract["result_contract_path"]),
+        result_contract_manifest_path=str(
+            planning_contract["result_contract_manifest_path"]
+        ),
         result_path=str(planning_result_path(state)),
         rubric_paths=[str(project_path(
             "src",

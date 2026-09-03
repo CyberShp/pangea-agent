@@ -1,4 +1,237 @@
 {
+  "$defs": {
+    "RepairRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "attempt": {
+          "exclusiveMinimum": 0,
+          "title": "Attempt",
+          "type": "integer"
+        },
+        "kind": {
+          "enum": [
+            "schema_validation",
+            "incomplete_result"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "validation_report_path": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Validation Report Path"
+        },
+        "result_contract_path": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Result Contract Path"
+        },
+        "result_sha256": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Result Sha256"
+        },
+        "error": {
+          "additionalProperties": true,
+          "title": "Error",
+          "type": "object"
+        }
+      },
+      "required": [
+        "attempt",
+        "kind"
+      ],
+      "title": "RepairRequest",
+      "type": "object"
+    },
+    "ValidationErrorGroup": {
+      "additionalProperties": false,
+      "properties": {
+        "group_key": {
+          "minLength": 1,
+          "title": "Group Key",
+          "type": "string"
+        },
+        "path_pattern": {
+          "minLength": 1,
+          "title": "Path Pattern",
+          "type": "string"
+        },
+        "error_type": {
+          "minLength": 1,
+          "title": "Error Type",
+          "type": "string"
+        },
+        "count": {
+          "minimum": 1,
+          "title": "Count",
+          "type": "integer"
+        },
+        "sample_paths": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Sample Paths",
+          "type": "array"
+        },
+        "expected": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expected"
+        },
+        "unexpected_fields": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Unexpected Fields",
+          "type": "array"
+        }
+      },
+      "required": [
+        "group_key",
+        "path_pattern",
+        "error_type",
+        "count"
+      ],
+      "title": "ValidationErrorGroup",
+      "type": "object"
+    },
+    "ValidationFailureRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "attempt": {
+          "exclusiveMinimum": 0,
+          "title": "Attempt",
+          "type": "integer"
+        },
+        "code": {
+          "minLength": 1,
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "minLength": 1,
+          "title": "Message",
+          "type": "string"
+        },
+        "detail_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Detail Count",
+          "type": "integer"
+        },
+        "group_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Group Count",
+          "type": "integer"
+        },
+        "family_fingerprint": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Family Fingerprint"
+        },
+        "result_sha256": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Result Sha256"
+        },
+        "report_path": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Report Path"
+        },
+        "groups": {
+          "items": {
+            "$ref": "#/$defs/ValidationErrorGroup"
+          },
+          "title": "Groups",
+          "type": "array"
+        },
+        "details": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Details",
+          "type": "array"
+        },
+        "details_truncated": {
+          "default": false,
+          "title": "Details Truncated",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "attempt",
+        "code",
+        "message"
+      ],
+      "title": "ValidationFailureRecord",
+      "type": "object"
+    }
+  },
   "additionalProperties": false,
   "properties": {
     "schema_version": {
@@ -59,6 +292,118 @@
       ],
       "default": null,
       "title": "Task Id"
+    },
+    "status": {
+      "default": "pending",
+      "enum": [
+        "pending",
+        "dispatched",
+        "settled",
+        "accepted",
+        "failed"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "error": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Error"
+    },
+    "validation_failures": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Validation Failures",
+      "type": "integer"
+    },
+    "repeated_validation_failures": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Repeated Validation Failures",
+      "type": "integer"
+    },
+    "validation_history": {
+      "items": {
+        "$ref": "#/$defs/ValidationFailureRecord"
+      },
+      "title": "Validation History",
+      "type": "array"
+    },
+    "incomplete_attempts": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Incomplete Attempts",
+      "type": "integer"
+    },
+    "incomplete_history": {
+      "items": {
+        "$ref": "#/$defs/ValidationFailureRecord"
+      },
+      "title": "Incomplete History",
+      "type": "array"
+    },
+    "repair_status": {
+      "default": "none",
+      "enum": [
+        "none",
+        "required",
+        "dispatched"
+      ],
+      "title": "Repair Status",
+      "type": "string"
+    },
+    "repair_dispatches": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Repair Dispatches",
+      "type": "integer"
+    },
+    "pending_repair": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RepairRequest"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "last_validation_family_fingerprint": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Last Validation Family Fingerprint"
+    },
+    "last_validation_detail_count": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Last Validation Detail Count",
+      "type": "integer"
+    },
+    "consecutive_no_progress_failures": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Consecutive No Progress Failures",
+      "type": "integer"
+    },
+    "attention_required": {
+      "default": false,
+      "title": "Attention Required",
+      "type": "boolean"
     }
   },
   "required": [
@@ -68,6 +413,6 @@
     "stage",
     "task_path"
   ],
-  "title": "AgentAction",
+  "title": "ActionState",
   "type": "object"
 }

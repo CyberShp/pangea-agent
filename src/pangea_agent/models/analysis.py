@@ -77,6 +77,8 @@ class PlanningTask(StrictModel):
     result_schema_path: str = Field(default="schemas/planning_result.schema.json", min_length=1)
     result_skeleton_path: str | None = Field(default=None, min_length=1)
     result_example_path: str = Field(default="schemas/planning_result.example.json", min_length=1)
+    result_contract_path: str | None = Field(default=None, min_length=1)
+    result_contract_manifest_path: str | None = Field(default=None, min_length=1)
     result_path: str = Field(min_length=1)
     rubric_paths: list[str] = Field(default_factory=lambda: ["src/pangea_agent/rubrics/builtin/c_cpp_unit_planning.md"], min_length=1)
     max_unit_lines: int = Field(default=5000, gt=0)
@@ -394,6 +396,8 @@ class AnalysisTask(StrictModel):
     result_schema_path: str = Field(default="schemas/analysis_result.schema.json", min_length=1)
     result_skeleton_path: str = Field(default="schemas/analysis_result.skeleton.json", min_length=1)
     result_example_path: str = Field(default="schemas/analysis_result.example.json", min_length=1)
+    result_contract_path: str | None = Field(default=None, min_length=1)
+    result_contract_manifest_path: str | None = Field(default=None, min_length=1)
     result_path: str = Field(min_length=1)
     rubric_paths: list[str] = Field(min_length=1)
 
@@ -425,6 +429,9 @@ class IndependentReviewTask(StrictModel):
     rubric_paths: list[str] = Field(min_length=1)
     result_schema_path: str = Field(default="schemas/independent_review_result.schema.json", min_length=1)
     result_skeleton_path: str = Field(default="schemas/independent_review_result.skeleton.json", min_length=1)
+    result_example_path: str | None = Field(default=None, min_length=1)
+    result_contract_path: str | None = Field(default=None, min_length=1)
+    result_contract_manifest_path: str | None = Field(default=None, min_length=1)
     result_path: str = Field(min_length=1)
 
 
@@ -529,6 +536,9 @@ class ComparisonReviewTask(StrictModel):
     rubric_paths: list[str] = Field(min_length=1)
     result_schema_path: str = Field(default="schemas/comparison_review_result.schema.json", min_length=1)
     result_skeleton_path: str = Field(default="schemas/comparison_review_result.skeleton.json", min_length=1)
+    result_example_path: str | None = Field(default=None, min_length=1)
+    result_contract_path: str | None = Field(default=None, min_length=1)
+    result_contract_manifest_path: str | None = Field(default=None, min_length=1)
     result_path: str = Field(min_length=1)
 
 
@@ -550,6 +560,8 @@ class ClosureTask(StrictModel):
     risk_test_obligations: list[str] = Field(default_factory=list)
     result_schema_path: str = Field(default="schemas/analysis_result.schema.json", min_length=1)
     result_example_path: str = Field(default="schemas/analysis_result.example.json", min_length=1)
+    result_contract_path: str | None = Field(default=None, min_length=1)
+    result_contract_manifest_path: str | None = Field(default=None, min_length=1)
     result_path: str = Field(min_length=1)
     rubric_paths: list[str] = Field(min_length=1)
 
@@ -564,11 +576,42 @@ class AgentAction(StrictModel):
     task_id: str | None = None
 
 
+class ValidationErrorSample(StrictModel):
+    path: str = Field(min_length=1)
+    error_type: str = Field(min_length=1)
+    message: str = Field(min_length=1)
+    context: dict[str, Any] = Field(default_factory=dict)
+
+
+class ValidationErrorGroup(StrictModel):
+    group_key: str = Field(min_length=1)
+    path_pattern: str = Field(min_length=1)
+    error_type: str = Field(min_length=1)
+    count: int = Field(ge=1)
+    sample_paths: list[str] = Field(default_factory=list)
+    expected: str | list[str] | None = None
+    unexpected_fields: list[str] = Field(default_factory=list)
+
+
+class RepairRequest(StrictModel):
+    attempt: int = Field(gt=0)
+    kind: Literal["schema_validation", "incomplete_result"]
+    validation_report_path: str | None = Field(default=None, min_length=1)
+    result_contract_path: str | None = Field(default=None, min_length=1)
+    result_sha256: str | None = Field(default=None, min_length=1)
+    error: dict[str, Any] = Field(default_factory=dict)
+
+
 class ValidationFailureRecord(StrictModel):
     attempt: int = Field(gt=0)
     code: str = Field(min_length=1)
     message: str = Field(min_length=1)
     detail_count: int = Field(default=0, ge=0)
+    group_count: int = Field(default=0, ge=0)
+    family_fingerprint: str | None = Field(default=None, min_length=1)
+    result_sha256: str | None = Field(default=None, min_length=1)
+    report_path: str | None = Field(default=None, min_length=1)
+    groups: list[ValidationErrorGroup] = Field(default_factory=list)
     details: list[dict] = Field(default_factory=list)
     details_truncated: bool = False
 
@@ -581,10 +624,17 @@ class ActionState(AgentAction):
     validation_history: list[ValidationFailureRecord] = Field(default_factory=list)
     incomplete_attempts: int = Field(default=0, ge=0)
     incomplete_history: list[ValidationFailureRecord] = Field(default_factory=list)
+    repair_status: Literal["none", "required", "dispatched"] = "none"
+    repair_dispatches: int = Field(default=0, ge=0)
+    pending_repair: RepairRequest | None = None
+    last_validation_family_fingerprint: str | None = None
+    last_validation_detail_count: int = Field(default=0, ge=0)
+    consecutive_no_progress_failures: int = Field(default=0, ge=0)
+    attention_required: bool = False
 
 
 class WorkflowProgress(StrictModel):
-    schema_version: Literal["3.0"] = "3.0"
+    schema_version: Literal["3.0", "3.1"] = "3.1"
     run_id: str = Field(min_length=1)
     lifecycle_status: Literal["running", "complete", "stopped", "failed"] = "running"
     stage: Literal["preparing", "planning", "analyzing", "reviewing", "closing", "reporting", "complete"] = "preparing"

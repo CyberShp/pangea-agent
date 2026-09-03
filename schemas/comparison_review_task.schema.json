@@ -3,11 +3,31 @@
     "ComparisonAuditTarget": {
       "additionalProperties": false,
       "properties": {
-        "audit_id": {"minLength": 1, "title": "Audit Id", "type": "string"},
-        "unit_id": {"minLength": 1, "title": "Unit Id", "type": "string"},
-        "object_type": {"minLength": 1, "title": "Object Type", "type": "string"},
-        "object_key": {"minLength": 1, "title": "Object Key", "type": "string"},
-        "check": {"minLength": 1, "title": "Check", "type": "string"},
+        "audit_id": {
+          "minLength": 1,
+          "title": "Audit Id",
+          "type": "string"
+        },
+        "unit_id": {
+          "minLength": 1,
+          "title": "Unit Id",
+          "type": "string"
+        },
+        "object_type": {
+          "minLength": 1,
+          "title": "Object Type",
+          "type": "string"
+        },
+        "object_key": {
+          "minLength": 1,
+          "title": "Object Key",
+          "type": "string"
+        },
+        "check": {
+          "minLength": 1,
+          "title": "Check",
+          "type": "string"
+        },
         "observed_fields": {
           "additionalProperties": true,
           "description": "Workflow 从 validated Analysis 和对应 Analysis task 原样冻结的待核对字段；仅用于让 Reviewer 直接看到当前值，不代表 Python 已作语义裁决",
@@ -21,7 +41,13 @@
           "type": "string"
         }
       },
-      "required": ["audit_id", "unit_id", "object_type", "object_key", "check"],
+      "required": [
+        "audit_id",
+        "unit_id",
+        "object_type",
+        "object_key",
+        "check"
+      ],
       "title": "ComparisonAuditTarget",
       "type": "object"
     },
@@ -79,7 +105,10 @@
     },
     "review_contract_version": {
       "default": "1.0",
-      "enum": ["1.0", "2.0"],
+      "enum": [
+        "1.0",
+        "2.0"
+      ],
       "title": "Review Contract Version",
       "type": "string"
     },
@@ -131,7 +160,9 @@
       "type": "object"
     },
     "required_analysis_audits": {
-      "items": {"$ref": "#/$defs/ComparisonAuditTarget"},
+      "items": {
+        "$ref": "#/$defs/ComparisonAuditTarget"
+      },
       "title": "Required Analysis Audits",
       "type": "array"
     },
@@ -169,6 +200,45 @@
       "minLength": 1,
       "title": "Result Skeleton Path",
       "type": "string"
+    },
+    "result_example_path": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Result Example Path"
+    },
+    "result_contract_path": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Result Contract Path"
+    },
+    "result_contract_manifest_path": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Result Contract Manifest Path"
     },
     "result_path": {
       "minLength": 1,
