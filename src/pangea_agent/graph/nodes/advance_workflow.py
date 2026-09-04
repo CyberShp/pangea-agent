@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from collections import defaultdict
+import json
 from pathlib import Path
 
 from pangea_agent.agent_io import read_json, write_json
 from pangea_agent.graph.planning import accept_planning_result, planning_result_model
+from pangea_agent.graph.analysis_obligations import build_analysis_obligation_manifest
 from pangea_agent.graph.result_contract import (
     ResultContractIssue,
     ResultContractValidationError,
@@ -23,6 +25,9 @@ from pangea_agent.graph.workflow_store import (
     analysis_task_path,
     closure_result_path,
     closure_task_path,
+    comparison_review_aggregate_path,
+    comparison_review_batch_result_path,
+    comparison_review_batch_task_path,
     comparison_review_result_path,
     comparison_review_task_path,
     current_stage_actions,
@@ -282,6 +287,34 @@ def _analysis_audit_targets(
         "scenario_completeness": [item.scenario_key for item in result.scenarios],
         "test_case_completeness": [item.case_key for item in result.test_cases],
     }
+    expected_keys: dict[str, list[str]] = {}
+    if task is not None and task.obligation_manifest_path:
+        try:
+            manifest = read_json(Path(task.obligation_manifest_path))
+            expected_keys = {
+                "input_decision_completeness": [
+                    str(item["item_id"])
+                    for item in manifest.get("input_obligations", [])
+                    if isinstance(item, dict) and item.get("item_id")
+                ],
+                "branch_completeness": [
+                    str(item["branch_id"])
+                    for item in manifest.get("branch_obligations", [])
+                    if isinstance(item, dict) and item.get("branch_id")
+                ],
+                "coverage_completeness": [
+                    str(item["coverage_id"])
+                    for item in manifest.get("coverage_obligations", [])
+                    if isinstance(item, dict) and item.get("coverage_id")
+                ],
+                "mechanism_completeness": [
+                    str(item["mechanism_id"])
+                    for item in manifest.get("mechanism_obligations", [])
+                    if isinstance(item, dict) and item.get("mechanism_id")
+                ],
+            }
+        except (OSError, ValueError, TypeError):
+            expected_keys = {}
     add("unit", unit_id, "summary_consistency", {"summary": result.summary})
     add(
         "unit",
@@ -290,7 +323,10 @@ def _analysis_audit_targets(
         {"flow_keys": [item.flow_key for item in result.flows]},
     )
     for check in _UNIT_AUDIT_CHECKS[2:]:
-        observed_fields = {"result_object_keys": decision_keys[check]}
+        observed_fields = {
+            "result_object_keys": decision_keys[check],
+            **({"expected_object_keys": expected_keys[check]} if check in expected_keys else {}),
+        }
         if task is not None:
             task_key = {
                 "input_decision_completeness": "asset_item_ids",
@@ -516,6 +552,71 @@ def _analysis_audit_targets(
             start=1,
         )
     ]
+
+
+_COMPARISON_AUDIT_MAX_ITEMS = 64
+_COMPARISON_AUDIT_MAX_BYTES = 96 * 1024
+
+
+def _comparison_audit_batches(
+    audits: list[ComparisonAuditTarget],
+    *,
+    max_items: int = _COMPARISON_AUDIT_MAX_ITEMS,
+    max_bytes: int = _COMPARISON_AUDIT_MAX_BYTES,
+) -> list[list[ComparisonAuditTarget]]:
+    """Split audit coordinates without dropping or rewriting any target."""
+    batches: list[list[ComparisonAuditTarget]] = []
+    current: list[ComparisonAuditTarget] = []
+    for audit in audits:
+        candidate = [*current, audit]
+        payload_size = len(json.dumps(
+            [item.model_dump(mode="json") for item in candidate],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8"))
+        if current and (len(current) >= max_items or payload_size > max_bytes):
+            batches.append(current)
+            current = []
+        current.append(audit)
+    if current or not batches:
+        batches.append(current)
+    return batches
+
+
+def _merge_comparison_results(
+    previous: ComparisonReviewResult | None,
+    current: ComparisonReviewResult,
+) -> ComparisonReviewResult:
+    """Accumulate checkpoint results while preserving the first occurrence by key."""
+    if previous is None:
+        return current
+
+    def merge_by_key(existing, incoming, key: str):
+        merged = []
+        seen = set()
+        for item in [*existing, *incoming]:
+            value = getattr(item, key)
+            if value in seen:
+                continue
+            seen.add(value)
+            merged.append(item)
+        return merged
+
+    return ComparisonReviewResult(
+        summary=current.summary,
+        independent_finding_decisions=merge_by_key(
+            previous.independent_finding_decisions,
+            current.independent_finding_decisions,
+            "finding_key",
+        ),
+        findings=merge_by_key(previous.findings, current.findings, "finding_key"),
+        analysis_audit_decisions=merge_by_key(
+            previous.analysis_audit_decisions,
+            current.analysis_audit_decisions,
+            "audit_id",
+        ),
+        unresolved=[*previous.unresolved, *current.unresolved],
+    )
 
 
 def _general_rubrics(analysis_language: str) -> list[str]:
@@ -849,6 +950,18 @@ def _prepare_analysis(state: PangeaState, progress) -> PangeaState:
                 ],
             ],
         )
+        obligation_manifest = build_analysis_obligation_manifest(
+            analysis_task,
+            read_json(run_dir / "inputs" / "inventory.json"),
+            unit_inputs,
+        )
+        obligation_path = run_dir / "inputs" / "units" / f"{unit.unit_id}-obligations.json"
+        write_json(obligation_path, obligation_manifest)
+        analysis_task = analysis_task.model_copy(update={
+            "obligation_manifest_path": str(obligation_path),
+            "obligation_manifest_sha256": obligation_manifest["manifest_sha256"],
+            "obligation_counts": obligation_manifest["counts"],
+        })
         write_json(task_path, analysis_task.model_dump(mode="json"))
         initialize_result(
             Path(analysis_task.result_path),
@@ -1089,19 +1202,26 @@ def _validate_comparison_review(
     independent_by_key = {
         finding.finding_key: finding for finding in independent.findings
     }
+    is_batched = bool(
+        comparison_task is not None
+        and comparison_task.audit_batch_count
+        and comparison_task.audit_batch_count > 1
+    )
+    is_first_batch = not is_batched or comparison_task.audit_batch_index in {None, 0}
     decision_keys = [
         decision.finding_key
         for decision in comparison.independent_finding_decisions
     ]
     if len(decision_keys) != len(set(decision_keys)):
         warnings.append("盲审 finding 的复核决定包含重复编号")
-    missing = independent_keys - set(decision_keys)
-    extra = set(decision_keys) - independent_keys
-    if missing or extra:
-        warnings.append(
-            "对照复核没有逐条裁决盲审 finding："
-            f"missing={sorted(missing)} extra={sorted(extra)}"
-        )
+    if is_first_batch:
+        missing = independent_keys - set(decision_keys)
+        extra = set(decision_keys) - independent_keys
+        if missing or extra:
+            warnings.append(
+                "对照复核没有逐条裁决盲审 finding："
+                f"missing={sorted(missing)} extra={sorted(extra)}"
+            )
     for decision in comparison.independent_finding_decisions:
         finding = independent_by_key.get(decision.finding_key)
         if finding is None:
@@ -1164,6 +1284,8 @@ def _validate_v2_comparison_contract(
     analysis_results: dict[str, UnitSemanticResult] | None = None,
 ) -> None:
     errors: list[str] = []
+    is_batched = bool(task.audit_batch_count and task.audit_batch_count > 1)
+    is_first_batch = not is_batched or task.audit_batch_index in {None, 0}
     independent_keys = [finding.finding_key for finding in independent.findings]
     if len(independent_keys) != len(set(independent_keys)):
         errors.append("Independent findings 包含重复 finding_key")
@@ -1178,13 +1300,14 @@ def _validate_v2_comparison_contract(
     ]
     if len(decision_keys) != len(set(decision_keys)):
         errors.append("Independent finding 存在重复的 Comparison decision")
-    missing_decisions = set(independent_by_key) - set(decision_keys)
-    extra_decisions = set(decision_keys) - set(independent_by_key)
-    if missing_decisions or extra_decisions:
-        errors.append(
-            "Independent finding decision 集合不完整："
-            f"missing={sorted(missing_decisions)} extra={sorted(extra_decisions)}"
-        )
+    if is_first_batch:
+        missing_decisions = set(independent_by_key) - set(decision_keys)
+        extra_decisions = set(decision_keys) - set(independent_by_key)
+        if missing_decisions or extra_decisions:
+            errors.append(
+                "Independent finding decision 集合不完整："
+                f"missing={sorted(missing_decisions)} extra={sorted(extra_decisions)}"
+            )
     decisions_by_key = {
         decision.finding_key: decision
         for decision in comparison.independent_finding_decisions
@@ -1199,6 +1322,12 @@ def _validate_v2_comparison_contract(
         for key, decision in decisions_by_key.items()
         if key in independent_by_key and decision.disposition != "dismissed"
     }
+    if is_batched and not is_first_batch:
+        # Later checkpoints may attach an audit to an independent finding even
+        # though the first checkpoint owns the finding disposition decision.
+        # Keep those finding identities available for target matching; the
+        # final aggregate is validated again with the real dispositions.
+        retained_findings = dict(independent_by_key)
     duplicate_closure_keys = set(retained_findings) & set(new_findings)
     if duplicate_closure_keys:
         errors.append(
@@ -1574,16 +1703,17 @@ def _validate_v2_comparison_contract(
                 continue
             referenced_units[finding_key].add(target.unit_id)
 
-    for finding_key, finding in closure_findings.items():
-        missing_units = (
-            set(finding.affected_unit_ids)
-            - referenced_units.get(finding_key, set())
-        )
-        if missing_units:
-            errors.append(
-                f"进入 Closure 的 finding {finding_key} 未被 fail audit 覆盖："
-                f"{sorted(missing_units)}"
+    if not is_batched:
+        for finding_key, finding in closure_findings.items():
+            missing_units = (
+                set(finding.affected_unit_ids)
+                - referenced_units.get(finding_key, set())
             )
+            if missing_units:
+                errors.append(
+                    f"进入 Closure 的 finding {finding_key} 未被 fail audit 覆盖："
+                    f"{sorted(missing_units)}"
+                )
 
     if errors:
         raise ResultContractValidationError(
@@ -1641,6 +1771,8 @@ def _accept_independent_review(state: PangeaState, progress, action) -> PangeaSt
         required_analysis_audits.extend(
             _analysis_audit_targets(unit.unit_id, analysis_result, analysis_task)
         )
+    audit_batches = _comparison_audit_batches(required_analysis_audits)
+    first_batch = audit_batches[0]
     comparison_task = ComparisonReviewTask(
         action_id=action_id,
         review_contract_version="2.0",
@@ -1654,8 +1786,12 @@ def _accept_independent_review(state: PangeaState, progress, action) -> PangeaSt
             for unit in progress.analysis_units
         },
         analysis_result_paths=analysis_result_paths,
-        required_analysis_audits=required_analysis_audits,
+        required_analysis_audits=first_batch,
         require_audit_conclusions=True,
+        audit_batch_index=0,
+        audit_batch_count=len(audit_batches),
+        audit_batch_max_items=_COMPARISON_AUDIT_MAX_ITEMS,
+        audit_batch_max_bytes=_COMPARISON_AUDIT_MAX_BYTES,
         independent_review_result_path=str(
             validated_result_path(state, action.action_id)
         ),
@@ -1668,9 +1804,9 @@ def _accept_independent_review(state: PangeaState, progress, action) -> PangeaSt
         result_contract_manifest_path=str(
             comparison_contract["result_contract_manifest_path"]
         ),
-        result_path=str(comparison_review_result_path(state)),
+        result_path=str(comparison_review_batch_result_path(state, 0)),
     )
-    task_path = comparison_review_task_path(state)
+    task_path = comparison_review_batch_task_path(state, 0)
     write_json(task_path, comparison_task.model_dump(mode="json"))
     initialize_result(
         Path(comparison_task.result_path),
@@ -1689,8 +1825,11 @@ def _accept_independent_review(state: PangeaState, progress, action) -> PangeaSt
 
 
 def _accept_comparison_review(state: PangeaState, progress, action) -> PangeaState:
+    task_path = Path(action.task_path)
+    if not task_path.is_file():
+        task_path = comparison_review_task_path(state)
     comparison_task = ComparisonReviewTask.model_validate(
-        read_json(comparison_review_task_path(state))
+        read_json(task_path)
     )
     independent_task = IndependentReviewTask.model_validate(read_json(review_task_path(state)))
     comparison = _read_validated_result(
@@ -1715,6 +1854,102 @@ def _accept_comparison_review(state: PangeaState, progress, action) -> PangeaSta
     except Exception as exc:
         _fail_action(state, progress, action, exc)
         raise
+
+    aggregate_path = comparison_review_aggregate_path(state)
+    aggregate = None
+    if aggregate_path.is_file():
+        aggregate = ComparisonReviewResult.model_validate(read_json(aggregate_path))
+    aggregate = _merge_comparison_results(aggregate, comparison)
+    write_json(aggregate_path, aggregate.model_dump(mode="json"))
+
+    batch_count = comparison_task.audit_batch_count or 1
+    batch_index = comparison_task.audit_batch_index or 0
+    if batch_count > 1 and batch_index + 1 < batch_count:
+        action.status = "accepted"
+        all_audits: list[ComparisonAuditTarget] = []
+        for unit_id, analysis_task_path_value in comparison_task.analysis_task_paths.items():
+            analysis_task = AnalysisTask.model_validate(
+                read_json(Path(analysis_task_path_value))
+            )
+            analysis_result = UnitSemanticResult.model_validate(
+                read_json(Path(comparison_task.analysis_result_paths[unit_id]))
+            )
+            all_audits.extend(
+                _analysis_audit_targets(unit_id, analysis_result, analysis_task)
+            )
+        audit_batches = _comparison_audit_batches(
+            all_audits,
+            max_items=comparison_task.audit_batch_max_items,
+            max_bytes=comparison_task.audit_batch_max_bytes,
+        )
+        next_index = batch_index + 1
+        if next_index >= len(audit_batches):
+            raise ValueError(
+                "Comparison audit batch metadata 与冻结审计集合不一致"
+            )
+        next_action_id = (
+            f"{state['run_id']}:comparison-review:batch:{next_index:04d}"
+        )
+        next_task = comparison_task.model_copy(update={
+            "action_id": next_action_id,
+            "audit_batch_index": next_index,
+            "audit_batch_count": len(audit_batches),
+            "required_analysis_audits": audit_batches[next_index],
+            "result_path": str(comparison_review_batch_result_path(state, next_index)),
+        })
+        next_task_path = comparison_review_batch_task_path(state, next_index)
+        write_json(next_task_path, next_task.model_dump(mode="json"))
+        initialize_result(
+            Path(next_task.result_path),
+            read_json(Path(next_task.result_skeleton_path)),
+        )
+        add_action(progress, ActionState(
+            action_id=next_action_id,
+            action="continue_agent",
+            role="review",
+            stage="comparison_review",
+            task_path=str(next_task_path),
+            task_id=action.task_id,
+        ))
+        save_progress(state, progress)
+        return _waiting(state, progress)
+
+    all_audits = list(comparison_task.required_analysis_audits)
+    if batch_count > 1:
+        all_audits = []
+        for unit_id, analysis_task_path_value in comparison_task.analysis_task_paths.items():
+            analysis_task = AnalysisTask.model_validate(
+                read_json(Path(analysis_task_path_value))
+            )
+            analysis_result = UnitSemanticResult.model_validate(
+                read_json(Path(comparison_task.analysis_result_paths[unit_id]))
+            )
+            all_audits.extend(
+                _analysis_audit_targets(unit_id, analysis_result, analysis_task)
+            )
+    canonical_task = comparison_task.model_copy(update={
+        "action_id": f"{state['run_id']}:comparison-review",
+        "audit_batch_index": None,
+        "audit_batch_count": None,
+        "required_analysis_audits": all_audits,
+        "result_path": str(comparison_review_result_path(state)),
+    })
+    canonical_task_path = comparison_review_task_path(state)
+    write_json(canonical_task_path, canonical_task.model_dump(mode="json"))
+    write_json(comparison_review_result_path(state), aggregate.model_dump(mode="json"))
+    if batch_count > 1:
+        try:
+            _validate_comparison_review(
+                progress,
+                independent,
+                aggregate,
+                read_json(Path(canonical_task.selected_inputs_path)),
+                canonical_task,
+            )
+        except Exception as exc:
+            _fail_action(state, progress, action, exc)
+            raise
+    comparison = aggregate
     action.status = "accepted"
     decisions = {
         decision.finding_key: decision

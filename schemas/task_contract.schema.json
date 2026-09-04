@@ -57,6 +57,22 @@
       "title": "Source Scope",
       "type": "array"
     },
+    "context_scope": {
+      "description": "仅用于理解和证据定位的冻结上下文路径；不产生源码覆盖义务，且不会触发展开声明实现。",
+      "anyOf": [
+        {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Context Scope"
+    },
     "focus": {
       "items": {
         "type": "string"

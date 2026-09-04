@@ -41,7 +41,7 @@ Run/action/task 丢失、冻结输入损坏、`continue_agent` 缺少约定的 `
 
 Worker 结束前可调用 `check-result-json --task`。DSH 在 POSIX 工作区固定使用 `.venv/bin/python -m pangea_agent.cli.main check-result-json --task '<当前 task JSON 路径>'`，Windows 工作区使用 `.venv\Scripts\python.exe`；不要用 `PYTHONPATH` 或系统 `python3` 绕过项目运行环境。该命令只读取 task 指向的结果，确认 JSON 能否被下游消费，并以 `advisories` 提示内部编号、声明链接和证据路径问题。`submission_ready=false` 时由当前 Agent 修正无法读取的结构；`submission_ready=true` 时允许结束回合，`status=WARN` 由 settle 保留为降级提示并继续流程。它不判断语义，任何内容修正仍由当前 Agent 自己决定。
 
-Review 固定分为同一 Reviewer Session 的两个隔离 checkpoint：`independent_review` 不提供首轮结果；Graph 接受后才通过 `continue_agent` 进入 `comparison_review` 并开放盲审与首轮结果做对照。定向补齐后直接聚合，不再启动新的 Reviewer 或第三个复核 Agent。
+Review 固定分为同一 Reviewer Session 的两个隔离 checkpoint：`independent_review` 不提供首轮结果；Graph 接受后才通过 `continue_agent` 进入 `comparison_review` 并开放盲审与首轮结果做对照。若 Comparison task 带有 `audit_batch_count`，每个 batch 都是同一 Reviewer 的 `continue_agent` checkpoint，必须按返回的 exact action_id 逐批 dispatch/settle，不能新建 Reviewer 或自行合并结果；最后一批由 Workflow 聚合后再进入定向补齐，不再启动新的 Reviewer 或第三个复核 Agent。
 
 资料提取和方法论提炼由资产插件管理。历史缺陷提取使用
 `asset-extraction-worker.md`，完成后等待人工审核，不自动批准。方法论提炼只接受已批准历史缺陷，

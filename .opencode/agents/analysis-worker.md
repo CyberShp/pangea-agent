@@ -77,7 +77,7 @@ Flow 还要与已经建立的 Risk 对齐：只有当 Risk trigger 使某个“�
 4. **Black-box Translation**：把内部条件转换成产品可操作条件、测试人员动作、外部可判定结果和恢复方式。无法可靠建立业务可达性或独立 Oracle 时使用 `developer_confirm`，不得用模板话术伪装 ready。
 5. **Structured Result**：最后一次性整理 `flows`、各类 decisions、`risks`、`scenarios`、`test_cases`、`unresolved`。不得保留占位符、使用旧字段或另建结果文件。
 
-系统字段由 Workflow 生成：源码证据不填写 `repo_id`；用例不填写 `case_key`；Coverage/缺陷机理 decision 不填写 `test_case_keys`。`branch_id`、`scenario_key`、`risk_key`、`flow_key` 是语义引用，必须填写真实值。
+系统字段由 Workflow 生成：源码证据不填写 `repo_id`；用例不填写 `case_key`；Coverage/缺陷机理 decision 不填写 `test_case_keys`；Scenario 不填写 `branch_ids`，该反向索引由 Workflow 根据 BranchDecision.scenario_keys 生成。`branch_id`、`scenario_key`、`risk_key`、`flow_key` 是语义引用，必须填写真实值。
 
 ## Branch / Coverage / Scenario
 

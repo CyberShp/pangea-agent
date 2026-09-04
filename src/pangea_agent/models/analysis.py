@@ -70,6 +70,7 @@ class PlanningTask(StrictModel):
     analysis_language: AnalysisLanguage = "c_cpp"
     repositories: list[RepositoryRef] = Field(min_length=1)
     requested_scope: list[str] = Field(min_length=1)
+    requested_context_scope: list[str] = Field(default_factory=list)
     compact_metadata_path: str = Field(min_length=1)
     asset_candidates_path: str = Field(min_length=1)
     methodology_paths: list[str] = Field(default_factory=list)
@@ -315,6 +316,18 @@ class CorrectionTargetRef(StrictModel):
         return self
 
 
+class CorrectionAssertion(StrictModel):
+    json_pointer: str = Field(min_length=1)
+    operator: Literal["equals", "contains", "not_contains", "exists", "absent"]
+    expected: Any = None
+
+    @model_validator(mode="after")
+    def validate_pointer(self) -> "CorrectionAssertion":
+        if not self.json_pointer.startswith("/"):
+            raise ValueError("correction assertion json_pointer 必须是 RFC 6901 JSON Pointer")
+        return self
+
+
 class ValueSnapshot(StrictModel):
     exists: bool
     value: Any
@@ -324,6 +337,7 @@ class AtomicCorrectionTarget(StrictModel):
     correction_id: str = Field(min_length=1)
     target: CorrectionTargetRef
     required_state: str = Field(min_length=1)
+    assertions: list[CorrectionAssertion] = Field(default_factory=list)
 
 
 class ClosureCorrectionTarget(AtomicCorrectionTarget):
@@ -392,6 +406,9 @@ class AnalysisTask(StrictModel):
     inventory_path: str = Field(min_length=1)
     source_manifest_path: str = Field(min_length=1)
     selected_inputs_path: str = Field(min_length=1)
+    obligation_manifest_path: str | None = Field(default=None, min_length=1)
+    obligation_manifest_sha256: str | None = Field(default=None, min_length=1)
+    obligation_counts: dict[str, int] = Field(default_factory=dict)
     coverage_context: list[dict] = Field(default_factory=list)
     result_schema_path: str = Field(default="schemas/analysis_result.schema.json", min_length=1)
     result_skeleton_path: str = Field(default="schemas/analysis_result.skeleton.json", min_length=1)
@@ -531,6 +548,10 @@ class ComparisonReviewTask(StrictModel):
     analysis_result_paths: dict[str, str] = Field(min_length=1)
     required_analysis_audits: list[ComparisonAuditTarget] = Field(default_factory=list)
     require_audit_conclusions: bool = False
+    audit_batch_index: int | None = Field(default=None, ge=0)
+    audit_batch_count: int | None = Field(default=None, gt=0)
+    audit_batch_max_items: int = Field(default=64, gt=0)
+    audit_batch_max_bytes: int = Field(default=96 * 1024, gt=0)
     independent_review_result_path: str = Field(min_length=1)
     selected_inputs_path: str = Field(min_length=1)
     rubric_paths: list[str] = Field(min_length=1)

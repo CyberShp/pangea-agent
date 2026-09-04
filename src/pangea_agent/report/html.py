@@ -18,6 +18,7 @@ from .markdown import (
     _items,
     _methodology_rows,
     _parse_failures,
+    _parse_failures_by_role,
     _quality_summary,
     _report_title,
     _repository_rows,
@@ -375,7 +376,8 @@ def render_html_report(state: Mapping[str, Any]) -> str:
     body.append(f'<section id="cases"><a class="back" href="#top">回到顶部</a><h2>8. 测试用例与风险映射</h2>{rendered_cases}</section>')
 
     unresolved_units = [unit for unit in _items(state.get("analysis_units")) if isinstance(unit, Mapping) and str(unit.get("status", "")).upper() not in {"", "PASS", "COMPLETED", "COMPLETE"}]
-    incomplete_html = f'<h3>解析失败</h3>{_list(_parse_failures(state))}<h3>未读图片</h3>{_list(state.get("unread_images") or state.get("unparsed_images"))}<h3>运行错误</h3>{_list(state.get("errors"))}<h3>未完成分析单元</h3>{_list(unresolved_units)}'
+    parse_roles = _parse_failures_by_role(state)
+    incomplete_html = f'<h3>源码解析失败</h3>{_list(parse_roles["source"])}<h3>上下文解析失败（降级）</h3>{_list(parse_roles["context"])}<h3>未读图片</h3>{_list(state.get("unread_images") or state.get("unparsed_images"))}<h3>运行错误</h3>{_list(state.get("errors"))}<h3>未完成分析单元</h3>{_list(unresolved_units)}'
     body.append(f'<section id="incomplete"><a class="back" href="#top">回到顶部</a><h2>9. 不完整项与未解析证据</h2>{incomplete_html}</section>')
     quality = state.get("quality_report") or {}
     final_tone = "danger" if incomplete else "ok"

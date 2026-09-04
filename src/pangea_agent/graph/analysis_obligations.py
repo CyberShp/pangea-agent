@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+import hashlib
+import json
 from typing import Any
 
 from pangea_agent.models.analysis import AnalysisTask, UnitSemanticResult
@@ -8,6 +10,68 @@ from pangea_agent.models.analysis import AnalysisTask, UnitSemanticResult
 
 READY_SCENARIO_STATES = {"blackbox_ready", "graybox_ready"}
 SCENARIO_MAPPED_DISPOSITIONS = {"scenario_mapped", "merged"}
+
+
+def build_analysis_obligation_manifest(
+    task: AnalysisTask,
+    inventory: Mapping[str, Any],
+    selected_inputs: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Freeze deterministic object identities for one Analysis unit."""
+
+    branches = []
+    owned_paths = set(task.unit.source_scope)
+    for file_item in inventory.get("files", []):
+        if not isinstance(file_item, Mapping):
+            continue
+        if file_item.get("repo_id") != task.unit.repo_id:
+            continue
+        if file_item.get("path") not in owned_paths:
+            continue
+        for branch in file_item.get("branches", []):
+            if not isinstance(branch, Mapping) or not branch.get("branch_id"):
+                continue
+            branches.append({
+                "branch_id": str(branch["branch_id"]),
+                "path": str(file_item["path"]),
+                "line": branch.get("line"),
+                "kind": branch.get("kind"),
+            })
+    coverage = [
+        {"coverage_id": str(item["coverage_id"])}
+        for item in selected_inputs.get("coverage_gaps", [])
+        if isinstance(item, Mapping) and item.get("coverage_id")
+    ]
+    inputs = sorted(
+        str(item_id)
+        for item_id in selected_inputs.get("asset_items", {})
+        if item_id
+    )
+    mechanisms = sorted(
+        str(item_id)
+        for item_id in selected_inputs.get("defect_mechanisms", {})
+        if item_id
+    )
+    manifest = {
+        "schema_version": 1,
+        "run_id": task.run_id,
+        "action_id": task.action_id,
+        "unit_id": task.unit.unit_id,
+        "source_scope": list(task.unit.source_scope),
+        "counts": {
+            "branch_decisions": len(branches),
+            "input_decisions": len(inputs),
+            "coverage_decisions": len(coverage),
+            "mechanism_decisions": len(mechanisms),
+        },
+        "branch_obligations": sorted(branches, key=lambda item: item["branch_id"]),
+        "input_obligations": [{"item_id": item_id} for item_id in inputs],
+        "coverage_obligations": sorted(coverage, key=lambda item: item["coverage_id"]),
+        "mechanism_obligations": [{"mechanism_id": item_id} for item_id in mechanisms],
+    }
+    canonical = json.dumps(manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    manifest["manifest_sha256"] = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return manifest
 
 
 def analysis_obligations(

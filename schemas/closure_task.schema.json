@@ -111,6 +111,13 @@
           "minLength": 1,
           "title": "Required State",
           "type": "string"
+        },
+        "assertions": {
+          "items": {
+            "$ref": "#/$defs/CorrectionAssertion"
+          },
+          "title": "Assertions",
+          "type": "array"
         }
       },
       "required": [
@@ -137,6 +144,13 @@
           "title": "Required State",
           "type": "string"
         },
+        "assertions": {
+          "items": {
+            "$ref": "#/$defs/CorrectionAssertion"
+          },
+          "title": "Assertions",
+          "type": "array"
+        },
         "finding_key": {
           "minLength": 1,
           "title": "Finding Key",
@@ -154,6 +168,28 @@
         "before"
       ],
       "title": "ClosureCorrectionTarget",
+      "type": "object"
+    },
+    "CorrectionAssertion": {
+      "additionalProperties": false,
+      "properties": {
+        "json_pointer": {
+          "minLength": 1,
+          "title": "Json Pointer",
+          "type": "string"
+        },
+        "operator": {
+          "enum": ["equals", "contains", "not_contains", "exists", "absent"],
+          "title": "Operator",
+          "type": "string"
+        },
+        "expected": {
+          "default": null,
+          "title": "Expected"
+        }
+      },
+      "required": ["json_pointer", "operator"],
+      "title": "CorrectionAssertion",
       "type": "object"
     },
     "CorrectionTargetRef": {

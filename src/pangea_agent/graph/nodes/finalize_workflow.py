@@ -14,6 +14,7 @@ from pangea_agent.graph.result_contract import (
 )
 from pangea_agent.graph.workflow_store import (
     analysis_task_path,
+    comparison_review_aggregate_path,
     closure_task_path,
     comparison_review_task_path,
     load_progress,
@@ -1087,8 +1088,11 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
     comparison_review = None
     comparison_action_id = f"{state['run_id']}:comparison-review"
     if comparison_action_id in progress.actions:
+        comparison_result_path = comparison_review_aggregate_path(state)
+        if not comparison_result_path.is_file():
+            comparison_result_path = validated_result_path(state, comparison_action_id)
         comparison_review = ComparisonReviewResult.model_validate(
-            read_json(validated_result_path(state, comparison_action_id))
+            read_json(comparison_result_path)
         )
         unresolved.extend(
             {"stage": "review", "reason": value}

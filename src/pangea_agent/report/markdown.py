@@ -369,8 +369,9 @@ def _quality_summary(state: Mapping[str, Any], incomplete: bool) -> str:
     )
     if incomplete:
         gaps = []
-        if _items(_parse_failures(state)):
-            gaps.append(f"解析失败 {len(_items(_parse_failures(state)))} 项")
+        parse_roles = _parse_failures_by_role(state)
+        if parse_roles["source"]:
+            gaps.append(f"源码解析失败 {len(parse_roles['source'])} 项")
         if _items(state.get("unread_images") or state.get("unparsed_images")):
             gaps.append(f"未读图片 {len(_items(state.get('unread_images') or state.get('unparsed_images')))} 项")
         if _items(state.get("errors")):
@@ -412,11 +413,10 @@ def _status(state: Mapping[str, Any]) -> tuple[str, bool]:
     quality_status = str(quality.get("status", "UNKNOWN")).upper()
     run_status = str(state.get("run_status", "")).upper()
     inventory = state.get("inventory") or {}
+    parse_roles = _parse_failures_by_role(state)
     has_gaps = bool(
         state.get("incomplete")
-        or state.get("parse_failures")
-        or state.get("parser_failures")
-        or (inventory.get("parse_failures") if isinstance(inventory, Mapping) else None)
+        or parse_roles["source"]
         or state.get("unread_images")
         or state.get("unparsed_images")
         or state.get("errors")
@@ -438,6 +438,19 @@ def _parse_failures(state: Mapping[str, Any]) -> Any:
         or state.get("parser_failures")
         or (inventory.get("parse_failures") if isinstance(inventory, Mapping) else None)
     )
+
+
+def _parse_failures_by_role(state: Mapping[str, Any]) -> dict[str, list[Any]]:
+    manifest = state.get("source_manifest") or {}
+    compact = state.get("compact_metadata") or {}
+    for candidate in (manifest, compact):
+        value = candidate.get("parse_failures_by_role") if isinstance(candidate, Mapping) else None
+        if isinstance(value, Mapping):
+            return {
+                "source": _items(value.get("source")),
+                "context": _items(value.get("context")),
+            }
+    return {"source": _items(_parse_failures(state)), "context": []}
 
 
 def _append_list(lines: list[str], values: Any, empty: str = "- 无") -> None:
@@ -708,8 +721,11 @@ def render_report(state: "PangeaState | Mapping[str, Any]") -> str:
             lines.append(f"  - {_text(item)}")
         lines.append("")
 
-    lines.extend(["## 9. 不完整项与未解析证据", "", "### 解析失败", ""])
-    _append_list(lines, _parse_failures(state))
+    parse_roles = _parse_failures_by_role(state)
+    lines.extend(["## 9. 不完整项与未解析证据", "", "### 源码解析失败", ""])
+    _append_list(lines, parse_roles["source"])
+    lines.extend(["", "### 上下文解析失败（降级）", ""])
+    _append_list(lines, parse_roles["context"])
     lines.extend(["", "### 未读图片", ""])
     _append_list(lines, state.get("unread_images") or state.get("unparsed_images"))
     lines.extend(["", "### 运行错误与未完成分析单元", ""])

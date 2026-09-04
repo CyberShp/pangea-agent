@@ -171,6 +171,34 @@
       "title": "Require Audit Conclusions",
       "type": "boolean"
     },
+    "audit_batch_index": {
+      "anyOf": [
+        { "minimum": 0, "type": "integer" },
+        { "type": "null" }
+      ],
+      "default": null,
+      "title": "Audit Batch Index"
+    },
+    "audit_batch_count": {
+      "anyOf": [
+        { "exclusiveMinimum": 0, "type": "integer" },
+        { "type": "null" }
+      ],
+      "default": null,
+      "title": "Audit Batch Count"
+    },
+    "audit_batch_max_items": {
+      "default": 64,
+      "exclusiveMinimum": 0,
+      "title": "Audit Batch Max Items",
+      "type": "integer"
+    },
+    "audit_batch_max_bytes": {
+      "default": 98304,
+      "exclusiveMinimum": 0,
+      "title": "Audit Batch Max Bytes",
+      "type": "integer"
+    },
     "independent_review_result_path": {
       "minLength": 1,
       "title": "Independent Review Result Path",

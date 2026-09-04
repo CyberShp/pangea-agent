@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
+from pathlib import PurePosixPath
 
 from pangea_agent.agent_io import read_json, write_json
 from pangea_agent.assets import analysis_asset_inputs
@@ -30,6 +31,73 @@ from pangea_agent.models.analysis import (
     WorkflowProgress,
 )
 from pangea_agent.repositories.resolver import resolve_repositories_from_contract
+
+
+def _normalize_context_path(value: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("context_scope 只能包含非空相对文件路径")
+    normalized = value.strip().replace("\\", "/")
+    if normalized.startswith("/"):
+        raise ValueError(f"context_scope 必须是相对路径：{value}")
+    parts = PurePosixPath(normalized).parts
+    if ".." in parts:
+        raise ValueError(f"context_scope 越过仓库边界：{value}")
+    return str(PurePosixPath(normalized))
+
+
+def _explicit_context_files(
+    repositories: list[dict], context_scope: list[str], expansion: dict,
+) -> list[dict]:
+    """Resolve user-frozen context without changing source ownership."""
+
+    if not context_scope:
+        return []
+    repo_ids = {item["repo_id"] for item in repositories}
+    owned = {
+        (group["repo_id"], _normalize_context_path(path))
+        for group in expansion.get("groups", [])
+        for path in group.get("code_paths", [])
+    }
+    records: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    for raw in context_scope:
+        repo_hint = None
+        candidate = raw
+        if isinstance(raw, str) and ":" in raw:
+            prefix, suffix = raw.split(":", 1)
+            if prefix in repo_ids and suffix:
+                repo_hint, candidate = prefix, suffix
+        relative = _normalize_context_path(candidate)
+        matches = []
+        for repository in repositories:
+            if repo_hint and repository["repo_id"] != repo_hint:
+                continue
+            root = Path(repository["source_root"]).resolve()
+            path = (root / relative).resolve()
+            try:
+                path.relative_to(root)
+            except ValueError as exc:
+                raise ValueError(
+                    f"context_scope 越过仓库边界：{repository['repo_id']}:{relative}"
+                ) from exc
+            if path.is_file():
+                matches.append((repository["repo_id"], relative))
+        if len(matches) != 1:
+            if not matches:
+                raise ValueError(f"context_scope 文件不存在：{raw}")
+            raise ValueError(
+                f"多仓库 context_scope 路径不唯一，请使用 repo_id:path：{raw}"
+            )
+        key = matches[0]
+        if key in owned:
+            raise ValueError(
+                f"context_scope 与 source_scope 重叠：{key[0]}:{key[1]}"
+            )
+        if key in seen:
+            continue
+        seen.add(key)
+        records.append({"repo_id": key[0], "path": key[1], "reason": "explicit_context"})
+    return records
 
 
 def _freeze_sources(state: PangeaState, repositories: list[dict], expansion: dict) -> list[dict]:
@@ -112,6 +180,24 @@ def _compact_inventory(
         "context_files": expansion.get("context_files", []),
         "parse_failures": inventory.get("parse_failures", []),
     }
+    owned = {
+        (group["repo_id"], path)
+        for group in expansion.get("groups", [])
+        for path in group.get("code_paths", [])
+    }
+    parse_failures = inventory.get("parse_failures", [])
+    compact["parse_failures_by_role"] = {
+        "source": [
+            item for item in parse_failures
+            if isinstance(item, dict)
+            and (item.get("repo_id"), item.get("path")) in owned
+        ],
+        "context": [
+            item for item in parse_failures
+            if isinstance(item, dict)
+            and (item.get("repo_id"), item.get("path")) not in owned
+        ],
+    }
     if analysis_language == "lua":
         compact["require_dependencies"] = expansion.get(
             "require_dependencies", []
@@ -172,6 +258,29 @@ def prepare_inputs(state: PangeaState) -> PangeaState:
             target=str(contract.get("target", "")),
             focus=list(contract.get("focus", [])),
         )
+    explicit_context = _explicit_context_files(
+        repositories,
+        list(contract.get("context_scope") or []),
+        expansion,
+    )
+    if explicit_context:
+        existing_context = {
+            (item.get("repo_id"), item.get("path"))
+            for item in expansion.get("context_files", [])
+            if isinstance(item, dict)
+        }
+        new_context = [
+            item for item in explicit_context
+            if (item["repo_id"], item["path"]) not in existing_context
+        ]
+        expansion["context_files"] = [
+            *expansion.get("context_files", []),
+            *new_context,
+        ]
+        for group in expansion.get("groups", []):
+            for record in new_context:
+                if record["repo_id"] == group["repo_id"]:
+                    group.setdefault("context_paths", []).append(record["path"])
     if not any(group.get("code_paths") for group in expansion.get("groups", [])):
         raise ValueError(
             f"用户指定范围没有可分析的 {'Lua' if analysis_language == 'lua' else 'C/C++'} 源码"
@@ -228,6 +337,7 @@ def prepare_inputs(state: PangeaState) -> PangeaState:
             "ambiguous": len(coverage_match["ambiguous"]),
             "unmatched": len(coverage_match["unmatched"]),
         },
+        "parse_failures_by_role": compact_metadata.get("parse_failures_by_role", {}),
     })
 
     planning_skeleton_path = run_dir / "inputs" / "planning-result.skeleton.json"
@@ -272,6 +382,9 @@ def prepare_inputs(state: PangeaState) -> PangeaState:
         analysis_language=analysis_language,
         repositories=[RepositoryRef.model_validate(item) for item in frozen_repositories],
         requested_scope=requested_scope,
+        requested_context_scope=[
+            f"{item['repo_id']}:{item['path']}" for item in explicit_context
+        ],
         compact_metadata_path=str(compact_path),
         asset_candidates_path=str(candidates_path),
         methodology_catalog_path=str(

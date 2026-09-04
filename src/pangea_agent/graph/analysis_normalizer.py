@@ -26,7 +26,7 @@ def normalize_analysis_result(
     payload = deepcopy(dict(raw_result))
     _inject_evidence_repo_ids(payload, task.unit.repo_id)
     _inject_case_keys(payload)
-    _discard_submitted_derived_links(payload)
+    _discard_submitted_derived_links(payload, warnings)
 
     result = _derive_test_case_links(UnitSemanticResult.model_validate(payload))
     issues = analysis_obligations(task, result, inventory, selected_inputs)
@@ -83,15 +83,26 @@ def _inject_case_keys(payload: dict[str, Any]) -> None:
             case["case_key"] = f"CASE-{index:03d}"
 
 
-def _discard_submitted_derived_links(payload: dict[str, Any]) -> None:
+def _discard_submitted_derived_links(payload: dict[str, Any], warnings: list[str]) -> None:
     for name in ("coverage_decisions", "mechanism_decisions"):
         for decision in _mapping_items(payload.get(name)):
             decision.pop("test_case_keys", None)
+    for scenario in _mapping_items(payload.get("scenarios")):
+        if scenario.get("branch_ids"):
+            warnings.append(
+                "Workflow 重建 Scenario.branch_ids；忽略 Agent 提交的派生值"
+            )
+        scenario.pop("branch_ids", None)
 
 
 def _derive_test_case_links(result: UnitSemanticResult) -> UnitSemanticResult:
     coverage_cases = test_case_keys_by_coverage_claim(result)
     cases_by_input = test_case_keys_by_input(result)
+    branches_by_scenario: dict[str, list[str]] = defaultdict(list)
+    for decision in result.branch_decisions:
+        for scenario_key in decision.scenario_keys:
+            if decision.branch_id not in branches_by_scenario[scenario_key]:
+                branches_by_scenario[scenario_key].append(decision.branch_id)
 
     coverage_decisions = []
     for decision in result.coverage_decisions:
@@ -102,6 +113,12 @@ def _derive_test_case_links(result: UnitSemanticResult) -> UnitSemanticResult:
 
     return result.model_copy(
         update={
+            "scenarios": [
+                scenario.model_copy(update={
+                    "branch_ids": branches_by_scenario.get(scenario.scenario_key, [])
+                })
+                for scenario in result.scenarios
+            ],
             "coverage_decisions": coverage_decisions,
             "mechanism_decisions": [
                 decision.model_copy(

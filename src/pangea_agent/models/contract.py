@@ -15,6 +15,13 @@ class TaskContract(BaseModel):
     repositories: list[str] = Field(default_factory=list)
     target: str
     source_scope: list[str] = Field(default_factory=list)
+    context_scope: list[str] | None = Field(
+        default=None,
+        description=(
+            "仅用于理解和证据定位的冻结上下文路径；不产生源码覆盖义务，"
+            "且不会触发展开声明实现。"
+        ),
+    )
     focus: list[str] = Field(default_factory=list)
     asset_ids: list[str] = Field(default_factory=list)
     test_case_examples: list[str] = Field(default_factory=list)

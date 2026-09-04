@@ -225,6 +225,39 @@
       "title": "Selected Inputs Path",
       "type": "string"
     },
+    "obligation_manifest_path": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Obligation Manifest Path"
+    },
+    "obligation_manifest_sha256": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Obligation Manifest Sha256"
+    },
+    "obligation_counts": {
+      "additionalProperties": {
+        "type": "integer"
+      },
+      "title": "Obligation Counts",
+      "type": "object"
+    },
     "coverage_context": {
       "items": {
         "additionalProperties": true,

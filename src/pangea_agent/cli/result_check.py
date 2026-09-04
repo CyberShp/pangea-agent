@@ -75,6 +75,33 @@ def _review_progress(task_data: dict) -> WorkflowProgress:
     )
 
 
+def _obligation_summary(task: AnalysisTask, result: UnitSemanticResult) -> dict | None:
+    if not task.obligation_manifest_path:
+        return None
+    manifest = read_json(Path(task.obligation_manifest_path))
+    expected = manifest.get("counts", {}) if isinstance(manifest, dict) else {}
+    actual = {
+        "branch_decisions": len(result.branch_decisions),
+        "input_decisions": len(result.input_decisions),
+        "coverage_decisions": len(result.coverage_decisions),
+        "mechanism_decisions": len(result.mechanism_decisions),
+    }
+    return {
+        "manifest_path": task.obligation_manifest_path,
+        "manifest_sha256": manifest.get("manifest_sha256"),
+        "hash_match": (
+            task.obligation_manifest_sha256 is None
+            or task.obligation_manifest_sha256 == manifest.get("manifest_sha256")
+        ),
+        "expected_counts": expected,
+        "actual_counts": actual,
+        "count_deltas": {
+            key: actual.get(key, 0) - int(expected.get(key, 0))
+            for key in set(expected) | set(actual)
+        },
+    }
+
+
 def check_result_json(task_path: str) -> dict:
     """Read result JSON and report non-blocking structural advisories."""
     task_data = read_json(Path(task_path))
@@ -228,6 +255,15 @@ def check_result_json(task_path: str) -> dict:
         return response
 
     response["advisories"] = normalization_warnings
+    try:
+        obligation_summary = _obligation_summary(task, result)
+    except (OSError, ValueError, TypeError) as exc:
+        obligation_summary = None
+        normalization_warnings.append(f"无法读取 obligation manifest：{exc}")
+    if obligation_summary is not None:
+        response["obligation_manifest"] = obligation_summary
+        if not obligation_summary["hash_match"]:
+            normalization_warnings.append("obligation manifest SHA-256 与 task 声明不一致")
     correction_errors: list[str] = []
     if task_type == "closure":
         try:

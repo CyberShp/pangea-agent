@@ -96,6 +96,13 @@
       "title": "Requested Scope",
       "type": "array"
     },
+    "requested_context_scope": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Requested Context Scope",
+      "type": "array"
+    },
     "compact_metadata_path": {
       "minLength": 1,
       "title": "Compact Metadata Path",

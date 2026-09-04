@@ -70,6 +70,18 @@ def comparison_review_result_path(state: dict) -> Path:
     return run_directory(state) / "agent-results" / "comparison-review.json"
 
 
+def comparison_review_batch_task_path(state: dict, batch_index: int) -> Path:
+    return run_directory(state) / "agent-tasks" / "comparison" / f"batch-{batch_index:04d}.json"
+
+
+def comparison_review_batch_result_path(state: dict, batch_index: int) -> Path:
+    return run_directory(state) / "agent-results" / "comparison" / f"batch-{batch_index:04d}.json"
+
+
+def comparison_review_aggregate_path(state: dict) -> Path:
+    return run_directory(state) / "agent-results" / "comparison-review-aggregate.json"
+
+
 def closure_task_path(state: dict, unit_id: str) -> Path:
     return run_directory(state) / "agent-tasks" / "closure" / f"{unit_id}.json"
 

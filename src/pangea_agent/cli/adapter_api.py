@@ -124,6 +124,16 @@ def _contract_card_sha256(task: dict) -> str | None:
         return None
 
 
+def _quality_diagnostics_path(state: dict, action_id: str, attempt: int) -> Path:
+    safe_action_id = action_id.replace(":", "__")
+    return (
+        run_directory(state)
+        / "validation"
+        / safe_action_id
+        / f"quality-diagnostics-attempt-{attempt:04d}.json"
+    )
+
+
 def _optional_path(value: object) -> str | None:
     return value if isinstance(value, str) and value else None
 
@@ -703,6 +713,22 @@ def _validate_action(data_root: str, run_id: str, action_id: str) -> dict:
     else:
         raise ValueError(f"Run adapter 不处理 role={action.role}")
 
+    quality_diagnostics_path = _quality_diagnostics_path(
+        state,
+        action_id,
+        _repair_attempts(action) + 1,
+    )
+    write_json(quality_diagnostics_path, {
+        "schema_version": 1,
+        "kind": "quality_diagnostics",
+        "run_id": run_id,
+        "action_id": action_id,
+        "task_id": action.task_id,
+        "task_path": action.task_path,
+        "result_path": str(task.get("result_path", "")),
+        "warnings": warnings,
+        "warning_count": len(warnings),
+    })
     write_json(
         validated_result_path(state, action_id),
         result.model_dump(mode="json"),
@@ -720,7 +746,11 @@ def _validate_action(data_root: str, run_id: str, action_id: str) -> dict:
         action.consecutive_no_progress_failures = 0
         action.attention_required = False
     save_progress(state, progress)
-    payload = {"action_id": action_id, "status": "valid"}
+    payload = {
+        "action_id": action_id,
+        "status": "valid",
+        "quality_diagnostics_path": str(quality_diagnostics_path),
+    }
     if warnings:
         payload["warnings"] = warnings
     return payload

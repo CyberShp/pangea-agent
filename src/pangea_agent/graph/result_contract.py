@@ -8,6 +8,7 @@ from typing import Any
 
 from pangea_agent.models.analysis import (
     AnalysisTask,
+    CorrectionAssertion,
     ClosureTask,
     ReviewFinding,
     UnitSemanticResult,
@@ -416,6 +417,7 @@ def validate_closure_correction_contract(
             f"extra={_format_correction_ids(extra)}"
         )
 
+    resolved_new_keys: set[str] = set()
     for identity in sorted(expected_ids & actual_ids):
         target = target_by_id[identity]
         decision = decision_by_id[identity]
@@ -458,6 +460,12 @@ def validate_closure_correction_contract(
                     f"Closure correction {label} 的 resolved_object_key="
                     f"{resolved_object_key!r} 未出现在 Closure result 中"
                 )
+            if resolved_object_key in resolved_new_keys:
+                errors.append(
+                    f"Closure correction {label} 复用了另一个新增对象的 resolved_object_key="
+                    f"{resolved_object_key!r}"
+                )
+            resolved_new_keys.add(resolved_object_key)
             changed = not resolved_before["exists"] and after["exists"]
         else:
             after = resolve_correction_target(result, ref)
@@ -472,6 +480,25 @@ def validate_closure_correction_contract(
                 f"Closure correction {label} 标记 incorporated，"
                 "但目标 before 与 after 完全相同"
             )
+        if decision.disposition == "incorporated":
+            assertions = getattr(target, "assertions", [])
+            if assertions:
+                if missing_object_target:
+                    assertion_root = after.get("value") if after.get("exists") else None
+                elif ref_data.get("collection") == "result":
+                    assertion_root = _as_mapping(result, "Closure result")
+                else:
+                    assertion_root = after.get("value") if ref_data.get("field_path") is None else resolve_correction_target(
+                        result,
+                        {**ref_data, "field_path": None},
+                    ).get("value")
+                for assertion in assertions:
+                    assertion_error = _correction_assertion_error(
+                        assertion,
+                        assertion_root,
+                    )
+                    if assertion_error:
+                        errors.append(f"Closure correction {label} assertion 未满足：{assertion_error}")
         elif decision.disposition in {"dismissed", "unresolved"} and changed:
             errors.append(
                 f"Closure correction {label} 标记 {decision.disposition}，"
@@ -543,6 +570,31 @@ def _snapshot_value(value: Any, field_path: str | None) -> dict[str, Any]:
             continue
         return {"exists": False, "value": None}
     return {"exists": True, "value": deepcopy(current)}
+
+
+def _correction_assertion_error(
+    assertion: CorrectionAssertion,
+    value: Any,
+) -> str | None:
+    snapshot = _snapshot_value(value, assertion.json_pointer)
+    operator = assertion.operator
+    expected = assertion.expected
+    if operator == "exists":
+        return None if snapshot["exists"] else f"{assertion.json_pointer} 不存在"
+    if operator == "absent":
+        return f"{assertion.json_pointer} 仍然存在" if snapshot["exists"] else None
+    if not snapshot["exists"]:
+        return f"{assertion.json_pointer} 不存在"
+    actual = snapshot["value"]
+    if operator == "equals" and actual == expected:
+        return None
+    if operator == "contains":
+        if isinstance(actual, (list, str, dict)) and expected in actual:
+            return None
+    if operator == "not_contains":
+        if isinstance(actual, (list, str, dict)) and expected not in actual:
+            return None
+    return f"{assertion.json_pointer}: actual={actual!r}, expected={expected!r}, operator={operator}"
 
 
 def _decode_json_pointer_token(token: str) -> str:
