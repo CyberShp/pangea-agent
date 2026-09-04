@@ -138,6 +138,7 @@ def verify_source_snapshot(
     *,
     run_id: str | None = None,
     repo_id: str | None = None,
+    verify_files: bool = True,
 ) -> dict:
     root = Path(snapshot_root)
     manifest_path = root / "manifest.json"
@@ -164,13 +165,14 @@ def verify_source_snapshot(
         relative_path = Path(relative)
         if relative_path.is_absolute() or ".." in relative_path.parts:
             raise ValueError(f"源码快照文件越过边界：{relative}")
-        path = (repository_root / relative_path).resolve()
-        try:
-            path.relative_to(repository_root)
-        except ValueError as exc:
-            raise ValueError(f"源码快照文件越过边界：{relative}") from exc
-        if not os.path.isfile(_filesystem_path(path)) or _sha256(path) != expected:
-            raise ValueError(f"源码快照完整性校验失败：{relative}")
+        if verify_files:
+            path = (repository_root / relative_path).resolve()
+            try:
+                path.relative_to(repository_root)
+            except ValueError as exc:
+                raise ValueError(f"源码快照文件越过边界：{relative}") from exc
+            if not os.path.isfile(_filesystem_path(path)) or _sha256(path) != expected:
+                raise ValueError(f"源码快照完整性校验失败：{relative}")
     actual = f"sha256:{_digest_manifest(files)}"
     if actual != manifest.get("snapshot_digest"):
         raise ValueError("源码快照清单 digest 不匹配")

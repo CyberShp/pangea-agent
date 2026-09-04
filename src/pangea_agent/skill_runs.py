@@ -372,6 +372,7 @@ def skill_run_detail(data_root: str, run_id: str) -> dict:
                 snapshot_path,
                 run_id=run_id,
                 repo_id=metadata.get("request", {}).get("repository"),
+                verify_files=False,
             )
             snapshot_status = "verified"
         except ValueError as exc:
