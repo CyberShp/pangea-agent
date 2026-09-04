@@ -9,9 +9,26 @@ from datetime import datetime
 from pathlib import Path
 
 
+def _windows_extended_path(value: str) -> str:
+    if value.startswith("\\\\?\\"):
+        return value
+    if value.startswith("\\\\"):
+        return "\\\\?\\UNC\\" + value[2:]
+    return "\\\\?\\" + value
+
+
+def _filesystem_path(path: str | Path) -> str:
+    value = os.fspath(path)
+    if os.name != "nt":
+        return value
+    if value.startswith("\\\\?\\"):
+        return value
+    return _windows_extended_path(os.path.abspath(value))
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
-    with path.open("rb") as stream:
+    with open(_filesystem_path(path), "rb") as stream:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
@@ -19,16 +36,17 @@ def _sha256(path: Path) -> str:
 
 def _relative_file_paths(repository_root: Path, scope: list[dict[str, str]]) -> list[Path]:
     root = repository_root.resolve()
+    filesystem_root = Path(_filesystem_path(root))
     paths: set[Path] = set()
     for item in scope:
-        candidate = Path(item["verified"])
+        candidate = Path(_filesystem_path(Path(item["verified"])))
         if candidate.is_symlink():
             raise ValueError(f"source_scope 不能是符号链接：{item['raw']}")
         if candidate.is_file():
-            paths.add(candidate.relative_to(root))
+            paths.add(candidate.relative_to(filesystem_root))
             continue
         for child in candidate.rglob("*"):
-            relative = child.resolve().relative_to(root)
+            relative = child.resolve().relative_to(filesystem_root)
             if ".git" in relative.parts:
                 continue
             if child.is_symlink():
@@ -60,10 +78,13 @@ def create_source_snapshot(
     files = _relative_file_paths(root, scope)
     if not files:
         raise ValueError("source_scope 没有可冻结的普通源码文件")
-    target.parent.mkdir(parents=True, exist_ok=True)
-    if target.exists():
+    os.makedirs(_filesystem_path(target.parent), exist_ok=True)
+    if os.path.exists(_filesystem_path(target)):
         raise ValueError(f"源码快照目录已存在：{target}")
-    temporary = Path(tempfile.mkdtemp(prefix=f".{target.name}-", dir=target.parent))
+    temporary = Path(tempfile.mkdtemp(
+        prefix=f".{target.name}-",
+        dir=_filesystem_path(target.parent),
+    ))
     try:
         repository = temporary / "repository"
         manifest_files: list[dict[str, object]] = []
@@ -73,14 +94,16 @@ def create_source_snapshot(
                 source.relative_to(root)
             except ValueError as exc:
                 raise ValueError(f"源码路径越过仓库边界：{relative}") from exc
-            if source.is_symlink() or not source.is_file():
+            if os.path.islink(_filesystem_path(source)) or not os.path.isfile(
+                _filesystem_path(source)
+            ):
                 raise ValueError(f"源码文件不可安全冻结：{relative}")
             destination_file = repository / relative
-            destination_file.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source, destination_file)
+            os.makedirs(_filesystem_path(destination_file.parent), exist_ok=True)
+            shutil.copy2(_filesystem_path(source), _filesystem_path(destination_file))
             manifest_files.append({
                 "path": relative.as_posix(),
-                "size": destination_file.stat().st_size,
+                "size": os.path.getsize(_filesystem_path(destination_file)),
                 "sha256": _sha256(destination_file),
             })
         manifest = {
@@ -95,14 +118,18 @@ def create_source_snapshot(
             "file_count": len(manifest_files),
             "snapshot_digest": f"sha256:{_digest_manifest(manifest_files)}",
         }
-        (temporary / "manifest.json").write_text(
-            json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
-        os.replace(temporary, target)
+        with open(_filesystem_path(temporary / "manifest.json"), "w", encoding="utf-8") as stream:
+            stream.write(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
+        os.replace(_filesystem_path(temporary), _filesystem_path(target))
         return manifest
-    except Exception:
-        shutil.rmtree(temporary, ignore_errors=True)
+    except Exception as exc:
+        shutil.rmtree(_filesystem_path(temporary), ignore_errors=True)
+        if isinstance(exc, OSError):
+            raise OSError(
+                "源码快照创建失败："
+                f"source={root}, destination={target}, "
+                f"destination_length={len(str(target))}: {exc}"
+            ) from exc
         raise
 
 
@@ -114,10 +141,11 @@ def verify_source_snapshot(
 ) -> dict:
     root = Path(snapshot_root)
     manifest_path = root / "manifest.json"
-    if not manifest_path.is_file():
+    if not os.path.isfile(_filesystem_path(manifest_path)):
         raise ValueError(f"源码快照清单不存在：{manifest_path}")
     try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        with open(_filesystem_path(manifest_path), encoding="utf-8") as stream:
+            manifest = json.load(stream)
     except json.JSONDecodeError as exc:
         raise ValueError(f"源码快照清单无法解析：{manifest_path}") from exc
     if run_id is not None and manifest.get("run_id") != run_id:
@@ -127,17 +155,21 @@ def verify_source_snapshot(
     files = manifest.get("files")
     if not isinstance(files, list) or not files:
         raise ValueError("源码快照清单没有文件")
+    repository_root = Path(_filesystem_path(root / "repository")).resolve()
     for item in files:
         relative = item.get("path") if isinstance(item, dict) else None
         expected = item.get("sha256") if isinstance(item, dict) else None
         if not isinstance(relative, str) or not relative or not isinstance(expected, str):
             raise ValueError("源码快照清单包含非法文件项")
-        path = (root / "repository" / relative).resolve()
+        relative_path = Path(relative)
+        if relative_path.is_absolute() or ".." in relative_path.parts:
+            raise ValueError(f"源码快照文件越过边界：{relative}")
+        path = (repository_root / relative_path).resolve()
         try:
-            path.relative_to((root / "repository").resolve())
+            path.relative_to(repository_root)
         except ValueError as exc:
             raise ValueError(f"源码快照文件越过边界：{relative}") from exc
-        if not path.is_file() or _sha256(path) != expected:
+        if not os.path.isfile(_filesystem_path(path)) or _sha256(path) != expected:
             raise ValueError(f"源码快照完整性校验失败：{relative}")
     actual = f"sha256:{_digest_manifest(files)}"
     if actual != manifest.get("snapshot_digest"):
