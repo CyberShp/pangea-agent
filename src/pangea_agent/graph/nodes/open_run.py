@@ -27,6 +27,7 @@ def open_run(state: PangeaState) -> PangeaState:
         "run_id": run_id,
         "data_root": data_root,
         "task_contract": contract,
+        "workflow_version": contract.get("workflow_version"),
     }
     frozen_path = run_directory(opened) / "inputs" / "task-contract.json"
     progress = load_progress(opened)
@@ -38,6 +39,7 @@ def open_run(state: PangeaState) -> PangeaState:
     return {
         **opened,
         "needs_prepare": False,
+        "workflow_version": progress.workflow_version or contract.get("workflow_version"),
         "lifecycle_status": progress.lifecycle_status,
         "stage": progress.stage,
     }

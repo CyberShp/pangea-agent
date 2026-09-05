@@ -240,6 +240,10 @@ def _freeze_test_case_examples(state: PangeaState, examples: list[str]) -> list[
 
 def prepare_inputs(state: PangeaState) -> PangeaState:
     contract = state["task_contract"]
+    if contract.get("workflow_version") == "source-first-v1":
+        from pangea_agent.graph.nodes.source_first import prepare_source_first_inputs
+
+        return prepare_source_first_inputs(state)
     run_dir = run_directory(state)
     freeze_enabled_methodologies(
         state["data_root"],

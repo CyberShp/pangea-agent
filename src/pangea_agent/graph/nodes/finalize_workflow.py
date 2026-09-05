@@ -695,6 +695,28 @@ def _completed_checks(
 
 
 def finalize_workflow(state: PangeaState) -> PangeaState:
+    if state.get("workflow_version") == "source-first-v1" or state.get("task_contract", {}).get("workflow_version") == "source-first-v1":
+        from pangea_agent.report.source_first import write_source_first_reports
+
+        paths = write_source_first_reports(state)
+        progress = load_progress(state)
+        if progress is None:
+            raise ValueError("Run progress 不存在")
+        progress.lifecycle_status = "complete"
+        progress.stage = "complete"
+        progress.report_path = paths["report_path"]
+        progress.html_report_path = paths["html_report_path"]
+        if progress.quality_status is None:
+            progress.quality_status = "UNRESOLVED"
+        save_progress(state, progress)
+        return {
+            **state,
+            "lifecycle_status": progress.lifecycle_status,
+            "stage": progress.stage,
+            "quality_status": progress.quality_status,
+            "report_path": paths["report_path"],
+            "html_report_path": paths["html_report_path"],
+        }
     progress = load_progress(state)
     if progress is None:
         raise ValueError("Run progress 不存在")

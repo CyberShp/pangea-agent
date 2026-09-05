@@ -46,6 +46,24 @@ def planning_result_path(state: dict) -> Path:
     return run_directory(state) / "agent-results" / "planning.json"
 
 
+def source_first_task_path(state: dict, stage: str, key: str | None = None) -> Path:
+    """Return a unique task path owned by the source-first Graph."""
+
+    suffix = f"-{key}" if key else ""
+    return run_directory(state) / "agent-tasks" / "source-first" / f"{stage}{suffix}.json"
+
+
+def source_first_result_path(state: dict, stage: str, key: str | None = None) -> Path:
+    """Return the single result path for one source-first action."""
+
+    suffix = f"-{key}" if key else ""
+    return run_directory(state) / "agent-results" / "source-first" / f"{stage}{suffix}.json"
+
+
+def source_first_index_path(state: dict) -> Path:
+    return run_directory(state) / "inputs" / "source-index.json"
+
+
 def analysis_task_path(state: dict, unit_id: str) -> Path:
     return run_directory(state) / "agent-tasks" / "analysis" / f"{unit_id}.json"
 

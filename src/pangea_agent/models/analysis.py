@@ -661,6 +661,10 @@ class ActionState(AgentAction):
 class WorkflowProgress(StrictModel):
     schema_version: Literal["3.0", "3.1"] = "3.1"
     run_id: str = Field(min_length=1)
+    workflow_version: Literal["legacy-v1", "source-first-v1"] | None = None
+    runtime_commit: str | None = None
+    model_id: str | None = None
+    effective_context_budget: int | None = Field(default=None, gt=0)
     lifecycle_status: Literal["running", "complete", "stopped", "failed"] = "running"
     stage: Literal["preparing", "planning", "analyzing", "reviewing", "closing", "reporting", "complete"] = "preparing"
     quality_status: Literal["PASS", "UNRESOLVED"] | None = None
@@ -672,3 +676,7 @@ class WorkflowProgress(StrictModel):
     errors: list[dict] = Field(default_factory=list)
     report_path: str | None = None
     html_report_path: str | None = None
+    needs_user: bool = False
+    blocking_reason: dict[str, Any] | None = None
+    first_finish_revisions: dict[str, int] = Field(default_factory=dict)
+    accepted_revisions: dict[str, int] = Field(default_factory=dict)

@@ -530,6 +530,59 @@
       "title": "Run Id",
       "type": "string"
     },
+    "workflow_version": {
+      "anyOf": [
+        {
+          "enum": [
+            "legacy-v1",
+            "source-first-v1"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Workflow Version"
+    },
+    "runtime_commit": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Runtime Commit"
+    },
+    "model_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Model Id"
+    },
+    "effective_context_budget": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Effective Context Budget"
+    },
     "lifecycle_status": {
       "default": "running",
       "enum": [
@@ -638,6 +691,38 @@
       ],
       "default": null,
       "title": "Html Report Path"
+    },
+    "needs_user": {
+      "default": false,
+      "title": "Needs User",
+      "type": "boolean"
+    },
+    "blocking_reason": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Blocking Reason"
+    },
+    "first_finish_revisions": {
+      "additionalProperties": {
+        "type": "integer"
+      },
+      "title": "First Finish Revisions",
+      "type": "object"
+    },
+    "accepted_revisions": {
+      "additionalProperties": {
+        "type": "integer"
+      },
+      "title": "Accepted Revisions",
+      "type": "object"
     }
   },
   "required": [

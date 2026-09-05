@@ -2127,6 +2127,10 @@ def _accept_closure(state: PangeaState, progress) -> PangeaState:
 
 
 def advance_workflow(state: PangeaState) -> PangeaState:
+    if state.get("workflow_version") == "source-first-v1" or state.get("task_contract", {}).get("workflow_version") == "source-first-v1":
+        from pangea_agent.graph.nodes.source_first import advance_source_first
+
+        return advance_source_first(state)
     progress = load_progress(state)
     if progress is None:
         raise ValueError("Run progress 不存在")

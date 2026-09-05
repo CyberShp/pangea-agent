@@ -13,6 +13,7 @@ from pangea_agent.assets import (
     save_asset_action,
 )
 from pangea_agent.cli.run_module_analysis import resume_module_analysis
+from pangea_agent.cli.source_first_api import validate_source_first_result
 from pangea_agent.cli.validation_diagnostics import (
     compact_diagnostic,
     diagnostics_from_contract_issues,
@@ -429,6 +430,66 @@ def _incomplete_result(
     }
 
 
+def _incomplete_source_first_result(
+    state: dict,
+    progress,
+    action: ActionState,
+    reason: str,
+) -> dict:
+    """Keep a source-first partial body while asking the same Agent to continue."""
+
+    task = _task_data(action)
+    attempt = _repair_attempts(action) + 1
+    result_sha256 = _result_sha256(task)
+    action.incomplete_attempts += 1
+    action.error = reason
+    _update_no_progress(
+        action,
+        error_count=0,
+        family_fingerprint=None,
+        result_sha256=result_sha256,
+    )
+    record = ValidationFailureRecord(
+        attempt=attempt,
+        code="IncompleteSourceFirstResult",
+        message=reason,
+        result_sha256=result_sha256,
+    )
+    action.incomplete_history.append(record)
+    action.action = "continue_agent"
+    action.status = "pending"
+    action.repair_status = "required"
+    action.pending_repair = RepairRequest.model_validate({
+        "attempt": attempt,
+        "kind": "incomplete_result",
+        "validation_report_path": None,
+        "result_contract_path": None,
+        "result_sha256": result_sha256,
+        "error": {
+            "code": record.code,
+            "message": record.message,
+            "result_sha256": result_sha256,
+        },
+    })
+    save_progress(state, progress)
+    repair_action = _repair_action(action)
+    repair_action["validation_error"] = {
+        "code": record.code,
+        "message": record.message,
+    }
+    return {
+        "action_id": action.action_id,
+        "status": "incomplete",
+        "recoverable": True,
+        "repair_dispatched": False,
+        "error": repair_action["validation_error"],
+        "validation_failures": action.validation_failures,
+        "incomplete_attempts": action.incomplete_attempts,
+        "attention_required": action.attention_required,
+        "repair_action": repair_action,
+    }
+
+
 def _record_degradations(progress, action_id: str, warnings: list[str]) -> None:
     progress.degradations = [
         item
@@ -588,6 +649,72 @@ def _validate_action(data_root: str, run_id: str, action_id: str) -> dict:
         raise ValueError(f"Action task 不存在：{task_path}")
 
     raw_task = read_json(task_path)
+    if isinstance(raw_task, dict) and raw_task.get("workflow_version") == "source-first-v1":
+        try:
+            source_first = validate_source_first_result(
+                data_root,
+                run_id,
+                action_id,
+                action.task_id,
+            )
+        except (OSError, ValueError) as exc:
+            return _workflow_input_error(state, progress, action, exc)
+        if source_first["status"] == "incomplete":
+            return _incomplete_source_first_result(
+                state,
+                progress,
+                action,
+                str(source_first.get("reason", "source-first 结果尚未完成")),
+            )
+        if source_first["status"] != "valid":
+            return _invalid_result(
+                state,
+                progress,
+                action,
+                ValueError(str(source_first.get("reason", "source-first 结果不可消费"))),
+            )
+        result_warnings = [
+            str(item.get("message") or item.get("kind") or item)
+            for item in source_first.get("warnings", [])
+            if isinstance(item, dict)
+        ]
+        _record_degradations(progress, action_id, result_warnings)
+        progress.first_finish_revisions.setdefault(
+            action_id,
+            int(source_first.get("revision", 0)),
+        )
+        quality_diagnostics_path = _quality_diagnostics_path(
+            state,
+            action_id,
+            _repair_attempts(action) + 1,
+        )
+        write_json(quality_diagnostics_path, {
+            "schema_version": 1,
+            "kind": "quality_diagnostics",
+            "workflow_version": "source-first-v1",
+            "run_id": run_id,
+            "action_id": action_id,
+            "task_id": action.task_id,
+            "task_path": action.task_path,
+            "result_path": raw_task.get("result_path"),
+            "warnings": result_warnings,
+            "warning_count": len(result_warnings),
+        })
+        action.error = None
+        action.repair_status = "none"
+        action.pending_repair = None
+        action.consecutive_no_progress_failures = 0
+        action.attention_required = False
+        save_progress(state, progress)
+        payload = {
+            "action_id": action_id,
+            "status": "valid",
+            "quality_diagnostics_path": str(quality_diagnostics_path),
+            "revision": source_first.get("revision", 0),
+        }
+        if result_warnings:
+            payload["warnings"] = result_warnings
+        return payload
     comparison_task = None
     independent = None
     analysis_results = None

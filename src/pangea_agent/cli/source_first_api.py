@@ -48,6 +48,65 @@ def _binding_and_result(
     return binding, path, task
 
 
+def validate_source_first_result(
+    data_root: str,
+    run_id: str,
+    action_id: str,
+    task_id: str,
+) -> dict[str, Any]:
+    """Validate only the consumability of a source-first result shell.
+
+    A non-empty body is preserved for the Reviewer even when its prose is
+    vague.  The only blocking checks here are identity, readable JSON, and an
+    explicit completion declaration.
+    """
+
+    binding, path, _ = _binding_and_result(data_root, run_id, action_id, task_id)
+    result = read_result(path)
+    # ``read_records`` performs the binding check without exposing private
+    # store internals; it also confirms the shell can be consumed as notes.
+    view = read_records(path, binding, cursor=0, limit=1)
+    records = result.records
+    warnings = list(view.get("warnings", []))
+    if not records:
+        return {
+            "status": "incomplete",
+            "reason": "result_path 仍没有正文 records，空结果不能作为完成交付",
+            "revision": result.revision,
+            "warnings": warnings,
+        }
+    if result.completion is None:
+        return {
+            "status": "incomplete",
+            "reason": "正文已保存但 Agent 尚未提交 work_finish 完成声明",
+            "revision": result.revision,
+            "warnings": warnings,
+        }
+    if not result.completion.complete:
+        return {
+            "status": "incomplete",
+            "reason": "Agent 明确声明当前结果未完成",
+            "revision": result.revision,
+            "warnings": warnings,
+        }
+    if result.completion.declared_revision != result.revision:
+        return {
+            "status": "invalid",
+            "reason": (
+                "completion.declared_revision 与当前 result revision 不一致："
+                f"declared={result.completion.declared_revision} current={result.revision}"
+            ),
+            "revision": result.revision,
+            "warnings": warnings,
+        }
+    return {
+        "status": "valid",
+        "revision": result.revision,
+        "record_count": len(records),
+        "warnings": warnings,
+    }
+
+
 def source_index(
     data_root: str,
     run_id: str,
@@ -268,4 +327,3 @@ def parse_json_argument(value: str) -> Any:
         return json.loads(value)
     except json.JSONDecodeError as exc:
         raise ValueError(f"参数不是合法 JSON：{exc}") from exc
-
