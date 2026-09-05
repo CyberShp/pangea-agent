@@ -180,4 +180,3 @@ def build_source_index(inventory: dict) -> dict:
         "region_count": sum(len(item.regions) for item in files),
         "parse_failures": inventory.get("parse_failures", []),
     }
-

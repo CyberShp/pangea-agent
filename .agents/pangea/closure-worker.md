@@ -14,4 +14,3 @@ UNRESOLVED notes 说明，不伪造 PASS。
 
 完成前回读 result revision，追加 closure notes，调用 pangea_work_finish。最后只
 回复：完成 action_id=<task.action_id>。
-
