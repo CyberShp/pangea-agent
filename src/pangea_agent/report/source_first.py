@@ -143,4 +143,11 @@ def write_source_first_reports(state: dict) -> dict[str, str]:
     markdown = _markdown(state, progress, records)
     _atomic_text(markdown_path, markdown)
     _atomic_text(html_path, _html(markdown))
+    _atomic_text(
+        run_directory(state) / "report-complete.json",
+        json.dumps(
+            {"files": ["report.md", "report.html"]},
+            ensure_ascii=False,
+        ) + "\n",
+    )
     return {"report_path": str(markdown_path), "html_report_path": str(html_path)}

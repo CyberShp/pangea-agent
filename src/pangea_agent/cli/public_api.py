@@ -30,6 +30,15 @@ from pangea_agent.report import reports_are_complete
 
 def system_capabilities(data_root: str) -> dict:
     return {
+        "workflow_versions": ["legacy-v1", "source-first-v1"],
+        "source_first": {
+            "version": "source-first-v1",
+            "tools": [
+                "source_index", "source_read", "source_search", "plan_write",
+                "result_write", "result_read", "comparison_read",
+                "work_finish", "review_decide",
+            ],
+        },
         "analysis_languages": ["c_cpp", "lua"],
         "asset_types": [
             "requirement",
@@ -88,6 +97,7 @@ def _run_summary(run_dir: Path) -> dict:
     )
     return {
         "run_id": run_dir.name,
+        "workflow_version": progress.get("workflow_version"),
         "lifecycle_status": lifecycle_status,
         "phase": phase,
         "stage": progress.get("stage"),
@@ -95,6 +105,10 @@ def _run_summary(run_dir: Path) -> dict:
         "unit_count": len(units),
         "completed_unit_count": len(completed),
         "errors": progress.get("errors", []),
+        "needs_user": bool(progress.get("needs_user", False)),
+        "blocking_reason": progress.get("blocking_reason"),
+        "first_finish_revisions": progress.get("first_finish_revisions", {}),
+        "accepted_revisions": progress.get("accepted_revisions", {}),
         "report_available": report_available,
     }
 
