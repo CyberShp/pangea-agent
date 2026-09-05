@@ -10,6 +10,12 @@ class TaskContract(BaseModel):
 
     run_id: str | None = None
     data_root: str = "pangea-data"
+    # New runs are explicitly versioned by the caller.  ``None`` is retained
+    # for old frozen contracts, which remain read-only compatible.
+    workflow_version: Literal["legacy-v1", "source-first-v1"] | None = None
+    runtime_commit: str | None = None
+    model_id: str | None = None
+    effective_context_budget: int | None = Field(default=None, gt=0)
     mode: Literal["module_analysis", "mr_analysis"] = "module_analysis"
     repository: str | None = None
     repositories: list[str] = Field(default_factory=list)

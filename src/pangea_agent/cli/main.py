@@ -37,6 +37,17 @@ from .public_api import (
 )
 from .result_check import check_result_json
 from .run_module_analysis import resume_module_analysis, run_module_analysis
+from .source_first_api import (
+    parse_json_argument,
+    plan_write,
+    result_read,
+    result_write,
+    review_decide,
+    source_index,
+    source_read,
+    source_search,
+    work_finish,
+)
 
 
 def main() -> None:
@@ -183,6 +194,86 @@ def main() -> None:
     adapter_settle_target.add_argument("--run-id")
     adapter_settle_target.add_argument("--asset-id")
     adapter_settle.add_argument("--action-id", required=True)
+
+    # Source-first worker tools.  The host must supply the exact binding that
+    # Graph returned; these commands never locate another Run or task.
+    source_index_cmd = sub.add_parser("source-index")
+    source_index_cmd.add_argument("--data-root", default="pangea-data")
+    source_index_cmd.add_argument("--run-id", required=True)
+    source_index_cmd.add_argument("--action-id", required=True)
+    source_index_cmd.add_argument("--task-id", required=True)
+    source_index_cmd.add_argument("--cursor")
+    source_index_cmd.add_argument("--page-size", type=int, default=64)
+
+    source_read_cmd = sub.add_parser("source-read")
+    source_read_cmd.add_argument("--data-root", default="pangea-data")
+    source_read_cmd.add_argument("--run-id", required=True)
+    source_read_cmd.add_argument("--action-id", required=True)
+    source_read_cmd.add_argument("--task-id", required=True)
+    source_read_cmd.add_argument("--repo-id", required=True)
+    source_read_cmd.add_argument("--path")
+    source_read_cmd.add_argument("--region-id")
+    source_read_cmd.add_argument("--line-start", type=int)
+    source_read_cmd.add_argument("--line-end", type=int)
+    source_read_cmd.add_argument("--cursor")
+    source_read_cmd.add_argument("--max-lines", type=int, default=400)
+
+    source_search_cmd = sub.add_parser("source-search")
+    source_search_cmd.add_argument("--data-root", default="pangea-data")
+    source_search_cmd.add_argument("--run-id", required=True)
+    source_search_cmd.add_argument("--action-id", required=True)
+    source_search_cmd.add_argument("--task-id", required=True)
+    source_search_cmd.add_argument("--query", required=True)
+    source_search_cmd.add_argument("--repo-id")
+    source_search_cmd.add_argument("--path")
+    source_search_cmd.add_argument("--cursor")
+    source_search_cmd.add_argument("--page-size", type=int, default=100)
+
+    result_write_cmd = sub.add_parser("result-write")
+    result_write_cmd.add_argument("--data-root", default="pangea-data")
+    result_write_cmd.add_argument("--run-id", required=True)
+    result_write_cmd.add_argument("--action-id", required=True)
+    result_write_cmd.add_argument("--task-id", required=True)
+    result_write_cmd.add_argument("--expected-revision", type=int, required=True)
+    result_write_cmd.add_argument("--records", required=True, help="JSON array")
+    result_write_cmd.add_argument("--request-id")
+
+    result_read_cmd = sub.add_parser("result-read")
+    result_read_cmd.add_argument("--data-root", default="pangea-data")
+    result_read_cmd.add_argument("--run-id", required=True)
+    result_read_cmd.add_argument("--action-id", required=True)
+    result_read_cmd.add_argument("--task-id", required=True)
+    result_read_cmd.add_argument("--record-id")
+    result_read_cmd.add_argument("--cursor", type=int, default=0)
+    result_read_cmd.add_argument("--limit", type=int, default=100)
+
+    finish_cmd = sub.add_parser("work-finish")
+    finish_cmd.add_argument("--data-root", default="pangea-data")
+    finish_cmd.add_argument("--run-id", required=True)
+    finish_cmd.add_argument("--action-id", required=True)
+    finish_cmd.add_argument("--task-id", required=True)
+    finish_cmd.add_argument("--revision", type=int, required=True)
+    finish_cmd.add_argument("--complete", action=argparse.BooleanOptionalAction, default=True)
+    finish_cmd.add_argument("--note", default="")
+    finish_cmd.add_argument("--request-id")
+
+    plan_write_cmd = sub.add_parser("plan-write")
+    plan_write_cmd.add_argument("--data-root", default="pangea-data")
+    plan_write_cmd.add_argument("--run-id", required=True)
+    plan_write_cmd.add_argument("--action-id", required=True)
+    plan_write_cmd.add_argument("--task-id", required=True)
+    plan_write_cmd.add_argument("--expected-revision", type=int, required=True)
+    plan_write_cmd.add_argument("--unit", required=True, help="JSON object")
+    plan_write_cmd.add_argument("--request-id")
+
+    review_decide_cmd = sub.add_parser("review-decide")
+    review_decide_cmd.add_argument("--data-root", default="pangea-data")
+    review_decide_cmd.add_argument("--run-id", required=True)
+    review_decide_cmd.add_argument("--action-id", required=True)
+    review_decide_cmd.add_argument("--task-id", required=True)
+    review_decide_cmd.add_argument("--expected-revision", type=int, required=True)
+    review_decide_cmd.add_argument("--decision", required=True, help="JSON object")
+    review_decide_cmd.add_argument("--request-id")
     args = parser.parse_args()
 
     if args.command == "init-data":
@@ -338,6 +429,88 @@ def main() -> None:
                         args.data_root, args.asset_id, args.action_id
                     )
                 print_success(result)
+        except Exception as exc:
+            print_error(exc)
+            raise SystemExit(1) from exc
+    elif args.command == "source-index":
+        try:
+            print_success(source_index(
+                args.data_root, args.run_id, args.action_id, args.task_id,
+                cursor=args.cursor, page_size=args.page_size,
+            ))
+        except Exception as exc:
+            print_error(exc)
+            raise SystemExit(1) from exc
+    elif args.command == "source-read":
+        try:
+            print_success(source_read(
+                args.data_root, args.run_id, args.action_id, args.task_id,
+                repo_id=args.repo_id, path=args.path, region_id=args.region_id,
+                line_start=args.line_start, line_end=args.line_end,
+                cursor=args.cursor, max_lines=args.max_lines,
+            ))
+        except Exception as exc:
+            print_error(exc)
+            raise SystemExit(1) from exc
+    elif args.command == "source-search":
+        try:
+            print_success(source_search(
+                args.data_root, args.run_id, args.action_id, args.task_id,
+                query=args.query, repo_id=args.repo_id, path=args.path,
+                cursor=args.cursor, page_size=args.page_size,
+            ))
+        except Exception as exc:
+            print_error(exc)
+            raise SystemExit(1) from exc
+    elif args.command == "result-write":
+        try:
+            records = parse_json_argument(args.records)
+            print_success(result_write(
+                args.data_root, args.run_id, args.action_id, args.task_id,
+                expected_revision=args.expected_revision, records=records,
+                request_id=args.request_id,
+            ))
+        except Exception as exc:
+            print_error(exc)
+            raise SystemExit(1) from exc
+    elif args.command == "result-read":
+        try:
+            print_success(result_read(
+                args.data_root, args.run_id, args.action_id, args.task_id,
+                record_id=args.record_id, cursor=args.cursor, limit=args.limit,
+            ))
+        except Exception as exc:
+            print_error(exc)
+            raise SystemExit(1) from exc
+    elif args.command == "work-finish":
+        try:
+            print_success(work_finish(
+                args.data_root, args.run_id, args.action_id, args.task_id,
+                revision=args.revision, complete=args.complete, note=args.note,
+                request_id=args.request_id,
+            ))
+        except Exception as exc:
+            print_error(exc)
+            raise SystemExit(1) from exc
+    elif args.command == "plan-write":
+        try:
+            unit = parse_json_argument(args.unit)
+            print_success(plan_write(
+                args.data_root, args.run_id, args.action_id, args.task_id,
+                expected_revision=args.expected_revision, unit=unit,
+                request_id=args.request_id,
+            ))
+        except Exception as exc:
+            print_error(exc)
+            raise SystemExit(1) from exc
+    elif args.command == "review-decide":
+        try:
+            decision = parse_json_argument(args.decision)
+            print_success(review_decide(
+                args.data_root, args.run_id, args.action_id, args.task_id,
+                expected_revision=args.expected_revision, decision=decision,
+                request_id=args.request_id,
+            ))
         except Exception as exc:
             print_error(exc)
             raise SystemExit(1) from exc

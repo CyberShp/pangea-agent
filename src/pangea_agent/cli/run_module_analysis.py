@@ -37,6 +37,14 @@ def run_module_analysis(contract_path: str) -> dict:
         run_id = _default_run_id(contract)
         allocated_run = True
         contract["run_id"] = run_id
+    run_root = Path(contract.get("data_root", "pangea-data")) / "runs" / run_id
+    # A missing version is an old frozen contract when progress already
+    # exists, but a newly-created contract must opt into the source-first
+    # production path explicitly.  This keeps historical Runs readable
+    # without making the new client remember an internal version knob.
+    if not contract.get("workflow_version") and not (run_root / "progress.json").is_file():
+        contract["workflow_version"] = "source-first-v1"
+    if allocated_run or contract.get("workflow_version") == "source-first-v1":
         write_json(path, contract)
     state = {
         "run_id": run_id,

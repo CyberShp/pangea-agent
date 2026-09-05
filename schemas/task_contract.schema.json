@@ -18,6 +18,59 @@
       "title": "Data Root",
       "type": "string"
     },
+    "workflow_version": {
+      "anyOf": [
+        {
+          "enum": [
+            "legacy-v1",
+            "source-first-v1"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Workflow Version"
+    },
+    "runtime_commit": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Runtime Commit"
+    },
+    "model_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Model Id"
+    },
+    "effective_context_budget": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Effective Context Budget"
+    },
     "mode": {
       "default": "module_analysis",
       "enum": [
