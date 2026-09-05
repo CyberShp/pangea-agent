@@ -29,6 +29,7 @@ from pangea_agent.methodology import (
 )
 from pangea_agent.skill_runs import (
     list_skill_runs,
+    resume_skill_run,
     skill_run_detail,
     stop_skill_run,
     validate_runtime_skill,
@@ -102,6 +103,10 @@ def stop_run(data_root: str, run_id: str) -> dict:
     return stop_skill_run(data_root, run_id)
 
 
+def resume_run(data_root: str, run_id: str) -> dict:
+    return resume_skill_run(data_root, run_id)
+
+
 __all__ = [
     "archive_asset",
     "asset_detail",
@@ -121,6 +126,7 @@ __all__ = [
     "restore_asset",
     "run_detail",
     "run_report",
+    "resume_run",
     "set_methodology_status",
     "show_methodology_derivation",
     "show_methodology",

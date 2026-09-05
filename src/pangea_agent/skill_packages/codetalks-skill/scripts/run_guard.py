@@ -538,6 +538,47 @@ def command_publish_stage(args) -> None:
 def command_init(args) -> None:
     root = resolve_run_root(args.workspace)
     root.mkdir(parents=True, exist_ok=True)
+    resume = bool(getattr(args, "resume", False))
+    existing_state_path = state_path(root)
+    if resume:
+        if not existing_state_path.is_file():
+            raise SystemExit(f"无法继续：运行状态不存在：{existing_state_path}")
+        state = load_json(existing_state_path)
+        if state.get("status") == "complete":
+            raise SystemExit("已经完成的 Skill Run 不能继续")
+        for relative in [
+            "活文档/流程讲解",
+            "活文档/覆盖门禁",
+            "内部索引",
+            "正式输出",
+        ]:
+            (root / relative).mkdir(parents=True, exist_ok=True)
+        state["resume_count"] = int(state.get("resume_count", 0)) + 1
+        state["last_resumed_at"] = now()
+        state["status"] = "in_progress"
+        state["updated_at"] = now()
+        save_json(existing_state_path, state)
+        for relative, default in [
+            ("内部索引/运行计划.json", {"version": "1.3.0", "passes": []}),
+            ("内部索引/输入材料索引.json", {"version": "1.3.0", "items": []}),
+        ]:
+            path = root / relative
+            if not path.is_file():
+                save_json(path, default)
+        layout_errors = validate_layout(root, final_phase=False)
+        if layout_errors:
+            raise SystemExit("\n".join(layout_errors))
+        print(json.dumps({
+            "ok": True,
+            "resumed": True,
+            "run_root": str(root),
+            "current_step": state.get("current_step"),
+            "completed_steps": state.get("completed_steps", []),
+            "resume_count": state["resume_count"],
+        }, ensure_ascii=False))
+        return
+    if existing_state_path.is_file():
+        raise SystemExit(f"运行已初始化；如需继续请使用 `init --resume`：{existing_state_path}")
     skill_root = Path(args.skill_root).expanduser().resolve()
     manifest = load_json(skill_root / "workflow-manifest.json")
 
@@ -875,6 +916,8 @@ def main() -> None:
                       choices=["module-analysis", "issue-regression", "root-cause",
                                "special-risk", "custom"])
     init.add_argument("--mode", required=True, choices=["speed", "depth"])
+    init.add_argument("--resume", action="store_true",
+                      help="保留已有运行状态，从最近检查点继续")
     init.set_defaults(function=command_init)
 
     ack = commands.add_parser("ack-core")

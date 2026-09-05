@@ -33,7 +33,7 @@ from .public_api import (
     update_asset_metadata,
     update_asset_result,
 )
-from pangea_agent.skill_runs import create_skill_run
+from pangea_agent.skill_runs import create_skill_run, resume_skill_run
 
 
 def main() -> None:
@@ -176,6 +176,9 @@ def main() -> None:
     run_stop = run_commands.add_parser("stop")
     run_stop.add_argument("--data-root", default="pangea-data")
     run_stop.add_argument("--run-id", required=True)
+    run_resume = run_commands.add_parser("resume")
+    run_resume.add_argument("--data-root", default="pangea-data")
+    run_resume.add_argument("--run-id", required=True)
 
     system = sub.add_parser("system")
     system_commands = system.add_subparsers(dest="system_command", required=True)
@@ -313,6 +316,8 @@ def main() -> None:
                 print_success(create_skill_run(args.request))
             elif args.run_command == "stop":
                 print_success(stop_run(args.data_root, args.run_id))
+            elif args.run_command == "resume":
+                print_success(resume_skill_run(args.data_root, args.run_id))
         except Exception as exc:
             print_error(exc)
             raise SystemExit(1) from exc

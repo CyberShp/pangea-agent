@@ -520,6 +520,41 @@ def stop_skill_run(data_root: str, run_id: str) -> dict:
     return skill_run_detail(str(root), run_id)
 
 
+def resume_skill_run(data_root: str, run_id: str) -> dict:
+    """Re-open an incomplete Run without recreating its frozen inputs.
+
+    The ACP owner is responsible for ensuring the previous attempt has
+    stopped before calling this endpoint.  The Run's checkpoint and all
+    frozen source/asset inputs remain unchanged; the next Agent invocation
+    uses ``run_guard init --resume`` to continue from that checkpoint.
+    """
+    root = Path(data_root).resolve()
+    safe_run_id = _safe_run_id(run_id)
+    metadata, state = _state(root, safe_run_id)
+    if state and state.get("status") == "complete":
+        raise ValueError("已经完成的 Skill Run 不能继续")
+    lifecycle, _phase, _verdict = _lifecycle(metadata, state)
+    if lifecycle == "complete":
+        raise ValueError("已经完成的 Skill Run 不能继续")
+    resumed_at = datetime.now().astimezone().isoformat(timespec="seconds")
+    metadata["status"] = "preparing"
+    metadata["resume_count"] = int(metadata.get("resume_count", 0)) + 1
+    metadata["last_resumed_at"] = resumed_at
+    metadata["resume_from"] = {
+        "current_step": state.get("current_step") if state else None,
+        "completed_steps": list(state.get("completed_steps", [])) if state else [],
+    }
+    metadata["updated_at"] = resumed_at
+    write_json(_metadata_path(root, safe_run_id), metadata)
+    if state is not None:
+        state["status"] = "in_progress"
+        state["resume_count"] = int(state.get("resume_count", 0)) + 1
+        state["last_resumed_at"] = resumed_at
+        state["updated_at"] = resumed_at
+        write_json(root / "runs" / safe_run_id / "内部索引" / "运行状态.json", state)
+    return skill_run_detail(str(root), safe_run_id)
+
+
 def validate_runtime_skill() -> dict:
     validate_skill_package(SOURCE_ROOT)
     return {

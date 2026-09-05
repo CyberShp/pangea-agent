@@ -99,6 +99,36 @@ class StagePublicationTests(unittest.TestCase):
             self.assertFalse(state["judge"]["required"])
             self.assertEqual(state["publication"]["state"], "pending")
 
+    def test_resume_init_preserves_checkpoint_and_records_resume(self) -> None:
+        guard = load_guard()
+        skill_root = Path(__file__).parents[1] / "src/pangea_agent/skill_packages/codetalks-skill"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "run-resume"
+            guard.command_init(Namespace(
+                workspace=str(root), skill_root=str(skill_root), source_raw="raw",
+                source_verified="verified", output=None, scenario="module-analysis", mode="depth",
+            ))
+            state_path = root / "内部索引/运行状态.json"
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state["status"] = "in_progress"
+            state["current_step"] = "04"
+            state["completed_steps"] = ["01", "02", "03"]
+            state["resume_count"] = 2
+            state_path.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+
+            guard.command_init(Namespace(
+                workspace=str(root), skill_root=str(skill_root), source_raw="raw",
+                source_verified="verified", output=None, scenario="module-analysis", mode="depth",
+                resume=True,
+            ))
+
+            resumed = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(resumed["current_step"], "04")
+            self.assertEqual(resumed["completed_steps"], ["01", "02", "03"])
+            self.assertEqual(resumed["resume_count"], 3)
+            self.assertEqual(resumed["status"], "in_progress")
+            self.assertIsInstance(resumed["last_resumed_at"], str)
+
 
 if __name__ == "__main__":
     unittest.main()
