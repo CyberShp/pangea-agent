@@ -387,6 +387,8 @@ def list_assets(
     status: str | None = None,
     query: str | None = None,
     knowledge_kind: str | None = None,
+    repository_id: str | None = None,
+    module_tag: str | None = None,
 ) -> dict:
     if cursor < 0:
         raise ValueError("cursor 不能小于 0")
@@ -406,6 +408,8 @@ def list_assets(
     }
     records = []
     normalized_query = (query or "").strip().casefold()
+    normalized_repository = (repository_id or "").strip().casefold()
+    normalized_module = (module_tag or "").strip().casefold()
     allowed_types = (
         SEMANTIC_ASSET_TYPES if knowledge_kind == "semantic"
         else EVIDENCE_ASSET_TYPES if knowledge_kind == "evidence"
@@ -417,6 +421,16 @@ def list_assets(
         if asset_type and record.asset_type != asset_type:
             continue
         if status and record.status != status:
+            continue
+        if normalized_repository and not any(
+            normalized_repository == str(value).strip().casefold()
+            for value in record.repository_ids
+        ):
+            continue
+        if normalized_module and not any(
+            normalized_module == str(value).strip().casefold()
+            for value in record.module_tags
+        ):
             continue
         if normalized_query and normalized_query not in "\n".join((
             record.asset_id,

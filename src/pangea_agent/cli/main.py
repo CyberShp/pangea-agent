@@ -73,6 +73,8 @@ def main() -> None:
     asset_list.add_argument("--status")
     asset_list.add_argument("--query")
     asset_list.add_argument("--kind", choices=("semantic", "evidence"))
+    asset_list.add_argument("--repository-id")
+    asset_list.add_argument("--module-tag")
     asset_get = asset_commands.add_parser("get")
     asset_get.add_argument("--data-root", default="pangea-data")
     asset_get.add_argument("--asset-id", required=True)
@@ -206,6 +208,8 @@ def main() -> None:
                     status=args.status,
                     query=args.query,
                     knowledge_kind=args.kind,
+                    repository_id=args.repository_id,
+                    module_tag=args.module_tag,
                 ))
             elif args.asset_command == "get":
                 print_success(asset_detail(args.data_root, args.asset_id))
