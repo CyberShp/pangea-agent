@@ -695,6 +695,11 @@ python3 {skill-root}/scripts/run_guard.py publish-stage \
 `publication.revision` 原子写入 `内部索引/工作台投影.json`。阶段发布状态为 `draft`；
 Step 09 完成并 `finalize` 成功后才会变为 `final`。投影尚未发布属于 `pending`，不是数据异常。
 
+`运行状态.json` 还会记录 `performance.steps` 的可比较观测：每个已完成步骤的
+`duration_ms`、`progress_updates` 以及活文档/正式输出的文件数和字节增量。它们只用于
+定位慢步骤、重复写作和上下文压缩热点，不是质量结论，也不能单独证明适合并行。
+只有完成真实步骤后才计入耗时；不要手工填充这些字段。
+
 不得：
 
 - 不读取步骤文件直接执行；

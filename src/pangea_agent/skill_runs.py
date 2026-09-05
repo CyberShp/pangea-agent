@@ -436,6 +436,7 @@ def skill_run_detail(data_root: str, run_id: str) -> dict:
         "completed_steps": state.get("completed_steps", []) if state else [],
         "current_step": state.get("current_step") if state else None,
         "step_progress": state.get("step_progress") if state else None,
+        "performance": state.get("performance", {"version": 1, "steps": {}, "progress_updates": 0}) if state else {"version": 1, "steps": {}, "progress_updates": 0},
         "publication": state.get("publication", {
             "state": "pending",
             "revision": 0,

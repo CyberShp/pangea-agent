@@ -26,6 +26,68 @@ PUBLICATION_STEPS = {"03", "04", "05", "07", "08", "09"}
 def now() -> str:
     return dt.datetime.now(dt.timezone.utc).isoformat()
 
+
+def artifact_metrics(root: Path) -> dict[str, int]:
+    """Return cheap output metrics without scanning the frozen source tree."""
+    count = 0
+    byte_count = 0
+    for directory_name in ("活文档", "正式输出"):
+        directory = root / directory_name
+        if not directory.is_dir():
+            continue
+        for path in directory.rglob("*"):
+            if not path.is_file():
+                continue
+            try:
+                byte_count += path.stat().st_size
+                count += 1
+            except OSError:
+                # A concurrent Agent write is not a reason to fail a guard
+                # command; the next progress/complete event will refresh it.
+                continue
+    return {"artifact_count": count, "artifact_bytes": byte_count}
+
+
+def elapsed_ms(started_at: str | None, ended_at: str) -> int | None:
+    if not isinstance(started_at, str) or not started_at:
+        return None
+    try:
+        started = dt.datetime.fromisoformat(started_at)
+        ended = dt.datetime.fromisoformat(ended_at)
+    except ValueError:
+        return None
+    return max(0, int((ended - started).total_seconds() * 1000))
+
+
+def performance_state(state: dict) -> dict:
+    value = state.get("performance")
+    if not isinstance(value, dict):
+        value = {}
+    steps = value.get("steps")
+    if not isinstance(steps, dict):
+        steps = {}
+    value["version"] = 1
+    value["steps"] = steps
+    value.setdefault("progress_updates", 0)
+    return value
+
+
+def finish_step_timing(state: dict, root: Path, step_id: str) -> None:
+    performance = performance_state(state)
+    timing = performance["steps"].get(step_id)
+    if not isinstance(timing, dict):
+        return
+    ended_at = now()
+    current_metrics = artifact_metrics(root)
+    timing["ended_at"] = ended_at
+    timing["duration_ms"] = elapsed_ms(timing.get("started_at"), ended_at)
+    timing["artifact_count_end"] = current_metrics["artifact_count"]
+    timing["artifact_bytes_end"] = current_metrics["artifact_bytes"]
+    timing["artifact_count_delta"] = current_metrics["artifact_count"] - int(timing.get("artifact_count_start", 0))
+    timing["artifact_bytes_delta"] = current_metrics["artifact_bytes"] - int(timing.get("artifact_bytes_start", 0))
+    performance["updated_at"] = ended_at
+    state["performance"] = performance
+
 def load_json(path: Path) -> Any:
     with path.open("r", encoding="utf-8") as f:
         return json.load(f)
@@ -511,6 +573,12 @@ def command_init(args) -> None:
             "step_id": None,
             "updated_at": now(),
         },
+        "performance": {
+            "version": 1,
+            "steps": {},
+            "progress_updates": 0,
+            "updated_at": now(),
+        },
         "verdict": None,
         "step_progress": None,
         "validation": {"status": "not_checked", "error_count": 0, "errors": []},
@@ -572,6 +640,23 @@ def command_start(args) -> None:
     if state["current_step"] not in {None, args.step}:
         raise SystemExit(f"当前仍在 Step {state['current_step']}")
 
+    started_at = now()
+    performance = performance_state(state)
+    previous_timing = performance["steps"].get(args.step)
+    attempt = int(previous_timing.get("attempt", 0)) + 1 if isinstance(previous_timing, dict) else 1
+    start_metrics = artifact_metrics(root)
+    performance["steps"][args.step] = {
+        "step": args.step,
+        "attempt": attempt,
+        "started_at": started_at,
+        "ended_at": None,
+        "duration_ms": None,
+        "progress_updates": 0,
+        "artifact_count_start": start_metrics["artifact_count"],
+        "artifact_bytes_start": start_metrics["artifact_bytes"],
+    }
+    performance["updated_at"] = started_at
+    state["performance"] = performance
     state["current_step"] = args.step
     state["status"] = "in_progress"
     state["step_progress"] = {
@@ -582,8 +667,8 @@ def command_start(args) -> None:
         "total": None,
         "completed": 0,
         "current": None,
-        "started_at": now(),
-        "updated_at": now(),
+        "started_at": started_at,
+        "updated_at": started_at,
     }
     state["validation"] = {"status": "not_checked", "error_count": 0, "errors": []}
     state["updated_at"] = now()
@@ -610,6 +695,7 @@ def command_complete(args) -> None:
 
     if args.step not in state["completed_steps"]:
         state["completed_steps"].append(args.step)
+    finish_step_timing(state, root, args.step)
     state["current_step"] = None
     if isinstance(state.get("step_progress"), dict):
         state["step_progress"]["status"] = "completed"
@@ -674,6 +760,13 @@ def command_progress(args) -> None:
     progress.setdefault("started_at", now())
     progress["updated_at"] = now()
     state["step_progress"] = progress
+    performance = performance_state(state)
+    performance["progress_updates"] = int(performance.get("progress_updates", 0)) + 1
+    timing = performance["steps"].get(args.step)
+    if isinstance(timing, dict):
+        timing["progress_updates"] = int(timing.get("progress_updates", 0)) + 1
+    performance["updated_at"] = progress["updated_at"]
+    state["performance"] = performance
     state["updated_at"] = now()
     save_json(state_path(root), state)
     print(json.dumps({"ok": True, "step_progress": progress}, ensure_ascii=False))

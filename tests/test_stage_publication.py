@@ -19,6 +19,42 @@ def load_guard():
 
 
 class StagePublicationTests(unittest.TestCase):
+    def test_step_timing_records_duration_and_artifact_delta(self) -> None:
+        guard = load_guard()
+        skill_root = Path(__file__).parents[1] / "src/pangea_agent/skill_packages/codetalks-skill"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "run-timing"
+            guard.command_init(Namespace(
+                workspace=str(root), skill_root=str(skill_root), source_raw="raw",
+                source_verified="verified", output=None, scenario="module-analysis", mode="depth",
+            ))
+            state_path = root / "内部索引/运行状态.json"
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state["core_rules_ack"] = {key: {"file": "fixture"} for key in guard.load_manifest(state)["required_core_rules"]}
+            state_path.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+
+            guard.command_start(Namespace(workspace=str(root), step="01"))
+            guard.command_progress(Namespace(
+                workspace=str(root), step="01", total=1, completed=1,
+                unit_label="材料", item_id="scope", item_title="范围", status=None,
+            ))
+            (root / "活文档" / "01-范围与任务契约.md").write_text("范围与任务契约\n" + "这是用于性能回归的自然语言记录。" * 80, encoding="utf-8")
+            (root / "内部索引" / "方法论选择.json").write_text(json.dumps({
+                "schema_version": "1.0",
+                "selected": [{"methodology_id": "codetalks-skill", "reason": "fixture", "evidence": ["fixture"]}],
+                "excluded": [],
+            }, ensure_ascii=False), encoding="utf-8")
+            guard.command_complete(Namespace(workspace=str(root), step="01"))
+
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            timing = state["performance"]["steps"]["01"]
+            self.assertIsInstance(timing["started_at"], str)
+            self.assertIsInstance(timing["ended_at"], str)
+            self.assertIsInstance(timing["duration_ms"], int)
+            self.assertGreaterEqual(timing["duration_ms"], 0)
+            self.assertEqual(timing["progress_updates"], 1)
+            self.assertGreater(timing["artifact_bytes_delta"], 0)
+
     def test_stage_projection_is_published_as_draft_with_revision(self) -> None:
         guard = load_guard()
         skill_root = Path(__file__).parents[1] / "src/pangea_agent/skill_packages/codetalks-skill"
