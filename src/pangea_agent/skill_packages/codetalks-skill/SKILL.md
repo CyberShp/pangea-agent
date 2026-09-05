@@ -680,6 +680,21 @@ python3 {skill-root}/scripts/run_guard.py progress \
 
 `completed` 不能倒退或超过 `total`；只有 `complete-step` 成功后步骤才算完成。
 
+当 Step 03、04、05、07 或 08 已产生可消费的结构化结果时，应在当前步骤内发布阶段投影，
+让工作台显示真实的草稿数量；投影仍必须包含全部五个数组，尚未生成的数组使用空数组，
+不能把 Markdown 正文交给工作台自行猜测：
+
+```bash
+python3 {skill-root}/scripts/run_guard.py publish-stage \
+  --workspace "{workspace_root}" \
+  --step "05" \
+  --projection "{projection_json}"
+```
+
+`publish-stage` 会校验 Run ID、条目 ID 唯一性、风险/用例/证据引用和受控路径，并以递增
+`publication.revision` 原子写入 `内部索引/工作台投影.json`。阶段发布状态为 `draft`；
+Step 09 完成并 `finalize` 成功后才会变为 `final`。投影尚未发布属于 `pending`，不是数据异常。
+
 不得：
 
 - 不读取步骤文件直接执行；

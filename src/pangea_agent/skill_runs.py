@@ -425,6 +425,8 @@ def skill_run_detail(data_root: str, run_id: str) -> dict:
         "stage": state.get("current_step") if state else None,
         "verdict": verdict,
         "quality_status": verdict,
+        "scenario": metadata.get("request", {}).get("scenario", "module-analysis"),
+        "mode": metadata.get("request", {}).get("mode", "depth"),
         "skill": {
             "skill_id": frozen_skill.get("skill_id", "codetalks-skill"),
             "version": skill_version,
@@ -434,6 +436,15 @@ def skill_run_detail(data_root: str, run_id: str) -> dict:
         "completed_steps": state.get("completed_steps", []) if state else [],
         "current_step": state.get("current_step") if state else None,
         "step_progress": state.get("step_progress") if state else None,
+        "publication": state.get("publication", {
+            "state": "pending",
+            "revision": 0,
+            "step_id": None,
+        }) if state else {
+            "state": "pending",
+            "revision": 0,
+            "step_id": None,
+        },
         "validation": state.get("validation", {"status": "not_checked", "error_count": 0, "errors": []}) if state else {"status": "not_checked", "error_count": 0, "errors": []},
         "run_root": str(run_root),
         "request_path": metadata["request_path"],

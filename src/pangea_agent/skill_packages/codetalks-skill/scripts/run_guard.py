@@ -21,6 +21,7 @@ FORBIDDEN_NESTED = [
 ]
 STEP_FILE_RE = re.compile(r"^\d{2}-.*\.md$")
 FORMAL_STEP_FILE_RE = re.compile(r"^\d{2}-.*\.md$")
+PUBLICATION_STEPS = {"03", "04", "05", "07", "08", "09"}
 
 def now() -> str:
     return dt.datetime.now(dt.timezone.utc).isoformat()
@@ -220,21 +221,14 @@ def validate_methodology_selection(root: Path) -> list[str]:
         errors.append("内置 Codetalks Skill 必须出现在 selected")
     return errors
 
-def validate_workbench_projection(root: Path) -> list[str]:
+def validate_workbench_projection_data(data: Any, run_id: str) -> list[str]:
     """Validate only the machine-readable shape and cross-references."""
-    path = root / "内部索引/工作台投影.json"
-    if not path.exists():
-        return [f"缺少工作台结构化投影：{path}"]
-    try:
-        data = load_json(path)
-    except Exception as exc:
-        return [f"工作台结构化投影无法解析：{exc}"]
     if not isinstance(data, dict):
         return ["工作台结构化投影必须是 JSON 对象"]
     errors: list[str] = []
     if data.get("schema_version") != "1.0":
         errors.append("工作台结构化投影 schema_version 必须是 1.0")
-    if data.get("run_id") != root.name:
+    if data.get("run_id") != run_id:
         errors.append("工作台结构化投影 run_id 必须与当前 Run 一致")
     for key in ("business_flows", "risks", "test_cases", "evidence", "review_issues"):
         if not isinstance(data.get(key), list):
@@ -282,6 +276,17 @@ def validate_workbench_projection(root: Path) -> list[str]:
         if isinstance(location, str) and (Path(location).is_absolute() or ".." in Path(location).parts):
             errors.append(f"evidence[{index}] location 越过受控边界：{location}")
     return errors
+
+
+def validate_workbench_projection(root: Path) -> list[str]:
+    path = root / "内部索引/工作台投影.json"
+    if not path.exists():
+        return [f"缺少工作台结构化投影：{path}"]
+    try:
+        data = load_json(path)
+    except Exception as exc:
+        return [f"工作台结构化投影无法解析：{exc}"]
+    return validate_workbench_projection_data(data, root.name)
 
 def validation_records(errors: list[str], *, command: str, step: str | None = None) -> list[dict[str, str]]:
     records = []
@@ -411,6 +416,63 @@ def require_core_rules(state: dict, manifest: dict) -> None:
     if missing:
         raise SystemExit("核心规则未 ACK：" + ", ".join(missing))
 
+
+def _publication_record(state: dict) -> dict:
+    current = state.get("publication")
+    if not isinstance(current, dict):
+        current = {"state": "pending", "revision": 0, "step_id": None}
+    try:
+        revision = max(0, int(current.get("revision", 0)))
+    except (TypeError, ValueError):
+        revision = 0
+    return {
+        "state": current.get("state") if current.get("state") in {"pending", "draft", "final", "broken"} else "pending",
+        "revision": revision,
+        "step_id": current.get("step_id") if isinstance(current.get("step_id"), str) else None,
+        **({"updated_at": current["updated_at"]} if isinstance(current.get("updated_at"), str) else {}),
+    }
+
+
+def command_publish_stage(args) -> None:
+    root = resolve_run_root(args.workspace)
+    state = ensure_state(root)
+    step_id = str(args.step)
+    if step_id not in PUBLICATION_STEPS:
+        raise SystemExit("只有 Step 03、04、05、07、08、09 可以发布阶段投影")
+    if state.get("current_step") != step_id and step_id not in state.get("completed_steps", []):
+        raise SystemExit(f"只能发布当前步骤或已完成步骤的阶段投影：Step {step_id}")
+
+    source = Path(args.projection).expanduser().resolve()
+    if not source.is_file():
+        raise SystemExit(f"阶段投影文件不存在：{source}")
+    try:
+        data = load_json(source)
+    except Exception as exc:
+        raise SystemExit(f"阶段投影无法解析：{exc}") from exc
+    errors = validate_workbench_projection_data(data, root.name)
+    if errors:
+        save_validation(state, errors, command="publish-stage", step=step_id)
+        save_json(state_path(root), state)
+        print(json.dumps({"ok": False, "errors": errors}, ensure_ascii=False, indent=2))
+        raise SystemExit(2)
+
+    previous = _publication_record(state)
+    revision = previous["revision"] + 1
+    publication = {
+        "state": "final" if step_id == "09" and step_id in state.get("completed_steps", []) else "draft",
+        "revision": revision,
+        "step_id": step_id,
+        "updated_at": now(),
+    }
+    published = dict(data)
+    published["publication"] = publication
+    save_json(root / "内部索引/工作台投影.json", published)
+    state["publication"] = publication
+    save_validation(state, [], command="publish-stage", step=step_id)
+    state["updated_at"] = now()
+    save_json(state_path(root), state)
+    print(json.dumps({"ok": True, "publication": publication}, ensure_ascii=False))
+
 def command_init(args) -> None:
     root = resolve_run_root(args.workspace)
     root.mkdir(parents=True, exist_ok=True)
@@ -442,6 +504,12 @@ def command_init(args) -> None:
         "judge": {
             "required": args.scenario == "module-analysis" and args.mode == "depth",
             "status": "pending",
+        },
+        "publication": {
+            "state": "pending",
+            "revision": 0,
+            "step_id": None,
+            "updated_at": now(),
         },
         "verdict": None,
         "step_progress": None,
@@ -671,6 +739,24 @@ def command_finalize(args) -> None:
 
     state["status"] = "complete"
     state["verdict"] = "READY"
+    projection_path = root / "内部索引/工作台投影.json"
+    if projection_path.is_file():
+        try:
+            projection = load_json(projection_path)
+            publication = _publication_record(state)
+            publication = {
+                "state": "final",
+                "revision": publication["revision"] + 1,
+                "step_id": "09",
+                "updated_at": now(),
+            }
+            projection["publication"] = publication
+            save_json(projection_path, projection)
+            state["publication"] = publication
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            # validate_step already checked the projection; leave its exact
+            # validation result intact if a final metadata write fails.
+            pass
     save_validation(state, [], command="finalize")
     state["updated_at"] = now()
     save_json(state_path(root), state)
@@ -713,6 +799,13 @@ def main() -> None:
     complete.add_argument("--workspace", required=True)
     complete.add_argument("--step", required=True)
     complete.set_defaults(function=command_complete)
+
+    publish = commands.add_parser("publish-stage")
+    publish.add_argument("--workspace", required=True)
+    publish.add_argument("--step", required=True, choices=sorted(PUBLICATION_STEPS))
+    publish.add_argument("--projection", required=True,
+                         help="由 Agent 生成的、待校验的工作台投影 JSON 文件")
+    publish.set_defaults(function=command_publish_stage)
 
     validate = commands.add_parser("validate")
     validate.add_argument("--workspace", required=True)
