@@ -7,6 +7,8 @@ Graph only coordinates explicit machine handles supplied by the Agent.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from pathlib import Path
 from typing import Any
@@ -24,6 +26,7 @@ from pangea_agent.graph.workflow_store import (
     source_first_index_path,
     source_first_result_path,
     source_first_task_path,
+    source_first_version_set_path,
 )
 from pangea_agent.inventory.languages import detect_analysis_language
 from pangea_agent.inventory.lua_scope_expander import expand_lua_analysis_scope
@@ -285,7 +288,8 @@ def _planning_units(state: PangeaState, action: ActionState, task: dict, result)
         if record.kind != "unit_plan" or not isinstance(record.body, dict):
             continue
         body = record.body
-        unit_id = str(body.get("unit_id") or (record.relates_to[0] if record.relates_to else record.record_id))
+        relations = record.relates_to if isinstance(record.relates_to, list) else []
+        unit_id = str(body.get("unit_id") or (relations[0] if relations else record.record_id))
         if unit_id in seen:
             continue
         owned = body.get("owned_regions", [])
@@ -396,11 +400,6 @@ def _make_analysis_actions(state: PangeaState, progress: WorkflowProgress, units
 
 
 def _prepare_review(state: PangeaState, progress: WorkflowProgress) -> None:
-    task_id = None
-    for action in progress.actions.values():
-        if action.role == "analysis" and action.task_id:
-            task_id = action.task_id
-            break
     # The Reviewer is a newly dispatched task; the host binds it before any
     # source/result operation.  The comparison continuation reuses this ID.
     action_id = f"{state['run_id']}:review"
@@ -419,11 +418,6 @@ def _prepare_review(state: PangeaState, progress: WorkflowProgress) -> None:
         "source_manifest_path": str(run_directory(state) / "inputs" / "source-manifest.json"),
         "source_index_path": str(source_first_index_path(state)),
         "allowed_paths": _all_scope_paths(manifest.get("scope_expansion", {})),
-        "analysis_result_paths": {
-            action.action_id: read_json(Path(action.task_path)).get("result_path")
-            for action in progress.actions.values()
-            if action.role == "analysis"
-        },
         "result_path": str(result_path),
         "rubric_paths": [],
     }
@@ -444,6 +438,72 @@ def _prepare_review(state: PangeaState, progress: WorkflowProgress) -> None:
         stage="independent_review",
         task_path=str(task_path),
     ))
+
+
+def _write_comparison_version_set(
+    state: PangeaState,
+    progress: WorkflowProgress,
+    review_action: ActionState,
+) -> tuple[Path, str]:
+    """Freeze the exact accepted revisions that comparison may inspect."""
+
+    entries: list[dict[str, Any]] = []
+    for action in progress.actions.values():
+        if action.role != "analysis" or action.status != "accepted":
+            continue
+        task = read_json(Path(action.task_path))
+        result_path = task.get("result_path")
+        if not isinstance(result_path, str) or not action.task_id:
+            raise ValueError(f"accepted analysis action 缺少绑定结果：{action.action_id}")
+        result = read_result(Path(result_path))
+        entries.append({
+            "role": "analysis",
+            "unit_id": task.get("unit_id"),
+            "action_id": action.action_id,
+            "task_id": action.task_id,
+            "result_path": result_path,
+            "revision": result.revision,
+        })
+    if review_action.status != "accepted" or not review_action.task_id:
+        raise ValueError("independent review 尚未绑定并接受，不能生成 comparison version set")
+    review_task = read_json(Path(review_action.task_path))
+    review_result_path = review_task.get("result_path")
+    if not isinstance(review_result_path, str):
+        raise ValueError("independent review 缺少 result_path")
+    review_result = read_result(Path(review_result_path))
+    entries.append({
+        "role": "independent_review",
+        "action_id": review_action.action_id,
+        "task_id": review_action.task_id,
+        "result_path": review_result_path,
+        "revision": review_result.revision,
+    })
+    identity = {
+        "run_id": state["run_id"],
+        "workflow_version": "source-first-v1",
+        "entries": entries,
+    }
+    version_set_id = "vs-" + hashlib.sha256(
+        json.dumps(
+            identity,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()[:24]
+    payload = {
+        "format_version": "pangea-version-set-v1",
+        "version_set_id": version_set_id,
+        **identity,
+    }
+    path = source_first_version_set_path(state, "comparison")
+    if path.is_file():
+        existing = read_json(path)
+        if existing != payload:
+            raise ValueError("comparison version set 已存在且内容不一致，拒绝覆盖")
+    else:
+        write_json(path, payload)
+    return path, version_set_id
 
 
 def _review_disposition(result) -> tuple[str | None, list[str]]:
@@ -529,6 +589,9 @@ def _source_first_advance(state: PangeaState, progress: WorkflowProgress) -> Pan
             review_action = independent_actions[0]
             _task, _result = _load_notes_action(state, review_action)
             review_action.status = "accepted"
+            version_set_path, version_set_id = _write_comparison_version_set(
+                state, progress, review_action
+            )
             comparison_action_id = f"{state['run_id']}:comparison-review"
             comparison_task_path = source_first_task_path(state, "comparison")
             comparison_result_path = source_first_result_path(state, "comparison")
@@ -538,8 +601,8 @@ def _source_first_advance(state: PangeaState, progress: WorkflowProgress) -> Pan
                 "task_type": "source_first_review",
                 "review_stage": "comparison_review",
                 "action_id": comparison_action_id,
-                "independent_result_path": review_task["result_path"],
-                "analysis_result_paths": review_task.get("analysis_result_paths", {}),
+                "version_set_id": version_set_id,
+                "version_set_path": str(version_set_path),
                 "result_path": str(comparison_result_path),
             }
             write_json(comparison_task_path, comparison_task)
@@ -615,17 +678,18 @@ def _source_first_advance(state: PangeaState, progress: WorkflowProgress) -> Pan
             closure_action_id = f"{state['run_id']}:closure:{unit_id}"
             closure_task_path = source_first_task_path(state, "closure", _safe_key(unit_id))
             closure_result_path = source_first_result_path(state, "closure", _safe_key(unit_id))
+            original = read_result(Path(original_result_path))
             closure_task = {
                 **original_task,
                 "task_type": "source_first_closure",
                 "action_id": closure_action_id,
                 "original_task_path": origin.task_path,
                 "original_result_path": original_result_path,
-                "base_revision": read_result(Path(original_result_path)).revision,
+                "base_revision": original.revision,
+                "current_revision": original.revision,
                 "result_path": str(closure_result_path),
             }
             write_json(closure_task_path, closure_task)
-            original = read_result(Path(original_result_path))
             write_json(closure_result_path, original.model_copy(update={
                 "binding": SourceBinding(
                     data_root=str(Path(state["data_root"]).resolve()),

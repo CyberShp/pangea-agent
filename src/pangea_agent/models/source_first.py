@@ -135,8 +135,10 @@ class NoteRecord(SourceFirstModel):
     record_id: str = Field(min_length=1)
     body: Any
     kind: str = "note"
-    evidence: list[str] = Field(default_factory=list)
-    relates_to: list[str] = Field(default_factory=list)
+    # Keep the original JSON values when a worker sends an unusual relation
+    # shape.  The store warns about it, but must not silently replace it.
+    evidence: Any = Field(default_factory=list)
+    relates_to: Any = Field(default_factory=list)
     created_revision: int = Field(ge=1)
 
 
@@ -157,9 +159,12 @@ class NotesResult(SourceFirstModel):
 
 
 class ReviewDecision(SourceFirstModel):
+    # The decision vocabulary is machine-routed, but the Reviewer may carry
+    # additional semantic fields in the original body.  They must survive
+    # transport without becoming a new rich schema gate.
+    model_config = ConfigDict(extra="allow")
     disposition: Literal["pass", "unresolved", "finding"]
     summary: str = ""
     finding_keys: list[str] = Field(default_factory=list)
     closure_units: list[str] = Field(default_factory=list)
     body: Any = None
-

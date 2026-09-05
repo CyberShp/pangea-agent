@@ -38,6 +38,7 @@ from .public_api import (
 from .result_check import check_result_json
 from .run_module_analysis import resume_module_analysis, run_module_analysis
 from .source_first_api import (
+    comparison_read,
     parse_json_argument,
     plan_write,
     result_read,
@@ -246,6 +247,16 @@ def main() -> None:
     result_read_cmd.add_argument("--record-id")
     result_read_cmd.add_argument("--cursor", type=int, default=0)
     result_read_cmd.add_argument("--limit", type=int, default=100)
+
+    comparison_read_cmd = sub.add_parser("comparison-read")
+    comparison_read_cmd.add_argument("--data-root", default="pangea-data")
+    comparison_read_cmd.add_argument("--run-id", required=True)
+    comparison_read_cmd.add_argument("--action-id", required=True)
+    comparison_read_cmd.add_argument("--task-id", required=True)
+    comparison_read_cmd.add_argument("--version-set-id", required=True)
+    comparison_read_cmd.add_argument("--unit-id")
+    comparison_read_cmd.add_argument("--cursor", type=int, default=0)
+    comparison_read_cmd.add_argument("--limit", type=int, default=100)
 
     finish_cmd = sub.add_parser("work-finish")
     finish_cmd.add_argument("--data-root", default="pangea-data")
@@ -478,6 +489,16 @@ def main() -> None:
             print_success(result_read(
                 args.data_root, args.run_id, args.action_id, args.task_id,
                 record_id=args.record_id, cursor=args.cursor, limit=args.limit,
+            ))
+        except Exception as exc:
+            print_error(exc)
+            raise SystemExit(1) from exc
+    elif args.command == "comparison-read":
+        try:
+            print_success(comparison_read(
+                args.data_root, args.run_id, args.action_id, args.task_id,
+                version_set_id=args.version_set_id, unit_id=args.unit_id,
+                cursor=args.cursor, limit=args.limit,
             ))
         except Exception as exc:
             print_error(exc)

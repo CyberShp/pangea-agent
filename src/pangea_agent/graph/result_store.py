@@ -202,22 +202,22 @@ def append_records(
                 warnings.append({
                     "kind": "invalid_evidence_shape",
                     "record_index": offset,
-                    "message": "evidence must be a list; original value preserved in body",
+                    "message": "evidence must be a list; original value preserved in record",
+                    "original_value": evidence,
                 })
-                evidence = []
             if not isinstance(relates_to, list):
                 warnings.append({
                     "kind": "invalid_relation_shape",
                     "record_index": offset,
-                    "message": "relates_to must be a list; original value preserved in body",
+                    "message": "relates_to must be a list; original value preserved in record",
+                    "original_value": relates_to,
                 })
-                relates_to = []
             generated.append(NoteRecord(
                 record_id=f"rec-{next_number:06d}",
                 body=item["body"],
                 kind=kind,
-                evidence=[str(value) for value in evidence],
-                relates_to=[str(value) for value in relates_to],
+                evidence=evidence,
+                relates_to=relates_to,
                 created_revision=revision,
             ))
             next_number += 1

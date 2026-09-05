@@ -64,6 +64,12 @@ def source_first_index_path(state: dict) -> Path:
     return run_directory(state) / "inputs" / "source-index.json"
 
 
+def source_first_version_set_path(state: dict, stage: str = "comparison") -> Path:
+    """Return the Graph-owned immutable version set for Reviewer reads."""
+
+    return run_directory(state) / "inputs" / f"source-first-{stage}-version-set.json"
+
+
 def analysis_task_path(state: dict, unit_id: str) -> Path:
     return run_directory(state) / "agent-tasks" / "analysis" / f"{unit_id}.json"
 

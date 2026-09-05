@@ -9,6 +9,7 @@ class PangeaState(TypedDict, total=False):
     run_id: str
     data_root: str
     task_contract: dict[str, Any]
+    workflow_version: str
     repositories: list[dict[str, Any]]
     module_scope: list[str]
     scope_expansion: dict[str, Any]
@@ -34,5 +35,8 @@ class PangeaState(TypedDict, total=False):
     needs_prepare: bool
     lifecycle_status: str
     stage: str
+    quality_status: str
+    needs_user: bool
+    blocking_reason: dict[str, Any]
     ready_to_finalize: bool
     agent_actions: list[dict[str, Any]]
