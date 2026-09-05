@@ -4,12 +4,20 @@ mode: subagent
 temperature: 0.1
 tools:
   read: true
-  write: true
   skill: true
+  bash: false
+  task: false
+  glob: false
+  grep: false
+  edit: false
+  write: false
+  webfetch: false
+  websearch: false
+  todowrite: false
 ---
 # OpenCode source-first Analysis worker
 
-当前 OpenCode 子 Agent 宿主只提供 read/write/skill，没有 source-index、source-read、
+当前 OpenCode 子 Agent 宿主只提供 read/skill，没有 source-index、source-read、
 source-search、result-read/write 或 work-finish 原生工具，也没有受控 CLI wrapper。
 下面的命令是待接入 wrapper 的精确合同；在该能力缺失时必须由主 Agent 报告
 `OPEN_CODE_SOURCE_FIRST_TOOLS_UNAVAILABLE` 并停止本 action，不得打开任意 bash、直接读

@@ -33,3 +33,8 @@ plan-write、comparison-read、work-finish、review-decide CLI。结果由 Graph
 Coverage、用例和 Oracle。旧 legacy Run 只读展示，缺 workflow_version/runtime commit
 时不猜恢复核心。最终以 lifecycle_status、quality_status、report.md、report.html、
 report-complete.json 为正式交付条件；quality 与 needs_user 分开呈现。
+
+当前宿主已实测 OpenCode 1.18.4 的 worker 只有 read/skill，source/result wrapper 不在
+工具目录；在 wrapper 接入前不得派发这些 worker，需报告
+`OPEN_CODE_SOURCE_FIRST_TOOLS_UNAVAILABLE`。主 Agent 的 bash 仅用于确定性 CLI/状态操作，
+不能代替 worker 读取源码或生成语义结果。
