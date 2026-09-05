@@ -21,6 +21,15 @@ from pangea_agent.skills import (
     validate_skill_package,
 )
 
+ANALYSIS_SCENARIOS = {
+    "module-analysis",
+    "root-cause",
+    "issue-regression",
+    "special-risk",
+    "custom",
+}
+ANALYSIS_MODES = {"speed", "depth"}
+
 
 def _safe_run_id(value: str) -> str:
     if not value or value in {".", ".."} or Path(value).name != value:
@@ -50,13 +59,22 @@ def _skill_request(raw: object) -> dict:
     rejected = sorted(set(raw) & {"focus", "test_case_examples"})
     if rejected:
         raise ValueError(f"request 2.0 不支持字段：{', '.join(rejected)}")
-    allowed = {"request_version", "run_id", "data_root", "repository", "target", "source_scope", "asset_ids"}
+    allowed = {
+        "request_version", "run_id", "data_root", "repository", "target", "source_scope", "asset_ids",
+        "scenario", "mode",
+    }
     extras = sorted(set(raw) - allowed)
     if extras:
         raise ValueError(f"Skill Run request 包含未知字段：{', '.join(extras)}")
     run_id = raw.get("run_id")
     if run_id is not None and (not isinstance(run_id, str) or not run_id.strip()):
         raise ValueError("run_id 必须是非空字符串")
+    scenario = raw.get("scenario", "module-analysis")
+    if not isinstance(scenario, str) or scenario not in ANALYSIS_SCENARIOS:
+        raise ValueError(f"scenario 不受支持：{scenario}")
+    mode = raw.get("mode", "depth")
+    if not isinstance(mode, str) or mode not in ANALYSIS_MODES:
+        raise ValueError(f"mode 不受支持：{mode}")
     return {
         "request_version": "2.0",
         "run_id": run_id.strip() if isinstance(run_id, str) else None,
@@ -65,6 +83,8 @@ def _skill_request(raw: object) -> dict:
         "target": _required_text(raw, "target"),
         "source_scope": _text_list(raw, "source_scope"),
         "asset_ids": _text_list(raw, "asset_ids"),
+        "scenario": scenario,
+        "mode": mode,
     }
 
 
@@ -205,7 +225,7 @@ def _request_markdown(
     return "\n".join([
         "# Codetalks Skill 运行请求",
         "",
-        "这是用户已经确认启动的深度型模块全量分析。立即执行，不再创建 PANGEA Graph、Planning、Worker action 或 settle。",
+        f"这是用户已经确认启动的{'速度' if request['mode'] == 'speed' else '深度'}型分析。立即执行，不再创建 PANGEA Graph、Planning、Worker action 或 settle。",
         "",
         "## 唯一执行协议",
         "",
@@ -214,14 +234,19 @@ def _request_markdown(
         f"- Run ID：`{run_id}`",
         "- Request：`2.0`",
         f"- 运行根目录：`{run_root}`",
-        "- 场景：`module-analysis`",
-        "- 模式：`depth`",
+        f"- 场景：`{request['scenario']}`",
+        f"- 模式：`{request['mode']}`",
         f"- 语言识别：`{', '.join(language_profiles['languages']) or '未识别'}`",
         f"- Skill Profile：`{', '.join(language_profiles['profiles']) or '待 Step 01 确认'}`",
         f"- 识别状态：`{language_profiles['status']}`（{language_profiles['reason']}）",
         "",
         "先完整读取 SKILL.md。随后第一条执行命令必须是该 Skill 规定的 `run_guard.py init`，再按 JIT 规则逐步执行 01–09。",
-        "Producer 完成 Step 07 后必须启动一个与 Producer 分离的独立 Judge 执行 Step 08；Judge 只以运行计划、活文档、源码和证据为依据。",
+        (
+            "Producer 完成 Step 07 后必须启动一个与 Producer 分离的独立 Judge 执行 Step 08；"
+            "Judge 只以运行计划、活文档、源码和证据为依据。"
+            if request["mode"] == "depth"
+            else "速度型模式不要求独立 Judge；仍需保留关键校验结果，并在交付中如实标注覆盖边界。"
+        ),
         "只有 `run_guard.py finalize` 成功后才可宣称完成。",
         "根据上面的语言 Profile 读取对应参考：检测到 Lua 必须读取 `references/language-lua.md`；检测到 openUBMC 目录时还必须读取 `references/openubmc-lua.md`。当前版本不接受同一分析范围同时包含 C/C++ 与 Lua 源码。",
         "",

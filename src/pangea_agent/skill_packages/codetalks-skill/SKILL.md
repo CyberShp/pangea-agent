@@ -67,7 +67,10 @@ V1 的主要缺陷不是“规则不够多”，而是规则只有文字约束�
 ## 0.2 运行输入冻结（Asset Management 2.0）
 
 新建分析只接受 `request_version=2.0`，请求字段为 `run_id`、`data_root`、
-`repository`、`target`、`source_scope` 和已选资产的内部 `asset_ids`。分析重点、
+`repository`、`target`、`source_scope`、已选资产的内部 `asset_ids`，以及可选的
+`scenario` 和 `mode`。`scenario` 默认为 `module-analysis`，可选
+`module-analysis`、`issue-regression`、`root-cause`、`special-risk`、`custom`；
+`mode` 默认为 `depth`，可选 `speed`（速度型）和 `depth`（深度型）。分析重点、
 手工结构化资产 ID 和文本用例路径不属于新请求；出现这些字段必须报错，不能静默转发。
 
 启动时，运行器将每个已选且状态为 `available`、完整性校验通过的资产复制到
