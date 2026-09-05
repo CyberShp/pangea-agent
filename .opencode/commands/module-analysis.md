@@ -1,6 +1,14 @@
 ---
-description: 启动或继续一次 PANGEA C/C++ 或 Lua 模块分析
+description: 启动或继续一次 source-first 模块分析
 ---
 # module-analysis
 
-确定用户指定仓库和最小核心 `source_scope`，创建新 Run 后严格执行 CLI 返回的 action。每个 action 必须绑定真实子任务 ID、通过 adapter 校验后再 settle；一次最多并发 8 个。Review 先由盲审 Reviewer 独立检查，Graph 接受后再按 `continue_agent` 续接同一 Reviewer Session 对照首轮结果。持续到报告生成或出现真实 `UNRESOLVED`，不扫描历史 Run 猜测恢复目标，不自行修改语义结果。
+收集用户确认的 repository、target、source_scope、focus、asset_ids 和用例示例后，
+调用 source-first Graph 的 Run create。按返回的 exact action_id 调度 planning、analysis、
+independent review、同 Reviewer comparison 和必要 closure；每个 task 只读冻结
+source-index/read/search，并通过当前 result_path 增量写 notes、work-finish。每次
+settle 只消费对应 action_id，revision 冲突回读后在同一 task 修复。
+
+旧 legacy Run 仅由 reader 兼容展示；没有 source-first workflow_version 时不得猜测
+恢复。报告必须同时存在 report.md、report.html、report-complete.json，质量状态为
+UNRESOLVED 时如实展示，不把空投影解释为零。

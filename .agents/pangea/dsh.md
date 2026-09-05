@@ -1,51 +1,67 @@
-# PANGEA DSH 运行规则
+# PANGEA DSH source-first 运行规则
 
-本文件只负责 DSH Desktop 中的 PANGEA action 调度。主 Agent 不分析源码，不填写或修正语义结果。
+本文件是 DSH 根 Agent 的可执行规则。根 Agent 负责收集用户确认的输入、创建
+Run、派发 Graph action 和逐个 settle；不读取业务源码，不填写或改写语义 notes。
 
-## 新 Run
+## 新 Run 与恢复
 
-当前会话没有明确 `run_id` 时，准备新 Run 只允许在 `pangea-data/repositories/` 下列目录、按文件名搜索或 grep 符号，用于确定仓库和最小 `source_scope`。搜索时把 `.c` / `.h` / `.cc` / `.cpp` / `.cxx` / `.hpp` / `.hh` 视为 `c_cpp`，把 `.lua` 视为 `lua`；用户只提供自然语言目标，主 Agent 不要求用户另填语言。Workflow 会根据选中模块的冻结源码再次判断并记录语言。创建 Run 前不得调用 Read、分段读取或通读业务源码，不得统计文件行数后继续展开阅读。不得列举或读取 `pangea-data/runs/`、历史契约、历史报告或 Companion 历史状态；不得读取 PANGEA 的 CLI、graph、schema 或其他内部实现来学习调用方法；不得调用 `pangea_status` 猜测恢复对象。
+新 Run 只用 pangea_run_create，参数是用户确认的 repository、target、
+source_scope，并保留 focus、asset_ids、test_case_examples。创建前只在
+pangea-data/repositories/<repo_id> 做目录、文件名或符号搜索来确定范围；创建后
+源码只能通过当前 task 的 pangea_source_index、pangea_source_read、
+pangea_source_search 读取。不得手写 contract、读取历史 Run 来推测范围，或把
+旧 Skill/富 JSON 当新 Run 输入。
 
-从用户要求确定仓库、目标、最小 `source_scope`、重点、资产 ID 和可选用例示例后，直接调用 `pangea_run_create`。业务源码的内容理解和调用链分析由 Planning/Analysis Agent 完成。该工具负责创建并删除临时契约，不得自行写 pending contract。`pangea_status` 只能使用当前会话已持有或用户明确给出的 `run_id`。
+已有 Run 只能使用用户明确给出的 run_id 和 data_root 调用
+pangea_run_resume。返回的 workflow_version 必须是 source-first-v1；缺少
+版本或 task/action/result 绑定时停止并报告，不能猜测恢复对象。历史 legacy Run
+仅由 reader 展示，不由本流程改写或恢复。
 
-`pangea_run_create` 和 action 工具会加载当前工作区的 `src`。主 Agent 不用 shell 启动 PANGEA，不用 `--help`、版本探测或源码阅读代替正式工具调用。
+## Action 生命周期
 
-## 调度
+pangea_run_create/pangea_run_resume 返回 Graph 的 actions 后，对每一个返回项
+原样调用 pangea_action_dispatch({action_id})。dispatch 会按 role 创建或续接真实
+DSH subagent，并在同一次调用中用 Graph 的 data_root、run_id、action_id 和
+真实 task_id 完成 bind；根 Agent 不手写 task_id。
 
-工具返回 action 后，对每个 action 直接调用 `pangea_action_dispatch` 并传入原始 `action_id`。`dispatch_agent` 才按 role 创建新任务：
+- dispatch_agent：由 dispatch 创建一个 task。
+- continue_agent：必须续接 action 自带的原 task_id，包括 comparison Reviewer
+  与 targeted closure；不得替换 worker、另建 Reviewer 或把 closure 变成新分析。
+- 收到子 Agent 完成通知后，第一且唯一的工作流工具调用是该通知回显的 exact
+  action_id 对应的 pangea_action_settle。settle 在一次调用中完成确定性校验和
+  Graph 推进；不调用独立 validate。
+- settle 返回的新 actions 仍逐项 dispatch。invalid/incomplete 只把具体契约
+  错误交回同一个 task 的同一个 result_path；再次 dispatch 必须续接原 task。非致命
+  relation/enum/引用问题只记录 warning 并保留原文；空结果或缺少 completion 不能
+  伪装完成。
+- 只允许按返回的 exact action_id 结算；不得根据子任务 UUID、单元名、通知顺序
+  或记忆猜测 action。最多同时派发 8 个 action。
 
-- `planning`：`planning-worker.md`
-- `analysis`：`analysis-worker.md`
-- `review`：`review-worker.md`
-- `asset_extraction`：`asset-extraction-worker.md`
+## Worker 工具边界
 
-`continue_agent` 必须恢复 action 自带的 `task_id`。Comparison review 续接同一盲审 Reviewer Session；正常 workflow 的 `targeted_closure` 续接该单元首轮 `analysis-worker`，两者都不得创建替代 worker。
+每个 worker 先用受控 read 打开 action 的 task JSON，再按 task 中的绑定调用
+source-first 工具：
 
-主 Agent 不自行调用通用 `subagent`，不读取 task，也不重写子 Agent 提示。最多同时派发 8 个 action；8 是并发数量，不限制 Run 的总单元数。子 Agent 不得继续派发。
+- pangea_source_index/read/search：只读 Graph 冻结源码与允许 region；
+- pangea_plan_write：Planning 增量写 unit plan；
+- pangea_result_read/write：按当前 revision 读取/追加原文 notes；
+- pangea_comparison_read：Comparison 只用 Graph 提供的 opaque
+  version_set_id 读取冻结的首轮 analysis 与盲审版本；
+- pangea_work_finish：以当前 revision 声明本回合完成；
+- pangea_review_decide：Reviewer 追加原文 review decision。
 
-派发 action 后如果尚未收到子 Agent 完成通知，主 Agent 立即结束当前回合，把控制权交还 DSH；不得调用通用等待/轮询工具，不得反复输出“继续等待”，也不得在同一回合循环检查子 Agent。DSH 会在子 Agent 结束后注入完成通知并唤醒主 Agent。若等待接口只返回 unchanged/idle 而没有完成通知，视为没有新事件并结束当前回合；不得无限等待。
+worker 不调用 action 生命周期工具、不越过 task 的结果路径、不访问 live working
+tree 或另一个 Run。Python 只处理身份、路径、revision、持久化和报告组装；风险、
+DFX、可达性、单元边界、finding 与用例质量由 Agent/Reviewer 保持原文记录。
 
-`pangea_action_dispatch` 会自动把 action 与 DSH 真实任务 ID 绑定。新 task 还包含同一个不可变 `action_id`，子 Agent 的一行完成报告会原样回显它。子 Agent 回合结束后，主 Agent 的第一且唯一动作是对完成报告中这个 exact `action_id` 调用 `pangea_action_settle`；该工具在同一次调用中校验当前结果并推进 Workflow。不得先读取结果、查询状态、检查其他 Agent 或发送普通消息。并行 Agent 的完成通知即使同时到达，也必须逐条保留各自的 exact `action_id`，先处理当前 action 的 settle 返回，再处理下一条。不得根据 DSH 子任务 UUID、单元名、通知先后或记忆猜测待结算 action；已经 settle 成功的 action 不得因另一个修复完成而重新当成待处理 action。历史 task 没有 `action_id` 时，才使用 `pangea_action_dispatch` 已保存的 action 与 DSH 任务绑定：
+## 审核与报告
 
-独立 `pangea_action_validate` 已停用，不再执行校验，也不改变 action 状态；误调用只会返回 `status=settle_required`。收到该状态时不得重试 validate，直接对同一 `action_id` 调用 `pangea_action_settle`。
+Graph 先派发一个盲审 Reviewer（independent_review），接受后用同一 Reviewer
+task 续接 comparison_review，Comparison 才能读取 Graph 锁定的版本集合。仅由
+Comparison 的 finding 决定一次 targeted closure，closure 续接对应首轮 worker；
+不新增终审层。Reviewer 结论不足时保持 UNRESOLVED。
 
-- 返回下一批 `agent_actions` 或完成状态：按返回值继续，不再补调 validate。
-- 返回 `validation.status=invalid|incomplete`：这是结构校验失败，或 Agent 尚未写入骨架。settle 会把原 Action 持久化为同一 `action_id`、同一 `task_id` 的 `continue_agent + pending + repair_status=required`，并返回 `repair_dispatched=false`、`next_required_tool=pangea_action_dispatch` 和待派发 repair descriptor。主 Agent 的下一个且唯一个工具调用必须是 `pangea_action_dispatch`，并原样传入 `next_required_action_id` / `repair_action.action_id`；该调用成功返回真实子任务信息后，才算已派发。不得因 action_id 与首轮相同，或因 settle 返回了 `agent_actions` 就声称“repair 已自动 dispatch”。
-
-  修复 action 必须恢复同一个 `task_id`，把返回的 `error`（包括按错误族聚合的 `groups`、`detail_count`、`family_fingerprint` 和 `full_report_path`）交回该任务，只修正同一 `result_path` 后再次 settle。错误很多时让原 Agent 读取 `result_contract_path` 和 `full_report_path`，保留可用语义后重建结构；不得套用旧版或其他项目的字段，不得用普通 `send_message` 或通用子 Agent 代替 `repair_action`。修复派发后立即结束当前回合，收到该修复任务的完成通知后再 settle 同一 action。
-
-  并行 Agent 的其他完成通知只能按各自 exact `action_id` 排队。当前 action 返回 invalid 后，在它的 repair 已真实 dispatch 之前，不得 settle 另一个已完成 action、读状态、猜测哪个任务已推进，也不得跳到下一条 repair。先完成这一次 `settle -> dispatch repair`，再处理队列中的下一个完成通知。多个 repair 完成后，逐个 settle 它们各自回显的 action；不得改成等待另一个已经 settled 的 action，也不得在仍有已完成但未 settle 的 exact action 时结束会话。
-- 修复回合完成后再次 settle：若结构已经合法则正常推进；若仍不合法，继续把同一 Action 持久化为 `pending + repair_status=required`，追加新的 Validation Report 和 history，直到宿主依据 attention 提示停止盲试。Schema 非法结果不得自动降级或推进 Graph；可解析但存在非致命确定性 warning 的结果仍按现有机制进入 `UNRESOLVED`。
-
-Run/action/task 丢失、冻结输入损坏、`continue_agent` 缺少约定的 `task_id` 或 Workflow 返回未持久化 action 才属于流程错误。无法解析、缺少摘要或没有可消费流程的结果由当前 worker 在同一 `result_path` 原地修复；可确定的字段别名、枚举、边、系统编号和悬空引用仍由 Workflow 记录提示，但不得改写 Agent-owned 语义或把 Schema error 变成 warning。evidence 范围、Coverage 取舍和 finding 是否成立等分歧保留给 Reviewer。这些检查只说明契约关联状态，不裁决风险、流程或用例语义。返修时保留已有有效语义内容，编辑方法由当前 Agent 自己选择；不得把语义判断交给 Python 或脚本。主 Agent 不读取或代改结果，不得换 worker，也不因达到 attention 阈值自动推进。
-
-Worker 结束前可调用 `check-result-json --task`。DSH 在 POSIX 工作区固定使用 `.venv/bin/python -m pangea_agent.cli.main check-result-json --task '<当前 task JSON 路径>'`，Windows 工作区使用 `.venv\Scripts\python.exe`；不要用 `PYTHONPATH` 或系统 `python3` 绕过项目运行环境。该命令只读取 task 指向的结果，确认 JSON 能否被下游消费，并以 `advisories` 提示内部编号、声明链接和证据路径问题。`submission_ready=false` 时由当前 Agent 修正无法读取的结构；`submission_ready=true` 时允许结束回合，`status=WARN` 由 settle 保留为降级提示并继续流程。它不判断语义，任何内容修正仍由当前 Agent 自己决定。
-
-Review 固定分为同一 Reviewer Session 的两个隔离 checkpoint：`independent_review` 不提供首轮结果；Graph 接受后才通过 `continue_agent` 进入 `comparison_review` 并开放盲审与首轮结果做对照。若 Comparison task 带有 `audit_batch_count`，每个 batch 都是同一 Reviewer 的 `continue_agent` checkpoint，必须按返回的 exact action_id 逐批 dispatch/settle，不能新建 Reviewer 或自行合并结果；最后一批由 Workflow 聚合后再进入定向补齐，不再启动新的 Reviewer 或第三个复核 Agent。
-
-资料提取和方法论提炼由资产插件管理。历史缺陷提取使用
-`asset-extraction-worker.md`，完成后等待人工审核，不自动批准。方法论提炼只接受已批准历史缺陷，
-使用 `methodology-worker.md` 写入 task 的 `result_path`；资产插件再调用
-`methodologies complete-derivation --task <task_path>` 校验并登记为待确认候选，不自动启用。
-
-结果骨架由 Workflow 创建，主 Agent 不得另建、替换或用占位内容推进流程。最终必须同时满足 Run `lifecycle_status=complete`、`report-complete.json` 完成标记以及实际存在的 `report.md`、`report.html`；单独存在的报告文件不是正式产物。
+正式交付须同时有 lifecycle_status=complete、report.md、report.html 和
+report-complete.json。Desktop reader 同时展示当前 stage、action/revision、
+quality/needs_user 和 Agent 原文 records；空语义投影显示“待解析/原文记录”，
+不显示成零。

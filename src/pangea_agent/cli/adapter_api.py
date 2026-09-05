@@ -570,7 +570,9 @@ def next_actions(data_root: str, run_id: str, limit: int = 8) -> dict:
         key=lambda item: item["action_id"],
     )
     return {
+        "data_root": str(Path(data_root).resolve()),
         "run_id": run_id,
+        "workflow_version": progress.workflow_version,
         "lifecycle_status": progress.lifecycle_status,
         "stage": progress.stage,
         "actions": actions,
