@@ -19,6 +19,25 @@ def load_guard():
 
 
 class StagePublicationTests(unittest.TestCase):
+    def test_workbench_projection_documents_complete_risk_details_without_making_them_hard_required(self) -> None:
+        root = Path(__file__).parents[1]
+        schema = json.loads((root / "schemas/workbench_projection.schema.json").read_text(encoding="utf-8"))
+        risk = schema["properties"]["risks"]["items"]
+        self.assertEqual(risk["properties"]["severity"]["enum"], ["Critical", "High", "Medium", "Low"])
+        for field in (
+            "risk_id", "narrative", "trigger", "system_result", "residual_effect",
+            "apparent_normality", "external_observation", "blackbox_proof", "severity_source",
+            "source_section",
+        ):
+            self.assertIn(field, risk["properties"])
+        self.assertNotIn("required", risk)
+
+        step_05 = (root / "src/pangea_agent/skill_packages/codetalks-skill/steps/05-scenario-expansion.md").read_text(encoding="utf-8")
+        step_09 = (root / "src/pangea_agent/skill_packages/codetalks-skill/steps/09-final-delivery.md").read_text(encoding="utf-8")
+        self.assertIn('"severity": "High"', step_05)
+        self.assertIn('"residual_effect"', step_05)
+        self.assertIn("相同 risk_id", step_09)
+
     def test_completed_run_validation_allows_step_09_formal_outputs(self) -> None:
         guard = load_guard()
         with tempfile.TemporaryDirectory() as directory:

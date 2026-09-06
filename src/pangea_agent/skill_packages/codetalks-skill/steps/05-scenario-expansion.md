@@ -38,6 +38,28 @@
 → 黑盒如何证明
 ```
 
+风险标题必须包含在本次 Run 内稳定且唯一的 `risk_id`。写入阶段工作台投影时，沿用同一个 ID，并使用统一字段：
+
+```json
+{
+  "risk_id": "R-001",
+  "severity": "High",
+  "severity_source": "workbench_projection",
+  "narrative": "风险概要",
+  "trigger": "什么条件发生",
+  "system_result": "代码内部哪里失效",
+  "residual_effect": "状态、资源或数据留下什么问题",
+  "apparent_normality": "为什么当前操作可能仍看似正常",
+  "external_observation": "什么时候对外暴露",
+  "blackbox_proof": "黑盒如何证明",
+  "source_section": "活文档/14-风险点清单与因果说明.md#R-001"
+}
+```
+
+`severity` 只使用 `Critical`、`High`、`Medium`、`Low`。等级由 Agent 根据分析写出；若尚未完成分级则省略该字段，不得用默认等级补齐。`severity_source` 记录实际来源。SFMEA 失效模式与风险的关系必须显式写出，不能按编号或标题相似度推断。
+
+阶段投影用于工作台及时展示。字段暂缺只表示草稿尚未补齐，不得因此把 Run 判为失败；后续步骤应在保留相同 `risk_id` 的前提下补全。
+
 
 ## 目录限制
 
