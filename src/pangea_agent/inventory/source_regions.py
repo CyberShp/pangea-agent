@@ -161,6 +161,7 @@ def build_file_regions(file_record: dict) -> SourceFileIndex:
         line_count=line_count,
         regions=regions,
         parse_complete=parse_complete,
+        region_count=len(regions),
     )
 
 

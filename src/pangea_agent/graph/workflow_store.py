@@ -1,12 +1,19 @@
 from __future__ import annotations
 
+import os
+import threading
+from contextlib import contextmanager
+from functools import wraps
 from pathlib import Path
+from typing import Callable, Iterator
 
 from pangea_agent.agent_io import read_json, write_json
 from pangea_agent.models.analysis import ActionState, WorkflowProgress
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
+_PROCESS_LOCKS: dict[str, threading.RLock] = {}
+_PROCESS_LOCKS_GUARD = threading.Lock()
 
 
 def project_path(*parts: str) -> Path:
@@ -19,6 +26,55 @@ def run_directory(state: dict) -> Path:
 
 def progress_path(state: dict) -> Path:
     return run_directory(state) / "progress.json"
+
+
+@contextmanager
+def run_mutation_lock(state: dict) -> Iterator[None]:
+    """Serialize one Run's load-modify-save transactions across threads/processes."""
+
+    lock_path = run_directory(state) / ".progress.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    key = str(lock_path.resolve())
+    with _PROCESS_LOCKS_GUARD:
+        process_lock = _PROCESS_LOCKS.setdefault(key, threading.RLock())
+    with process_lock:
+        handle = lock_path.open("a+b")
+        try:
+            if os.name == "nt":
+                import msvcrt
+
+                handle.seek(0)
+                handle.write(b"0")
+                handle.flush()
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            yield
+        finally:
+            try:
+                if os.name == "nt":
+                    import msvcrt
+
+                    handle.seek(0)
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            finally:
+                handle.close()
+
+
+def serialized_run_mutation(function: Callable) -> Callable:
+    @wraps(function)
+    def wrapped(data_root: str, run_id: str, *args, **kwargs):
+        with run_mutation_lock({"data_root": data_root, "run_id": run_id}):
+            return function(data_root, run_id, *args, **kwargs)
+
+    return wrapped
 
 
 def load_progress(state: dict) -> WorkflowProgress | None:

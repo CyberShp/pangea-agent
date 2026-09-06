@@ -5,7 +5,9 @@ import argparse
 from .adapter_api import (
     bind_action,
     bind_asset_action,
+    defer_action,
     next_actions,
+    retry_attention_action,
     settle_action,
     settle_asset_action,
     validate_action,
@@ -38,15 +40,20 @@ from .public_api import (
 from .result_check import check_result_json
 from .run_module_analysis import resume_module_analysis, run_module_analysis
 from .source_first_api import (
+    comparison_finding_write,
     comparison_read,
+    input_read,
     parse_json_argument,
     plan_write,
     result_read,
+    result_repair,
+    result_supersede,
     result_write,
     review_decide,
     source_index,
     source_read,
     source_search,
+    task_open,
     work_finish,
 )
 
@@ -195,16 +202,51 @@ def main() -> None:
     adapter_settle_target.add_argument("--run-id")
     adapter_settle_target.add_argument("--asset-id")
     adapter_settle.add_argument("--action-id", required=True)
+    adapter_retry = adapter_commands.add_parser("retry")
+    adapter_retry.add_argument("--data-root", default="pangea-data")
+    adapter_retry.add_argument("--run-id", required=True)
+    adapter_retry.add_argument("--action-id", required=True)
+    adapter_defer = adapter_commands.add_parser("defer")
+    adapter_defer.add_argument("--data-root", default="pangea-data")
+    adapter_defer.add_argument("--run-id", required=True)
+    adapter_defer.add_argument("--action-id", required=True)
+    adapter_defer.add_argument("--task-id", required=True)
+    adapter_defer.add_argument("--reason-code", required=True, choices=[
+        "worker_error", "result_incomplete", "finalization_incomplete",
+    ])
+    adapter_defer.add_argument("--reason", required=True)
+    adapter_defer.add_argument("--no-progress", action="store_true")
+    adapter_defer.add_argument("--finalization-base-record-count", type=int)
 
     # Source-first worker tools.  The host must supply the exact binding that
     # Graph returned; these commands never locate another Run or task.
+    task_open_cmd = sub.add_parser("task-open")
+    task_open_cmd.add_argument("--data-root", default="pangea-data")
+    task_open_cmd.add_argument("--run-id", required=True)
+    task_open_cmd.add_argument("--action-id", required=True)
+    task_open_cmd.add_argument("--task-id", required=True)
+
+    input_read_cmd = sub.add_parser("input-read")
+    input_read_cmd.add_argument("--data-root", default="pangea-data")
+    input_read_cmd.add_argument("--run-id", required=True)
+    input_read_cmd.add_argument("--action-id", required=True)
+    input_read_cmd.add_argument("--task-id", required=True)
+    input_read_cmd.add_argument("--input-id", required=True)
+    input_read_cmd.add_argument("--cursor")
+    input_read_cmd.add_argument("--max-chars", type=int, default=12000)
+
     source_index_cmd = sub.add_parser("source-index")
     source_index_cmd.add_argument("--data-root", default="pangea-data")
     source_index_cmd.add_argument("--run-id", required=True)
     source_index_cmd.add_argument("--action-id", required=True)
     source_index_cmd.add_argument("--task-id", required=True)
+    source_index_cmd.add_argument("--repo-id")
+    source_index_cmd.add_argument("--path")
     source_index_cmd.add_argument("--cursor")
-    source_index_cmd.add_argument("--page-size", type=int, default=64)
+    source_index_cmd.add_argument("--page-size", type=int, default=50)
+    source_index_cmd.add_argument("--view", choices=["legacy", "compact"], default="legacy")
+    source_index_cmd.add_argument("--page-token")
+    source_index_cmd.add_argument("--max-chars", type=int, default=12000)
 
     source_read_cmd = sub.add_parser("source-read")
     source_read_cmd.add_argument("--data-root", default="pangea-data")
@@ -218,6 +260,9 @@ def main() -> None:
     source_read_cmd.add_argument("--line-end", type=int)
     source_read_cmd.add_argument("--cursor")
     source_read_cmd.add_argument("--max-lines", type=int, default=400)
+    source_read_cmd.add_argument("--view", choices=["legacy", "compact"], default="legacy")
+    source_read_cmd.add_argument("--page-token")
+    source_read_cmd.add_argument("--max-chars", type=int, default=12000)
 
     source_search_cmd = sub.add_parser("source-search")
     source_search_cmd.add_argument("--data-root", default="pangea-data")
@@ -229,6 +274,9 @@ def main() -> None:
     source_search_cmd.add_argument("--path")
     source_search_cmd.add_argument("--cursor")
     source_search_cmd.add_argument("--page-size", type=int, default=100)
+    source_search_cmd.add_argument("--view", choices=["legacy", "compact"], default="legacy")
+    source_search_cmd.add_argument("--page-token")
+    source_search_cmd.add_argument("--max-chars", type=int, default=12000)
 
     result_write_cmd = sub.add_parser("result-write")
     result_write_cmd.add_argument("--data-root", default="pangea-data")
@@ -239,6 +287,27 @@ def main() -> None:
     result_write_cmd.add_argument("--records", required=True, help="JSON array")
     result_write_cmd.add_argument("--request-id")
 
+    result_supersede_cmd = sub.add_parser("result-supersede")
+    result_supersede_cmd.add_argument("--data-root", default="pangea-data")
+    result_supersede_cmd.add_argument("--run-id", required=True)
+    result_supersede_cmd.add_argument("--action-id", required=True)
+    result_supersede_cmd.add_argument("--task-id", required=True)
+    result_supersede_cmd.add_argument("--expected-revision", type=int, required=True)
+    result_supersede_cmd.add_argument("--target-record-ids", required=True, help="JSON array")
+    result_supersede_cmd.add_argument("--replacement", required=True, help="JSON object")
+    result_supersede_cmd.add_argument("--request-id")
+
+    comparison_finding_cmd = sub.add_parser("comparison-finding-write")
+    comparison_finding_cmd.add_argument("--data-root", default="pangea-data")
+    comparison_finding_cmd.add_argument("--run-id", required=True)
+    comparison_finding_cmd.add_argument("--action-id", required=True)
+    comparison_finding_cmd.add_argument("--task-id", required=True)
+    comparison_finding_cmd.add_argument("--expected-revision", type=int, required=True)
+    comparison_finding_cmd.add_argument("--unit-ids", required=True, help="JSON array")
+    comparison_finding_cmd.add_argument("--finding", required=True, help="JSON object")
+    comparison_finding_cmd.add_argument("--replace-finding-record-ids", help="JSON array")
+    comparison_finding_cmd.add_argument("--request-id")
+
     result_read_cmd = sub.add_parser("result-read")
     result_read_cmd.add_argument("--data-root", default="pangea-data")
     result_read_cmd.add_argument("--run-id", required=True)
@@ -247,6 +316,18 @@ def main() -> None:
     result_read_cmd.add_argument("--record-id")
     result_read_cmd.add_argument("--cursor", type=int, default=0)
     result_read_cmd.add_argument("--limit", type=int, default=100)
+    result_read_cmd.add_argument("--view", choices=["legacy", "compact"], default="legacy")
+    result_read_cmd.add_argument("--page-token")
+    result_read_cmd.add_argument("--max-chars", type=int, default=12000)
+    result_read_cmd.add_argument("--include-history", action="store_true")
+
+    result_repair_cmd = sub.add_parser("result-repair")
+    result_repair_cmd.add_argument("--data-root", default="pangea-data")
+    result_repair_cmd.add_argument("--run-id", required=True)
+    result_repair_cmd.add_argument("--action-id", required=True)
+    result_repair_cmd.add_argument("--task-id", required=True)
+    result_repair_cmd.add_argument("--expected-sha256", required=True)
+    result_repair_cmd.add_argument("--records", required=True, help="JSON array resent by the same Agent")
 
     comparison_read_cmd = sub.add_parser("comparison-read")
     comparison_read_cmd.add_argument("--data-root", default="pangea-data")
@@ -257,6 +338,10 @@ def main() -> None:
     comparison_read_cmd.add_argument("--unit-id")
     comparison_read_cmd.add_argument("--cursor", type=int, default=0)
     comparison_read_cmd.add_argument("--limit", type=int, default=100)
+    comparison_read_cmd.add_argument("--view", choices=["legacy", "compact"], default="legacy")
+    comparison_read_cmd.add_argument("--page-token")
+    comparison_read_cmd.add_argument("--max-chars", type=int, default=12000)
+    comparison_read_cmd.add_argument("--include-history", action="store_true")
 
     finish_cmd = sub.add_parser("work-finish")
     finish_cmd.add_argument("--data-root", default="pangea-data")
@@ -284,6 +369,7 @@ def main() -> None:
     review_decide_cmd.add_argument("--task-id", required=True)
     review_decide_cmd.add_argument("--expected-revision", type=int, required=True)
     review_decide_cmd.add_argument("--decision", required=True, help="JSON object")
+    review_decide_cmd.add_argument("--replace-decision-record-ids", help="JSON array")
     review_decide_cmd.add_argument("--request-id")
     args = parser.parse_args()
 
@@ -440,6 +526,32 @@ def main() -> None:
                         args.data_root, args.asset_id, args.action_id
                     )
                 print_success(result)
+            elif args.adapter_command == "retry":
+                print_success(retry_attention_action(
+                    args.data_root, args.run_id, args.action_id
+                ))
+            elif args.adapter_command == "defer":
+                print_success(defer_action(
+                    args.data_root, args.run_id, args.action_id, args.task_id,
+                    reason_code=args.reason_code, reason=args.reason,
+                    no_progress=args.no_progress,
+                    finalization_base_record_count=args.finalization_base_record_count,
+                ))
+        except Exception as exc:
+            print_error(exc)
+            raise SystemExit(1) from exc
+    elif args.command == "task-open":
+        try:
+            print_success(task_open(args.data_root, args.run_id, args.action_id, args.task_id))
+        except Exception as exc:
+            print_error(exc)
+            raise SystemExit(1) from exc
+    elif args.command == "input-read":
+        try:
+            print_success(input_read(
+                args.data_root, args.run_id, args.action_id, args.task_id,
+                input_id=args.input_id, cursor=args.cursor, max_chars=args.max_chars,
+            ))
         except Exception as exc:
             print_error(exc)
             raise SystemExit(1) from exc
@@ -447,7 +559,9 @@ def main() -> None:
         try:
             print_success(source_index(
                 args.data_root, args.run_id, args.action_id, args.task_id,
+                repo_id=args.repo_id, path=args.path,
                 cursor=args.cursor, page_size=args.page_size,
+                view=args.view, page_token=args.page_token, max_chars=args.max_chars,
             ))
         except Exception as exc:
             print_error(exc)
@@ -459,6 +573,7 @@ def main() -> None:
                 repo_id=args.repo_id, path=args.path, region_id=args.region_id,
                 line_start=args.line_start, line_end=args.line_end,
                 cursor=args.cursor, max_lines=args.max_lines,
+                view=args.view, page_token=args.page_token, max_chars=args.max_chars,
             ))
         except Exception as exc:
             print_error(exc)
@@ -469,6 +584,7 @@ def main() -> None:
                 args.data_root, args.run_id, args.action_id, args.task_id,
                 query=args.query, repo_id=args.repo_id, path=args.path,
                 cursor=args.cursor, page_size=args.page_size,
+                view=args.view, page_token=args.page_token, max_chars=args.max_chars,
             ))
         except Exception as exc:
             print_error(exc)
@@ -489,6 +605,52 @@ def main() -> None:
             print_success(result_read(
                 args.data_root, args.run_id, args.action_id, args.task_id,
                 record_id=args.record_id, cursor=args.cursor, limit=args.limit,
+                view=args.view, page_token=args.page_token, max_chars=args.max_chars,
+                include_history=args.include_history,
+            ))
+        except Exception as exc:
+            print_error(exc)
+            raise SystemExit(1) from exc
+    elif args.command == "comparison-finding-write":
+        try:
+            unit_ids = parse_json_argument(args.unit_ids)
+            finding = parse_json_argument(args.finding)
+            replace_finding_record_ids = (
+                parse_json_argument(args.replace_finding_record_ids)
+                if args.replace_finding_record_ids
+                else None
+            )
+            print_success(comparison_finding_write(
+                args.data_root, args.run_id, args.action_id, args.task_id,
+                expected_revision=args.expected_revision,
+                unit_ids=unit_ids,
+                finding=finding,
+                replace_finding_record_ids=replace_finding_record_ids,
+                request_id=args.request_id,
+            ))
+        except Exception as exc:
+            print_error(exc)
+            raise SystemExit(1) from exc
+    elif args.command == "result-supersede":
+        try:
+            target_record_ids = parse_json_argument(args.target_record_ids)
+            replacement = parse_json_argument(args.replacement)
+            print_success(result_supersede(
+                args.data_root, args.run_id, args.action_id, args.task_id,
+                expected_revision=args.expected_revision,
+                target_record_ids=target_record_ids,
+                replacement=replacement,
+                request_id=args.request_id,
+            ))
+        except Exception as exc:
+            print_error(exc)
+            raise SystemExit(1) from exc
+    elif args.command == "result-repair":
+        try:
+            records = parse_json_argument(args.records)
+            print_success(result_repair(
+                args.data_root, args.run_id, args.action_id, args.task_id,
+                expected_sha256=args.expected_sha256, records=records,
             ))
         except Exception as exc:
             print_error(exc)
@@ -499,6 +661,8 @@ def main() -> None:
                 args.data_root, args.run_id, args.action_id, args.task_id,
                 version_set_id=args.version_set_id, unit_id=args.unit_id,
                 cursor=args.cursor, limit=args.limit,
+                view=args.view, page_token=args.page_token, max_chars=args.max_chars,
+                include_history=args.include_history,
             ))
         except Exception as exc:
             print_error(exc)
@@ -527,9 +691,15 @@ def main() -> None:
     elif args.command == "review-decide":
         try:
             decision = parse_json_argument(args.decision)
+            replace_decision_record_ids = (
+                parse_json_argument(args.replace_decision_record_ids)
+                if args.replace_decision_record_ids
+                else None
+            )
             print_success(review_decide(
                 args.data_root, args.run_id, args.action_id, args.task_id,
                 expected_revision=args.expected_revision, decision=decision,
+                replace_decision_record_ids=replace_decision_record_ids,
                 request_id=args.request_id,
             ))
         except Exception as exc:

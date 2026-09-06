@@ -34,6 +34,19 @@
       "default": null,
       "title": "Workflow Version"
     },
+    "analysis_profile": {
+      "anyOf": [
+        {
+          "const": "behavior-test-v1",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Analysis Profile"
+    },
     "runtime_commit": {
       "anyOf": [
         {

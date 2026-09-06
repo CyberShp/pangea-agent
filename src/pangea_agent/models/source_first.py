@@ -49,14 +49,35 @@ class SourceFileIndex(SourceFirstModel):
     line_count: int = Field(ge=0)
     regions: list[SourceRegion] = Field(default_factory=list)
     parse_complete: bool = True
+    scope_role: Literal["owned", "reference"] = "reference"
+    region_count: int = Field(default=0, ge=0)
+
+
+class SourceRegionSummary(SourceFirstModel):
+    region_id: str = Field(min_length=1)
+    kind: Literal["function", "type", "global", "macro", "branch", "raw"]
+    line_start: int = Field(gt=0)
+    line_end: int = Field(ge=1)
+    symbol: str | None = None
+
+
+class SourceIndexFilePage(SourceFirstModel):
+    repo_id: str = Field(min_length=1)
+    path: str = Field(min_length=1)
+    line_count: int = Field(ge=0)
+    scope_role: Literal["owned", "reference"] = "reference"
+    region_count: int = Field(default=0, ge=0)
+    regions: list[SourceRegionSummary] = Field(default_factory=list)
 
 
 class SourceIndexPage(SourceFirstModel):
     format_version: Literal["pangea-source-index-v1"] = "pangea-source-index-v1"
     binding: SourceBinding
-    files: list[SourceFileIndex] = Field(default_factory=list)
+    files: list[SourceIndexFilePage] = Field(default_factory=list)
     next_cursor: str | None = None
     total_files: int = Field(ge=0)
+    total_regions: int = Field(default=0, ge=0)
+    page_mode: Literal["files", "regions"] = "files"
 
 
 class SourceReadResult(SourceFirstModel):
@@ -77,6 +98,7 @@ class SourceSearchHit(SourceFirstModel):
     line: int = Field(gt=0)
     text: str
     evidence_handle: str = Field(min_length=1)
+    region_ids: list[str] = Field(default_factory=list)
 
 
 class SourceSearchResult(SourceFirstModel):
@@ -128,6 +150,11 @@ NoteKind = Literal[
     "unit_plan",
     "review_decision",
     "completion",
+    "branch",
+    "evidence",
+    "scenario",
+    "review_finding",
+    "blackbox_translation",
 ]
 
 
@@ -139,6 +166,10 @@ class NoteRecord(SourceFirstModel):
     # shape.  The store warns about it, but must not silently replace it.
     evidence: Any = Field(default_factory=list)
     relates_to: Any = Field(default_factory=list)
+    # The Agent may explicitly retire earlier records without erasing audit
+    # history.  Keep unusual input shapes readable; the store records warnings
+    # and only valid references affect the active projection.
+    supersedes: Any = Field(default_factory=list)
     created_revision: int = Field(ge=1)
 
 

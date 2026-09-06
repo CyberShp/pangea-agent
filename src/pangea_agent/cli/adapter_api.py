@@ -36,11 +36,13 @@ from pangea_agent.graph.result_contract import (
     validate_closure_corrections,
     validate_unit_result,
 )
+from pangea_agent.graph.result_store import ResultStoreError
 from pangea_agent.graph.workflow_store import (
     load_progress,
     pending_actions,
     run_directory,
     save_progress,
+    serialized_run_mutation,
     validation_report_path,
     validated_result_path,
 )
@@ -92,7 +94,7 @@ def _repair_action(action: ActionState) -> dict:
     # This is a next-action descriptor, not evidence that the continuation
     # has already been sent to the bound Agent session.
     payload["status"] = "pending"
-    payload["dispatch_required"] = not action.attention_required
+    payload["dispatch_required"] = True
     payload["repair_dispatched"] = False
     return payload
 
@@ -312,10 +314,8 @@ def _invalid_result(
         "action_id": action.action_id,
         "status": "invalid",
         "recoverable": True,
-        **({
-            "next_required_tool": "pangea_action_dispatch",
-            "next_required_action_id": action.action_id,
-        } if not action.attention_required else {}),
+        "next_required_tool": "pangea_action_dispatch",
+        "next_required_action_id": action.action_id,
         "repair_dispatched": False,
         "error": error,
         "validation_failures": action.validation_failures,
@@ -417,10 +417,8 @@ def _incomplete_result(
         "action_id": action.action_id,
         "status": "incomplete",
         "recoverable": True,
-        **({
-            "next_required_tool": "pangea_action_dispatch",
-            "next_required_action_id": action.action_id,
-        } if not action.attention_required else {}),
+        "next_required_tool": "pangea_action_dispatch",
+        "next_required_action_id": action.action_id,
         "repair_dispatched": False,
         "error": error,
         "validation_failures": action.validation_failures,
@@ -481,6 +479,8 @@ def _incomplete_source_first_result(
         "action_id": action.action_id,
         "status": "incomplete",
         "recoverable": True,
+        "next_required_tool": "pangea_action_dispatch",
+        "next_required_action_id": action.action_id,
         "repair_dispatched": False,
         "error": repair_action["validation_error"],
         "validation_failures": action.validation_failures,
@@ -579,6 +579,95 @@ def next_actions(data_root: str, run_id: str, limit: int = 8) -> dict:
     }
 
 
+@serialized_run_mutation
+def defer_action(
+    data_root: str,
+    run_id: str,
+    action_id: str,
+    task_id: str,
+    *,
+    reason_code: str,
+    reason: str,
+    no_progress: bool = False,
+    finalization_base_record_count: int | None = None,
+) -> dict:
+    """Keep an unfinished host turn attached to its original worker."""
+    state = _state(data_root, run_id)
+    progress = load_progress(state)
+    if progress is None or action_id not in progress.actions:
+        raise ValueError(f"Action 不存在：{action_id}")
+    action = progress.actions[action_id]
+    if progress.workflow_version != "source-first-v1" or progress.lifecycle_status != "running":
+        raise ValueError("只有运行中的 source-first Run 可以保存宿主续接")
+    if action.status != "dispatched" or not task_id or action.task_id != task_id:
+        raise ValueError("宿主续接必须匹配当前 dispatched action 的原 task_id")
+    if reason_code not in {"worker_error", "result_incomplete", "finalization_incomplete"}:
+        raise ValueError("未知的宿主续接原因")
+    if not reason.strip():
+        raise ValueError("宿主续接必须提供具体原因")
+    if finalization_base_record_count is not None and finalization_base_record_count < 0:
+        raise ValueError("finalization_base_record_count 必须是非负整数")
+    error = {
+        "code": "HostWorkerIncomplete",
+        "origin": "opencode_host",
+        "reason_code": reason_code,
+        "message": reason,
+    }
+    if finalization_base_record_count is not None:
+        error["finalization_base_record_count"] = finalization_base_record_count
+    action.action = "continue_agent"
+    action.status = "pending"
+    action.error = reason
+    action.repair_status = "required"
+    action.pending_repair = RepairRequest(
+        attempt=_repair_attempts(action) + 1,
+        kind="incomplete_result",
+        error=error,
+    )
+    action.consecutive_no_progress_failures = (
+        action.consecutive_no_progress_failures + 1 if no_progress else 0
+    )
+    action.attention_required = no_progress
+    save_progress(state, progress)
+    return {
+        "action_id": action_id,
+        "status": "incomplete",
+        "recoverable": True,
+        "attention_required": action.attention_required,
+        "error": error,
+        "repair_action": _repair_action(action),
+    }
+
+
+@serialized_run_mutation
+def retry_attention_action(data_root: str, run_id: str, action_id: str) -> dict:
+    """Requeue one exact interrupted/attention action without changing identity."""
+
+    state = _state(data_root, run_id)
+    progress = load_progress(state)
+    if progress is None or action_id not in progress.actions:
+        raise ValueError(f"Action 不存在：{action_id}")
+    if progress.lifecycle_status != "running":
+        raise ValueError("Run 当前不接受 action 续接")
+    action = progress.actions[action_id]
+    if action.action != "continue_agent" or not action.task_id:
+        raise ValueError("只能续接已绑定原 Agent 的 continue_agent action")
+    if action.status not in {"pending", "dispatched"}:
+        raise ValueError(f"Action 当前不能续接：status={action.status}")
+    if not action.attention_required and action.status != "dispatched":
+        raise ValueError("Action 未处于 attention/interrupted 状态，无需人工续接")
+    action.status = "pending"
+    action.attention_required = False
+    action.consecutive_no_progress_failures = 0
+    save_progress(state, progress)
+    payload = _repair_action(action)
+    payload["validation_error"] = (
+        action.pending_repair.error if action.pending_repair is not None else None
+    )
+    return payload
+
+
+@serialized_run_mutation
 def bind_action(data_root: str, run_id: str, action_id: str, task_id: str) -> dict:
     if not task_id:
         raise ValueError("task_id 不能为空")
@@ -659,6 +748,8 @@ def _validate_action(data_root: str, run_id: str, action_id: str) -> dict:
                 action_id,
                 action.task_id,
             )
+        except ResultStoreError as exc:
+            return _invalid_result(state, progress, action, exc)
         except (OSError, ValueError) as exc:
             return _workflow_input_error(state, progress, action, exc)
         if source_first["status"] == "incomplete":
@@ -897,6 +988,7 @@ def validate_action(data_root: str, run_id: str, action_id: str) -> dict:
     }
 
 
+@serialized_run_mutation
 def settle_action(data_root: str, run_id: str, action_id: str) -> dict:
     state = _state(data_root, run_id)
     progress = load_progress(state)
@@ -933,16 +1025,13 @@ def settle_action(data_root: str, run_id: str, action_id: str) -> dict:
             "repair_dispatched": False,
             "attention_required": bool(validation.get("attention_required")),
         }
-        if validation.get("attention_required"):
-            payload["agent_actions"] = []
-        else:
-            payload["next_required_tool"] = "pangea_action_dispatch"
-            payload["next_required_action_id"] = action_id
-            payload["agent_actions"] = (
-                [validation["repair_action"]]
-                if validation.get("repair_action")
-                else []
-            )
+        payload["next_required_tool"] = "pangea_action_dispatch"
+        payload["next_required_action_id"] = action_id
+        payload["agent_actions"] = (
+            [validation["repair_action"]]
+            if validation.get("repair_action")
+            else []
+        )
         return payload
 
     progress = load_progress(state)

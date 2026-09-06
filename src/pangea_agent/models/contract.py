@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class TaskContract(BaseModel):
@@ -13,6 +13,7 @@ class TaskContract(BaseModel):
     # New runs are explicitly versioned by the caller.  ``None`` is retained
     # for old frozen contracts, which remain read-only compatible.
     workflow_version: Literal["legacy-v1", "source-first-v1"] | None = None
+    analysis_profile: Literal["behavior-test-v1"] | None = None
     runtime_commit: str | None = None
     model_id: str | None = None
     effective_context_budget: int | None = Field(default=None, gt=0)
@@ -32,6 +33,16 @@ class TaskContract(BaseModel):
     asset_ids: list[str] = Field(default_factory=list)
     test_case_examples: list[str] = Field(default_factory=list)
     mr_url: str | None = None
+
+    @field_validator("focus", "asset_ids", "test_case_examples", mode="before")
+    @classmethod
+    def discard_blank_optional_items(cls, value):
+        """Treat blank optional list entries as an omitted selection."""
+
+        if not isinstance(value, list):
+            return value
+        return [item.strip() if isinstance(item, str) else item for item in value
+                if not isinstance(item, str) or item.strip()]
 
     @model_validator(mode="after")
     def validate_mode(self) -> "TaskContract":

@@ -11,6 +11,16 @@ pangea-data/repositories/<repo_id> 做目录、文件名或符号搜索来确定
 源码只能通过当前 task 的 pangea_source_index、pangea_source_read、
 pangea_source_search 读取。不得手写 contract、读取历史 Run 来推测范围，或把
 旧 Skill/富 JSON 当新 Run 输入。
+target 必须保留用户的完整分析目标、关键约束和交付要求，不得缩写成文件路径；
+文件路径只放 source_scope。用户给出 run_id 时原样传入。
+不得在 target 中自行补写尚未核实的 API、状态码、宏或清理动作；具体名称由 worker
+读取冻结源码后确定。
+用户只说“公共入口”或“失败后再次操作”时，target 仍保留这种业务表述，不得改写为猜测的
+函数名、状态字段或回调顺序。`source_scope` 只接受仓库内相对路径，例如
+`lib/nvme/nvme_auth.c`；不得添加 `repositories/<repo>/` 前缀、`@commit` 后缀，也不得把
+repository 或 commit 信息拼进路径。
+新任务冻结 `behavior-test-v1` 时，业务行为用例是本期交付主体，不要求先建立 Risk；旧 Run
+缺少该标记时继续按原冻结合同和方法执行。
 
 已有 Run 只能使用用户明确给出的 run_id 和 data_root 调用
 pangea_run_resume。返回的 workflow_version 必须是 source-first-v1；缺少
@@ -39,12 +49,13 @@ DSH subagent，并在同一次调用中用 Graph 的 data_root、run_id、action
 
 ## Worker 工具边界
 
-每个 worker 先用受控 read 打开 action 的 task JSON，再按 task 中的绑定调用
-source-first 工具：
+每个 worker 先用 pangea_task_open 打开宿主已绑定的 task，再调用 source-first 工具：
 
+- pangea_input_read：只读取 task 明确列出的冻结资料和方法论；
 - pangea_source_index/read/search：只读 Graph 冻结源码与允许 region；
 - pangea_plan_write：Planning 增量写 unit plan；
-- pangea_result_read/write：按当前 revision 读取/追加原文 notes；
+- pangea_result_read/write/repair：按当前 revision 读取/追加原文 notes；只有结果外壳
+  不可读且 sha256 未变化时，同一 worker 才能重发自己的 records 修复；
 - pangea_comparison_read：Comparison 只用 Graph 提供的 opaque
   version_set_id 读取冻结的首轮 analysis 与盲审版本；
 - pangea_work_finish：以当前 revision 声明本回合完成；
@@ -60,8 +71,16 @@ Graph 先派发一个盲审 Reviewer（independent_review），接受后用同�
 task 续接 comparison_review，Comparison 才能读取 Graph 锁定的版本集合。仅由
 Comparison 的 finding 决定一次 targeted closure，closure 续接对应首轮 worker；
 不新增终审层。Reviewer 结论不足时保持 UNRESOLVED。
+盲审先独立确认重要业务行为；Comparison 再检查必要用例遗漏、错误预期、不可执行触发/
+观测、清理恢复和 Coverage 对应，不以先证明产品缺陷为前提。
 
 正式交付须同时有 lifecycle_status=complete、report.md、report.html 和
 report-complete.json。Desktop reader 同时展示当前 stage、action/revision、
 quality/needs_user 和 Agent 原文 records；空语义投影显示“待解析/原文记录”，
-不显示成零。
+不显示成零。`lifecycle_status=complete` 只表示流程已收尾；`quality_status=UNRESOLVED`
+必须明确说明本次质量未通过、仍有待确认项，只有 `quality_status=PASS` 才能说质量通过。
+终态为 UNRESOLVED 时只报告未通过、正式产物路径和 Graph 已提供的具体原因；不要追加“是否
+新开 Run、继续修或由用户决定”的泛化反问。只有 Graph 因真实权限、额度、冻结输入或宿主
+身份问题要求选择时才向用户提问。
+最终摘要中的函数、状态码、业务选项和清理入口必须复用当前 task 或正式报告的原名，
+不得为了说得顺口改名或补写源码中不存在的动作。

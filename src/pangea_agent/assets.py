@@ -149,13 +149,24 @@ def list_assets(
 def asset_detail(data_root: str, asset_id: str) -> dict:
     record = load_asset(data_root, asset_id)
     result = None
-    if record.result_path and Path(record.result_path).is_file():
-        result = read_json(Path(record.result_path))
+    result_path = _asset_result_path(data_root, record)
+    if result_path and result_path.is_file():
+        result = read_json(result_path)
     return {"asset": record.model_dump(mode="json"), "result": result}
 
 
+def _asset_result_path(data_root: str, record: AssetRecord) -> Path | None:
+    """Resolve an asset result independently of the worktree that created it."""
+    if not record.result_path:
+        return None
+    recorded = Path(record.result_path)
+    return _asset_dir(data_root, record.asset_id) / recorded.name
+
+
 def analysis_asset_inputs(data_root: str, asset_ids: list[str] | None = None) -> dict:
-    selected = set(asset_ids or [])
+    # ``None`` is the catalog-management view (all available assets).  A Run
+    # contract always supplies a list, where an empty list means no assets.
+    selected = None if asset_ids is None else set(asset_ids)
     page = list_assets(data_root, limit=200)
     records = page["items"]
     if page["next_cursor"] is not None:
@@ -170,11 +181,14 @@ def analysis_asset_inputs(data_root: str, asset_ids: list[str] | None = None) ->
     coverage_records: list[dict] = []
     for raw_record in records:
         record = AssetRecord.model_validate(raw_record)
-        if selected and record.asset_id not in selected:
+        if selected is not None and record.asset_id not in selected:
             continue
         if record.status != "available" or not record.result_path:
             continue
-        result = read_json(Path(record.result_path))
+        result_path = _asset_result_path(data_root, record)
+        if result_path is None or not result_path.is_file():
+            continue
+        result = read_json(result_path)
         if record.asset_type == "coverage":
             for number, coverage in enumerate(result.get("records", []), 1):
                 coverage_records.append({

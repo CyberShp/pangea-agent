@@ -8,6 +8,7 @@ from pathlib import Path
 
 from pangea_agent.agent_io import write_json
 from pangea_agent.graph.graph import graph
+from pangea_agent.graph.workflow_store import load_progress
 
 
 def _default_run_id(contract: dict) -> str:
@@ -44,6 +45,12 @@ def run_module_analysis(contract_path: str) -> dict:
     # without making the new client remember an internal version knob.
     if not contract.get("workflow_version") and not (run_root / "progress.json").is_file():
         contract["workflow_version"] = "source-first-v1"
+    if (
+        contract.get("workflow_version") == "source-first-v1"
+        and not (run_root / "progress.json").is_file()
+        and "analysis_profile" not in contract
+    ):
+        contract["analysis_profile"] = "behavior-test-v1"
     if allocated_run or contract.get("workflow_version") == "source-first-v1":
         write_json(path, contract)
     state = {
@@ -52,7 +59,26 @@ def run_module_analysis(contract_path: str) -> dict:
         "task_contract": contract,
     }
     try:
-        return graph.invoke(state)
+        result = graph.invoke(state)
+        if contract.get("workflow_version") != "source-first-v1":
+            return result
+        progress = load_progress(state)
+        response = {
+            "run_id": run_id,
+            "data_root": str(Path(state["data_root"]).resolve()),
+            "workflow_version": "source-first-v1",
+            "lifecycle_status": result.get("lifecycle_status", progress.lifecycle_status if progress else "running"),
+            "stage": result.get("stage", progress.stage if progress else "preparing"),
+            "quality_status": result.get("quality_status", progress.quality_status if progress else None),
+            "needs_user": bool(progress.needs_user) if progress else False,
+            "blocking_reason": progress.blocking_reason if progress else None,
+            "agent_actions": result.get("agent_actions", []),
+            "first_finish_revisions": progress.first_finish_revisions if progress else {},
+            "accepted_revisions": progress.accepted_revisions if progress else {},
+            "report_path": progress.report_path if progress else None,
+            "html_report_path": progress.html_report_path if progress else None,
+        }
+        return response
     except Exception:
         run_dir = Path(state["data_root"]) / "runs" / run_id
         if allocated_run and not (run_dir / "progress.json").is_file():

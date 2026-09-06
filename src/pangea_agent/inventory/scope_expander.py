@@ -27,7 +27,13 @@ _INLINE_DEF_RE = re.compile(
     re.MULTILINE,
 )
 _DECL_RE = re.compile(r"^[ \t]*(?:extern[ \t]+)?(?:[A-Za-z_]\w*[ \t*]+)+([A-Za-z_]\w*)[ \t]*\([^;{}]*\)[ \t]*;", re.MULTILINE)
-_DEF_RE = re.compile(r"^[ \t]*(?!if\b|for\b|while\b|switch\b)(?:[A-Za-z_]\w*[ \t*]+)+([A-Za-z_]\w*)[ \t]*\([^;{}]*\)[ \t\n]*\{", re.MULTILINE)
+_DEF_RE = re.compile(
+    r"^[ \t]*(?!static\b)(?:inline[ \t]+)?"
+    r"(?:[A-Za-z_]\w*(?:[ \t*]+[A-Za-z_]\w*)*[ \t*]*)"
+    r"(?:\n[ \t]*|[ \t]+)"
+    r"([A-Za-z_]\w*)[ \t]*\([^;{}]*\)[ \t\n]*\{",
+    re.MULTILINE,
+)
 
 
 def expand_analysis_scope(repositories: list[dict], requested_scopes: list[str], *, target: str, focus: list[str]) -> dict:
@@ -67,6 +73,16 @@ def expand_analysis_scope(repositories: list[dict], requested_scopes: list[str],
                     added_files.append({"repo_id": repo_id, "path": relative, "reason": f"declared_definition:{','.join(symbols[:5])}"})
             paths.update(companions)
             paths.update(definitions)
+            direct_callees = _called_source_definitions(
+                (root / relative for relative in paths),
+                code_paths,
+            )
+            for relative, symbols in sorted(direct_callees.items()):
+                context_files.append({
+                    "repo_id": repo_id,
+                    "path": relative,
+                    "reason": f"direct_callee_definition:{','.join(sorted(symbols)[:5])}",
+                })
             inline_headers = _called_inline_headers(
                 (root / relative for relative in paths),
                 code_paths,
@@ -95,7 +111,9 @@ def expand_analysis_scope(repositories: list[dict], requested_scopes: list[str],
                 "repo_id": repo_id,
                 "requested_scope": list(scopes),
                 "code_paths": sorted(paths),
-                "context_paths": sorted(set(pointer_implementations) | set(inline_headers)),
+                "context_paths": sorted(
+                    set(direct_callees) | set(pointer_implementations) | set(inline_headers)
+                ),
             })
 
         repo_groups = _merge_overlapping_groups(repo_groups)
@@ -150,7 +168,7 @@ def expand_analysis_scope(repositories: list[dict], requested_scopes: list[str],
         "context_files": _unique_records(context_files),
         "added_files": _unique_records(added_files),
         "caller_context_truncations": caller_context_truncations,
-        "boundary": "source_scope = explicit scope + declared implementations; context_scope = inline/function-pointer dependencies + bounded transitive callers + target-related config/docs/tests; caller budgets are resource guards, not semantic completion",
+        "boundary": "source_scope = explicit scope + declared implementations; context_scope = unique direct callee definitions + inline/function-pointer dependencies + bounded transitive callers + target-related config/docs/tests; caller budgets are resource guards, not semantic completion",
     }
 
 
@@ -306,6 +324,29 @@ def _definition_symbols_by_path(wanted: set[str], code_paths: dict[Path, str]) -
         if matched:
             definitions[relative] = matched
     return definitions
+
+
+def _called_source_definitions(paths, code_paths: dict[Path, str]) -> dict[str, set[str]]:
+    """Resolve unique repository-local definitions for direct function calls."""
+
+    source_paths = [path for path in paths if path.is_file()]
+    called: set[str] = set()
+    current = {code_paths[path] for path in source_paths if path in code_paths}
+    for path in source_paths:
+        called.update(_CALL_RE.findall(path.read_text(encoding="utf-8", errors="replace")))
+    definitions = _definition_symbols_by_path(called - COMMON_FUNCTIONS, code_paths)
+    owners: dict[str, set[str]] = {}
+    for relative, symbols in definitions.items():
+        for symbol in symbols:
+            owners.setdefault(symbol, set()).add(relative)
+    resolved: dict[str, set[str]] = {}
+    for symbol, relatives in owners.items():
+        if len(relatives) != 1:
+            continue
+        relative = next(iter(relatives))
+        if relative not in current:
+            resolved.setdefault(relative, set()).add(symbol)
+    return resolved
 
 
 def _struct_bodies(text: str):
