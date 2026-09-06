@@ -19,6 +19,32 @@ def load_guard():
 
 
 class StagePublicationTests(unittest.TestCase):
+    def test_completed_run_validation_allows_step_09_formal_outputs(self) -> None:
+        guard = load_guard()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "run-final"
+            for name in ("活文档", "内部索引", "正式输出"):
+                (root / name).mkdir(parents=True, exist_ok=True)
+            for name in ("运行状态.json", "运行计划.json", "输入材料索引.json"):
+                (root / "内部索引" / name).write_text("{}", encoding="utf-8")
+            (root / "正式输出" / "完整分析报告.md").write_text("final", encoding="utf-8")
+            manifest = {
+                "steps": [
+                    {"id": "01", "required": []},
+                    {"id": "09", "required": []},
+                ],
+            }
+
+            incomplete_errors = guard.validate_completed_steps(
+                root, {"completed_steps": ["01"]}, manifest,
+            )
+            final_errors = guard.validate_completed_steps(
+                root, {"completed_steps": ["01", "09"]}, manifest,
+            )
+
+            self.assertTrue(any("必须保持为空" in error for error in incomplete_errors))
+            self.assertFalse(any("必须保持为空" in error for error in final_errors))
+
     def test_step_timing_records_duration_and_artifact_delta(self) -> None:
         guard = load_guard()
         skill_root = Path(__file__).parents[1] / "src/pangea_agent/skill_packages/codetalks-skill"

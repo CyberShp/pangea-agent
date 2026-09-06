@@ -424,8 +424,9 @@ def validate_layout(root: Path, *, final_phase: bool = False) -> list[str]:
 
     return errors
 
-def validate_step(root: Path, step: dict, manifest: dict) -> list[str]:
-    final_phase = step["id"] == "09"
+def validate_step(root: Path, step: dict, manifest: dict, *, final_phase: bool | None = None) -> list[str]:
+    if final_phase is None:
+        final_phase = step["id"] == "09"
     errors = validate_layout(root, final_phase=final_phase)
     minimum = int(step.get("markdown_min_chars", 300))
 
@@ -468,6 +469,20 @@ def validate_step(root: Path, step: dict, manifest: dict) -> list[str]:
             except Exception as exc:
                 errors.append(f"独立审查状态无法解析：{exc}")
 
+    return errors
+
+
+def validate_completed_steps(root: Path, state: dict, manifest: dict) -> list[str]:
+    completed_steps = state.get("completed_steps", [])
+    final_phase = "09" in completed_steps
+    errors = []
+    for step_id in completed_steps:
+        errors.extend(validate_step(
+            root,
+            find_step(manifest, step_id),
+            manifest,
+            final_phase=final_phase,
+        ))
     return errors
 
 def require_core_rules(state: dict, manifest: dict) -> None:
@@ -754,9 +769,7 @@ def command_validate(args) -> None:
     state = ensure_state(root)
     manifest = load_manifest(state)
     require_core_rules(state, manifest)
-    errors = []
-    for step_id in state.get("completed_steps", []):
-        errors.extend(validate_step(root, find_step(manifest, step_id), manifest))
+    errors = validate_completed_steps(root, state, manifest)
     save_validation(state, errors, command="validate")
     save_json(state_path(root), state)
     print(json.dumps({
@@ -853,12 +866,10 @@ def command_finalize(args) -> None:
     root = resolve_run_root(args.workspace)
     state = ensure_state(root)
     manifest = load_manifest(state)
-    errors = []
+    errors = validate_completed_steps(root, state, manifest)
     for step in manifest["steps"]:
         if step["id"] not in state.get("completed_steps", []):
             errors.append(f"未完成步骤：{step['id']}")
-        else:
-            errors.extend(validate_step(root, step, manifest))
     if state.get("judge", {}).get("required") and state.get("judge", {}).get("status") != "complete":
         errors.append("深度型模块全量分析未完成独立审查")
 
