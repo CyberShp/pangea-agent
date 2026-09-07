@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 import tempfile
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -61,6 +62,29 @@ def _digest_manifest(files: list[dict[str, object]]) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def _publish_snapshot(temporary: Path, target: Path) -> None:
+    source_path = _filesystem_path(temporary)
+    target_path = _filesystem_path(target)
+    delays = (0.05, 0.1, 0.2, 0.4, 0.8)
+    for attempt in range(len(delays) + 1):
+        if os.path.lexists(target_path):
+            raise FileExistsError(f"源码快照目录已存在：{target}")
+        try:
+            # Windows rename refuses an existing destination, including one
+            # created after the check. Never replace another snapshot.
+            os.rename(source_path, target_path)
+            return
+        except OSError as exc:
+            if (
+                os.name != "nt"
+                or getattr(exc, "winerror", None) not in (5, 32, 33)
+                or attempt == len(delays)
+            ):
+                raise
+            # Retry only publication; keep the completed copy and manifest.
+            time.sleep(delays[attempt])
+
+
 def create_source_snapshot(
     repository_root: str | Path,
     scope: list[dict[str, str]],
@@ -79,12 +103,13 @@ def create_source_snapshot(
     if not files:
         raise ValueError("source_scope 没有可冻结的普通源码文件")
     os.makedirs(_filesystem_path(target.parent), exist_ok=True)
-    if os.path.exists(_filesystem_path(target)):
+    if os.path.lexists(_filesystem_path(target)):
         raise ValueError(f"源码快照目录已存在：{target}")
     temporary = Path(tempfile.mkdtemp(
         prefix=f".{target.name}-",
         dir=_filesystem_path(target.parent),
     ))
+    stage = "copy_source"
     try:
         repository = temporary / "repository"
         manifest_files: list[dict[str, object]] = []
@@ -118,15 +143,18 @@ def create_source_snapshot(
             "file_count": len(manifest_files),
             "snapshot_digest": f"sha256:{_digest_manifest(manifest_files)}",
         }
+        stage = "write_manifest"
         with open(_filesystem_path(temporary / "manifest.json"), "w", encoding="utf-8") as stream:
             stream.write(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
-        os.replace(_filesystem_path(temporary), _filesystem_path(target))
+        stage = "publish_snapshot"
+        _publish_snapshot(temporary, target)
         return manifest
     except Exception as exc:
         shutil.rmtree(_filesystem_path(temporary), ignore_errors=True)
         if isinstance(exc, OSError):
             raise OSError(
                 "源码快照创建失败："
+                f"stage={stage}, winerror={getattr(exc, 'winerror', None)}, "
                 f"source={root}, destination={target}, "
                 f"destination_length={len(str(target))}: {exc}"
             ) from exc
