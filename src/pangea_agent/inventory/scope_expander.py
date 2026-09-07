@@ -70,9 +70,12 @@ def expand_analysis_scope(repositories: list[dict], requested_scopes: list[str],
                     added_files.append({"repo_id": repo_id, "path": relative, "reason": "companion_source"})
             for relative, symbols in sorted(definitions.items()):
                 if relative not in explicit_paths:
-                    added_files.append({"repo_id": repo_id, "path": relative, "reason": f"declared_definition:{','.join(symbols[:5])}"})
+                    context_files.append({
+                        "repo_id": repo_id,
+                        "path": relative,
+                        "reason": f"declared_definition:{','.join(symbols[:5])}",
+                    })
             paths.update(companions)
-            paths.update(definitions)
             direct_callees = _called_source_definitions(
                 (root / relative for relative in paths),
                 code_paths,
@@ -112,7 +115,7 @@ def expand_analysis_scope(repositories: list[dict], requested_scopes: list[str],
                 "requested_scope": list(scopes),
                 "code_paths": sorted(paths),
                 "context_paths": sorted(
-                    set(direct_callees) | set(pointer_implementations) | set(inline_headers)
+                    set(definitions) | set(direct_callees) | set(pointer_implementations) | set(inline_headers)
                 ),
             })
 
@@ -168,7 +171,7 @@ def expand_analysis_scope(repositories: list[dict], requested_scopes: list[str],
         "context_files": _unique_records(context_files),
         "added_files": _unique_records(added_files),
         "caller_context_truncations": caller_context_truncations,
-        "boundary": "source_scope = explicit scope + declared implementations; context_scope = unique direct callee definitions + inline/function-pointer dependencies + bounded transitive callers + target-related config/docs/tests; caller budgets are resource guards, not semantic completion",
+        "boundary": "source_scope = explicit scope + same-stem companion sources; context_scope = declared implementations + unique direct callee definitions + inline/function-pointer dependencies + bounded transitive callers + target-related config/docs/tests; caller budgets are resource guards, not semantic completion",
     }
 
 

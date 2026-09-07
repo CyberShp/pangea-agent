@@ -74,6 +74,8 @@ BOUNDARY_LABELS = {
         "源码范围 = 用户指定范围 + 声明的直接实现；上下文范围 = 函数指针的直接实现 + 直接调用者 + 相关配置、文档和测试",
     "source_scope = explicit scope + declared implementations; context_scope = called inline headers + direct function-pointer implementations + callers + target-related config/docs/tests":
         "源码范围 = 用户指定范围 + 声明的直接实现；上下文范围 = 当前源码实际调用的内联头文件 + 函数指针的直接实现 + 直接调用者 + 相关配置、文档和测试",
+    "source_scope = explicit scope + same-stem companion sources; context_scope = declared implementations + unique direct callee definitions + inline/function-pointer dependencies + bounded transitive callers + target-related config/docs/tests; caller budgets are resource guards, not semantic completion":
+        "源码范围 = 用户指定范围 + 同名配套源码；上下文范围 = 头文件声明的实现 + 唯一直接被调实现 + 内联或函数指针依赖 + 有界调用者 + 相关配置、文档和测试；上下文只供理解，不自动生成独立用例",
     "source_scope = explicit Lua scope; context_scope = directly required repository-local Lua modules":
         "源码范围 = 用户指定的 Lua 模块；上下文范围 = 仓库内直接 require 的 Lua 模块",
 }
@@ -273,6 +275,8 @@ def _reason_text(reason: Any) -> str:
         return f"函数指针直接实现 {raw.split(':', 1)[1]}"
     if raw.startswith("direct_inline_dependency:"):
         return f"当前源码调用的内联实现 {raw.split(':', 1)[1]}"
+    if raw.startswith("declared_definition:"):
+        return f"头文件声明的实现（仅作上下文）{raw.split(':', 1)[1]}"
     if raw.startswith("direct_require:"):
         return f"Lua 直接 require {raw.split(':', 1)[1]}"
     return REASON_LABELS.get(raw, raw)

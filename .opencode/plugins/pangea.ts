@@ -15,6 +15,10 @@ const ordinaryRecordKinds = new Set([
   "unresolved", "branch", "evidence", "scenario", "review_finding",
   "blackbox_translation",
 ])
+const semanticBody = tool.schema.union([
+  tool.schema.string().min(1),
+  tool.schema.record(tool.schema.string(), tool.schema.any()),
+])
 
 function ordinaryRecordKind(kind: string | undefined): string {
   return kind && ordinaryRecordKinds.has(kind) ? kind : "note"
@@ -146,6 +150,7 @@ const PangeaPlugin: Plugin = async ({ client, worktree }) => {
     glob: false,
     grep: false,
     task: false,
+    skill: stage === "unit_analysis",
     webfetch: false,
     websearch: false,
   })
@@ -288,11 +293,11 @@ const PangeaPlugin: Plugin = async ({ client, worktree }) => {
             ? "\nPlanning 只做紧凑归属：purpose 概括主责行为、用户点名生命周期和必要 context 类别，不展开状态机步骤、helper 清单、分支表或预期错误码；context 不产生额外用例义务。确认 owned regions、公开/自动入口、transport/adapter、feature-off 与测试路径后立即写 plan。"
             : ""
           const analysisInstruction = action.stage === "unit_analysis" && behaviorTestProfile
-            ? "\n250K 任务给同一 worker 可能的 closure 预留约 70000 token，首轮输入历史目标约 145000。优先主干、错误传播、再次操作和清理，同结果枚举用紧凑参数表。再次操作必须连续追踪第一次 adapter/transport 终态、第二次公开调用命中的底层守卫、新异步状态/资源是否真实创建，以及下一次宿主 poll/callback 的指针和外部后果；公开入口返回 0 不等于新事务已经启动。两次操作之间不得无依据把内部状态改回 ready/running。"
+            ? "\n先调用 product-blackbox-test-case Skill。按冻结 behavior_test_generation rubric 逐个完整行为生成 behavior-flow-v1 和 behavior-test-case-v1；测试目的使用 branch、coverage 或 risk，测试层级单独声明。先交付正常主干，再交付业务分支、异常传播、并发、重试与恢复。内部状态核对留在证据中，正式用例只写产品入口、测试人员动作和外部结果；资料不能证明产品入口时记录具体缺口。首轮输入历史目标约 145000 token，并给同一 worker 的定向修正预留约 70000 token。"
             : ""
           const comparisonInstruction = action.stage === "comparison_review"
             ? behaviorTestProfile
-              ? "\nComparison 对照重要业务行为、测试入口、步骤与预期、外部观测、清理恢复和真实 Coverage 对应。必要用例遗漏、源码可回答却仍悬置、互斥终态或不可执行步骤都可以成为 finding，不要求先证明产品缺陷。优先检查首轮 unresolved、‘可能/待确认’、跨次状态与次数。跨次链必须核对第一次 adapter/transport 终态、第二次公开调用的底层守卫、新异步资源是否真实建立及下一次宿主 poll/callback 的指针；公开入口返回 0 不等于新事务已经启动。两次操作之间无依据把内部状态改回 ready/running 属于不可执行前置条件。不得仅因 Planning 罗列 helper/context 就要求逐函数独立用例；context 不扩大 owned source，同结果分支可参数化合并。finding 通过 pangea_comparison_finding 绑定 Graph 的精确 unit_id。pangea_review_decide.correction_record_ids 必须填写 pangea_comparison_finding 返回的 finding record_id，绝不能填写被指出错误的 Analysis/test_case record_id。不要用 pangea_input_read 猜 version_set_id，comparison 工具由宿主绑定版本。"
+              ? "\nComparison 按冻结 rubric 对照模块流程、三个测试目的、产品入口、操作与预期、外部观测、清理恢复和真实 Coverage。必要流程或用例遗漏、源码可回答却仍悬置、互斥终态、不可执行步骤及内部分析冒充产品用例均可形成精确 finding。finding 通过 pangea_comparison_finding 绑定 Graph 的 unit_id；pangea_review_decide.correction_record_ids 只填写该工具返回的 finding record_id。不要猜 version_set_id，comparison 工具由宿主绑定版本。"
               : "\nComparison 还必须逐条确认：只有当前可达且能证明具体错误外部结果的差异才是 finding；仅缺 callee/包装/清理函数体只是 unresolved，不得触发 closure。对齐 test_case 与 flow 的状态和协议消息顺序。finding 通过 pangea_comparison_finding 绑定 Graph 的精确 unit_id。"
             : ""
           const closureInstruction = action.stage === "targeted_closure"
@@ -532,10 +537,10 @@ const PangeaPlugin: Plugin = async ({ client, worktree }) => {
       }),
 
       pangea_result_write: tool({
-        description: "Append one plain-text semantic record to the bound result. Supported kind values include summary, flow, risk, test_case, test_case_group, note, unresolved, branch, evidence, scenario, review_finding, and blackbox_translation; omitted or unsupported values are stored as note without changing body. The host serializes writes and supplies the current revision. Use pangea_result_supersede to replace an earlier record; comparison findings use pangea_comparison_finding.",
+        description: "Append one semantic record to the bound result. body may be plain text or a lightweight object such as behavior-test-case-v1 and is preserved verbatim. Supported kind values include summary, flow, risk, test_case, test_case_group, note, unresolved, branch, evidence, scenario, review_finding, and blackbox_translation; omitted or unsupported values are stored as note without changing body. The host serializes writes and supplies the current revision. Use pangea_result_supersede to replace an earlier record; comparison findings use pangea_comparison_finding.",
         args: {
           kind: tool.schema.string().optional(),
-          body: tool.schema.string().min(1),
+          body: semanticBody,
         },
         async execute(args, context) {
           const record = { kind: ordinaryRecordKind(args.kind), body: args.body }
@@ -548,7 +553,7 @@ const PangeaPlugin: Plugin = async ({ client, worktree }) => {
         args: {
           target_record_ids: tool.schema.array(tool.schema.string().regex(/^rec-\d{6}$/)).min(1).max(8),
           kind: tool.schema.string().optional(),
-          body: tool.schema.string().min(1),
+          body: semanticBody,
         },
         async execute(args, context) {
           const extra = [
