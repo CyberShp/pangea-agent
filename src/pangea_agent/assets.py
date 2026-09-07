@@ -346,8 +346,9 @@ def import_asset_revision(
     current_revision_root = _asset_dir(data_root, asset_id) / "revisions" / f"r{record.revision:04d}" / "source"
     current_revision_root.mkdir(parents=True, exist_ok=True)
     current_source = Path(record.source_path)
-    if current_source.is_file():
-        shutil.copy2(current_source, current_revision_root / (record.source_name or current_source.name))
+    archived_source = current_revision_root / (record.source_name or current_source.name)
+    if current_source.is_file() and current_source.resolve() != archived_source.resolve():
+        shutil.copy2(current_source, archived_source)
     current_review = _review_path(data_root, asset_id)
     if current_review.is_file():
         review_archive = _asset_dir(data_root, asset_id) / "revisions" / f"r{record.revision:04d}" / "review.json"
@@ -650,7 +651,13 @@ def prepare_asset_extraction(data_root: str, asset_id: str) -> dict:
         raise ValueError(record.last_error)
 
     if record.asset_type == "coverage":
-        records, warnings = parse_coverage_xlsx(source)
+        try:
+            records, warnings = parse_coverage_xlsx(source)
+        except Exception as exc:
+            record.status = "failed"
+            record.last_error = str(exc)
+            _save_record(data_root, record)
+            raise
         result_path = asset_dir / "coverage.json"
         write_json(result_path, {"records": records, "warnings": warnings})
         normalized_path = asset_dir / "normalized.txt"
@@ -785,13 +792,23 @@ def review_asset_items(
 
 def review_asset(data_root: str, asset_id: str, decision: str) -> AssetRecord:
     record = load_asset(data_root, asset_id)
-    if record.asset_type != "historical_defect" or not record.result_path:
+    if record.asset_type != "historical_defect":
         raise ValueError("当前资产没有可审核的历史缺陷结果")
+    if record.status == "archived":
+        raise ValueError("已归档资产不能审核，请先恢复资产")
+    if decision not in {"approve", "reject"}:
+        raise ValueError("decision 必须是 approve 或 reject")
+    if not record.result_path:
+        normalized = Path(record.normalized_text_path) if record.normalized_text_path else None
+        if not normalized or not normalized.is_file() or not normalized.read_text(encoding="utf-8").strip():
+            raise ValueError("当前资产没有可审核的历史缺陷文本")
+        record.review_status = "approved" if decision == "approve" else "rejected"
+        record.status = "available" if decision == "approve" else "rejected"
+        _save_record(data_root, record)
+        return record
     result_path = Path(record.result_path)
     if not result_path.is_file():
         raise ValueError("当前资产没有可审核的结构化结果")
-    if decision not in {"approve", "reject"}:
-        raise ValueError("decision 必须是 approve 或 reject")
     value = "accepted" if decision == "approve" else "rejected"
     result = read_json(result_path)
     return review_asset_items(

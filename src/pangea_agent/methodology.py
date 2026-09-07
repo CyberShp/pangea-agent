@@ -263,7 +263,7 @@ def prepare_methodology_derivation(
     task_path = task_root / "task.json"
     write_json(task_path, task.model_dump(mode="json"))
     return {
-        "task": task.model_dump(mode="json"),
+        "task": {**task.model_dump(mode="json"), "task_path": str(task_path)},
         "execution": "direct-skill",
     }
 
@@ -609,7 +609,7 @@ def freeze_enabled_methodologies(
         relative_path = Path("user") / f"{record.methodology_id}.md"
         staging_path = staging_root / relative_path
         content = _methodology_markdown(record)
-        staging_path.write_text(content, encoding="utf-8")
+        staging_path.write_bytes(content.encode("utf-8"))
         enabled.append({
             "methodology_id": record.methodology_id,
             "origin": "user",

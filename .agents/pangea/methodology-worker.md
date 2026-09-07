@@ -8,6 +8,7 @@
 
 - `applicable_when` 写成 Planning Agent 能依据当前模块目标、源码符号、调用关系、资源信号或协议语义判断的正向适用条件；
 - `checks` 给出因果链检查顺序，不只复述历史修复；
+- 涉及补丁或条件变化时，先核对变化是否会改变触发输入下的外部结果；历史材料未提供足够证据时保留待核实条件，不把补丁描述本身当成已证明的机理；
 - `expected_signals` 和 `failure_signals` 都是当前源码或测试中可观察的信号；
 - `exceptions` 保留可以排除该机理的条件；
 - `source_item_ids` 只能使用 `source_items_path` 中的完整键；
