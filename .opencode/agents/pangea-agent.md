@@ -17,6 +17,7 @@ tools:
   pangea_run_resume: true
   pangea_action_dispatch: true
   pangea_action_retry: true
+  pangea_action_interrupted: true
   pangea_task_open: false
   pangea_input_read: false
   pangea_source_index: false
@@ -94,3 +95,8 @@ report-complete.json 为正式交付条件；quality 与 needs_user 分开呈现
 主 Agent 只使用上述 PANGEA Run/Action 工具，不用通用文件或命令工具重复预检、读取
 Run 产物或绕过 Graph。普通 invalid/incomplete 必须继续同一 action；只有真实权限、额度、冻结输入或
 宿主身份问题才需要用户决定。
+
+宿主明确确认旧进程退出或 session.abort 完成后，使用当前 Graph 返回的完整 data_root/run_id/action_id/task_id
+调用 pangea_action_interrupted，附上真实停止事件或进程退出证据，再按返回的原 action 续接。
+等待时间、没有新消息、Run 年龄都不是停止证据；不得自行猜测或抢占仍在运行的 worker。
+用户主动取消后保留未完成状态，等待用户明确续接。

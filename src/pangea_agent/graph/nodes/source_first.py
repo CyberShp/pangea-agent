@@ -33,7 +33,7 @@ from pangea_agent.graph.workflow_store import (
 from pangea_agent.inventory.languages import detect_analysis_language
 from pangea_agent.inventory.lua_scope_expander import expand_lua_analysis_scope
 from pangea_agent.inventory.lua_source_scanner import build_lua_inventory
-from pangea_agent.inventory.source_access import resolve_binding
+from pangea_agent.inventory.source_access import resolve_binding, expand_owned_files
 from pangea_agent.inventory.source_regions import build_source_index
 from pangea_agent.inventory.source_scanner import build_lightweight_inventory
 from pangea_agent.methodology import freeze_enabled_methodologies
@@ -377,12 +377,20 @@ def _load_notes_action(state: PangeaState, action: ActionState):
 def _planning_units(state: PangeaState, action: ActionState, task: dict, result) -> list[dict]:
     """Extract explicit unit handles; no Python inference or source splitting."""
 
+    index = read_json(source_first_index_path(state))
     units_by_id: dict[str, dict] = {}
     order: list[str] = []
+    latest_records = {}
     for record in active_records(result):
         if record.kind != "unit_plan" or not isinstance(record.body, dict):
             continue
-        body = record.body
+        relations = record.relates_to if isinstance(record.relates_to, list) else []
+        unit_id = str(record.body.get("unit_id") or (relations[0] if relations else record.record_id))
+        latest_records[unit_id] = record
+    for record in latest_records.values():
+        body, selection_issues = expand_owned_files(record.body, index, task.get("owned_scope_paths", []))
+        if selection_issues:
+            return []
         relations = record.relates_to if isinstance(record.relates_to, list) else []
         unit_id = str(body.get("unit_id") or (relations[0] if relations else record.record_id))
         owned = body.get("owned_regions", [])

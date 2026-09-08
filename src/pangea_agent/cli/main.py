@@ -260,7 +260,7 @@ def main() -> None:
     source_read_cmd.add_argument("--line-end", type=int)
     source_read_cmd.add_argument("--cursor")
     source_read_cmd.add_argument("--max-lines", type=int, default=400)
-    source_read_cmd.add_argument("--view", choices=["legacy", "compact"], default="legacy")
+    source_read_cmd.add_argument("--view", choices=["legacy", "compact", "text"], default="legacy")
     source_read_cmd.add_argument("--page-token")
     source_read_cmd.add_argument("--max-chars", type=int, default=12000)
 

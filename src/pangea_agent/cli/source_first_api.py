@@ -28,6 +28,8 @@ from pangea_agent.graph.result_store import (
 from pangea_agent.inventory.source_access import (
     input_read as read_input,
     resolve_binding,
+    expand_owned_files,
+    planning_regions,
     source_index as read_source_index,
     source_read as read_source,
     source_search as search_source,
@@ -93,37 +95,17 @@ def _region_id(value: Any) -> str | None:
 
 def _plan_diagnostics(run_dir: Path, task: dict[str, Any], result) -> dict[str, Any]:
     index = read_json(run_dir / "inputs" / "source-index.json")
-    files = index.get("files", []) if isinstance(index, dict) else []
-    all_regions = {
-        str(region["region_id"]): region
-        for file in files
-        if isinstance(file, dict)
-        for region in file.get("regions", [])
-        if isinstance(region, dict) and region.get("region_id")
-    }
-    owned_paths = {
-        (str(item.get("repo_id")), str(item.get("path")).replace("\\", "/"))
-        for item in task.get("owned_scope_paths", [])
-        if isinstance(item, dict) and item.get("repo_id") and item.get("path")
-    }
-    required = {
-        region_id
-        for region_id, region in all_regions.items()
-        if (str(region.get("repo_id")), str(region.get("path")).replace("\\", "/")) in owned_paths
-        and region.get("kind") in {"function", "global"}
-    }
-    if not required:
-        required = {
-            region_id
-            for region_id, region in all_regions.items()
-            if (str(region.get("repo_id")), str(region.get("path")).replace("\\", "/")) in owned_paths
-            and region.get("kind") != "branch"
-        }
+    all_regions, required = planning_regions(index, task.get("owned_scope_paths", []))
     owners: dict[str, list[str]] = {}
     unknown: list[dict[str, str]] = []
     units = _effective_plan_units(result)
-    for unit in units:
+    selection_issues = []
+    for raw_unit in units:
+        unit, issues = expand_owned_files(raw_unit, index, task.get("owned_scope_paths", []))
         unit_id = str(unit["unit_id"])
+        selection_issues.extend({"unit_id": unit_id, **issue} for issue in issues)
+        if not unit.get("owned_regions"):
+            selection_issues.append({"unit_id": unit_id, "field": "owned_regions", "reason": "owned_selection_required"})
         for key in ("owned_regions", "context_regions"):
             values = unit.get(key, [])
             for value in values if isinstance(values, list) else []:
@@ -141,9 +123,10 @@ def _plan_diagnostics(run_dir: Path, task: dict[str, Any], result) -> dict[str, 
         "unit_count": len(units),
         "required_owned_region_count": len(required),
         "unknown_references": unknown,
+        "selection_issues": selection_issues,
         "duplicate_owned_regions": duplicate,
         "unassigned_owned_regions": sorted(required - set(owners)),
-        "ready": bool(units) and not unknown and not duplicate and required <= set(owners),
+        "ready": bool(units) and not selection_issues and not unknown and not duplicate and required <= set(owners),
     }
 
 
@@ -904,9 +887,8 @@ def plan_write(
             not isinstance(item, str) or not item for item in value
         ):
             raise ResultStoreError(f"plan_write unit.{field} 必须是字符串数组")
-    if not unit["owned_regions"]:
-        raise ResultStoreError("plan_write unit.owned_regions 至少包含一个 region_id")
     binding, path, task = _binding_and_result(data_root, run_id, action_id, task_id, writable=True)
+    expand_owned_files(unit, read_json(path.parents[2] / "inputs" / "source-index.json"), task.get("owned_scope_paths", []))
     current = read_result(path)
     existing = {item["unit_id"] for item in _effective_plan_units(current)}
     requested_id = unit.get("unit_id")

@@ -124,8 +124,9 @@ context_files 只作导航，不自动扩大 owned source 或产生逐 wrapper/h
 非空 body。普通证据和关联写进 body，不组装 records 数组、evidence/relates_to 顶层
 结构。发现旧记录错误时调用 pangea_result_supersede，传精确 target_record_ids、kind 和
 唯一有效 body；不能只在后文写相反说法。Comparison finding 使用专用工具，不属于本角色。
-supersede 前先回读当前 revision，核对目标 record_id 的 case_id/flow_id 与准备替换的对象一致；
-提交后确认该编号只有一个 active 版本，且 flow_refs/case_ids 与 summary 仍指向有效编号。
+supersede 前按 pangea_result_read(record_id=目标) 定向读完该记录，核对正文身份，从返回对象复制
+record_id，不按 finding 编号、用例编号或记忆推算。当前 revision 已读完并核对的原文可复用。
+保存后核对 retired_records/created_records 的实际对象，确认无关流程仍保留，且引用仍有效。
 
 每一批写入前只检查一次：不了解源码的测试人员能否执行步骤、从外部判断结果，并完成清理
 恢复。若不能，继续转换为产品动作或记录具体入口缺口，不能提交成正式产品用例。
@@ -142,3 +143,5 @@ pangea_result_supersede 的平铺参数；证据不足保留 unresolved。结束
 完成 action_id=<task.action_id>。
 一个 finding 默认只产生一次直接 replacement；只有旧引用会因此变成事实错误时才级联替换。
 不要反复 supersede 同一组记录、重写无关正文或重新展开整个首轮结果。
+
+source_read 返回带行号 text；line_fragment 按零起点字符位置拼接完整后才作为整行证据。

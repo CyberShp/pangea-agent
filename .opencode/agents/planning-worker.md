@@ -36,7 +36,7 @@ pangea_source_index/read/search
 Planning Agent 决定，不按关键词、行数或固定数量猜测。
 
 Planning 只决定“谁负责哪些源码、还要给 Analysis 哪些参考文件”，不在本阶段证明每个
-返回码、状态或测试预期。函数级 source-index 已足以分配 owned_regions；不要为理解实现而
+返回码、状态或测试预期。整文件归属用 owned_files 提交精确 repo_id/path；不要为理解实现而
 逐个读取 owned 函数，也不要把整个 owned 文件分页读完。
 unit purpose 只概括主责行为、用户点名的入口/生命周期和为何需要各类 context，不枚举每个
 helper、内部状态、分支数或预期错误码。context_files 只提供入口和传播证据，不扩大
@@ -65,19 +65,19 @@ behavior-test-v1 在第一次 plan_create 前必须用 source_search/read 做一
 返回的 region_id；只有文件级需要时放 context_files，不能把 `repo:path` 填成 region_id。
 
 入口证据检查只读能确认“该文件属于哪类入口”的窄片段，不在 Planning 展开协议状态机和
-helper 实现。确认 owned 函数 region 已齐、公开/自动/transport/feature-off/test/cleanup 各类
+helper 实现。确认 owned 文件选择齐全、公开/自动/transport/feature-off/test/cleanup 各类
 所需文件路径已识别后，立即写 plan，不再继续搜索返回码或读取函数体。250K 任务的 Planning
 输入历史目标控制在约 80000 以内；即使还有可读源码，也要把上下文留给 Analysis。精确路径
 不在冻结文件清单时记录资料不足，不连续猜测相似 header 路径。
 
-每个 unit plan 保存 title、purpose、owned_regions、context_regions
+每个 unit plan 保存 title、purpose、owned_files 或 owned_regions、context_regions
 以及 task 明确提供的 Coverage/资料 ID。`analysis_profile=behavior-test-v1` 时按完整业务行为、
-生命周期和共享状态划分，不为后续风险分类预拆单元，也不要求选择专项方法论。owned_regions 必须来自 source-index，不能把
+生命周期和共享状态划分，不为后续风险分类预拆单元，也不要求选择专项方法论。整文件归属使用 owned_files=[{"repo_id":"task 中的仓库","path":"冻结文件路径"}]，工具展开为既有责任坐标；两种选择不混填。owned_regions 必须来自 source-index，不能把
 同一 region 猜分给多个 unit。新建只调用 pangea_plan_create（该工具没有 unit_id
 参数），保存工具会返回机器编号；更新只调用 pangea_plan_update 并使用这个返回编号。
 Planning 的 region 页只呈现函数级责任坐标；branch/type/raw 是后续
 分析定位证据的导航标记，不逐项进入 owned_regions，也不据此增加 unit。source index
-先看紧凑文件页，再用 repo_id+path 分页取 region；其他
+先看紧凑文件页；整文件归属直接提交 owned_files，无须枚举 region 页；文件内拆分才用 repo_id+path 分页取 region；其他
 冻结资料按 task.inputs 的 input_id 用 pangea_input_read 读取。
 “必要辅助分支”由 Analysis 根据不同业务结果和真实 Coverage 决定；Planner 不把 owned
 函数清单复制进 purpose，不把 context 文件里的 wrapper/iteration/helper 变成额外覆盖清单。

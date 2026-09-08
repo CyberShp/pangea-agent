@@ -54,3 +54,7 @@ completion 时，无须改写正文，核对后重新 pangea_work_finish。
 换 worker 或把语义交给 Python。结束时只回复：完成 action_id=<task.action_id>。
 targeted closure 对一个 finding 默认只做一次直接 replacement；只有旧引用会变成事实错误时才
 级联替换，不反复 supersede 同组记录、不重写无关正文。
+
+定向替换前按 pangea_result_read(record_id=目标) 读完该条，核对正文身份并复制实际 record_id；
+不按 finding/用例编号或记忆推算。当前 revision 已核对原文可复用。写入 supersedes 后，
+核对回执 retired_records/created_records 的实际对象，保留不受影响的流程和首轮原文件。

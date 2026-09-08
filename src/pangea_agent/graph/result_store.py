@@ -257,6 +257,17 @@ def _check_revision(current: NotesResult, expected_revision: int) -> None:
         raise RevisionConflict(Path("result_path"), expected_revision, current.revision)
 
 
+def record_identity(record: NoteRecord) -> dict[str, Any]:
+    """Copy explicit display fields for the worker; do not infer identity from prose."""
+    identity = {"record_id": record.record_id, "kind": record.kind}
+    if isinstance(record.body, dict):
+        identity.update({
+            key: record.body[key] for key in ("flow_id", "case_id", "title")
+            if key in record.body
+        })
+    return identity
+
+
 def append_records(
     path: str | Path,
     binding: SourceBinding,
@@ -357,6 +368,11 @@ def append_records(
             "record_ids": [item.record_id for item in generated],
             "warnings": warnings,
         }
+        retired = set(supersession_map(updated)) - set(supersession_map(current))
+        response["retired_records"] = [
+            record_identity(item) for item in updated.records if item.record_id in retired
+        ]
+        response["created_records"] = [record_identity(item) for item in generated]
         if request_id:
             receipts = {**updated.receipts, request_id: response}
             updated = updated.model_copy(update={"receipts": receipts})
@@ -560,6 +576,77 @@ def compact_page_resume(page_token: str | None) -> dict[str, int]:
     if isinstance(line_start, int) and isinstance(line_end, int):
         return {"line_start": line_start, "line_end": line_end}
     return {}
+
+
+def source_text_page(
+    *, metadata: dict[str, Any], lines: list[str], token_context: dict[str, Any],
+    page_token: str | None, max_chars: int,
+) -> dict[str, Any]:
+    """Bound numbered source text without dropping a long line or its position."""
+    if not isinstance(max_chars, int) or not 1000 <= max_chars <= 24000:
+        raise ResultStoreError("text max_chars 必须在 1000 到 24000 之间")
+    digest = hashlib.sha256(_compact_json(token_context).encode("utf-8")).hexdigest()
+    position, offset = 0, 0
+    if page_token:
+        token = _read_page_token(page_token)
+        if token.get("context_sha256") != digest[:24]:
+            raise ResultStoreError("text page_token 与当前读取条件不一致")
+        position, offset = token.get("item_index"), token.get("char_offset")
+    if (not isinstance(position, int) or not isinstance(offset, int)
+            or position < 0 or position > len(lines) or offset < 0
+            or (offset and (position >= len(lines) or offset >= len(lines[position])))):
+        raise ResultStoreError("text page_token 位置无效")
+    start = token_context["line_start"]
+
+    def response(last: int, fragment: dict | None = None) -> dict:
+        next_index = last
+        next_offset = 0
+        if fragment and not fragment["complete"]:
+            next_index, next_offset = position, fragment["char_end"]
+        token = None if next_index >= len(lines) else _page_token({
+            "context_sha256": digest, "item_index": next_index, "char_offset": next_offset,
+            "line_start": start, "line_end": token_context["line_end"],
+        })
+        first_line = start + position
+        last_line = first_line if fragment else start + last - 1
+        handle = f'{metadata["repo_id"]}:{metadata["path"]}:{first_line}-{last_line}' if last_line >= first_line else None
+        if fragment:
+            handle += f':chars={fragment["char_start"]}-{fragment["char_end"]}'
+        return {**metadata, "line_start": first_line, "line_end": last_line,
+                "text": "" if fragment else "\n".join(f"{start+i}: {lines[i]}" for i in range(position, last)),
+                "line_fragment": fragment, "evidence_handle": handle, "next_page_token": token}
+
+    best = None
+    if not offset:
+        low, high = position, len(lines)
+        while low <= high:
+            last = (low + high) // 2
+            candidate = response(last)
+            if len(_compact_json(candidate)) <= max_chars:
+                best = candidate
+                low = last + 1
+            else:
+                high = last - 1
+        if best and (best["line_end"] >= best["line_start"] or position == len(lines)):
+            return best
+    if position >= len(lines):
+        raise ResultStoreError("text metadata 超出字符预算")
+    best = None
+    low, high = offset + 1, len(lines[position])
+    while low <= high:
+        end = (low + high) // 2
+        candidate = response(position + 1, {
+            "line": start + position, "char_start": offset, "char_end": end,
+            "complete": end == len(lines[position]), "text": lines[position][offset:end],
+        })
+        if len(_compact_json(candidate)) <= max_chars:
+            best = candidate
+            low = end + 1
+        else:
+            high = end - 1
+    if best is None:
+        raise ResultStoreError("text metadata 超出字符预算，无法返回源码片段")
+    return best
 
 
 def compact_items_page(

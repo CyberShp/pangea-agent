@@ -28,6 +28,41 @@ const PangeaPlugin: Plugin = async ({ client, worktree }) => {
   const bindings = new Map<string, Binding>()
   const sessionModels = new Map<string, { providerID: string; modelID: string }>()
   const resultWrites = new Map<string, Promise<void>>()
+  const workerProgress = new Map<string, {
+    last: number; parts: Map<string, string>; tools: Set<string>;
+    counts: Record<string, number>; maxSilentMs: number; cancel?: Promise<boolean>;
+  }>()
+  const noticeSeconds = Number(process.env.PANGEA_WORKER_WAIT_NOTICE_SECONDS ?? 300)
+  const noticeMs = (Number.isFinite(noticeSeconds) && noticeSeconds > 0 ? noticeSeconds : 300) * 1000
+
+  function observeWorker(event: any) {
+    const part = event.properties?.part
+    const sessionID = part?.sessionID ?? event.properties?.sessionID
+    const progress = workerProgress.get(sessionID)
+    if (!progress) return
+    const now = Date.now()
+    const changed = (kind: string) => {
+      if (!progress.tools.size) progress.maxSilentMs = Math.max(progress.maxSilentMs, now - progress.last)
+      progress.last = now
+      progress.counts[kind] = (progress.counts[kind] ?? 0) + 1
+    }
+    if (event.type === "message.part.delta" && event.properties?.delta) {
+      changed(`delta:${event.properties.field ?? "unknown"}`)
+    } else if (event.type === "message.part.updated" && part) {
+      const content = part.type === "tool"
+        ? JSON.stringify([part.state?.status, part.state?.raw, part.state?.input])
+        : part.type === "text" || part.type === "reasoning" ? part.text : undefined
+      if (typeof content === "string" && content !== progress.parts.get(part.id)) {
+        const prior = progress.parts.has(part.id)
+        progress.parts.set(part.id, content)
+        changed(part.type === "tool" ? `tool:${part.state?.status}${prior ? ":update" : ":start"}` : part.type)
+      }
+      if (part.type === "tool") {
+        if (part.state?.status === "running") progress.tools.add(part.id)
+        else progress.tools.delete(part.id)
+      }
+    }
+  }
 
   function pythonExecutable(): string {
     const configured = process.env.PANGEA_PYTHON
@@ -131,6 +166,7 @@ const PangeaPlugin: Plugin = async ({ client, worktree }) => {
     pangea_task_open: true,
     pangea_input_read: true,
     pangea_source_index: true,
+    pangea_action_interrupted: false,
     pangea_source_read: true,
     pangea_source_search: true,
     pangea_result_read: true,
@@ -162,6 +198,7 @@ const PangeaPlugin: Plugin = async ({ client, worktree }) => {
   }
 
   return {
+    event: async ({ event }) => { observeWorker(event) },
     "chat.message": async (input) => {
       if (input.model) sessionModels.set(input.sessionID, input.model)
     },
@@ -290,7 +327,7 @@ const PangeaPlugin: Plugin = async ({ client, worktree }) => {
               : `\n这是同一 action 的局部修正：${validationText}\n先 pangea_result_read，再根据诊断调用 pangea_result_write/pangea_result_supersede/pangea_review_decide 产生新 revision；若旧记录错误，只能用 pangea_result_supersede 精确作废旧 record_id。在结果内容未变更前禁止重复 pangea_work_finish。`
             : ""
           const planningInstruction = action.stage === "unit_planning" && behaviorTestProfile
-            ? "\nPlanning 只做紧凑归属：purpose 概括主责行为、用户点名生命周期和必要 context 类别，不展开状态机步骤、helper 清单、分支表或预期错误码；context 不产生额外用例义务。确认 owned regions、公开/自动入口、transport/adapter、feature-off 与测试路径后立即写 plan。"
+            ? "\nPlanning 只做紧凑归属：purpose 概括主责行为、用户点名生命周期和必要 context 类别，不展开状态机步骤、helper 清单、分支表或预期错误码；context 不产生额外用例义务。整文件归属用 owned_files 提交 task/index 中精确 repo_id/path，无须枚举 region 页；文件内拆分才用 owned_regions，两种选择不混填。确认 owned 文件、公开/自动入口、transport/adapter、feature-off 与测试路径后立即写 plan。"
             : ""
           const analysisInstruction = action.stage === "unit_analysis" && behaviorTestProfile
             ? "\n先调用 product-blackbox-test-case Skill。按冻结 behavior_test_generation rubric 逐个完整行为生成 behavior-flow-v1 和 behavior-test-case-v1；测试目的使用 branch、coverage 或 risk，测试层级单独声明。先交付正常主干，再交付业务分支、异常传播、并发、重试与恢复。内部状态核对留在证据中，正式用例只写产品入口、测试人员动作和外部结果；资料不能证明产品入口时记录具体缺口。首轮输入历史目标约 145000 token，并给同一 worker 的定向修正预留约 70000 token。"
@@ -301,7 +338,7 @@ const PangeaPlugin: Plugin = async ({ client, worktree }) => {
               : "\nComparison 还必须逐条确认：只有当前可达且能证明具体错误外部结果的差异才是 finding；仅缺 callee/包装/清理函数体只是 unresolved，不得触发 closure。对齐 test_case 与 flow 的状态和协议消息顺序。finding 通过 pangea_comparison_finding 绑定 Graph 的精确 unit_id。"
             : ""
           const closureInstruction = action.stage === "targeted_closure"
-            ? "\nClosure 先调用 pangea_input_read(input_id=\"correction_records\")，按 next_cursor 完整读完 Comparison 选中的冻结修正记录，不得依赖可能过长的 task-open 回包或自行猜 finding。若更正 inherited record，必须调用 pangea_result_supersede；target_record_ids 填被更正的精确 rec-...，kind/body 写唯一有效的新结论。不得只在普通 pangea_result_write 的正文中声称已作废旧记录。一个 finding 默认只做一次直接 replacement；仅当旧引用会变成事实错误时才级联，不反复 supersede 同组记录、不重写无关正文。"
+            ? "\nClosure 先调用 pangea_input_read(input_id=\"correction_records\")，按 next_cursor 完整读完 Comparison 选中的冻结修正记录，不得依赖可能过长的 task-open 回包或自行猜 finding。若更正 inherited record，必须调用 pangea_result_supersede；先 pangea_result_read(record_id=目标) 读完该条并核对正文身份，从返回对象复制 record_id；同 revision 已核对原文可复用。保存后核对 retired_records/created_records 的实际身份。target_record_ids 填被更正的精确 rec-...，kind/body 写唯一有效的新结论。不得只在普通 pangea_result_write 的正文中声称已作废旧记录。一个 finding 默认只做一次直接 replacement；仅当旧引用会变成事实错误时才级联，不反复 supersede 同组记录、不重写无关正文。"
             : ""
 
           const model = sessionModels.get(context.sessionID)
@@ -325,7 +362,31 @@ const PangeaPlugin: Plugin = async ({ client, worktree }) => {
           async function promptWorker(prompt: string) {
             workerTurns += 1
             let workerError: string | null = null
+            const progress = { last: Date.now(), parts: new Map<string, string>(), tools: new Set<string>(), counts: {} as Record<string, number>, maxSilentMs: 0, cancel: undefined as Promise<boolean> | undefined }
+            workerProgress.set(sessionID, progress)
+            let noticed = false
+            const timer = setInterval(() => {
+              const silentMs = Date.now() - progress.last
+              if (!progress.tools.size) progress.maxSilentMs = Math.max(progress.maxSilentMs, silentMs)
+              if (!progress.tools.size && silentMs >= noticeMs && !noticed) {
+                noticed = true
+                context.metadata?.({ title: "PANGEA worker 等待模型输出", metadata: {
+                  action_id: args.action_id, task_id: sessionID, silent_seconds: Math.floor(silentMs / 1000),
+                  auto_abort: false, reason: "工具参数增量可观测性尚未证实，保留当前请求",
+                } })
+              }
+              if (silentMs < noticeMs) noticed = false
+            }, Math.min(1000, noticeMs))
+            const cancel = () => {
+              progress.cancel ??= client.session.abort({
+                path: { id: sessionID }, query: { directory: context.directory }, throwOnError: true,
+              }).then(response => response.data === true, () => false)
+            }
+            context.abort.addEventListener("abort", cancel, { once: true })
+            if (context.abort.aborted) cancel()
+            let promptReturned = false
             try {
+              context.abort.throwIfAborted()
               const response = await client.session.prompt({
                 path: { id: sessionID },
                 query: { directory: context.directory },
@@ -337,6 +398,7 @@ const PangeaPlugin: Plugin = async ({ client, worktree }) => {
                 },
                 throwOnError: true,
               })
+              promptReturned = true
               const info = response.data?.info
               if (!info) workerError = "OpenCode 未返回本轮 assistant message"
               else if (info.error) workerError = errorMessage(info.error)
@@ -350,6 +412,16 @@ const PangeaPlugin: Plugin = async ({ client, worktree }) => {
               workerError = errorMessage(error)
               lastWorkerResponse = { error: workerError }
             }
+            clearInterval(timer)
+            context.abort.removeEventListener("abort", cancel)
+            // A returned prompt is the required stop acknowledgement. No replacement
+            // prompt starts while the previous request is outstanding.
+            const stopUnconfirmed = context.abort.aborted && !promptReturned && !(await progress.cancel)
+            if (context.abort.aborted) workerError = "宿主已取消当前 worker 回合；请求已返回，等待明确续接"
+            workerProgress.delete(sessionID)
+            lastWorkerResponse = { ...lastWorkerResponse, progress_observation: {
+              counts: progress.counts, max_silent_ms: progress.maxSilentMs, auto_abort: false,
+            } }
             let result: any = null
             let resultError: string | null = null
             try {
@@ -378,7 +450,7 @@ const PangeaPlugin: Plugin = async ({ client, worktree }) => {
               resultError = `当前绑定结果无法读取：${errorMessage(error)}。请修复同一 result_path。`
             }
             return {
-              result,
+              result, stopUnconfirmed,
               issue: [workerError ? `OpenCode worker 返回错误：${workerError}` : null, resultError].filter(Boolean).join("\n"),
               reasonCode: workerError ? "worker_error" : "result_incomplete",
             }
@@ -394,8 +466,11 @@ const PangeaPlugin: Plugin = async ({ client, worktree }) => {
           }
 
           const outcome = await runPhase(`执行 PANGEA Graph action ${args.action_id}。身份已由宿主绑定；先调用 pangea_task_open 获取唯一 task，不要自行填写或猜测 task_id。${repairInstruction}${planningInstruction}${analysisInstruction}${comparisonInstruction}${closureInstruction}\n完成语义工作并调用 pangea_work_finish 后，只回显 exact action_id。`)
+          if (outcome.stopUnconfirmed) {
+            return render({ action_id: args.action_id, session_id: sessionID, completion_observed: false, attention_required: true, reason: "旧 worker 停止尚未确认；保留 dispatched，禁止再次派发" })
+          }
           if (outcome.issue) {
-            const noProgress = outcome.result === null || startingRecordCount === null || recordCount(outcome.result) <= startingRecordCount
+            const noProgress = context.abort.aborted || outcome.result === null || startingRecordCount === null || recordCount(outcome.result) <= startingRecordCount
             const continuation = await cli([
               "adapter", "defer", "--data-root", args.data_root, "--run-id", args.run_id,
               "--action-id", args.action_id, "--task-id", sessionID,
@@ -420,6 +495,24 @@ const PangeaPlugin: Plugin = async ({ client, worktree }) => {
             worker_response: lastWorkerResponse,
             settle: settled,
           })
+        },
+      }),
+
+      pangea_action_interrupted: tool({
+        description: "Register one exact Graph-dispatched action after the host explicitly confirmed its old process exited or its session abort completed. Supply the observed stop evidence; elapsed time, absent messages, and an idle-looking Run are not stop evidence. Reuses the original task/result via adapter defer; does not dispatch.",
+        args: {
+          data_root: tool.schema.string(), run_id: tool.schema.string(), action_id: tool.schema.string(),
+          task_id: tool.schema.string(),
+          host_state: tool.schema.enum(["process_exited", "session_abort_confirmed"]),
+          stop_evidence: tool.schema.string().min(1),
+        },
+        async execute(args) {
+          if (workerProgress.has(args.task_id)) throw new Error("当前宿主仍持有此 worker 回合，先等待取消确认")
+          return render(await cli([
+            "adapter", "defer", "--data-root", args.data_root, "--run-id", args.run_id,
+            "--action-id", args.action_id, "--task-id", args.task_id,
+            "--reason-code", "worker_error", "--reason", `${args.host_state}: ${args.stop_evidence}`,
+          ]))
         },
       }),
 
@@ -479,7 +572,7 @@ const PangeaPlugin: Plugin = async ({ client, worktree }) => {
       }),
 
       pangea_source_read: tool({
-        description: "Read frozen source by exact region or line range and return a source evidence handle. For a next page, copy next_page_token and keep repo/path/region stable; the token preserves the original line range. path is a source-relative path, not a task or result file.",
+        description: "Read frozen source by exact region or line range and return bounded numbered text and an actual-range evidence handle. line_fragment carries a long line by zero-based character offsets; concatenate its pieces before treating it as a whole line. For a next page, copy next_page_token and keep repo/path/region stable; the token preserves the original line range. path is a source-relative path, not a task or result file.",
         args: {
           repo_id: tool.schema.string(),
           path: tool.schema.string().optional(),
@@ -495,7 +588,7 @@ const PangeaPlugin: Plugin = async ({ client, worktree }) => {
           }
           if (args.line_start) extra.push("--line-start", String(args.line_start))
           if (args.line_end) extra.push("--line-end", String(args.line_end))
-          extra.push("--view", "compact")
+          extra.push("--view", "text")
           if (args.page_token) extra.push("--page-token", args.page_token)
           return render(await cli(["source-read", ...boundArgs(context), ...extra]))
         },
@@ -615,9 +708,10 @@ const PangeaPlugin: Plugin = async ({ client, worktree }) => {
           unit: tool.schema.object({
             title: tool.schema.string().min(1),
             purpose: tool.schema.string().min(1),
-            owned_regions: tool.schema.array(tool.schema.string()).min(1),
+            owned_regions: tool.schema.array(tool.schema.string()).optional(),
+            owned_files: tool.schema.array(tool.schema.object({ repo_id: tool.schema.string(), path: tool.schema.string() })).optional().describe("Selects ALL responsibility regions in each exact frozen owned file. Assign a whole file to one unit only; use owned_regions instead for an explicitly justified split. Do not create multiple units for the same whole file."),
             context_regions: tool.schema.array(tool.schema.string()).optional(),
-            context_files: tool.schema.array(tool.schema.string()).optional(),
+            context_files: tool.schema.array(tool.schema.string()).optional().describe("Exact frozen repo_id:path file references, without line-number suffixes. Choose only the files needed as context."),
             coverage_ids: tool.schema.array(tool.schema.string()).optional(),
             asset_item_ids: tool.schema.array(tool.schema.string()).optional(),
             mechanism_ids: tool.schema.array(tool.schema.string()).optional(),
@@ -635,9 +729,10 @@ const PangeaPlugin: Plugin = async ({ client, worktree }) => {
             unit_id: tool.schema.string().min(1),
             title: tool.schema.string().min(1),
             purpose: tool.schema.string().min(1),
-            owned_regions: tool.schema.array(tool.schema.string()).min(1),
+            owned_regions: tool.schema.array(tool.schema.string()).optional(),
+            owned_files: tool.schema.array(tool.schema.object({ repo_id: tool.schema.string(), path: tool.schema.string() })).optional().describe("Selects ALL responsibility regions in each exact frozen owned file. Assign a whole file to one unit only; use owned_regions instead for an explicitly justified split. Do not create multiple units for the same whole file."),
             context_regions: tool.schema.array(tool.schema.string()).optional(),
-            context_files: tool.schema.array(tool.schema.string()).optional(),
+            context_files: tool.schema.array(tool.schema.string()).optional().describe("Exact frozen repo_id:path file references, without line-number suffixes. Choose only the files needed as context."),
             coverage_ids: tool.schema.array(tool.schema.string()).optional(),
             asset_item_ids: tool.schema.array(tool.schema.string()).optional(),
             mechanism_ids: tool.schema.array(tool.schema.string()).optional(),

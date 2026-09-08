@@ -13,7 +13,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from pangea_agent.agent_io import read_json
-from pangea_agent.graph.result_store import compact_items_page, compact_page_resume
+from pangea_agent.graph.result_store import compact_items_page, compact_page_resume, source_text_page
 from pangea_agent.graph.workflow_store import load_progress
 from pangea_agent.inventory.source_regions import build_source_index
 from pangea_agent.models.source_first import (
@@ -31,6 +31,54 @@ from pangea_agent.models.source_first import (
 
 class SourceAccessError(ValueError):
     """A deterministic binding or frozen-source boundary error."""
+
+
+def planning_regions(index: dict, owned_paths: list[dict]) -> tuple[dict[str, dict], set[str]]:
+    """The existing planning responsibility inventory, shared by both consumers."""
+    regions = {
+        str(region["region_id"]): region
+        for file in index.get("files", []) if isinstance(file, dict)
+        for region in file.get("regions", [])
+        if isinstance(region, dict) and region.get("region_id")
+    }
+    paths = {(str(item.get("repo_id")), str(item.get("path")).replace("\\", "/"))
+             for item in owned_paths if isinstance(item, dict) and item.get("repo_id") and item.get("path")}
+    owned = {key: value for key, value in regions.items()
+             if (str(value.get("repo_id")), str(value.get("path")).replace("\\", "/")) in paths}
+    required = {key for key, value in owned.items() if value.get("kind") in {"function", "global"}}
+    if not required:
+        required = {key for key, value in owned.items() if value.get("kind") != "branch"}
+    return regions, required
+
+
+def expand_owned_files(unit: dict, index: dict, owned_paths: list[dict]) -> tuple[dict, list[dict]]:
+    """Expand only the Planner's explicit frozen file selections; retain raw notes."""
+    if "owned_files" not in unit:
+        return unit, []
+    issues = []
+    if "owned_regions" in unit:
+        issues.append({"field": "owned_files", "reason": "choose_owned_files_or_owned_regions"})
+    choices = unit.get("owned_files")
+    if not isinstance(choices, list) or not choices:
+        return {**unit, "owned_regions": []}, [*issues, {"field": "owned_files", "reason": "nonempty_file_list_required"}]
+    frozen = {(item.get("repo_id"), item.get("path")) for item in index.get("files", []) if isinstance(item, dict)}
+    allowed = {(item["repo_id"], item["path"]) for item in owned_paths}
+    regions, required = planning_regions(index, owned_paths)
+    expanded = []
+    for selection in choices:
+        if not isinstance(selection, dict) or not all(isinstance(selection.get(key), str) for key in ("repo_id", "path")):
+            issues.append({"field": "owned_files", "selection": selection, "reason": "repo_id_and_path_required"})
+            continue
+        path = selection["path"]
+        # Boundary violations retain the same hard boundary as source reads.
+        _normal_path(path)
+        pair = (selection["repo_id"], path)
+        if pair not in frozen or pair not in allowed:
+            issues.append({"field": "owned_files", "selection": selection, "reason": "file_not_in_frozen_owned_scope"})
+            continue
+        expanded.extend(key for key, value in regions.items()
+                        if key in required and (value.get("repo_id"), value.get("path")) == pair)
+    return {**unit, "owned_regions": expanded}, issues
 
 
 def _safe_identifier(value: str, label: str) -> str:
@@ -525,11 +573,11 @@ def source_read(
     max_chars: int = 12_000,
 ) -> dict[str, Any]:
     binding, run_dir, _, task = resolve_binding(data_root, run_id, action_id, task_id)
-    if view not in {"legacy", "compact"}:
+    if view not in {"legacy", "compact", "text"}:
         raise SourceAccessError(f"未知 source_read view：{view}")
     if max_lines < 1 or max_lines > 2000:
         raise SourceAccessError("max_lines 必须在 1 到 2000 之间")
-    resume = compact_page_resume(page_token) if view == "compact" else {}
+    resume = compact_page_resume(page_token) if view in {"compact", "text"} else {}
     manifest = _source_manifest(run_dir, task)
     allowed = _allowed_paths(task, manifest)
     index = _inventory_index(run_dir, task)
@@ -568,6 +616,19 @@ def source_read(
         raise SourceAccessError("source_read 起始行超出文件范围")
     end = min(end, len(lines))
     requested_start = start
+    if view == "text":
+        if cursor:
+            raise SourceAccessError("text source_read 使用 page_token，不接受 cursor")
+        return source_text_page(
+            metadata={"format_version": "pangea-source-read-text-v1",
+                      "binding": binding.model_dump(mode="json"), "repo_id": repo_id, "path": path},
+            lines=lines[start - 1:end],
+            token_context={"kind": "source-read-text", "run_id": binding.run_id,
+                           "action_id": binding.action_id, "task_id": binding.task_id,
+                           "repo_id": repo_id, "path": path, "region_id": region_id,
+                           "line_start": start, "line_end": end},
+            page_token=page_token, max_chars=max_chars,
+        )
     if view == "compact":
         if cursor:
             raise SourceAccessError("compact source_read 使用 page_token，不接受 cursor")

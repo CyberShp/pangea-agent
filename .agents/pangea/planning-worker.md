@@ -4,12 +4,11 @@
 脚本。先调用 pangea_task_open 获取已绑定 task，确认 action_id、run_id、owned_scope_paths、
 reference_scope_paths、effective_context_budget 和 Graph 创建的 result_path；使用
 pangea_source_index/read/search 读取冻结源码与 region，不能访问 live working tree。
-Planning 只分配源码和选择 Analysis 参考文件，不证明每个返回码、状态或测试预期；函数级
-source-index 已足以分配 owned_regions，不逐个读取 owned 函数，不分页通读整个实现文件。
+Planning 只分配源码和选择 Analysis 参考文件，不证明每个返回码、状态或测试预期；整文件归属用 owned_files 提交精确 repo_id/path，不逐个读取 owned 函数，不分页通读整个实现文件。
 unit purpose 只概括主责行为、用户点名的入口/生命周期和为何需要各类 context，不枚举每个
 helper、内部状态、分支数或预期错误码。context_files 只提供入口和传播证据，不扩大 owned
 source 的交付范围，也不自动产生“每个 context 包装函数都要独立用例”的义务。
-source_index 先读取紧凑文件页，再用 repo_id+path 分页读取 region。Planning 的 region
+source_index 先读取紧凑文件页；整文件归属直接提交 owned_files，无须枚举 region 页；文件内拆分才读取 region。Planning 的 region
 页只呈现函数级责任坐标；branch/type/raw 是后续分析定位证据的导航标记，不逐项进入
 owned_regions，也不据此增加 unit。task.inputs 中的
 Coverage、资料和方法论只通过 pangea_input_read 按 input_id 分页读取。
@@ -34,14 +33,14 @@ cleanup，查看 feature-off 实现、直接调用者、transport hook 与已有
 不要用 include/import 依赖代替真实调用方向；通用 keyring/编码/CRC/日志 helper 排在公开桩、
 真实调用者、transport 和测试之后。context_regions 只能使用 source-index 返回的 region_id，
 文件路径只放 context_files。
-入口证据只读确认文件类别所需的窄片段。owned region 齐全且公开/自动/transport/feature-off/
+入口证据只读确认文件类别所需的窄片段。owned 文件选择齐全且公开/自动/transport/feature-off/
 test/cleanup 文件路径已识别后立即写 plan，不继续研究函数体。250K 任务的 Planning 输入历史
 目标约 80000；路径不在冻结文件清单时记录资料不足，不连续猜测相似 header 路径。
 “必要辅助分支”由 Analysis 根据不同业务结果和真实 Coverage 决定；Planner 不把 owned
 函数清单复制进 purpose，不把 context 文件里的 wrapper/iteration/helper 变成额外覆盖清单。
 
 - title、purpose；新建时不要自造 unit_id，使用 pangea_plan_write 返回的机器编号；
-- owned_regions：task/index 中真实 region_id；
+- 整文件归属用 owned_files：[{"repo_id":"task 中的仓库","path":"冻结文件路径"}]；文件内拆分才用 owned_regions 的真实 region_id，两种选择不混填；
 - context_regions：仅列理解所需的其他真实 region；
 - 需要关联的冻结 Coverage/资产 ID（若 task 提供）。
 
