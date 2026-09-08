@@ -8,7 +8,10 @@ from pathlib import Path
 
 from pangea_agent.agent_io import read_json, write_json
 from pangea_agent.assets import freeze_asset_inputs, load_asset
-from pangea_agent.documents.source_snapshot import create_source_snapshot, verify_source_snapshot
+from pangea_agent.documents.source_snapshot import (
+    create_source_snapshot,
+    read_source_snapshot_manifest,
+)
 from pangea_agent.inventory.languages import C_CPP_SUFFIXES, IGNORED_PARTS, LUA_SUFFIXES
 from pangea_agent.methodology import freeze_enabled_methodologies
 from pangea_agent.repositories.resolver import resolve_repository
@@ -261,7 +264,7 @@ def _request_markdown(
         "",
         *scope_lines,
         "",
-        "源码快照清单：`inputs/source/manifest.json`。只读取 `inputs/source/repository/`，不得回读 source_raw；若清单或文件哈希校验失败，停止当前 Run 并报告 source_snapshot_corrupt。",
+        "源码清单：`inputs/source/manifest.json`。只读取 `inputs/source/repository/`，不得回读 source_raw；文件无法读取时如实报告对应路径和错误。",
         "",
         "### 输入材料",
         "",
@@ -310,7 +313,6 @@ def create_skill_run(request_path_value: str) -> dict:
             run_id=run_id,
             git=repository.get("git"),
         )
-        verify_source_snapshot(run_root / "inputs" / "source")
         asset_manifest = freeze_asset_inputs(
             data_root,
             run_root,
@@ -393,13 +395,12 @@ def skill_run_detail(data_root: str, run_id: str) -> dict:
     snapshot_error = None
     if (snapshot_path / "manifest.json").is_file():
         try:
-            verify_source_snapshot(
+            read_source_snapshot_manifest(
                 snapshot_path,
                 run_id=run_id,
                 repo_id=metadata.get("request", {}).get("repository"),
-                verify_files=False,
             )
-            snapshot_status = "verified"
+            snapshot_status = "frozen"
         except ValueError as exc:
             snapshot_status = "corrupt"
             snapshot_error = str(exc)
@@ -454,7 +455,6 @@ def skill_run_detail(data_root: str, run_id: str) -> dict:
         "source_scope": metadata["source_scope"],
         "source_snapshot": metadata.get("source_snapshot", {
             "status": "legacy_unavailable",
-            "snapshot_digest": None,
             "file_count": None,
         }),
         "source_snapshot_status": snapshot_status,

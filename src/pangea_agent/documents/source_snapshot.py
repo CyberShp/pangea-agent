@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import shutil
@@ -27,14 +26,6 @@ def _filesystem_path(path: str | Path) -> str:
     return _windows_extended_path(os.path.abspath(value))
 
 
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with open(_filesystem_path(path), "rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 def _relative_file_paths(repository_root: Path, scope: list[dict[str, str]]) -> list[Path]:
     root = repository_root.resolve()
     filesystem_root = Path(_filesystem_path(root))
@@ -55,11 +46,6 @@ def _relative_file_paths(repository_root: Path, scope: list[dict[str, str]]) -> 
             if child.is_file():
                 paths.add(relative)
     return sorted(paths, key=lambda value: value.as_posix().casefold())
-
-
-def _digest_manifest(files: list[dict[str, object]]) -> str:
-    payload = json.dumps(files, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def _publish_snapshot(temporary: Path, target: Path) -> None:
@@ -94,7 +80,8 @@ def create_source_snapshot(
     run_id: str,
     git: dict | None = None,
 ) -> dict:
-    """Copy only the verified source scope and return its immutable manifest."""
+    """Copy the verified source scope once and return its inventory manifest."""
+    started_at = time.perf_counter()
     root = Path(repository_root).resolve()
     target = Path(destination)
     if not scope:
@@ -129,10 +116,9 @@ def create_source_snapshot(
             manifest_files.append({
                 "path": relative.as_posix(),
                 "size": os.path.getsize(_filesystem_path(destination_file)),
-                "sha256": _sha256(destination_file),
             })
         manifest = {
-            "schema_version": "1.0",
+            "schema_version": "2.0",
             "run_id": run_id,
             "repo_id": repo_id,
             "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
@@ -141,7 +127,8 @@ def create_source_snapshot(
             "git": git or {"version_status": "unversioned"},
             "files": manifest_files,
             "file_count": len(manifest_files),
-            "snapshot_digest": f"sha256:{_digest_manifest(manifest_files)}",
+            "total_bytes": sum(int(item["size"]) for item in manifest_files),
+            "snapshot_duration_ms": round((time.perf_counter() - started_at) * 1000),
         }
         stage = "write_manifest"
         with open(_filesystem_path(temporary / "manifest.json"), "w", encoding="utf-8") as stream:
@@ -161,13 +148,13 @@ def create_source_snapshot(
         raise
 
 
-def verify_source_snapshot(
+def read_source_snapshot_manifest(
     snapshot_root: str | Path,
     *,
     run_id: str | None = None,
     repo_id: str | None = None,
-    verify_files: bool = True,
 ) -> dict:
+    """Read the snapshot inventory without rereading copied source files."""
     root = Path(snapshot_root)
     manifest_path = root / "manifest.json"
     if not os.path.isfile(_filesystem_path(manifest_path)):
@@ -184,24 +171,14 @@ def verify_source_snapshot(
     files = manifest.get("files")
     if not isinstance(files, list) or not files:
         raise ValueError("源码快照清单没有文件")
-    repository_root = Path(_filesystem_path(root / "repository")).resolve()
+    if manifest.get("file_count") != len(files):
+        raise ValueError("源码快照 file_count 与清单不一致")
     for item in files:
         relative = item.get("path") if isinstance(item, dict) else None
-        expected = item.get("sha256") if isinstance(item, dict) else None
-        if not isinstance(relative, str) or not relative or not isinstance(expected, str):
+        size = item.get("size") if isinstance(item, dict) else None
+        if not isinstance(relative, str) or not relative or not isinstance(size, int) or size < 0:
             raise ValueError("源码快照清单包含非法文件项")
         relative_path = Path(relative)
         if relative_path.is_absolute() or ".." in relative_path.parts:
             raise ValueError(f"源码快照文件越过边界：{relative}")
-        if verify_files:
-            path = (repository_root / relative_path).resolve()
-            try:
-                path.relative_to(repository_root)
-            except ValueError as exc:
-                raise ValueError(f"源码快照文件越过边界：{relative}") from exc
-            if not os.path.isfile(_filesystem_path(path)) or _sha256(path) != expected:
-                raise ValueError(f"源码快照完整性校验失败：{relative}")
-    actual = f"sha256:{_digest_manifest(files)}"
-    if actual != manifest.get("snapshot_digest"):
-        raise ValueError("源码快照清单 digest 不匹配")
     return manifest

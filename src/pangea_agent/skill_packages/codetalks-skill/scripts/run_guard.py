@@ -759,20 +759,25 @@ def command_ack(args) -> None:
     state = ensure_state(root)
     manifest = load_manifest(state)
     required = manifest["required_core_rules"]
-    if args.rule not in required:
+    rules = list(required) if args.ack_all else [args.rule]
+    if not args.ack_all and args.rule not in required:
         raise SystemExit(f"未知核心规则：{args.rule}")
-    expected = (Path(state["skill_root"]) / required[args.rule]).resolve()
-    actual = Path(args.file).expanduser().resolve()
-    if expected != actual or not actual.exists():
-        raise SystemExit(f"核心规则文件不匹配：期望 {expected}，实际 {actual}")
-    state["core_rules_ack"][args.rule] = {
-        "file": str(actual),
-        "sha256": sha256(actual),
-        "ack_at": now(),
-    }
+    if not args.ack_all and not args.file:
+        raise SystemExit("单条 ACK 必须提供 --file")
+    ack_at = now()
+    for rule in rules:
+        expected = (Path(state["skill_root"]) / required[rule]).resolve()
+        actual = expected if args.ack_all else Path(args.file).expanduser().resolve()
+        if expected != actual or not actual.exists():
+            raise SystemExit(f"核心规则文件不匹配：期望 {expected}，实际 {actual}")
+        state["core_rules_ack"][rule] = {
+            "file": str(actual),
+            "sha256": sha256(actual),
+            "ack_at": ack_at,
+        }
     state["updated_at"] = now()
     save_json(state_path(root), state)
-    print(json.dumps({"ok": True, "ack": args.rule}, ensure_ascii=False))
+    print(json.dumps({"ok": True, "ack": rules}, ensure_ascii=False))
 
 def command_start(args) -> None:
     root = resolve_run_root(args.workspace)
@@ -1033,8 +1038,10 @@ def main() -> None:
 
     ack = commands.add_parser("ack-core")
     ack.add_argument("--workspace", required=True)
-    ack.add_argument("--rule", required=True)
-    ack.add_argument("--file", required=True)
+    ack_mode = ack.add_mutually_exclusive_group(required=True)
+    ack_mode.add_argument("--rule")
+    ack_mode.add_argument("--all", action="store_true", dest="ack_all")
+    ack.add_argument("--file")
     ack.set_defaults(function=command_ack)
 
     start = commands.add_parser("start-step")
