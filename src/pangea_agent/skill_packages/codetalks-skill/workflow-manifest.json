@@ -1,5 +1,5 @@
 {
-  "version": "1.3.0",
+  "version": "1.4.0",
   "artifact_policy": {
     "primary_format": "markdown",
     "internal_json_only": [
@@ -14,8 +14,13 @@
   },
   "language_profiles": {
     "c_cpp": [],
-    "lua": ["references/language-lua.md"],
-    "openubmc_lua": ["references/language-lua.md", "references/openubmc-lua.md"]
+    "lua": [
+      "references/language-lua.md"
+    ],
+    "openubmc_lua": [
+      "references/language-lua.md",
+      "references/openubmc-lua.md"
+    ]
   },
   "required_core_rules": {
     "path-fidelity": "references/path-fidelity.md",
@@ -25,109 +30,56 @@
   "steps": [
     {
       "id": "01",
-      "file": "steps/01-intake-and-scope.md",
+      "title": "输入与范围",
+      "file": "steps/module-01-input.md",
       "required": [
-        "活文档/01-范围与任务契约.md",
-        "内部索引/方法论选择.json"
-      ],
-      "markdown_min_chars": 600
+        "活文档/输入与范围.md",
+        "内部索引/方法论选择.json",
+        "内部索引/输入材料索引.json",
+        "内部索引/运行计划.json"
+      ]
     },
     {
       "id": "02",
-      "file": "steps/02-evidence-consumption.md",
+      "title": "模块盘点",
+      "file": "steps/module-02-inventory.md",
       "required": [
-        "活文档/02-输入材料消费记录.md",
-        "内部索引/运行计划.json",
-        "内部索引/输入材料索引.json",
-        "活文档/覆盖门禁/步骤02-覆盖门禁.md"
-      ],
-      "markdown_min_chars": 800
+        "活文档/模块盘点.md",
+        "活文档/分析台账.md"
+      ]
     },
     {
       "id": "03",
-      "file": "steps/03-breadth-inventory.md",
+      "title": "按流程完成分析",
+      "file": "steps/module-03-flow.md",
       "required": [
-        "活文档/03-入口清单与说明.md",
-        "活文档/04-流程清单与说明.md",
-        "活文档/05-状态清单与说明.md",
-        "活文档/06-资源清单与说明.md",
-        "活文档/07-分析模型适用性.md",
-        "活文档/覆盖门禁/步骤03-覆盖门禁.md"
-      ],
-      "markdown_min_chars": 700
-    },
-    {
-      "id": "04",
-      "file": "steps/04-flow-deep-analysis.md",
-      "required": [
-        "活文档/08-分支处置与解释.md",
-        "活文档/09-状态转换处置与解释.md",
-        "活文档/10-资源生命周期处置与解释.md",
-        "活文档/11-异常传播链与解释.md",
-        "活文档/12-开发讲解覆盖台账.md",
-        "活文档/覆盖门禁/步骤04-覆盖门禁.md"
+        "活文档/风险点与SFMEA.md",
+        "活文档/黑盒测试用例.md",
+        "内部索引/工作台投影.json"
       ],
       "requires_glob": [
         "活文档/流程讲解/流程-*.md"
-      ],
-      "flow_narrative_validation": true,
-      "markdown_min_chars": 900
+      ]
+    },
+    {
+      "id": "04",
+      "title": "复核与定向修订",
+      "file": "steps/module-04-review.md",
+      "required": [
+        "活文档/复核记录.md",
+        "内部索引/独立审查状态.json"
+      ]
     },
     {
       "id": "05",
-      "file": "steps/05-scenario-expansion.md",
+      "title": "正式交付",
+      "file": "steps/module-05-delivery.md",
       "required": [
-        "活文档/13-场景候选池与推导说明.md",
-        "活文档/14-风险点清单与因果说明.md",
-        "活文档/覆盖门禁/步骤05-覆盖门禁.md"
-      ],
-      "markdown_min_chars": 1000
-    },
-    {
-      "id": "06",
-      "file": "steps/06-sfmea-blackbox-translation.md",
-      "required": [
-        "活文档/15-SFMEA分析.md",
-        "活文档/16-黑盒控制与观测映射.md",
-        "活文档/17-测试设计依据.md",
-        "活文档/覆盖门禁/步骤06-覆盖门禁.md"
-      ],
-      "markdown_min_chars": 1000
-    },
-    {
-      "id": "07",
-      "file": "steps/07-test-design.md",
-      "required": [
-        "活文档/18-测试追溯矩阵.md",
-        "活文档/覆盖门禁/步骤07-覆盖门禁.md"
-      ],
-      "markdown_min_chars": 1000
-    },
-    {
-      "id": "08",
-      "file": "steps/08-independent-judge.md",
-      "required": [
-        "活文档/19-独立审查报告.md",
-        "活文档/覆盖门禁/最终覆盖门禁.md",
-        "内部索引/独立审查状态.json"
-      ],
-      "markdown_min_chars": 1000
-    },
-    {
-      "id": "09",
-      "file": "steps/09-final-delivery.md",
-      "required": [
-        "正式输出/开发给测试讲代码.md",
-        "正式输出/流程分支状态资源与异常传播.md",
         "正式输出/风险点与SFMEA.md",
-        "正式输出/黑盒测试场景.md",
-        "正式输出/黑盒测试流程.md",
         "正式输出/黑盒测试用例.md",
-        "正式输出/覆盖审计与分析限制.md",
         "正式输出/完整分析报告.md",
         "内部索引/工作台投影.json"
-      ],
-      "markdown_min_chars": 1200
+      ]
     }
   ],
   "evidence_allowed_status": [
@@ -145,28 +97,6 @@
     "need_verify",
     "truncated"
   ],
-  "flow_required_headings": [
-    "## 一、这里是干什么的",
-    "## 二、外部怎么触发",
-    "## 三、正常流程怎么走",
-    "## 四、分支怎么进入",
-    "## 五、状态怎么变化",
-    "## 六、资源怎么使用和释放",
-    "## 七、超时、重试、取消和恢复",
-    "## 八、并发和关键时序窗口",
-    "## 九、异常传播和潜伏故障",
-    "## 十、风险点",
-    "## 十一、黑盒怎么测",
-    "## 十二、源码追溯和未决项"
-  ],
-  "flow_key_narrative_headings": [
-    "## 一、这里是干什么的",
-    "## 三、正常流程怎么走",
-    "## 四、分支怎么进入",
-    "## 九、异常传播和潜伏故障",
-    "## 十、风险点",
-    "## 十一、黑盒怎么测"
-  ],
   "directory_contract": {
     "run_root": "<用户选择的运行根目录>",
     "siblings": [
@@ -183,5 +113,52 @@
     ],
     "root_step_files_forbidden": true,
     "formal_output_step_prefix_forbidden": true
+  },
+  "workflow_id": "module-five-stage",
+  "review_step": "04",
+  "evidence_step": "01",
+  "publication_steps": [
+    "02",
+    "03",
+    "04",
+    "05"
+  ],
+  "asset_allowed_steps": {
+    "requirement": [
+      "01",
+      "02",
+      "03",
+      "04"
+    ],
+    "design": [
+      "01",
+      "02",
+      "03",
+      "04"
+    ],
+    "coverage": [
+      "01",
+      "02",
+      "03",
+      "04"
+    ],
+    "historical_defect": [
+      "01",
+      "02",
+      "03",
+      "04"
+    ],
+    "reference": [
+      "01",
+      "02",
+      "03",
+      "04"
+    ],
+    "test_case_example": [
+      "01",
+      "02",
+      "03",
+      "04"
+    ]
   }
 }

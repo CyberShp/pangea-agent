@@ -499,6 +499,8 @@ def freeze_asset_inputs(
     run_root: str | Path,
     run_id: str,
     asset_ids: list[str] | None = None,
+    *,
+    allowed_steps: dict[str, list[str]] | None = None,
 ) -> dict:
     """Freeze selected assets into an immutable Run-local input manifest."""
     root = Path(data_root)
@@ -557,7 +559,7 @@ def freeze_asset_inputs(
             "frozen_result_path": str(frozen_result) if frozen_result else None,
             "review_status": record.review_status,
             "accepted_item_count": len(result.get("items", [])) if isinstance(result, dict) else None,
-            "allowed_steps": ASSET_ALLOWED_STEPS[record.asset_type],
+            "allowed_steps": (allowed_steps or ASSET_ALLOWED_STEPS)[record.asset_type],
         })
     manifest = {
         "schema_version": "2.0",

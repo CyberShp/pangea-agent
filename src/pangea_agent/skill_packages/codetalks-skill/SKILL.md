@@ -2,15 +2,15 @@
 name: codetalks-skill
 description: >
   源码驱动的黑盒测试分析 Skill。用于模块全量测试分析、问题单/代码修改回归、
-  问题+日志+代码根因辅助定位及专项风险分析。通过九步门禁、开发实现讲解、
+  问题+日志+代码根因辅助定位及专项风险分析。模块分析采用五阶段，其他场景保留九步；通过开发实现讲解、
   多源场景增殖、SFMEA、黑盒转换和独立 Judge 形成可追溯交付。
-version: 1.3.0
+version: 1.4.0
 derived_from: codetalks-fused-v2.4
 license: CC-BY-SA-4.0
 allowed-tools: Read Search Grep Glob Bash Write Edit Agent AskUserQuestion
 ---
 
-# Codetalks Skill 1.3.0
+# Codetalks Skill 1.4.0
 
 本文件只定义运行入口和全局约束。每个步骤的具体要求在 `steps/`，专项方法在
 `references/`；必须按 JIT 顺序读取，不要在启动时一次性加载全部文件。
@@ -90,9 +90,19 @@ python3 {skill-root}/scripts/run_guard.py ack-core \
 速度型仍须执行广度盘点、深度分析、场景增殖和黑盒转换；发生截断、compact 丢失或
 多条核心流程未持久化时，最高只能给出 `PARTIAL` 或 `INCONCLUSIVE`。
 
-## 5. JIT 九步状态机
+## 5. JIT 阶段与恢复
 
-严格按顺序执行，每次只读取当前步骤文件：
+`module-analysis` 使用五阶段，speed/depth 不改变这五个阶段，也不能通过切换速度型绕过深度型复核：
+
+1. `steps/module-01-input.md`：输入与范围。
+2. `steps/module-02-inventory.md`：模块盘点。
+3. `steps/module-03-flow.md`：每个流程连续完成讲解、分支推导、风险/SFMEA 和测试设计。
+4. `steps/module-04-review.md`：复核与定向修订。
+5. `steps/module-05-delivery.md`：发布已审内容。
+
+模块分析不加载下面旧九步文件/覆盖门禁模板。其他场景维持下列顺序，由运行器选择 `legacy-workflow-manifest.json` 冻结为当前 Run 的 `workflow-manifest.json`；独立使用 Skill 时 init 根据 scenario 选择对应 manifest。
+
+其他场景严格按顺序执行，每次只读取当前步骤文件：
 
 1. `steps/01-intake-and-scope.md`
 2. `steps/02-evidence-consumption.md`
@@ -120,7 +130,7 @@ python3 {skill-root}/scripts/run_guard.py complete-step \
   --step "01"
 ```
 
-步骤有可数业务项目时用 `progress` 登记真实进度。Step 03、04、05、07、08 或 09
+步骤有可数业务项目时用 `progress` 登记真实进度。模块分析阶段 02–05（其他场景为 Step 03、04、05、07、08、09）
 产生可消费结构化结果后，用 `publish-stage` 发布工作台投影。投影必须同时包含
 `business_flows`、`risks`、`test_cases`、`evidence`、`review_issues` 五个数组；
 未生成的数组使用空数组，不能让工作台从 Markdown 猜测。
@@ -145,7 +155,7 @@ python3 {skill-root}/scripts/run_guard.py complete-step \
 
 ### 6.2 场景与风险
 
-Step 05 必须读取 `references/scenario-expansion-engine.md` 和
+模块阶段 03（其他场景 Step 05）读取 `references/scenario-expansion-engine.md` 和
 `references/worker-judge-protocol.md` 的候选裁决部分。候选来自：分支、状态、资源与
 不变量、数值/N/2N/翻转、并发、异常传播、需求/协议/安全/配置、覆盖率与历史证据。
 
@@ -183,17 +193,18 @@ Diff 时可以继续，但必须明确证据边界，不能伪装成读取了完
 └── 正式输出/
 ```
 
-Step 01–08 只写 `活文档/` 和允许的 `内部索引/`。只有 Step 09 可以写
+非交付阶段只写 `活文档/` 和允许的 `内部索引/`。只有当前 manifest 的最后阶段可以写
 `正式输出/`。不得创建嵌套的 `活文档/活文档/`，不得在运行根目录散落过程文件，
 不得生成 `progress.json`、`final-state.json`、`agent-results/`、旧 `report.md` 或
 `report.html`。
 
-每个步骤的必需工件以 `workflow-manifest.json` 和当前步骤文件为准。长度阈值只防空壳，
-不能证明语义完整。
+每个步骤的必需工件以当前 Run 的 manifest 和阶段文件为准。模块分析取消字数下限、固定章节和叙述长度门槛，按复杂度展开；不以篇幅证明质量。
+
+模块活文档固定为：输入与范围、模块盘点、分析台账、风险点与SFMEA、黑盒测试用例、复核记录；另按实际流程维护 `流程讲解/流程-*.md`。台账合并分析覆盖与未决项，风险/用例通过稳定 ID 链接流程证据，不复制正文。JSON 保留现有六种内部索引用途。
 
 ## 8. Producer、Judge 与结论
 
-Producer 完成 Step 07 后，深度型必须创建与 Producer 分离的真实 Judge 执行 Step 08。
+模块阶段 03 完成后（其他场景 Step 07 后），深度型创建与 Producer 分离的真实 Judge 执行模块阶段 04（其他场景 Step 08）。
 Judge 按 `references/worker-judge-protocol.md` 独立读取计划、活文档、冻结源码和证据，
 主动寻找反例、保护条件、等价结果和遗漏。环境不支持独立执行时如实记录，不能宣称独立审查。
 
@@ -210,9 +221,11 @@ Judge 按 `references/worker-judge-protocol.md` 独立读取计划、活文档�
 ## 9. 恢复与最终交付
 
 compact 或续跑时依次读取：运行状态、运行计划、输入材料索引、`活文档/任务交接.md`、
-当前步骤工件和当前相关源码。不得扫描历史 Run 猜测当前身份；任何 `in_progress` 项重新验证。
+当前阶段工件、模块分析台账和当前相关源码。不得扫描历史 Run 猜测当前身份；任何 `in_progress` 项重新验证。若当前阶段已启动，直接继续其中的流程游标，不再次 start-step 重置进度；`init --resume` 保留状态、游标和成果。
 
-Step 09 从已审查的活文档生成以下 UTF-8 Markdown：
+模块阶段 05 只发布已审风险/用例原文到 `正式输出/风险点与SFMEA.md`、`正式输出/黑盒测试用例.md`，以及补充摘要、索引、限制的 `正式输出/完整分析报告.md`。报告链接 Run 内已审流程、台账和复核记录，不重写结论。
+
+其他场景 Step 09 从已审查的活文档生成以下 UTF-8 Markdown：
 
 1. `开发给测试讲代码.md`
 2. `流程分支状态资源与异常传播.md`
@@ -233,3 +246,5 @@ python3 {skill-root}/scripts/run_guard.py finalize --workspace "{workspace_root}
 
 `finalize` 非零退出、`delivery_integrity.repair_required=true`、审查未完成或仍为
 `UNRESOLVED` 时必须如实报告，不得新建 Run、删除有效内容或伪装成全部通过。
+
+时间统一 UTC+8。历史 Run 只读展示自身冻结 manifest、步骤和产物，不迁移、不重编号、不用新 Skill 校验旧 Run。

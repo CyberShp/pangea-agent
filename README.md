@@ -1,10 +1,10 @@
 # pangea-agent
 
-`pangea-agent` 是部署在测试人员 Windows 电脑上的 Codetalks Skill 运行时与本地资料管理组件。源码、需求/设计资料、Coverage 和历史问题都由 `codetalks-skill 1.3.0` 直接消费并形成 Markdown 活文档与正式输出。
+`pangea-agent` 是部署在测试人员 Windows 电脑上的 Codetalks Skill 运行时与本地资料管理组件。源码、需求/设计资料、Coverage 和历史问题都由 `codetalks-skill 1.4.0` 直接消费并形成 Markdown 活文档与正式输出。
 
 Python 只负责仓库/资料登记、创建 Skill Run、冻结 Skill 包和只读解释 `run_guard.py` 状态。Python 不规划分析单元、不编排 Agent、不校验语义结果，也不生成报告。
 
-每个新 Run 都冻结一份完整 `codetalks-skill 1.3.0` 及其 SHA-256 摘要，并在 Run 内冻结所选 Asset Management 2.0 资产和启用的方法论。DSH 分析会话读取该 Skill 后，使用它自己的 Step 01–09、`run_guard.py`、Producer/Judge 分工和正式输出契约走完整流程；语言 Profile 会根据已验证源码范围自动选择 C/C++ 或 Lua。`内部索引/运行状态.json` 是唯一分析步骤真相。
+每个新 Run 都冻结一份完整 `codetalks-skill 1.4.0` 及其 SHA-256 摘要，并在 Run 内冻结所选 Asset Management 2.0 资产和启用的方法论。DSH 分析会话读取该 Skill 后，使用它自己的 当前冻结 manifest 的阶段、`run_guard.py`、Producer/Judge 分工和正式输出契约走完整流程；语言 Profile 会根据已验证源码范围自动选择 C/C++ 或 Lua。`内部索引/运行状态.json` 是唯一分析步骤真相。
 
 ## 初始化
 
@@ -35,15 +35,15 @@ pangea-data/
 └── runs/               # Run 输入、Skill 状态、Markdown 活文档和正式报告
 ```
 
-项目不会对 `repositories/` 中的用户源码执行 `pull`、`reset`、`stash`、`checkout` 或格式化。用例示例作为资产导入，只能在 Step 07 参考格式和粒度；新建 Run 不接受 focus、手写结构化资产 ID 或示例文件路径。
+项目不会对 `repositories/` 中的用户源码执行 `pull`、`reset`、`stash`、`checkout` 或格式化。用例示例作为资产导入，按冻结 manifest 在允许阶段参考格式和粒度；新建 Run 不接受 focus、手写结构化资产 ID 或示例文件路径。
 
 ## 分析流程
 
 ```text
 创建 Skill Run 并冻结 Skill、资产和方法论
-→ 当前分析会话执行 Step 01–07
-→ 独立 Judge 执行 Step 08
-→ 当前分析会话根据审查结果执行 Step 09
+→ 当前分析会话执行模块阶段 01–03
+→ 独立 Judge 执行阶段 04，Producer 定向修订
+→ 当前分析会话在阶段 05 发布已审内容
 → run_guard validate / handoff / finalize
 → 正式输出/完整分析报告.md
 ```

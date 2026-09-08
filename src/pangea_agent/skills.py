@@ -8,7 +8,7 @@ from pangea_agent.agent_io import read_json
 
 
 SKILL_ID = "codetalks-skill"
-SKILL_VERSION = "1.3.0"
+SKILL_VERSION = "1.4.0"
 DERIVED_FROM = "codetalks-fused-v2.4"
 SOURCE_ROOT = Path(__file__).resolve().parent / "skill_packages" / SKILL_ID
 
@@ -36,12 +36,14 @@ def validate_skill_package(root: Path) -> dict:
     return manifest
 
 
-def freeze_skill_package(destination: Path) -> Path:
+def freeze_skill_package(destination: Path, scenario: str = "module-analysis") -> Path:
     validate_skill_package(SOURCE_ROOT)
     if destination.exists():
         raise ValueError(f"Skill 冻结目录已存在：{destination}")
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(SOURCE_ROOT, destination)
+    if scenario != "module-analysis":
+        shutil.copyfile(destination / "legacy-workflow-manifest.json", destination / "workflow-manifest.json")
     validate_skill_package(destination)
     return destination.resolve()
 

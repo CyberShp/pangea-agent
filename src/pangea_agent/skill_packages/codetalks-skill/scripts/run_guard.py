@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Codetalks Skill 1.3.0 Markdown-first workflow and directory-layout guard."""
+"""Manifest-driven Markdown workflow and directory-layout guard."""
 
 from __future__ import annotations
 import argparse
@@ -24,7 +24,7 @@ FORMAL_STEP_FILE_RE = re.compile(r"^\d{2}-.*\.md$")
 PUBLICATION_STEPS = {"03", "04", "05", "07", "08", "09"}
 
 def now() -> str:
-    return dt.datetime.now(dt.timezone.utc).isoformat()
+    return dt.datetime.now(dt.timezone(dt.timedelta(hours=8))).isoformat()
 
 
 def artifact_metrics(root: Path) -> dict[str, int]:
@@ -223,7 +223,15 @@ def ensure_state(root: Path) -> dict:
     return load_json(path)
 
 def load_manifest(state: dict) -> dict:
-    return load_json(Path(state["skill_root"]) / "workflow-manifest.json")
+    return load_json(Path(state["skill_root"]) / state.get("workflow_manifest", "workflow-manifest.json"))
+
+
+def final_step(manifest: dict) -> str:
+    return manifest["steps"][-1]["id"]
+
+
+def module_workflow(manifest: dict) -> bool:
+    return manifest.get("workflow_id") == "module-five-stage"
 
 def find_step(manifest: dict, step_id: str) -> dict:
     for step in manifest["steps"]:
@@ -516,13 +524,13 @@ def validate_layout(root: Path, *, final_phase: bool = False) -> list[str]:
             elif FORMAL_STEP_FILE_RE.match(path.name):
                 errors.append(f"步骤编号文件不得放入正式输出目录：{path}")
         if not final_phase and any(formal_dir.iterdir()):
-            errors.append("Step 01–08 期间 `正式输出/` 必须保持为空；正式交付只在 Step 09 生成。")
+            errors.append("非交付阶段 `正式输出/` 必须保持为空；正式交付只在 manifest 的最后阶段生成。")
 
     return errors
 
 def validate_step(root: Path, step: dict, manifest: dict, *, final_phase: bool | None = None) -> list[str]:
     if final_phase is None:
-        final_phase = step["id"] == "09"
+        final_phase = step["id"] == final_step(manifest)
     errors = validate_layout(root, final_phase=final_phase)
     minimum = int(step.get("markdown_min_chars", 300))
 
@@ -532,7 +540,9 @@ def validate_step(root: Path, step: dict, manifest: dict, *, final_phase: bool |
             errors.append(f"缺少或为空：{relative}")
             continue
         if path.suffix.lower() == ".md":
-            if "覆盖门禁" in relative:
+            if module_workflow(manifest):
+                path.read_text(encoding="utf-8-sig")
+            elif "覆盖门禁" in relative:
                 errors.extend(validate_coverage(path, manifest))
             else:
                 errors.extend(validate_markdown(path, minimum))
@@ -547,13 +557,13 @@ def validate_step(root: Path, step: dict, manifest: dict, *, final_phase: bool |
             for path in matches:
                 errors.extend(validate_flow(path, manifest))
 
-    if step["id"] == "02":
+    if step["id"] == manifest.get("evidence_step", "02"):
         errors.extend(validate_evidence_index(root, manifest))
 
     if "内部索引/方法论选择.json" in step.get("required", []):
         errors.extend(validate_methodology_selection(root))
 
-    if step["id"] == "08":
+    if step["id"] == manifest.get("review_step", "08"):
         judge_path = root / "内部索引/独立审查状态.json"
         if judge_path.exists():
             try:
@@ -570,7 +580,7 @@ def validate_step(root: Path, step: dict, manifest: dict, *, final_phase: bool |
 
 def validate_completed_steps(root: Path, state: dict, manifest: dict) -> list[str]:
     completed_steps = state.get("completed_steps", [])
-    final_phase = "09" in completed_steps
+    final_phase = final_step(manifest) in completed_steps
     errors = []
     for step_id in completed_steps:
         errors.extend(validate_step(
@@ -610,8 +620,9 @@ def command_publish_stage(args) -> None:
     root = resolve_run_root(args.workspace)
     state = ensure_state(root)
     step_id = str(args.step)
-    if step_id not in PUBLICATION_STEPS:
-        raise SystemExit("只有 Step 03、04、05、07、08、09 可以发布阶段投影")
+    manifest = load_manifest(state)
+    if step_id not in manifest.get("publication_steps", PUBLICATION_STEPS):
+        raise SystemExit("当前 manifest 不允许该阶段发布投影")
     if state.get("current_step") != step_id and step_id not in state.get("completed_steps", []):
         raise SystemExit(f"只能发布当前步骤或已完成步骤的阶段投影：Step {step_id}")
 
@@ -632,7 +643,7 @@ def command_publish_stage(args) -> None:
     previous = _publication_record(state)
     revision = previous["revision"] + 1
     publication = {
-        "state": "final" if step_id == "09" and step_id in state.get("completed_steps", []) else "draft",
+        "state": "final" if state.get("status") == "complete" and step_id == final_step(manifest) else "draft",
         "revision": revision,
         "step_id": step_id,
         "updated_at": now(),
@@ -670,13 +681,14 @@ def command_init(args) -> None:
         state["updated_at"] = now()
         save_json(existing_state_path, state)
         for relative, default in [
-            ("内部索引/运行计划.json", {"version": "1.3.0", "passes": []}),
-            ("内部索引/输入材料索引.json", {"version": "1.3.0", "items": []}),
+            ("内部索引/运行计划.json", {"version": state["version"], "passes": []}),
+            ("内部索引/输入材料索引.json", {"version": state["version"], "items": []}),
         ]:
             path = root / relative
             if not path.is_file():
                 save_json(path, default)
-        layout_errors = validate_layout(root, final_phase=False)
+        manifest = load_manifest(state)
+        layout_errors = validate_layout(root, final_phase=state.get("current_step") == final_step(manifest) or final_step(manifest) in state.get("completed_steps", []))
         if layout_errors:
             raise SystemExit("\n".join(layout_errors))
         print(json.dumps({
@@ -691,7 +703,10 @@ def command_init(args) -> None:
     if existing_state_path.is_file():
         raise SystemExit(f"运行已初始化；如需继续请使用 `init --resume`：{existing_state_path}")
     skill_root = Path(args.skill_root).expanduser().resolve()
-    manifest = load_json(skill_root / "workflow-manifest.json")
+    manifest_name = "workflow-manifest.json"
+    if args.scenario != "module-analysis" and (skill_root / "legacy-workflow-manifest.json").is_file():
+        manifest_name = "legacy-workflow-manifest.json"
+    manifest = load_json(skill_root / manifest_name)
 
     for relative in [
         "活文档/流程讲解",
@@ -702,7 +717,8 @@ def command_init(args) -> None:
         (root / relative).mkdir(parents=True, exist_ok=True)
 
     state = {
-        "version": "1.3.0",
+        "version": manifest["version"],
+        "workflow_manifest": manifest_name,
         "created_at": now(),
         "updated_at": now(),
         "skill_root": str(skill_root),
@@ -736,8 +752,8 @@ def command_init(args) -> None:
         "validation": {"status": "not_checked", "error_count": 0, "errors": []},
     }
     save_json(state_path(root), state)
-    save_json(root / "内部索引/运行计划.json", {"version": "1.3.0", "passes": []})
-    save_json(root / "内部索引/输入材料索引.json", {"version": "1.3.0", "items": []})
+    save_json(root / "内部索引/运行计划.json", {"version": manifest["version"], "passes": []})
+    save_json(root / "内部索引/输入材料索引.json", {"version": manifest["version"], "items": []})
 
     layout_errors = validate_layout(root, final_phase=False)
     if layout_errors:
@@ -751,7 +767,7 @@ def command_init(args) -> None:
             str(root / "内部索引"),
             str(root / "正式输出"),
         ],
-        "note": "Step 01–08 只写活文档和内部索引；正式输出仅在 Step 09 生成。"
+        "note": f"正式输出仅在阶段 {final_step(manifest)} 生成。"
     }, ensure_ascii=False))
 
 def command_ack(args) -> None:
@@ -784,11 +800,16 @@ def command_start(args) -> None:
     state = ensure_state(root)
     manifest = load_manifest(state)
     require_core_rules(state, manifest)
-    layout_errors = validate_layout(root, final_phase=args.step == "09")
+    layout_errors = validate_layout(root, final_phase=args.step == final_step(manifest))
     if layout_errors:
         raise SystemExit("\n".join(layout_errors))
 
     step = find_step(manifest, args.step)
+    if state.get("current_step") == args.step:
+        print(json.dumps({"ok": True, "resumed": True, "step": args.step,
+                          "step_progress": state.get("step_progress"),
+                          "only_load_step_file": str(Path(state["skill_root"]) / step["file"])}, ensure_ascii=False))
+        return
     ids = [item["id"] for item in manifest["steps"]]
     previous = ids[:ids.index(args.step)]
     missing = [item for item in previous if item not in state["completed_steps"]]
@@ -834,7 +855,7 @@ def command_start(args) -> None:
         "ok": True,
         "step": args.step,
         "only_load_step_file": str(Path(state["skill_root"]) / step["file"]),
-        "write_scope": "正式输出/" if args.step == "09" else "活文档/ 与 内部索引/"
+        "write_scope": "正式输出/" if args.step == final_step(manifest) else "活文档/ 与 内部索引/"
     }, ensure_ascii=False))
 
 def command_complete(args) -> None:
@@ -844,7 +865,9 @@ def command_complete(args) -> None:
     if state.get("current_step") != args.step:
         raise SystemExit(f"当前步骤为 {state.get('current_step')}，不是 {args.step}")
     errors = validate_step(root, find_step(manifest, args.step), manifest)
-    feedback = delivery_feedback(root, state) if args.step == "09" else {}
+    feedback = delivery_feedback(root, state) if args.step == final_step(manifest) else {}
+    if module_workflow(manifest) and feedback.get("repair_required"):
+        errors.append(f"正式用例缺项，修订同一文件：{feedback['delivery_integrity']['repair_path']}")
     if errors:
         save_validation(state, errors, command="complete-step", step=args.step)
         save_json(state_path(root), state)
@@ -857,11 +880,12 @@ def command_complete(args) -> None:
     state["current_step"] = None
     if isinstance(state.get("step_progress"), dict):
         state["step_progress"]["status"] = "completed"
-        state["step_progress"]["completed"] = state["step_progress"].get("total") or state["step_progress"].get("completed", 0)
+        if not module_workflow(manifest):
+            state["step_progress"]["completed"] = state["step_progress"].get("total") or state["step_progress"].get("completed", 0)
         state["step_progress"]["updated_at"] = now()
     save_validation(state, [], command="complete-step", step=args.step)
     state["updated_at"] = now()
-    if args.step == "08":
+    if args.step == manifest.get("review_step", "08"):
         state["judge"]["status"] = "complete"
     save_json(state_path(root), state)
     print(json.dumps({"ok": True, "completed_step": args.step, **feedback}, ensure_ascii=False))
@@ -953,9 +977,10 @@ def command_handoff(args) -> None:
     lines += ["", "## 动态下一步"]
     if next_step:
         lines += [
-            f"1. 启动 Step {next_step['id']}。",
+            f"1. {'继续当前' if state.get('current_step') else '启动'}阶段 {next_step['id']}，保留流程游标与已有进度。",
             f"2. 只读取 `{next_step['file']}`。",
-            "3. 按目录契约写入对应目录。",
+            ("3. 读取运行计划、分析台账和当前流程工件，仅复查中断的分析中项；不要重做已确认流程。"
+             if module_workflow(manifest) else "3. 按目录契约写入对应目录。"),
         ]
     else:
         lines.append("所有步骤完成，执行 validate 和 finalize。")
@@ -975,6 +1000,9 @@ def command_finalize(args) -> None:
     if state.get("judge", {}).get("required") and state.get("judge", {}).get("status") != "complete":
         errors.append("深度型模块全量分析未完成独立审查")
 
+    feedback = delivery_feedback(root, state)
+    if module_workflow(manifest) and feedback.get("repair_required"):
+        errors.append(f"正式用例缺项，修订同一文件：{feedback['delivery_integrity']['repair_path']}")
     if errors:
         state["status"] = "validation_failed"
         state["verdict"] = "PARTIAL"
@@ -985,7 +1013,6 @@ def command_finalize(args) -> None:
         raise SystemExit(2)
 
     state["status"] = "complete"
-    feedback = delivery_feedback(root, state)
     # Legacy structural verdict: never a semantic approval from Python.
     state["verdict"] = "PARTIAL" if feedback["repair_required"] else "READY"
     projection_path = root / "内部索引/工作台投影.json"
@@ -996,7 +1023,7 @@ def command_finalize(args) -> None:
             publication = {
                 "state": "final",
                 "revision": publication["revision"] + 1,
-                "step_id": "09",
+                "step_id": final_step(manifest),
                 "updated_at": now(),
             }
             projection["publication"] = publication
@@ -1056,7 +1083,7 @@ def main() -> None:
 
     publish = commands.add_parser("publish-stage")
     publish.add_argument("--workspace", required=True)
-    publish.add_argument("--step", required=True, choices=sorted(PUBLICATION_STEPS))
+    publish.add_argument("--step", required=True)
     publish.add_argument("--projection", required=True,
                          help="由 Agent 生成的、待校验的工作台投影 JSON 文件")
     publish.set_defaults(function=command_publish_stage)

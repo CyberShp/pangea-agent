@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 import shutil
-from datetime import date, datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from pangea_agent.agent_io import read_json, write_json
@@ -94,7 +94,7 @@ def _skill_request(raw: object) -> dict:
 def _allocate_run_id(data_root: Path, target: str) -> str:
     slug = re.sub(r"[^A-Za-z0-9_-]+", "-", target).strip("-_").lower()
     slug = (slug[:24].rstrip("-_") or "analysis")
-    prefix = f"{slug}-{date.today():%y%m%d}"
+    prefix = f"{slug}-{datetime.now(timezone(timedelta(hours=8))):%y%m%d}"
     runs_root = data_root / "runs"
     runs_root.mkdir(parents=True, exist_ok=True)
     sequence = 1
@@ -243,9 +243,9 @@ def _request_markdown(
         f"- Skill Profile：`{', '.join(language_profiles['profiles']) or '待 Step 01 确认'}`",
         f"- 识别状态：`{language_profiles['status']}`（{language_profiles['reason']}）",
         "",
-        "先完整读取 SKILL.md。随后第一条执行命令必须是该 Skill 规定的 `run_guard.py init`，再按 JIT 规则逐步执行 01–09。",
+        "先完整读取 SKILL.md。执行 `run_guard.py init` 后，按当前冻结 workflow-manifest.json 的阶段顺序和工件要求继续，不使用其他 Run 的步骤编号。",
         (
-            "Producer 完成 Step 07 后必须启动一个与 Producer 分离的独立 Judge 执行 Step 08；"
+            "Producer 完成逐流程分析后必须启动一个与 Producer 分离的独立 Judge 执行当前 manifest 的复核阶段；"
             "Judge 只以运行计划、活文档、源码和证据为依据。"
             if request["mode"] == "depth"
             else "速度型模式不要求独立 Judge；仍需保留关键校验结果，并在交付中如实标注覆盖边界。"
@@ -303,7 +303,8 @@ def create_skill_run(request_path_value: str) -> dict:
     try:
         run_root.mkdir(parents=True)
         request_root.mkdir(parents=True)
-        frozen_skill = freeze_skill_package(request_root / "skill")
+        frozen_skill = freeze_skill_package(request_root / "skill", request["scenario"])
+        workflow = read_json(frozen_skill / "workflow-manifest.json")
         frozen_skill_digest = skill_package_digest(frozen_skill)
         source_snapshot = create_source_snapshot(
             repository_root,
@@ -318,6 +319,7 @@ def create_skill_run(request_path_value: str) -> dict:
             run_root,
             run_id,
             request["asset_ids"],
+            allowed_steps=workflow.get("asset_allowed_steps"),
         )
         methodology_manifest = freeze_enabled_methodologies(data_root, run_root, run_id)
         request_path = request_root / "request.md"
@@ -333,7 +335,7 @@ def create_skill_run(request_path_value: str) -> dict:
         ), encoding="utf-8")
         metadata = {
             "run_id": run_id,
-            "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "created_at": datetime.now(timezone(timedelta(hours=8))).isoformat(timespec="seconds"),
             "status": "preparing",
             "request": request,
             "repository_root": str(repository_root),
@@ -419,6 +421,8 @@ def skill_run_detail(data_root: str, run_id: str) -> dict:
             skill_version = str(read_json(Path(metadata["skill_root"]) / "workflow-manifest.json")["version"])
         except (KeyError, OSError, TypeError, ValueError):
             pass
+    workflow_path = Path(metadata["skill_root"]) / "workflow-manifest.json"
+    workflow = read_json(workflow_path) if workflow_path.is_file() else {}
     return {
         "run_id": run_id,
         "lifecycle_status": lifecycle,
@@ -436,6 +440,7 @@ def skill_run_detail(data_root: str, run_id: str) -> dict:
         },
         "completed_steps": state.get("completed_steps", []) if state else [],
         "current_step": state.get("current_step") if state else None,
+        "workflow": workflow,
         "step_progress": state.get("step_progress") if state else None,
         "performance": state.get("performance", {"version": 1, "steps": {}, "progress_updates": 0}) if state else {"version": 1, "steps": {}, "progress_updates": 0},
         "publication": state.get("publication", {
@@ -515,7 +520,7 @@ def stop_skill_run(data_root: str, run_id: str) -> dict:
     if state and state.get("status") == "complete":
         raise ValueError("已经完成的 Skill Run 不能停止")
     metadata["status"] = "stopped"
-    metadata["stopped_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
+    metadata["stopped_at"] = datetime.now(timezone(timedelta(hours=8))).isoformat(timespec="seconds")
     write_json(_metadata_path(root, run_id), metadata)
     return skill_run_detail(str(root), run_id)
 
@@ -536,7 +541,7 @@ def resume_skill_run(data_root: str, run_id: str) -> dict:
     lifecycle, _phase, _verdict = _lifecycle(metadata, state)
     if lifecycle == "complete":
         raise ValueError("已经完成的 Skill Run 不能继续")
-    resumed_at = datetime.now().astimezone().isoformat(timespec="seconds")
+    resumed_at = datetime.now(timezone(timedelta(hours=8))).isoformat(timespec="seconds")
     metadata["status"] = "preparing"
     metadata["resume_count"] = int(metadata.get("resume_count", 0)) + 1
     metadata["last_resumed_at"] = resumed_at
