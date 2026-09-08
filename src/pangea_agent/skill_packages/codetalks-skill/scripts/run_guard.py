@@ -92,6 +92,102 @@ def load_json(path: Path) -> Any:
     with path.open("r", encoding="utf-8") as f:
         return json.load(f)
 
+
+# This parser recognizes document fields only. It never reads risk prose or
+# decides whether a test or a reported defect is semantically correct.
+CASE_FIELDS = {
+    "preconditions": ("前置条件", "前置"),
+    "steps": ("操作步骤", "执行步骤", "步骤", "操作", "输入"),
+    "expected_results": ("预期结果和 Oracle", "预期接口结果", "预期结果", "期望结果（Oracle）", "预期结果（Oracle）", "期望结果", "预期"),
+    "observability": ("观测方式", "观察点", "观测", "观测点"),
+    "cleanup": ("清理或恢复", "清理/恢复", "清理和复原", "清理步骤", "清理动作", "清理", "恢复"),
+}
+
+
+def parse_delivery_cases(markdown: str, known_ids=()) -> dict:
+    markdown = re.sub(r"(?ms)^\s*(`{3,}|~{3,}).*?^\s*\1\s*$", "", markdown)
+    headings = list(re.finditer(r"^(#{1,6})\s+(.+)$", markdown, re.M))
+    aliases = {label: field for field, labels in CASE_FIELDS.items() for label in labels}
+    names = "|".join(re.escape(label) for label in sorted(aliases, key=len, reverse=True))
+    labels = re.compile(rf"(?:^|\s)(?:[-*]\s+)?({names})(（[^）]*）|\([^)]*\))?[：:]\s*(.*?)(?=\s+(?:{names})(?:（[^）]*）|\([^)]*\))?[：:]|$)")
+    cases = {}
+    for index, heading in enumerate(headings):
+        identity = re.match(r"([A-Za-z0-9]+(?:-[A-Za-z0-9]+)+)(?=[：:\s])", heading[2])
+        if not identity or not (identity[1].upper().startswith("TC-") or identity[1] in known_ids):
+            continue
+        end = next((h.start() for h in headings[index + 1:] if len(h[1]) <= len(heading[1])), len(markdown))
+        fields = {label: [] for label in aliases}
+        active = None
+        for line in markdown[heading.end():end].splitlines():
+            line = line.replace("**", "").strip()
+            matches = list(labels.finditer(line))
+            if matches:
+                for match in matches:
+                    active = match[1]
+                    if match[3].strip():
+                        fields[active].append((match[2] or "") + match[3].strip())
+                continue
+            subheading = re.match(r"^#{1,6}\s+(.+)$", line)
+            if subheading:
+                active = subheading[1].strip() if subheading[1].strip() in aliases else None
+            elif active and line and not re.fullmatch(r"[-*_]{3,}", line):
+                fields[active].append(re.sub(r"^(?:[-*]|\d+[.)、])\s*", "", line))
+            elif line:
+                active = None
+        cases[identity[1]] = {field: next((fields[label] for label in labels if fields[label]), []) for field, labels in CASE_FIELDS.items()}
+    columns = []
+    for line in markdown.splitlines():
+        if not line.strip().startswith("|"):
+            continue
+        row = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if any(cell.lower() in {"用例 id", "用例id", "case id"} for cell in row):
+            columns = row
+            continue
+        if not columns:
+            continue
+        values = dict(zip(columns, row))
+        identity = next((values[c] for c in columns if c.lower() in {"用例 id", "用例id", "case id"}), "")
+        if not re.fullmatch(r"TC-[A-Za-z0-9-]+", identity, re.I) and identity not in known_ids:
+            continue
+        if identity not in cases:
+            cases[identity] = {field: next(([values[label]] for label in labels if values.get(label)), []) for field, labels in CASE_FIELDS.items()}
+    return cases
+
+
+def check_delivery_integrity(root: Path) -> dict:
+    formal = root / "正式输出/黑盒测试用例.md"
+    receipt = {"status": "incomplete", "expected_count": 0, "complete_count": 0,
+               "issues": [], "repair_path": str(formal)}
+    try:
+        projection = load_json(root / "内部索引/工作台投影.json")
+        ids = [item["test_case_id"] for item in projection["test_cases"]]
+        if not all(isinstance(identity, str) and identity for identity in ids):
+            raise ValueError("test_case_id must be a non-empty string")
+        receipt["expected_count"] = len(ids)
+        markdown = formal.read_text(encoding="utf-8-sig") if formal.is_file() else ""
+        cases = parse_delivery_cases(markdown, ids)
+        for identity in ids:
+            fields = cases.get(identity, cases.get(f"TC-{identity}", {}))
+            missing = [field for field in CASE_FIELDS if not fields.get(field)]
+            if missing:
+                receipt["issues"].append({"test_case_id": identity, "missing_fields": missing})
+            else:
+                receipt["complete_count"] += 1
+        if not formal.is_file():
+            receipt["issues"].append({"code": "formal_cases_missing", "path": str(formal)})
+        receipt["status"] = "incomplete" if receipt["issues"] else "complete"
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        receipt["status"] = "unavailable"
+        receipt["issues"].append({"code": "delivery_unreadable", "message": str(exc)})
+    return receipt
+
+
+def delivery_feedback(root: Path, state: dict) -> dict:
+    receipt = check_delivery_integrity(root)
+    state["delivery_integrity"] = receipt
+    return {"delivery_integrity": receipt, "repair_required": receipt["status"] != "complete",
+            "repair_instruction": "由当前 Agent 修正 repair_path 原文件中的缺失 ID/字段，再执行 finalize；不得由导出器补造内容。" if receipt["status"] != "complete" else None}
+
 def save_json(path: Path, data: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_suffix(path.suffix + ".tmp")
@@ -462,7 +558,7 @@ def validate_step(root: Path, step: dict, manifest: dict, *, final_phase: bool |
         if judge_path.exists():
             try:
                 judge = load_json(judge_path)
-                if judge.get("independent") is not True:
+                if ensure_state(root).get("mode") != "speed" and judge.get("independent") is not True:
                     errors.append("独立审查状态未声明 independent=true")
                 if not judge.get("checked_artifacts"):
                     errors.append("独立审查未记录 checked_artifacts")
@@ -743,6 +839,7 @@ def command_complete(args) -> None:
     if state.get("current_step") != args.step:
         raise SystemExit(f"当前步骤为 {state.get('current_step')}，不是 {args.step}")
     errors = validate_step(root, find_step(manifest, args.step), manifest)
+    feedback = delivery_feedback(root, state) if args.step == "09" else {}
     if errors:
         save_validation(state, errors, command="complete-step", step=args.step)
         save_json(state_path(root), state)
@@ -762,7 +859,7 @@ def command_complete(args) -> None:
     if args.step == "08":
         state["judge"]["status"] = "complete"
     save_json(state_path(root), state)
-    print(json.dumps({"ok": True, "completed_step": args.step}, ensure_ascii=False))
+    print(json.dumps({"ok": True, "completed_step": args.step, **feedback}, ensure_ascii=False))
 
 def command_validate(args) -> None:
     root = resolve_run_root(args.workspace)
@@ -883,7 +980,9 @@ def command_finalize(args) -> None:
         raise SystemExit(2)
 
     state["status"] = "complete"
-    state["verdict"] = "READY"
+    feedback = delivery_feedback(root, state)
+    # Legacy structural verdict: never a semantic approval from Python.
+    state["verdict"] = "PARTIAL" if feedback["repair_required"] else "READY"
     projection_path = root / "内部索引/工作台投影.json"
     if projection_path.is_file():
         try:
@@ -907,7 +1006,8 @@ def command_finalize(args) -> None:
     save_json(state_path(root), state)
     print(json.dumps({
         "ok": True,
-        "verdict": "READY",
+        "verdict": state["verdict"],
+        **feedback,
         "formal_output": str(root / "正式输出"),
     }, ensure_ascii=False))
 

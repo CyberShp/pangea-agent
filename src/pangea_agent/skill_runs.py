@@ -247,7 +247,7 @@ def _request_markdown(
             if request["mode"] == "depth"
             else "速度型模式不要求独立 Judge；仍需保留关键校验结果，并在交付中如实标注覆盖边界。"
         ),
-        "只有 `run_guard.py finalize` 成功后才可宣称完成。",
+        "只有 `run_guard.py finalize` 成功且 delivery_integrity.status=complete 后才可宣称交付完整；repair_required=true 时由当前 Agent 修正 repair_path 原文件后再次 finalize，不新建 Run。语义通过只依据 Reviewer 的明确结论。",
         "根据上面的语言 Profile 读取对应参考：检测到 Lua 必须读取 `references/language-lua.md`；检测到 openUBMC 目录时还必须读取 `references/openubmc-lua.md`。当前版本不接受同一分析范围同时包含 C/C++ 与 Lua 源码。",
         "",
         "## 分析对象",

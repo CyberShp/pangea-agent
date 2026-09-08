@@ -23,8 +23,8 @@ DOCUMENT_SUFFIXES = {
 }
 PARSER_VERSION = "pangea-document-normalize-1"
 ASSET_ALLOWED_STEPS: dict[str, list[str]] = {
-    "requirement": ["02", "03", "04"],
-    "design": ["02", "03", "04"],
+    "requirement": ["02", "03", "04", "08"],
+    "design": ["02", "03", "04", "08"],
     "coverage": ["03", "05", "07"],
     "historical_defect": ["05"],
     "reference": ["02", "03", "04", "05", "06", "07"],

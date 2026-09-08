@@ -30,3 +30,11 @@
 最终工作台投影必须沿用 Step 05 风险的相同 risk_id，并以已经审查过的活文档为语义来源。风险概要与六段因果字段使用 Step 05 约定的字段名；`source_section` 指向对应风险章节。空字段不得覆盖活文档中已经存在的非空说明。
 
 严重度只使用 `Critical`、`High`、`Medium`、`Low` 并记录实际 `severity_source`。SFMEA 与风险之间没有显式关联时，保留风险自身已发布等级或省略等级，不得按 FM/Risk 编号猜测对应关系。
+
+## 交付详情核对
+
+正式用例文档必须逐一包含投影 `test_cases[].test_case_id` 对应的详情，标题使用 `## TC-<投影ID>：标题`（ID 已含 TC- 时不重复前缀）；每条包含前置条件、操作步骤、预期结果、观测方式、清理或恢复。字段可用小标题、加粗标签或表格列，步骤可用编号；无须清理时也明确写出，不留空。
+
+`complete-step --step 09` 和 `finalize` 返回 `delivery_integrity`。有 `repair_required=true` 时，由当前 Producer 按具体 test_case_id、missing_fields 和 repair_path 修正原正式文件，再次 finalize；保留有效分析和原 Run，不另建任务、不删投影 ID 掩盖缺项、不让导出器补造步骤。格式无法解析时调整对应字段表达，不重做语义分析。宿主预算用尽则保留缺项和降级交付。
+
+最终分别汇报流程状态、交付完整性、实际审查方式和 Reviewer 语义结论。finalize 的 `ok`/`READY` 仅为兼容的结构状态；未完成交付或 UNRESOLVED 不能描述为全部验收通过。
