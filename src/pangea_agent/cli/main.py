@@ -33,7 +33,7 @@ from .public_api import (
     update_asset_metadata,
     update_asset_result,
 )
-from pangea_agent.skill_runs import create_skill_run, resume_skill_run
+from pangea_agent.skill_runs import create_skill_run, resume_skill_run, coverage_operation
 
 
 def main() -> None:
@@ -160,6 +160,18 @@ def main() -> None:
 
     runs = sub.add_parser("runs")
     run_commands = runs.add_subparsers(dest="run_command", required=True)
+    for name in ("coverage-prepare", "coverage-page", "prepare-source"):
+        command = run_commands.add_parser(name)
+        command.add_argument("--data-root", required=True)
+        command.add_argument("--run-id", required=True)
+        if name == "prepare-source":
+            command.add_argument("--scope", action="append", required=True)
+        if name == "coverage-page":
+            command.add_argument("--cursor", type=int, default=0)
+            command.add_argument("--limit", type=int, default=50)
+            command.add_argument("--source")
+            command.add_argument("--file-path")
+            command.add_argument("--kind", choices=("function", "line", "branch"))
     run_list = run_commands.add_parser("list")
     run_list.add_argument("--data-root", default="pangea-data")
     run_list.add_argument("--cursor", type=int, default=0)
@@ -306,7 +318,12 @@ def main() -> None:
             raise SystemExit(1) from exc
     elif args.command == "runs":
         try:
-            if args.run_command == "list":
+            if args.run_command in {"coverage-prepare", "coverage-page", "prepare-source"}:
+                options = {"scope": args.scope} if args.run_command == "prepare-source" else {
+                    key: getattr(args, key) for key in ("cursor", "limit", "source", "file_path", "kind")
+                } if args.run_command == "coverage-page" else {}
+                print_success(coverage_operation(args.data_root, args.run_id, args.run_command, **options))
+            elif args.run_command == "list":
                 print_success(list_runs(args.data_root, cursor=args.cursor, limit=args.limit))
             elif args.run_command == "get":
                 print_success(run_detail(args.data_root, args.run_id))

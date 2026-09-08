@@ -1,0 +1,160 @@
+{
+  "version": "1.0.0",
+  "artifact_policy": {
+    "primary_format": "markdown",
+    "internal_json_only": [
+      "内部索引/运行状态.json",
+      "内部索引/运行计划.json",
+      "内部索引/输入材料索引.json",
+      "内部索引/独立审查状态.json",
+      "内部索引/方法论选择.json",
+      "内部索引/工作台投影.json"
+    ],
+    "forbid_json_as_content_deliverable": true
+  },
+  "language_profiles": {
+    "c_cpp": [],
+    "lua": [
+      "references/language-lua.md"
+    ],
+    "openubmc_lua": [
+      "references/language-lua.md",
+      "references/openubmc-lua.md"
+    ]
+  },
+  "required_core_rules": {
+    "path-fidelity": "references/path-fidelity.md",
+    "evidence-consumption": "references/evidence-consumption.md",
+    "narrative-first": "references/markdown-narrative-first.md"
+  },
+  "steps": [
+    {
+      "id": "01",
+      "title": "输入与定位",
+      "file": "steps/coverage-01-input.md",
+      "required": [
+        "活文档/输入与范围.md",
+        "内部索引/方法论选择.json",
+        "内部索引/输入材料索引.json",
+        "内部索引/运行计划.json"
+      ]
+    },
+    {
+      "id": "02",
+      "title": "缺口整理",
+      "file": "steps/coverage-02-gaps.md",
+      "required": [
+        "活文档/缺口台账.md"
+      ]
+    },
+    {
+      "id": "03",
+      "title": "定向分析与补测",
+      "file": "steps/coverage-03-analysis.md",
+      "required": [
+        "活文档/覆盖缺口分析.md",
+        "活文档/黑盒测试用例.md",
+        "内部索引/工作台投影.json"
+      ]
+    },
+    {
+      "id": "04",
+      "title": "复核与修订",
+      "file": "steps/coverage-04-review.md",
+      "required": [
+        "活文档/复核记录.md",
+        "内部索引/独立审查状态.json"
+      ]
+    },
+    {
+      "id": "05",
+      "title": "正式交付",
+      "file": "steps/coverage-05-delivery.md",
+      "required": [
+        "正式输出/覆盖缺口分析.md",
+        "正式输出/黑盒测试用例.md",
+        "正式输出/完整分析报告.md",
+        "内部索引/工作台投影.json"
+      ]
+    }
+  ],
+  "evidence_allowed_status": [
+    "parsed",
+    "partially_parsed",
+    "blocked",
+    "out_of_scope",
+    "unreadable"
+  ],
+  "coverage_allowed_outcomes": [
+    "analyzed",
+    "covered_by_other",
+    "not_applicable",
+    "blocked",
+    "need_verify",
+    "truncated"
+  ],
+  "directory_contract": {
+    "run_root": "<用户选择的运行根目录>",
+    "siblings": [
+      "活文档",
+      "内部索引",
+      "正式输出"
+    ],
+    "forbidden_nested_directories": [
+      "活文档/活文档",
+      "活文档/内部索引",
+      "活文档/正式输出",
+      "内部索引/活文档",
+      "正式输出/活文档"
+    ],
+    "root_step_files_forbidden": true,
+    "formal_output_step_prefix_forbidden": true
+  },
+  "workflow_id": "coverage-five-stage",
+  "review_step": "04",
+  "evidence_step": "01",
+  "publication_steps": [
+    "02",
+    "03",
+    "04",
+    "05"
+  ],
+  "asset_allowed_steps": {
+    "requirement": [
+      "01",
+      "02",
+      "03",
+      "04"
+    ],
+    "design": [
+      "01",
+      "02",
+      "03",
+      "04"
+    ],
+    "coverage": [
+      "01",
+      "02",
+      "03",
+      "04"
+    ],
+    "historical_defect": [
+      "01",
+      "02",
+      "03",
+      "04"
+    ],
+    "reference": [
+      "01",
+      "02",
+      "03",
+      "04"
+    ],
+    "test_case_example": [
+      "01",
+      "02",
+      "03",
+      "04"
+    ]
+  }
+}

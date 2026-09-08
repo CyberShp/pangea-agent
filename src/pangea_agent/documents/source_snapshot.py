@@ -182,3 +182,32 @@ def read_source_snapshot_manifest(
         if relative_path.is_absolute() or ".." in relative_path.parts:
             raise ValueError(f"源码快照文件越过边界：{relative}")
     return manifest
+
+
+def extend_source_snapshot(repository_root: Path, scope: list[dict[str, str]], destination: Path,
+                           *, repo_id: str, run_id: str) -> dict:
+    """Append explicitly requested source files without replacing frozen content."""
+    if not destination.exists():
+        return create_source_snapshot(repository_root, scope, destination, repo_id=repo_id, run_id=run_id)
+    manifest = read_source_snapshot_manifest(destination, run_id=run_id, repo_id=repo_id)
+    known = {item["path"] for item in manifest["files"]}
+    for relative in _relative_file_paths(repository_root, scope):
+        if relative.as_posix() in known:
+            continue
+        source = (repository_root / relative).resolve()
+        source.relative_to(repository_root.resolve())
+        target = destination / "repository" / relative
+        target.resolve().relative_to((destination / "repository").resolve())
+        os.makedirs(_filesystem_path(target.parent), exist_ok=True)
+        # Exclusive creation protects existing frozen files, including interrupted copies.
+        with open(_filesystem_path(source), "rb") as reader, open(_filesystem_path(target), "xb") as writer:
+            shutil.copyfileobj(reader, writer)
+        manifest["files"].append({"path": relative.as_posix(), "size": target.stat().st_size})
+    manifest.setdefault("additional_scopes", []).append({
+        "scope": scope, "copied_at": datetime.now().astimezone().isoformat(timespec="seconds")})
+    manifest["file_count"] = len(manifest["files"])
+    manifest["total_bytes"] = sum(item["size"] for item in manifest["files"])
+    temporary = destination / "manifest.pending.json"
+    temporary.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    temporary.replace(destination / "manifest.json")
+    return manifest

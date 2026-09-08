@@ -54,3 +54,6 @@ temp/
 
 # User requested: do not put tests/ on Git
 tests/
+
+# Private on-site skills, never part of the source distribution
+/local-skills/

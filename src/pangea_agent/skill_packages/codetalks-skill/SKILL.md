@@ -248,3 +248,5 @@ python3 {skill-root}/scripts/run_guard.py finalize --workspace "{workspace_root}
 `UNRESOLVED` 时必须如实报告，不得新建 Run、删除有效内容或伪装成全部通过。
 
 时间统一 UTC+8。历史 Run 只读展示自身冻结 manifest、步骤和产物，不迁移、不重编号、不用新 Skill 校验旧 Run。
+
+业务流程工作台的主干/分支字段见 references/business-flow-projection.md，在阶段分析流程时按需读取并维护。

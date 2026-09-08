@@ -20,3 +20,5 @@
 4. 更新并 publish-stage 工作台投影。投影是索引与显示摘要，引用正文、稳定 ID 和证据，不成为第二份分析结论。
 
 compact 前保存上述游标并 handoff。恢复先读状态、计划、台账和当前流程，只复查中断的分析中项，不从头重做。
+
+发布业务流程时读取 references/business-flow-projection.md，维护 mainline_steps 和 branches，供专用阅读器展示主干及分支。

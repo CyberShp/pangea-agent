@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from pangea_agent.agent_io import read_json, write_json
+from pangea_agent.documents.coverage_input import normalize_input, freeze_input, coverage_page, prepare_coverage
 from pangea_agent.assets import freeze_asset_inputs, load_asset
 from pangea_agent.documents.source_snapshot import (
     create_source_snapshot,
@@ -25,6 +26,7 @@ from pangea_agent.skills import (
 )
 
 ANALYSIS_SCENARIOS = {
+    "coverage-analysis",
     "module-analysis",
     "root-cause",
     "issue-regression",
@@ -64,7 +66,7 @@ def _skill_request(raw: object) -> dict:
         raise ValueError(f"request 2.0 不支持字段：{', '.join(rejected)}")
     allowed = {
         "request_version", "run_id", "data_root", "repository", "target", "source_scope", "asset_ids",
-        "scenario", "mode",
+        "scenario", "mode", "coverage_input",
     }
     extras = sorted(set(raw) - allowed)
     if extras:
@@ -79,6 +81,7 @@ def _skill_request(raw: object) -> dict:
     if not isinstance(mode, str) or mode not in ANALYSIS_MODES:
         raise ValueError(f"mode 不受支持：{mode}")
     return {
+        **({"coverage_input": normalize_input(raw.get("coverage_input"))} if scenario == "coverage-analysis" else {}),
         "request_version": "2.0",
         "run_id": run_id.strip() if isinstance(run_id, str) else None,
         "data_root": _required_text(raw, "data_root") if "data_root" in raw else "pangea-data",
@@ -298,15 +301,17 @@ def create_skill_run(request_path_value: str) -> dict:
     request_root = _request_root(data_root, run_id)
     if run_root.exists() or request_root.exists():
         raise ValueError(f"Run 已存在：{run_id}")
-    scope = _resolve_scope(repository_root, request["source_scope"])
-    language_profiles = _language_profiles(repository_root, scope)
+    deferred = request["scenario"] == "coverage-analysis" and not request["source_scope"]
+    scope = [] if deferred else _resolve_scope(repository_root, request["source_scope"])
+    language_profiles = {"languages": [], "profiles": [], "status": "pending", "reason": "由阶段 01 定位源码后识别"} if deferred else _language_profiles(repository_root, scope)
     try:
         run_root.mkdir(parents=True)
         request_root.mkdir(parents=True)
         frozen_skill = freeze_skill_package(request_root / "skill", request["scenario"])
         workflow = read_json(frozen_skill / "workflow-manifest.json")
         frozen_skill_digest = skill_package_digest(frozen_skill)
-        source_snapshot = create_source_snapshot(
+        coverage_input = freeze_input(request["coverage_input"], run_root) if request["scenario"] == "coverage-analysis" else None
+        source_snapshot = {"status": "pending", "file_count": 0} if deferred else create_source_snapshot(
             repository_root,
             scope,
             run_root / "inputs" / "source",
@@ -333,7 +338,16 @@ def create_skill_run(request_path_value: str) -> dict:
             asset_lines=_asset_lines(data_root, request["asset_ids"]),
             language_profiles=language_profiles,
         ), encoding="utf-8")
+        if coverage_input:
+            with request_path.open("a", encoding="utf-8") as stream:
+                stream.write("\n## 覆盖率输入\n\n读取 inputs/coverage/input.json。先阅读查询 Skill（若有），再执行下列当前 Run 命令；不将原始全量 JSON 放入上下文。\n")
+                cli = f'python -m pangea_agent.cli.main runs {{command}} --data-root "{data_root}" --run-id "{run_id}"'
+                stream.write(cli.format(command="coverage-prepare") + "\n" + cli.format(command="coverage-page") + " --cursor 0 --limit 50\n")
+                stream.write("范围未给出时可仅列举 source_raw 内文件路径以定位候选，不先读全仓库内容；通过 prepare-source 复制后读取冻结内容。\n")
+                stream.write(cli.format(command="prepare-source") + ' --scope "<仓库相对路径，可重复此参数补充依赖>"\n')
+                stream.write("源码版本与报告未关联提交，版本一致性待 Agent 核对；查询成功不代表分析完成。\n")
         metadata = {
+            "coverage_input": coverage_input,
             "run_id": run_id,
             "created_at": datetime.now(timezone(timedelta(hours=8))).isoformat(timespec="seconds"),
             "status": "preparing",
@@ -349,8 +363,8 @@ def create_skill_run(request_path_value: str) -> dict:
             "run_root": str(run_root),
             "skill_root": str(frozen_skill),
             "skill": {
-                "skill_id": SKILL_ID,
-                "version": SKILL_VERSION,
+                "skill_id": "codetalks-coverage-skill" if coverage_input else SKILL_ID,
+                "version": workflow["version"],
                 "digest": frozen_skill_digest,
             },
             "request_path": str(request_path),
@@ -393,7 +407,7 @@ def skill_run_detail(data_root: str, run_id: str) -> dict:
     lifecycle, phase, verdict = _lifecycle(metadata, state)
     run_root = Path(metadata["run_root"])
     snapshot_path = run_root / "inputs" / "source"
-    snapshot_status = "legacy_unavailable"
+    snapshot_status = "pending" if metadata.get("source_snapshot", {}).get("status") == "pending" else "legacy_unavailable"
     snapshot_error = None
     if (snapshot_path / "manifest.json").is_file():
         try:
@@ -430,6 +444,8 @@ def skill_run_detail(data_root: str, run_id: str) -> dict:
         "stage": state.get("current_step") if state else None,
         "verdict": verdict,
         "quality_status": verdict,
+        "coverage_input": metadata.get("coverage_input"),
+        "coverage": coverage_page(run_root) if metadata.get("coverage_input") else None,
         "scenario": metadata.get("request", {}).get("scenario", "module-analysis"),
         "mode": metadata.get("request", {}).get("mode", "depth"),
         "skill": {
@@ -569,3 +585,30 @@ def validate_runtime_skill() -> dict:
         "derived_from": "codetalks-fused-v2.4",
         "root_path": str(SOURCE_ROOT),
     }
+
+
+def coverage_operation(data_root: str, run_id: str, operation: str, **options) -> dict:
+    root = Path(data_root).resolve()
+    metadata, state = _state(root, _safe_run_id(run_id))
+    if metadata.get("request", {}).get("scenario") != "coverage-analysis":
+        raise ValueError("此入口只适用于 coverage-analysis Run")
+    run_root = root / "runs" / run_id
+    if operation == "coverage-page":
+        return coverage_page(run_root, **options)
+    if metadata.get("status") == "stopped":
+        raise ValueError("已停止 Run 需先恢复后才能准备输入")
+    if state and state.get("status") == "complete":
+        raise ValueError("已完成 Run 的输入不能修改")
+    if operation == "coverage-prepare":
+        return prepare_coverage(run_root)
+    if operation != "prepare-source":
+        raise ValueError("未知覆盖率操作")
+    from pangea_agent.documents.source_snapshot import extend_source_snapshot
+    scope = _resolve_scope(Path(metadata["repository_root"]), options["scope"])
+    snapshot = extend_source_snapshot(Path(metadata["repository_root"]), scope,
+        run_root / "inputs/source", repo_id=metadata["request"]["repository"], run_id=run_id)
+    metadata["source_snapshot"] = snapshot
+    metadata["language_profiles"] = _language_profiles(Path(metadata["repository_root"]), scope)
+    write_json(_metadata_path(root, run_id), metadata)
+    return {"file_count": snapshot["file_count"], "manifest_path": str(run_root / "inputs/source/manifest.json"),
+            "language_profiles": metadata["language_profiles"]}

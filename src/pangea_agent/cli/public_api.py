@@ -27,6 +27,7 @@ from pangea_agent.methodology import (
     show_methodology_derivation,
     show_methodology,
 )
+from pangea_agent.documents.coverage_input import local_query_skill
 from pangea_agent.skill_runs import (
     list_skill_runs,
     resume_skill_run,
@@ -39,6 +40,7 @@ from pangea_agent.skill_runs import (
 def system_capabilities(data_root: str) -> dict:
     return {
         "analysis_skill": validate_runtime_skill(),
+        "coverage_query_skill": local_query_skill(),
         "analysis_runtime": "direct-skill",
         "analysis_languages": ["c_cpp", "lua"],
         "asset_types": [
