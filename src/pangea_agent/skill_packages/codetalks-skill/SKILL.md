@@ -5,13 +5,13 @@ description: >
   问题+日志+代码根因辅助定位及专项风险分析。模块分析采用五阶段，其他场景保留九步；通过开发实现讲解、
   多源场景增殖、SFMEA、黑盒转换和独立 Judge 形成可追溯交付。
 metadata:
-  version: "1.4.1"
+  version: "1.4.9"
   derived_from: codetalks-fused-v2.4
 license: CC-BY-SA-4.0
 allowed-tools: Read Search Grep Glob Bash Write Edit Agent AskUserQuestion
 ---
 
-# Codetalks Skill 1.4.0
+# Codetalks Skill 1.4.9
 
 本文件只定义运行入口和全局约束。每个步骤的具体要求在 `steps/`，专项方法在
 `references/`；必须按 JIT 顺序读取，不要在启动时一次性加载全部文件。
@@ -20,6 +20,8 @@ allowed-tools: Read Search Grep Glob Bash Write Edit Agent AskUserQuestion
 
 Agent 必须先像熟悉模块的开发一样建立实现模型，再向黑盒测试人员交付可以执行、
 可以观察、可以清理恢复的测试内容。
+
+用例的实例初态只写在操作“步骤 0”，前置条件仅列环境要求；后续准备、触发、观测和清理沿这一状态连续执行。使用阶段 03 对应模板，不另写一套已完成准备的前置状态。
 
 主事实载体是 `活文档/` 中的 Markdown。JSON 只用于运行状态、计划、输入材料索引、
 方法论选择、独立审查状态和工作台投影，不得代替自然语言分析。

@@ -34,6 +34,7 @@ from .public_api import (
     update_asset_result,
 )
 from pangea_agent.skill_runs import create_skill_run, resume_skill_run, coverage_operation
+from pangea_agent.case_verification import verify_cases
 
 
 def main() -> None:
@@ -160,6 +161,12 @@ def main() -> None:
 
     runs = sub.add_parser("runs")
     run_commands = runs.add_subparsers(dest="run_command", required=True)
+    verification = run_commands.add_parser("verify-cases")
+    verification.add_argument("--data-root", required=True)
+    verification.add_argument("--run-id", required=True)
+    verification.add_argument("--review-request-id", required=True)
+    verification.add_argument("--formal", action="store_true")
+    verification.add_argument("--cancel-file")
     for name in ("coverage-prepare", "coverage-page", "coverage-refresh", "prepare-source"):
         command = run_commands.add_parser(name)
         command.add_argument("--data-root", required=True)
@@ -330,6 +337,8 @@ def main() -> None:
                     key: getattr(args, key) for key in ("cursor", "limit", "source", "file_path", "kind", "scope_status", "flow_id", "query", "analysis_status", "disposition")
                 } if args.run_command == "coverage-page" else {"query_file": args.query_file} if args.run_command == "coverage-refresh" else {}
                 print_success(coverage_operation(args.data_root, args.run_id, args.run_command, **options))
+            elif args.run_command == "verify-cases":
+                print_success(verify_cases(args.data_root, args.run_id, args.review_request_id, formal=args.formal, cancel_file=args.cancel_file))
             elif args.run_command == "list":
                 print_success(list_runs(args.data_root, cursor=args.cursor, limit=args.limit))
             elif args.run_command == "get":

@@ -20,6 +20,8 @@
 
 ## Judge
 
+宿主明确接管复核时，Producer 在阶段 03 发布后结束本轮等待；不自行完成阶段 04/05 或填写独立 PASS。Reviewer 根据宿主给定的当前 run_id 和 review_request_id 写入已有独立审查状态文件：review_action 为 revise（交回原 Producer）、accept（本轮复核结束）或 wait（受阻）。这些字段只用于宿主精确续接，semantic_verdict 仍由 Reviewer 按证据决定。Producer 不改写该决定；收到修订要求后修原文件并结束本轮，由同一 Reviewer 复查。正式交付后仍由原 Reviewer 检查正式文件与已审内容一致。
+
 - 深度型由宿主创建与 Producer 分离的真实 Judge 会话/子任务；记录实际 producer_session_id、reviewer_session_id 和宿主调用记录位置，禁止自编身份；无法获得独立执行能力时如实记录未完成独立审查；
 - 独立读取完整设计契约、源码和工件；
 - 不信任 Producer 的完成声明；

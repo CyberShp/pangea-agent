@@ -15,6 +15,8 @@ CSV/XLSX 支持中文函数覆盖率表（函数名、覆盖次数，代码路�
 文件路径是候选：范围为空可列举原仓库路径定位，再用 runs prepare-source --data-root ... --run-id ... --scope <path> 冻结所需文件后读源码。不要根据行号重叠自动解释分支真/假。
 
 ## 目标范围和显式处置
+coverage-page 返回的 gap_id、source、file_path、kind、raw、coverage_status 是原始事实。写投影时原样复制整个 raw 对象，包括 provenance、raw_cells、工作表和行号等嵌套字段，不能重建一个“等价”子集。源码定位写在 source_location 等分析字段，不能回填或删改原始 file_path/raw；原始路径缺失与分析已定位可以同时成立。
+scope_reason 必须回答“这个行为如何影响用户目标”，而非“它属于我新增的流程”。目标会话与同文件独立无状态工具没有调用/状态/资源关联时，可凭源码证据判范围外；确有共享资源影响的辅助入口则应纳入相关路径，不按名称统一排除。
 原始报告、目标行为、读取的依赖分别记录；Python 不根据 target 文字自动判范围。
 在现有投影 coverage_gaps 逐项加入 scope_status（in_scope/out_of_scope/unresolved）、scope_reason、scope_evidence_ids、linked_flow_ids、linked_branch_ids；未提供状态显示 unclassified。
 范围依据写明目标入口、调用/共享状态/资源和受影响结果，不能只用同目录/同函数作理由。无法判断时明确缺证据，不能静默剔除。

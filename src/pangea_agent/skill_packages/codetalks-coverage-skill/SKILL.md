@@ -2,7 +2,7 @@
 name: codetalks-coverage-skill
 description: 基于函数、行、分支覆盖输入和源码定位覆盖缺口、分析可达业务路径并设计补测；用于覆盖率分析，先盘点目标业务路径，再围绕相关缺口深入分析。
 metadata:
-  version: "1.1.1"
+  version: "1.1.11"
   derived_from: codetalks-skill-1.4.0 / codetalks-fused-v2.4
 license: CC-BY-SA-4.0
 ---
@@ -36,7 +36,7 @@ init 参数为 --skill-root、--workspace（Run 根目录）、--source-raw、--
 
 引用冻结源码 repo_id:path:line。补读依赖前用当前 Run prepare-source 入口复制，不重写已冻结文件；额外依赖不扩大用户补测范围。
 以受支持的外部入口、可构造条件、内部保护/判断、后续状态、外部结果形成完整解释。主动寻找反证及不可达原因，只有源码支持时才能作不可达结论。
-用例包含前置条件、外部操作/注入、独立 Oracle、预期结果、观测和清理恢复。函数和行号只作开发解释和追溯。存在真实风险时补充风险与 SFMEA；风险允许为空。
+用例包含前置条件、外部操作/注入、独立 Oracle、预期结果、观测和清理恢复。实例初态只写在操作“步骤 0”，前置条件仅列环境要求；后续准备、触发、观测和清理沿这一状态连续执行。函数和行号只作开发解释和追溯。存在真实风险时补充风险与 SFMEA；风险允许为空。
 coverage_status（实测）、analysis_status（分析）和 disposition（补测处置）分开保存；用例已设计不等于执行成功或覆盖率提升。
 深度型必须由真实独立 Reviewer 复核，读取 references/worker-judge-protocol.md 中 Judge 身份与反证要求；不得伪造独立审查或切到 speed 绕过。语义结论 PASS/UNRESOLVED 如实记录。
 

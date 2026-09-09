@@ -98,14 +98,27 @@ def load_json(path: Path) -> Any:
 CASE_FIELDS = {
     "preconditions": ("前置条件", "前置"),
     "steps": ("操作步骤", "执行步骤", "步骤", "操作", "输入"),
-    "expected_results": ("预期结果和 Oracle", "预期接口结果", "预期结果", "期望结果（Oracle）", "预期结果（Oracle）", "期望结果", "预期"),
+    "expected_results": ("预期结果和 Oracle", "预期结果 Oracle", "预期接口结果", "预期结果", "期望结果（Oracle）", "预期结果（Oracle）", "期望结果", "预期"),
     "observability": ("观测方式", "观察点", "观测", "观测点"),
     "cleanup": ("清理或恢复", "清理/恢复", "清理和复原", "清理步骤", "清理动作", "清理", "恢复"),
 }
 
 
 def parse_delivery_cases(markdown: str, known_ids=()) -> dict:
-    markdown = re.sub(r"(?ms)^\s*(`{3,}|~{3,}).*?^\s*\1\s*$", "", markdown)
+    # Keep code as field content without treating headings/labels inside it as Markdown.
+    literals = {}
+    prefix = "\x00case-code\x00"
+    while prefix in markdown:
+        prefix += "\x00"
+
+    def protect_code(match):
+        if not match['body'].strip():
+            return ""
+        marker = f"{prefix}{len(literals)}"
+        literals[marker] = match[0].strip()
+        return marker
+
+    markdown = re.sub(r"(?ms)^[ \t]*(?:(?P<ticks>`{3,})(?!`)|(?P<tildes>~{3,})(?!~))[^\r\n]*\r?\n(?P<body>.*?)(?:^[ \t]*(?:(?P=ticks)`*|(?P=tildes)~*)[ \t]*\r?$|\Z)", protect_code, markdown)
     headings = list(re.finditer(r"^(#{1,6})\s+(.+)$", markdown, re.M))
     aliases = {label: field for field, labels in CASE_FIELDS.items() for label in labels}
     names = "|".join(re.escape(label) for label in sorted(aliases, key=len, reverse=True))
@@ -118,8 +131,23 @@ def parse_delivery_cases(markdown: str, known_ids=()) -> dict:
         end = next((h.start() for h in headings[index + 1:] if len(h[1]) <= len(heading[1])), len(markdown))
         fields = {label: [] for label in aliases}
         active = None
+        section_level = None
         for line in markdown[heading.end():end].splitlines():
+            bold_field = line.lstrip().startswith("**")
             line = line.replace("**", "").strip()
+            if bold_field and labels.match(line):
+                section_level = None
+            section = re.match(r"^(#{1,6})\s+(.+)$", line)
+            if section and (section_level is None or len(section[1]) <= section_level):
+                active = section[2].strip() if section[2].strip() in aliases else None
+                section_level = len(section[1]) if active else None
+                continue
+            # Explicit Markdown fields end at a peer/parent heading, not an
+            # inline word such as “前置：” inside an operation.
+            if section_level is not None:
+                if line and not re.fullmatch(r"[-*_]{3,}", line):
+                    fields[active].append(re.sub(r"^(?:[-*]|\d+[.)、])\s*", "", line))
+                continue
             matches = list(labels.finditer(line))
             if matches:
                 for match in matches:
@@ -151,7 +179,9 @@ def parse_delivery_cases(markdown: str, known_ids=()) -> dict:
             continue
         if identity not in cases:
             cases[identity] = {field: next(([values[label]] for label in labels if values.get(label)), []) for field, labels in CASE_FIELDS.items()}
-    return cases
+    return {identity: {field: [literals.get(value, value) for value in values]
+                       for field, values in fields.items()}
+            for identity, fields in cases.items()}
 
 
 def check_delivery_integrity(root: Path) -> dict:
@@ -873,7 +903,7 @@ def command_complete(args) -> None:
     if errors:
         save_validation(state, errors, command="complete-step", step=args.step)
         save_json(state_path(root), state)
-        print(json.dumps({"ok": False, "errors": errors}, ensure_ascii=False, indent=2))
+        print(json.dumps({"ok": False, "errors": errors, **feedback}, ensure_ascii=True, indent=2))
         raise SystemExit(2)
 
     if args.step not in state["completed_steps"]:
@@ -1010,8 +1040,8 @@ def command_finalize(args) -> None:
         state["verdict"] = "PARTIAL"
         save_validation(state, errors, command="finalize")
         save_json(state_path(root), state)
-        print(json.dumps({"ok": False, "verdict": "PARTIAL", "errors": errors},
-                         ensure_ascii=False, indent=2))
+        print(json.dumps({"ok": False, "verdict": "PARTIAL", "errors": errors, **feedback},
+                         ensure_ascii=True, indent=2))
         raise SystemExit(2)
 
     state["status"] = "complete"
