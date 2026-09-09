@@ -8,13 +8,13 @@ from pangea_agent.agent_io import read_json
 
 
 SKILL_ID = "codetalks-skill"
-SKILL_VERSION = "1.4.0"
+SKILL_VERSION = "1.4.1"
 DERIVED_FROM = "codetalks-fused-v2.4"
 SOURCE_ROOT = Path(__file__).resolve().parent / "skill_packages" / SKILL_ID
 
 
 COVERAGE_SKILL_ID = "codetalks-coverage-skill"
-COVERAGE_SKILL_VERSION = "1.1.0"
+COVERAGE_SKILL_VERSION = "1.1.1"
 
 
 def validate_skill_package(root: Path) -> dict:

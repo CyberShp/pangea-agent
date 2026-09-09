@@ -3,11 +3,15 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
+import re
+from dataclasses import asdict
+from uuid import uuid4
 from datetime import datetime
 from pathlib import Path
 
 from pangea_agent.agent_io import read_json, write_json
 from pangea_agent.documents.coverage import parse_coverage_xlsx
+from pangea_agent.documents.coverage_input import read_input, gap_records
 from pangea_agent.documents.extract import extract_document
 from pangea_agent.models.asset import (
     AssetExtractionResult,
@@ -21,7 +25,7 @@ DOCUMENT_SUFFIXES = {
     ".md", ".txt", ".json", ".yaml", ".yml", ".csv", ".log",
     ".pdf", ".docx", ".xlsx",
 }
-PARSER_VERSION = "pangea-document-normalize-1"
+PARSER_VERSION = "pangea-document-normalize-2"
 ASSET_ALLOWED_STEPS: dict[str, list[str]] = {
     "requirement": ["02", "03", "04", "08"],
     "design": ["02", "03", "04", "08"],
@@ -171,8 +175,8 @@ def _validate_asset_source(source_path: Path, asset_type: AssetType) -> None:
     if not source_path.is_file():
         raise ValueError(f"资产来源不是文件：{source_path}")
     if asset_type == "coverage":
-        if source_path.suffix.lower() != ".xlsx":
-            raise ValueError("Coverage 当前只支持 XLSX")
+        if source_path.suffix.lower() not in {".xlsx", ".csv", ".json"}:
+            raise ValueError("Coverage 支持 XLSX、CSV 和 combined JSON")
     elif source_path.suffix.lower() not in DOCUMENT_SUFFIXES:
         raise ValueError(f"不支持的资料类型：{source_path.suffix or '<none>'}")
 
@@ -215,38 +219,54 @@ def preview_asset_import(
 
 def _normalize_document(data_root: str, record: AssetRecord) -> AssetRecord:
     source = Path(record.source_path)
-    if not source.is_file():
-        record.status = "failed"
-        record.last_error = f"资产原文不可读：{source}"
-        _save_record(data_root, record)
-        raise ValueError(record.last_error)
+    folder = _asset_dir(data_root, record.asset_id) / "normalizations" / uuid4().hex
+    folder.mkdir(parents=True)
+    previous_text = Path(record.normalized_text_path).read_text(encoding="utf-8") if record.normalized_text_path and Path(record.normalized_text_path).is_file() else None
+    previous_metadata = read_json(Path(record.normalization_path)) if record.normalization_path and Path(record.normalization_path).is_file() else {}
     try:
-        extraction = extract_document(source, _asset_dir(data_root, record.asset_id) / "attachments")
+        extraction = extract_document(source, folder / "attachments")
+        text_path = folder / "normalized.txt"
+        text_path.write_text(extraction.text, encoding="utf-8")
+        metadata_path = folder / "normalization.json"
+        attachment_digests = [{"location": item.location, "sha256": _sha256(Path(item.attachment_path))} for item in extraction.attachments]
+        write_json(metadata_path, {"parser_version": PARSER_VERSION, "source_sha256": _sha256(source),
+                   "created_at": _now(), "text_characters": len(extraction.text),
+                   "attachments": [asdict(item) for item in extraction.attachments],
+                   "attachment_digests": attachment_digests,
+                   "warnings": extraction.warnings, "previous": record.normalization_path})
     except Exception as exc:
-        record.status = "failed"
+        if previous_text is None:
+            record.status = "failed"
         record.last_error = str(exc)
         _save_record(data_root, record)
         raise
-    text_path = _asset_dir(data_root, record.asset_id) / "normalized.txt"
-    text_path.write_text(extraction.text, encoding="utf-8")
+    changed = previous_text != extraction.text or previous_metadata.get("attachment_digests", []) != attachment_digests
+    if changed and record.result_path:
+        record.result_stale = True
+    if changed and record.asset_type == "historical_defect":
+        review = _review_path(data_root, record.asset_id)
+        if review.is_file():
+            shutil.copy2(review, folder / "previous-review.json")
+            review.unlink()
     record.normalized_text_path = str(text_path)
+    record.normalization_path = str(metadata_path)
     record.parser_version = PARSER_VERSION
     record.extraction_task_path = None
-    record.result_path = None
-    if record.asset_type == "historical_defect":
-        _review_path(data_root, record.asset_id).unlink(missing_ok=True)
-    record.structured_item_count = 0
     record.warnings = extraction.warnings
     record.last_error = None
-    record.status = "available" if extraction.text.strip() else "no_items"
-    if record.asset_type == "historical_defect" and extraction.text.strip():
-        record.status = "awaiting_review"
-        record.review_status = "pending"
-    else:
-        record.review_status = "not_required"
+    text_readable = any(line.strip() and not re.fullmatch(r"\[(?:PDF page \d+|XLSX sheet .*|DOCX (?:paragraph|table) \d+)\]", line.strip()) for line in extraction.text.splitlines())
+    readable = text_readable or bool(extraction.attachments)
+    if not text_readable and extraction.attachments:
+        record.warnings.append("仅提取到图片附件，正文无法提取；分析需实际读取图片")
+    if changed or record.status in {"failed", "imported", "no_items"}:
+        record.status = "available" if readable else "no_items"
+        if record.asset_type == "historical_defect" and readable:
+            record.status = "awaiting_review"
+            record.review_status = "pending"
+        else:
+            record.review_status = "not_required"
     _save_record(data_root, record)
     return record
-
 
 def _ensure_normalized_text(data_root: str, record: AssetRecord) -> AssetRecord:
     """Materialize normalized text without discarding an old structured result."""
@@ -355,6 +375,7 @@ def import_asset_revision(
         review_archive.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(current_review, review_archive)
     new_revision = record.revision + 1
+    write_json(current_revision_root.parent / "asset.json", record.model_dump(mode="json"))
     destination = _asset_dir(data_root, asset_id) / "revisions" / f"r{new_revision:04d}" / "source" / source_path.name
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source_path, destination)
@@ -366,6 +387,8 @@ def import_asset_revision(
     if title:
         record.title = title
     record.normalized_text_path = None
+    record.normalization_path = None
+    record.result_stale = False
     record.result_path = None
     record.structured_item_count = 0
     record.warnings = []
@@ -477,6 +500,7 @@ def asset_detail(data_root: str, asset_id: str) -> dict:
     return {
         "asset": record.model_dump(mode="json"),
         "result": result,
+        "normalization": read_json(Path(record.normalization_path)) if record.normalization_path and Path(record.normalization_path).is_file() else None,
         "normalized_preview": normalized_preview,
         "integrity": integrity,
         "review": review,
@@ -509,6 +533,9 @@ def freeze_asset_inputs(
     manifest_items: list[dict] = []
     for asset_id in selected_ids:
         record = load_asset(str(root), asset_id)
+        if record.asset_type == "coverage" and record.status != "archived" and record.parser_version != "pangea-coverage-parser-2":
+            prepare_asset_extraction(str(root), asset_id)
+            record = load_asset(str(root), asset_id)
         if record.status in {"available", "imported"} and not record.normalized_text_path:
             record = _ensure_normalized_text(str(root), record)
         if record.status != "available":
@@ -535,7 +562,7 @@ def freeze_asset_inputs(
         shutil.copy2(Path(record.normalized_text_path), normalized_destination)
         frozen_result = None
         result = None
-        if record.result_path and Path(record.result_path).is_file():
+        if record.result_path and not record.result_stale and Path(record.result_path).is_file():
             frozen_result = item_root / "structured.json"
             result = read_json(Path(record.result_path))
             review = None
@@ -546,6 +573,16 @@ def freeze_asset_inputs(
                     raise ValueError(f"资产仍有未审核的历史缺陷：{asset_id}")
                 result = _accepted_result(result, review)
             write_json(frozen_result, result)
+        frozen_attachments = []
+        if record.normalization_path:
+            normalization = read_json(Path(record.normalization_path))
+            for attachment in normalization.get("attachments", []):
+                attachment_source = Path(attachment["attachment_path"])
+                attachment_source.resolve().relative_to(Path(record.normalization_path).parent.resolve())
+                target = item_root / "attachments" / f"{len(frozen_attachments) + 1}-{attachment_source.name}"
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(attachment_source, target)
+                frozen_attachments.append({**attachment, "source_path": str(source_destination), "attachment_path": str(target)})
         manifest_items.append({
             "asset_id": record.asset_id,
             "revision": record.revision,
@@ -554,6 +591,11 @@ def freeze_asset_inputs(
             "source_name": record.source_name or source.name,
             "source_sha256": record.source_sha256,
             "source_size": record.source_size,
+            "parser_version": record.parser_version,
+            "normalization_path": record.normalization_path,
+            "attachments": frozen_attachments,
+            "warnings": record.warnings,
+            "result_stale": record.result_stale,
             "frozen_source_path": str(source_destination),
             "frozen_normalized_text_path": str(normalized_destination),
             "frozen_result_path": str(frozen_result) if frozen_result else None,
@@ -589,7 +631,7 @@ def analysis_asset_inputs(data_root: str, asset_ids: list[str] | None = None) ->
         record = AssetRecord.model_validate(raw_record)
         if selected and record.asset_id not in selected:
             continue
-        if record.status != "available" or not record.result_path:
+        if record.status != "available" or not record.result_path or record.result_stale:
             continue
         result = read_json(Path(record.result_path))
         if record.asset_type == "coverage":
@@ -654,26 +696,40 @@ def prepare_asset_extraction(data_root: str, asset_id: str) -> dict:
 
     if record.asset_type == "coverage":
         try:
-            records, warnings = parse_coverage_xlsx(source)
+            combined = read_input(source)
+            if combined["status"] == "error":
+                raise ValueError(combined.get("message") or "覆盖率文件记录了获取失败，未替换已有解析结果")
+            records = [{**row, "coverage_type": row["kind"], "path": row["file_path"],
+                        "function": str(row.get("function") or ""), "module": str(row.get("module") or "")}
+                       for row in combined.get("records", [])]
+            warnings = combined.get("warnings", [])
         except Exception as exc:
-            record.status = "failed"
+            if not record.result_path:
+                record.status = "failed"
             record.last_error = str(exc)
             _save_record(data_root, record)
             raise
-        result_path = asset_dir / "coverage.json"
-        write_json(result_path, {"records": records, "warnings": warnings})
-        normalized_path = asset_dir / "normalized.txt"
+        folder = asset_dir / "normalizations" / uuid4().hex
+        folder.mkdir(parents=True)
+        result_path = folder / "coverage.json"
+        write_json(result_path, {**combined, "records": records})
+        normalized_path = folder / "normalized.txt"
         normalized_path.write_text(
-            "\n".join(json.dumps(item, ensure_ascii=False, sort_keys=True) for item in records),
+            "\n".join(json.dumps(item, ensure_ascii=False, sort_keys=True) for item in records) if records else json.dumps(combined, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
         record.result_path = str(result_path)
         record.normalized_text_path = str(normalized_path)
-        record.parser_version = "pangea-coverage-parser-1"
-        record.structured_item_count = len(records)
+        metadata_path = folder / "normalization.json"
+        write_json(metadata_path, {"parser_version": "pangea-coverage-parser-2", "created_at": _now(),
+                   "source_sha256": _sha256(source), "tables": combined.get("tables", []),
+                   "previous": record.normalization_path, "warnings": warnings})
+        record.normalization_path = str(metadata_path)
+        record.parser_version = "pangea-coverage-parser-2"
+        record.structured_item_count = len(records) if records else len(gap_records(combined))
         record.warnings = warnings
         record.last_error = None
-        record.status = "available" if records else "no_items"
+        record.status = "available" if combined.get("status") in {"success", "partial"} else "no_items"
         _save_record(data_root, record)
         return {"asset": record.model_dump(mode="json"), "action": None}
 
@@ -715,6 +771,7 @@ def _accept_extraction_result(
     )
     record.result_path = str(result_path)
     write_json(result_path, result.model_dump(mode="json"))
+    record.result_stale = False
     _review_path(data_root, record.asset_id).unlink(missing_ok=True)
     record.structured_item_count = len(result.items)
     record.warnings = [*record.warnings, *result.warnings]
@@ -800,7 +857,7 @@ def review_asset(data_root: str, asset_id: str, decision: str) -> AssetRecord:
         raise ValueError("已归档资产不能审核，请先恢复资产")
     if decision not in {"approve", "reject"}:
         raise ValueError("decision 必须是 approve 或 reject")
-    if not record.result_path:
+    if not record.result_path or record.result_stale:
         normalized = Path(record.normalized_text_path) if record.normalized_text_path else None
         if not normalized or not normalized.is_file() or not normalized.read_text(encoding="utf-8").strip():
             raise ValueError("当前资产没有可审核的历史缺陷文本")

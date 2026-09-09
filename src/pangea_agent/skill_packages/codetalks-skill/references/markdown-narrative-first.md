@@ -42,7 +42,7 @@ JSON 不得作为分析内容的唯一版本，也不得作为用户主要交付
 
 ## 三、Flow Card 必须是完整文章
 
-每个核心流程是独立 Markdown 文件，使用 YAML frontmatter 保存机器字段，正文按执行顺序讲解。
+每个核心流程是独立 Markdown 文件，frontmatter 可保留 ID 和状态，正文按执行顺序讲解。五阶段流程的可展示步骤按 business-flow-projection.md 在同一文件的 pangea-flow 内容块保存；投影引用文件，不重复维护另一套步骤。内容块只承担可读取字段，不能替代下面要求的推导正文。
 
 正文必须像熟悉代码的开发带着测试人员过流程：
 

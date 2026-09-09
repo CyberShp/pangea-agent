@@ -20,6 +20,8 @@
 - status
 - limitations
 
+每份资产使用 inputs/assets/manifest.json 的 asset_id 作为 id（或显式 asset_id），引用冻结文本和附件路径。实际用于结论时记录 linked_flow_ids、linked_risk_ids、linked_test_case_ids 与 consumed_ranges，未采用说明原因。规范化成功仅说明材料可读，不代表已经消费；没有读取的材料不能填已使用。重新解析后的资产只影响新任务，当前任务以冻结版本为准。
+
 ## 状态
 
 - parsed

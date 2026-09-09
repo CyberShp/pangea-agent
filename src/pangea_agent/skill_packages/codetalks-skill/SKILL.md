@@ -4,8 +4,9 @@ description: >
   源码驱动的黑盒测试分析 Skill。用于模块全量测试分析、问题单/代码修改回归、
   问题+日志+代码根因辅助定位及专项风险分析。模块分析采用五阶段，其他场景保留九步；通过开发实现讲解、
   多源场景增殖、SFMEA、黑盒转换和独立 Judge 形成可追溯交付。
-version: 1.4.0
-derived_from: codetalks-fused-v2.4
+metadata:
+  version: "1.4.1"
+  derived_from: codetalks-fused-v2.4
 license: CC-BY-SA-4.0
 allowed-tools: Read Search Grep Glob Bash Write Edit Agent AskUserQuestion
 ---

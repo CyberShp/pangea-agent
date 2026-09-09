@@ -109,11 +109,21 @@ def _extract_docx(path: Path, attachments_root: Path) -> DocumentExtraction:
         raise DependencyUnavailableError("python-docx", "DOCX") from exc
 
     document = Document(path)
-    blocks = [paragraph.text for paragraph in document.paragraphs if paragraph.text.strip()]
-    for table_number, table in enumerate(document.tables, 1):
-        blocks.append(f"[DOCX table {table_number}]")
-        for row in table.rows:
-            blocks.append("\t".join(cell.text for cell in row.cells))
+    from docx.text.paragraph import Paragraph
+    from docx.table import Table
+    blocks = []
+    paragraph_number = table_number = 0
+    for element in document.element.body.iterchildren():
+        if element.tag.endswith('}p'):
+            paragraph_number += 1
+            paragraph = Paragraph(element, document)
+            if paragraph.text.strip():
+                blocks.append(f"[DOCX paragraph {paragraph_number}]\n{paragraph.text}")
+        elif element.tag.endswith('}tbl'):
+            table_number += 1
+            blocks.append(f"[DOCX table {table_number}]")
+            for row in Table(element, document).rows:
+                blocks.append("\t".join(cell.text for cell in row.cells))
     attachments = _write_zip_images(path, attachments_root, "word/media/", "document image")
     return DocumentExtraction(text="\n".join(blocks), attachments=attachments)
 
@@ -129,10 +139,10 @@ def _extract_xlsx(path: Path, attachments_root: Path) -> DocumentExtraction:
     try:
         for sheet in workbook.worksheets:
             blocks.append(f"[XLSX sheet {sheet.title}]")
-            for row in sheet.iter_rows(values_only=True):
+            for row_number, row in enumerate(sheet.iter_rows(values_only=True), 1):
                 values = ["" if value is None else str(value) for value in row]
                 if any(values):
-                    blocks.append("\t".join(values))
+                    blocks.append(f"[row {row_number}] " + "\t".join(values))
     finally:
         workbook.close()
     attachments = _write_zip_images(path, attachments_root, "xl/media/", "workbook image")

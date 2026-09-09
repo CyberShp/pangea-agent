@@ -143,6 +143,16 @@
       "title": "Parser Version"
     },
     "result_path": {
+      "anyOf": [{"type": "string"}, {"type": "null"}],
+      "default": null,
+      "title": "Result Path"
+    },
+    "result_stale": {
+      "type": "boolean",
+      "default": false,
+      "title": "Result Stale"
+    },
+    "normalization_path": {
       "anyOf": [
         {
           "type": "string"
@@ -152,7 +162,7 @@
         }
       ],
       "default": null,
-      "title": "Result Path"
+      "title": "Normalization Path"
     },
     "warnings": {
       "items": {

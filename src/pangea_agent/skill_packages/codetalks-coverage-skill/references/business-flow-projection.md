@@ -1,5 +1,9 @@
 # 业务流程投影
 
+流程文件统一位于 活文档/流程讲解/。在 Markdown 内写一个 `pangea-flow` fenced 内容块，内容是 JSON 对象，包含 flow_id、title、mainline_steps、branches 和需要的证据/关联字段。它是主干和分支的唯一结构化版本；详细推导在同一 Markdown 正文展开，不另写重复步骤。
+投影 business_flows 项只需保留 flow_id、title、document_path（相对 Run 的该 Markdown 路径）及索引关系。publish-stage 会复制内容块到投影；每完成一个流程即可发布，无需等待整个 Step 03。旧版直接填写 mainline_steps/branches 的投影仍可读取。
+内容块未写完或无法读取时保留原内容并提示未解析，不把它描述为零步骤流程。工具只复制明确字段，不从自由正文猜测流程。
+
 在现有 business_flows 项上保留 flow_id/title/description/entry/evidence，添加 mainline_steps 与 branches；Markdown 仍是分析事实载体。由 Agent 写明语义，工具不推导。
 mainline_steps 按顺序，每项 step_id,title,external_action,processing,state_change,external_observation,evidence_ids。
 branches 每项 branch_id,from_step_id,kind,condition,processing,result,residual_state,external_observation,to_step_id 或 terminal_result,status,linked_risk_ids,linked_test_case_ids,evidence_ids。

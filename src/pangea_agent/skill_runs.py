@@ -310,7 +310,8 @@ def create_skill_run(request_path_value: str) -> dict:
         frozen_skill = freeze_skill_package(request_root / "skill", request["scenario"])
         workflow = read_json(frozen_skill / "workflow-manifest.json")
         frozen_skill_digest = skill_package_digest(frozen_skill)
-        coverage_input = freeze_input(request["coverage_input"], run_root) if request["scenario"] == "coverage-analysis" else None
+        if request["scenario"] == "coverage-analysis" and request["coverage_input"]["kind"] == "asset":
+            request["asset_ids"] = list(dict.fromkeys([*request["asset_ids"], request["coverage_input"]["asset_id"]]))
         source_snapshot = {"status": "pending", "file_count": 0} if deferred else create_source_snapshot(
             repository_root,
             scope,
@@ -327,6 +328,7 @@ def create_skill_run(request_path_value: str) -> dict:
             allowed_steps=workflow.get("asset_allowed_steps"),
         )
         methodology_manifest = freeze_enabled_methodologies(data_root, run_root, run_id)
+        coverage_input = freeze_input(request["coverage_input"], run_root, asset_manifest) if request["scenario"] == "coverage-analysis" else None
         request_path = request_root / "request.md"
         request_path.write_text(_request_markdown(
             request=request,
@@ -388,7 +390,7 @@ def _state(data_root: Path, run_id: str) -> tuple[dict, dict | None]:
 
 
 def _lifecycle(metadata: dict, state: dict | None) -> tuple[str, str, str | None]:
-    if metadata.get("status") == "stopped":
+    if metadata.get("status") == "stopped" and operation != "coverage-refresh":
         return "stopped", "STOPPED", None
     if state is None:
         return "preparing", "PREPARING", None
@@ -601,6 +603,16 @@ def coverage_operation(data_root: str, run_id: str, operation: str, **options) -
         raise ValueError("已完成 Run 的输入不能修改")
     if operation == "coverage-prepare":
         return prepare_coverage(run_root)
+    if operation == "coverage-refresh":
+        projection = run_root / "内部索引/工作台投影.json"
+        if (state and (state.get("current_step") not in {None, "01"} or state.get("completed_steps"))) or projection.is_file():
+            raise ValueError("此 Run 已进入下游分析，请保留现有结果并基于修正输入新建分析")
+        query = read_json(Path(options["query_file"]))
+        try:
+            return prepare_coverage(run_root, refresh=query)
+        finally:
+            metadata["coverage_input"] = read_json(run_root / "inputs/coverage/input.json")
+            write_json(_metadata_path(root, run_id), metadata)
     if operation != "prepare-source":
         raise ValueError("未知覆盖率操作")
     from pangea_agent.documents.source_snapshot import extend_source_snapshot

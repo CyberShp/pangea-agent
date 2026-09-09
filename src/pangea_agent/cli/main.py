@@ -160,10 +160,12 @@ def main() -> None:
 
     runs = sub.add_parser("runs")
     run_commands = runs.add_subparsers(dest="run_command", required=True)
-    for name in ("coverage-prepare", "coverage-page", "prepare-source"):
+    for name in ("coverage-prepare", "coverage-page", "coverage-refresh", "prepare-source"):
         command = run_commands.add_parser(name)
         command.add_argument("--data-root", required=True)
         command.add_argument("--run-id", required=True)
+        if name == "coverage-refresh":
+            command.add_argument("--query-file", required=True)
         if name == "prepare-source":
             command.add_argument("--scope", action="append", required=True)
         if name == "coverage-page":
@@ -323,10 +325,10 @@ def main() -> None:
             raise SystemExit(1) from exc
     elif args.command == "runs":
         try:
-            if args.run_command in {"coverage-prepare", "coverage-page", "prepare-source"}:
+            if args.run_command in {"coverage-prepare", "coverage-page", "coverage-refresh", "prepare-source"}:
                 options = {"scope": args.scope} if args.run_command == "prepare-source" else {
                     key: getattr(args, key) for key in ("cursor", "limit", "source", "file_path", "kind", "scope_status", "flow_id", "query", "analysis_status", "disposition")
-                } if args.run_command == "coverage-page" else {}
+                } if args.run_command == "coverage-page" else {"query_file": args.query_file} if args.run_command == "coverage-refresh" else {}
                 print_success(coverage_operation(args.data_root, args.run_id, args.run_command, **options))
             elif args.run_command == "list":
                 print_success(list_runs(args.data_root, cursor=args.cursor, limit=args.limit))

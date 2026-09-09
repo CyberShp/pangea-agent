@@ -2,7 +2,7 @@
 name: codetalks-coverage-skill
 description: 基于函数、行、分支覆盖输入和源码定位覆盖缺口、分析可达业务路径并设计补测；用于覆盖率分析，先盘点目标业务路径，再围绕相关缺口深入分析。
 metadata:
-  version: "1.1.0"
+  version: "1.1.1"
   derived_from: codetalks-skill-1.4.0 / codetalks-fused-v2.4
 license: CC-BY-SA-4.0
 ---

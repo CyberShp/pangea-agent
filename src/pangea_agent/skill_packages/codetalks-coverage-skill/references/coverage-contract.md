@@ -8,7 +8,9 @@ combined 的 sources 按 source×指标返回汇总，不是每条一种来源�
 success 可分析；partial 分析有效来源并保留 missing/warnings；no_data 没有可用数据，error 为查询失败。后两者不能宣称缺口清零，保存受阻原因并等待修正输入。再次运行 prepare 可重试失败查询，已成功/partial/no_data 的结果不重取；需要新报告时新建 Run。
 count='-' 是未知，既不算命中也不算缺口。CLI 的记录数和模块分母不同口径，不要求相等。
 
-CSV/XLSX 使用明确列 source,file_path,kind,count,function,line,block,branch。kind 为 function/line/branch，count 为非负整数或 '-'，不接受百分比。function 必填 function；line 必填 line；branch 必填 line/block/branch。表格覆盖范围可能不完整，不生成比例或推断缺失项已覆盖。JSON 支持 combined，不支持无文件归属的旧扁平输出。
+CSV/XLSX 支持中文函数覆盖率表（函数名、覆盖次数，代码路径、模块等字段），以及 source,file_path,kind,count,function,line,block,branch 契约列；两个入口共用解析器。函数表自动识别类型，文件来源由解析器保留，不能冒充平台 auto/summary。未知或冲突计数不算零覆盖；缺路径与旧式条件分支记录保留待定位，不能因未定位而丢失。工作表和字段映射见 tables。输入 kind=asset 时直接使用冻结的已解析结果。表格范围可能不完整，不生成比例或推断缺失项已覆盖。
+
+查询中产品和版本分别传入，平台匹配由内网查询 Skill 负责，禁止 Agent 改写冻结 input.json 或猜测产品前缀。query_resolution 用于返回平台对象及匹配状态；未提供时不能从 no_data 推断版本存在。修正输入通过产品“修正并重新获取”留存获取历史；进入下游分析后使用关联的新任务，不混用旧分析和新输入。
 
 文件路径是候选：范围为空可列举原仓库路径定位，再用 runs prepare-source --data-root ... --run-id ... --scope <path> 冻结所需文件后读源码。不要根据行号重叠自动解释分支真/假。
 

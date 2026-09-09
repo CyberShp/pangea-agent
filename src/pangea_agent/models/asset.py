@@ -117,6 +117,8 @@ class AssetRecord(StrictModel):
     extraction_task_path: str | None = None
     normalized_text_path: str | None = None
     parser_version: str | None = None
+    normalization_path: str | None = None
+    result_stale: bool = False
     result_path: str | None = None
     warnings: list[str] = Field(default_factory=list)
     last_error: str | None = None

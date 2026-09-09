@@ -633,6 +633,10 @@ def command_publish_stage(args) -> None:
         data = load_json(source)
     except Exception as exc:
         raise SystemExit(f"阶段投影无法解析：{exc}") from exc
+    if manifest.get("workflow_id") in {"module-five-stage", "coverage-five-stage"} and isinstance(data, dict) and isinstance(data.get("business_flows"), list):
+        from runpy import run_path
+        enrich_flows = run_path(str(Path(__file__).with_name("flow_documents.py")))["enrich_flows"]
+        data = enrich_flows(data, root)
     errors = validate_workbench_projection_data(data, root.name)
     if errors:
         save_validation(state, errors, command="publish-stage", step=step_id)

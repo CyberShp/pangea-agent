@@ -1,7 +1,6 @@
 """Coverage input preparation and paging; never infer source or test semantics."""
 from __future__ import annotations
 
-import csv
 import json
 import os
 import shutil
@@ -9,6 +8,7 @@ import signal
 import threading
 import subprocess
 import sys
+from uuid import uuid4
 from pathlib import Path
 
 
@@ -22,8 +22,12 @@ def local_query_skill() -> dict:
 
 
 def normalize_input(value: object) -> dict:
-    if not isinstance(value, dict) or value.get("kind") not in {"file", "query"}:
-        raise ValueError("coverage_input.kind 必须是 file 或 query")
+    if not isinstance(value, dict) or value.get("kind") not in {"file", "query", "asset"}:
+        raise ValueError("coverage_input.kind 必须是 file、query 或 asset")
+    if value["kind"] == "asset":
+        if not isinstance(value.get("asset_id"), str) or not value["asset_id"].strip():
+            raise ValueError("请选择覆盖率资产")
+        return {"kind": "asset", "asset_id": value["asset_id"]}
     if value["kind"] == "file":
         path = value.get("path")
         if not isinstance(path, str) or not Path(path).is_file():
@@ -43,11 +47,18 @@ def normalize_input(value: object) -> dict:
             ("product", "c_version", "b_version", "module")}}
 
 
-def freeze_input(value: dict, run_root: Path) -> dict:
+def freeze_input(value: dict, run_root: Path, assets: dict | None = None) -> dict:
     folder = run_root / "inputs/coverage"
     folder.mkdir(parents=True)
     frozen = dict(value)
-    if value["kind"] == "file":
+    if value["kind"] == "asset":
+        item = next((a for a in (assets or {}).get("assets", []) if a["asset_id"] == value["asset_id"] and a["asset_type"] == "coverage"), None)
+        if not item or not item.get("frozen_result_path"):
+            raise ValueError("覆盖率资产未冻结或未解析，请重新解析并选择该资产")
+        data = read_input(Path(item["frozen_result_path"]))
+        (folder / "combined.json").write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        frozen.update(path=item["frozen_result_path"], revision=item["revision"], parser_version=item.get("parser_version"))
+    elif value["kind"] == "file":
         target = folder / ("report" + Path(value["path"]).suffix.lower())
         shutil.copy2(value["path"], target)
         frozen["path"] = str(target)
@@ -63,52 +74,11 @@ def freeze_input(value: dict, run_root: Path) -> dict:
 
 
 def _table(path: Path) -> dict:
-    if path.suffix == ".csv":
-        with path.open(encoding="utf-8-sig", newline="") as stream:
-            rows = list(csv.DictReader(stream))
-    else:
-        from openpyxl import load_workbook
-        book = load_workbook(path, read_only=True, data_only=True)
-        try:
-            values = iter(book.active.values)
-            headers = next(values, ())
-            rows = [dict(zip(headers, row)) for row in values if any(v is not None for v in row)]
-        finally:
-            book.close()
-    data = {"status": "success" if rows else "no_data", "sources": [],
-            "uncovered_functions": [], "uncovered_lines": [], "uncovered_branches": [],
-            "missing": [], "warnings": [], "unknown_records": []}
-    for index, row in enumerate(rows, 2):
-        required = ("source", "file_path", "kind", "count")
-        if any(key not in row for key in required):
-            raise ValueError("表格必须包含 source,file_path,kind,count；function 另需 function；line 另需 line；branch 另需 line,block,branch")
-        kind = str(row["kind"] or "")
-        if kind not in {"function", "line", "branch"} or not row["source"] or not row["file_path"]:
-            raise ValueError(f"表格第 {index} 行缺少来源/文件或 kind 不受支持")
-        count = str(row["count"] if row["count"] is not None else "-")
-        if count in {"-", "", "unknown"}:
-            data["unknown_records"].append({**row, "count": count})
-            continue
-        try:
-            hits = int(count)
-        except ValueError as exc:
-            raise ValueError(f"表格第 {index} 行 count 需为非负整数或 -，不接受百分比") from exc
-        if hits < 0:
-            raise ValueError(f"表格第 {index} 行 count 不能为负数")
-        fields = ("function",) if kind == "function" else ("line",) if kind == "line" else ("line", "block", "branch")
-        if any(row.get(k) is None or str(row[k]) == "" for k in fields):
-            raise ValueError(f"表格第 {index} 行缺少 {','.join(fields)}")
-        if hits:
-            continue
-        key = "uncovered_" + {"function": "functions", "line": "lines", "branch": "branches"}[kind]
-        item = str(row["function"]) if kind == "function" else int(row["line"]) if kind == "line" else {
-            "line": int(row["line"]), "block": str(row["block"]), "branch": str(row["branch"]), "count": "0"}
-        data[key].append({"source": str(row["source"]), "file_path": str(row["file_path"]), key: [item]})
-    return data
-
+    from .coverage_table import read_table, table_combined
+    return table_combined(read_table(path))
 
 def read_input(path: Path) -> dict:
-    data = json.loads(path.read_text(encoding="utf-8-sig")) if path.suffix == ".json" else _table(path)
+    data = json.loads(path.read_text(encoding="utf-8-sig")) if path.suffix.lower() == ".json" else _table(path)
     if not isinstance(data, dict) or data.get("status") not in {"success", "partial", "no_data", "error"}:
         raise ValueError("需要 combined JSON，含 status=success/partial/no_data/error")
     for key in ("sources", "uncovered_functions", "uncovered_lines", "uncovered_branches", "missing", "warnings"):
@@ -133,13 +103,43 @@ def gap_records(data: dict) -> list[dict]:
                 records.append({"gap_id": f"GAP-{len(records) + 1:06d}", "source": group["source"],
                                 "file_path": group["file_path"], "kind": kind, "raw": value,
                                 "coverage_status": "uncovered"})
+    for row in data.get("unlocated_records", []):
+        records.append({"gap_id": f"GAP-{len(records) + 1:06d}", "source": row["source"],
+                        "file_path": row.get("file_path", ""), "kind": row["kind"], "raw": row,
+                        "coverage_status": "uncovered", "location_status": "unresolved"})
     return records
 
 
-def prepare_coverage(run_root: Path, *, timeout: int = 300) -> dict:
+def prepare_coverage(run_root: Path, *, timeout: int = 300, refresh: dict | None = None) -> dict:
+    folder = run_root / "inputs/coverage"
+    lock = folder / "acquisition.lock"
+    try:
+        descriptor = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError as exc:
+        raise ValueError("覆盖数据正在获取；若宿主异常退出，请先确认原查询进程已结束") from exc
+    os.close(descriptor)
+    try:
+        return _prepare_coverage(run_root, timeout=timeout, refresh=refresh)
+    finally:
+        lock.unlink(missing_ok=True)
+
+
+def _prepare_coverage(run_root: Path, *, timeout: int, refresh: dict | None) -> dict:
     folder = run_root / "inputs/coverage"
     frozen = json.loads((folder / "input.json").read_text(encoding="utf-8"))
     output = folder / "combined.json"
+    if refresh is not None:
+        if frozen["kind"] != "query":
+            raise ValueError("只有查询输入支持修正后重新获取")
+        corrected = normalize_input({"kind": "query", "query": refresh})
+        archive = folder / "acquisitions" / uuid4().hex
+        archive.mkdir(parents=True)
+        for name in ("input.json", "combined.json", "query-stderr.log"):
+            if (folder / name).is_file():
+                shutil.copy2(folder / name, archive / name)
+        frozen["query"] = corrected["query"]
+        (folder / "input.json").write_text(json.dumps(frozen, ensure_ascii=False, indent=2), encoding="utf-8")
+        output.unlink(missing_ok=True)
     # Reuse any valid acquisition. Retry failures; a successful frozen input is immutable.
     if output.is_file() and read_input(output)["status"] in {"success", "partial", "no_data"}:
         return coverage_page(run_root)
@@ -176,6 +176,14 @@ def prepare_coverage(run_root: Path, *, timeout: int = 300) -> dict:
             raise ValueError(f"查询退出码 {code} 与输出状态不一致；保留原输出待核对")
         temporary.replace(output)
         data = read_input(output)
+        resolution = data.get("query_resolution")
+        if isinstance(resolution, dict) and resolution.get("status") in {"not_found", "ambiguous"}:
+            data["status"] = "error"
+            data["message"] = resolution.get("message") or "平台查询对象未找到或存在多个匹配，请核对查询对象"
+        if not isinstance(resolution, dict) or resolution.get("status") not in {"matched", "not_found", "ambiguous"}:
+            data.setdefault("warnings", []).append("查询 Skill 未返回平台对象匹配结果；no_data 不足以证明版本存在或没有缺口")
+        data["query_input"] = frozen["query"]
+        output.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     if frozen["kind"] == "file":
         output.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     return coverage_page(run_root)
@@ -322,6 +330,10 @@ def coverage_page(run_root: Path, *, cursor: int = 0, limit: int = 50,
     return {"status": data["status"], "message": data.get("message"), "sources": data.get("sources", []),
             "missing": data.get("missing", []), "warnings": data.get("warnings", []),
             "unknown_count": len(data.get("unknown_records", [])), "total": len(records),
+            "record_count": len(data.get("records", [])), "tables": data.get("tables", []),
+            "parser_version": data.get("parser_version"), "query_resolution": data.get("query_resolution"),
+            "query_input": data.get("query_input"),
+            "unlocated_count": len(data.get("unlocated_records", [])),
             "scope_summary": summary, "traceability_warnings": trace_warnings,
             "items": records[cursor:cursor + limit],
             "next_cursor": cursor + limit if cursor + limit < len(records) else None,
