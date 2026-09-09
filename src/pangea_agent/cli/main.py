@@ -172,6 +172,11 @@ def main() -> None:
             command.add_argument("--source")
             command.add_argument("--file-path")
             command.add_argument("--kind", choices=("function", "line", "branch"))
+            command.add_argument("--scope-status", choices=("in_scope", "out_of_scope", "unresolved", "unclassified"))
+            command.add_argument("--flow-id")
+            command.add_argument("--query")
+            command.add_argument("--analysis-status")
+            command.add_argument("--disposition")
     run_list = run_commands.add_parser("list")
     run_list.add_argument("--data-root", default="pangea-data")
     run_list.add_argument("--cursor", type=int, default=0)
@@ -320,7 +325,7 @@ def main() -> None:
         try:
             if args.run_command in {"coverage-prepare", "coverage-page", "prepare-source"}:
                 options = {"scope": args.scope} if args.run_command == "prepare-source" else {
-                    key: getattr(args, key) for key in ("cursor", "limit", "source", "file_path", "kind")
+                    key: getattr(args, key) for key in ("cursor", "limit", "source", "file_path", "kind", "scope_status", "flow_id", "query", "analysis_status", "disposition")
                 } if args.run_command == "coverage-page" else {}
                 print_success(coverage_operation(args.data_root, args.run_id, args.run_command, **options))
             elif args.run_command == "list":

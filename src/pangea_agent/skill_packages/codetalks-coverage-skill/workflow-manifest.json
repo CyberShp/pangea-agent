@@ -1,5 +1,5 @@
 {
-  "version": "1.0.0",
+  "version": "1.1.0",
   "artifact_policy": {
     "primary_format": "markdown",
     "internal_json_only": [
@@ -41,7 +41,7 @@
     },
     {
       "id": "02",
-      "title": "缺口整理",
+      "title": "业务路径与缺口范围",
       "file": "steps/coverage-02-gaps.md",
       "required": [
         "活文档/缺口台账.md"

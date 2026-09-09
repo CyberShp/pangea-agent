@@ -1,6 +1,8 @@
 # 阶段 04：复核与定向修订
 
 深度型由宿主启动与 Producer 分离的真实 Reviewer，读取 `references/worker-judge-protocol.md` 的 Judge 要求。
+先读取 references/path-and-case-design.md，核对目标入口/路径目录与范围处置：范围外有据、共享实现不越界、相关耦合与异常恢复不遗漏。
+复核流程主干是否实际提供，缺口与用例是否能追到具体路径；每条用例能否独立判定，关键输入/结果不同的场景是否误合并；多缺口关联是否由同一次自然执行实现。
 复核覆盖来源/缺口定位、入口/分支、源码证据、实际参数类型、保护条件、支持范围、异常传播、遗漏以及测试的外部可执行性、独立观测、Oracle 和恢复。主动尝试反例，不能只重复 Producer 结论。
 
 集中写 `活文档/复核记录.md`：review_issue_id、受影响 Flow/Risk/Case ID、证据、保留/驳回/合并/未决及理由、原文件路径、Producer 定向修订和 Reviewer 复查结果。

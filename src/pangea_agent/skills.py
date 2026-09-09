@@ -14,7 +14,7 @@ SOURCE_ROOT = Path(__file__).resolve().parent / "skill_packages" / SKILL_ID
 
 
 COVERAGE_SKILL_ID = "codetalks-coverage-skill"
-COVERAGE_SKILL_VERSION = "1.0.0"
+COVERAGE_SKILL_VERSION = "1.1.0"
 
 
 def validate_skill_package(root: Path) -> dict:

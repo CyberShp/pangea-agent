@@ -181,20 +181,148 @@ def prepare_coverage(run_root: Path, *, timeout: int = 300) -> dict:
     return coverage_page(run_root)
 
 
+SCOPE_STATUSES = ("in_scope", "out_of_scope", "unresolved", "unclassified")
+ANNOTATION_FIELDS = ("scope_status", "scope_reason", "scope_evidence_ids", "linked_flow_ids",
+                     "linked_branch_ids", "analysis_status", "disposition", "source_location",
+                     "trigger_path", "guard_conditions", "external_result", "uncertainties",
+                     "linked_test_case_ids", "linked_risk_ids", "evidence_ids")
+
+
+def projection_traceability_warnings(projection: dict) -> list[str]:
+    """Advisory shape/reference observations; no verdict or lifecycle changes."""
+    warnings = []
+    flows = projection.get("business_flows", [])
+    if not isinstance(flows, list):
+        return ["业务流程投影不是数组，内容待补齐"]
+    flow_ids, branch_ids = set(), set()
+    for flow in flows:
+        if not isinstance(flow, dict):
+            continue
+        identifier = flow.get("flow_id")
+        if isinstance(identifier, str):
+            flow_ids.add(identifier)
+        steps = flow.get("mainline_steps")
+        if not isinstance(steps, list) or not steps:
+            warnings.append(f"{identifier} 主干步骤待补齐；流程名称不代表路径分析完成")
+        step_ids = {s.get("step_id") for s in (steps if isinstance(steps, list) else [])
+                    if isinstance(s, dict) and isinstance(s.get("step_id"), str)}
+        for branch in flow.get("branches", []) if isinstance(flow.get("branches", []), list) else []:
+            if not isinstance(branch, dict):
+                continue
+            if isinstance(branch.get("branch_id"), str):
+                branch_ids.add(branch["branch_id"])
+            origin, destination = branch.get("from_step_id"), branch.get("to_step_id")
+            if (not isinstance(origin, str) or origin not in step_ids
+                    or destination and (not isinstance(destination, str) or destination not in step_ids)):
+                warnings.append(f"{identifier}/{branch.get('branch_id')} 挂接步骤待核对")
+    for collection, id_key in (("coverage_gaps", "gap_id"), ("test_cases", "test_case_id")):
+        for item in projection.get(collection, []) if isinstance(projection.get(collection, []), list) else []:
+            if not isinstance(item, dict):
+                continue
+            for field, known in (("linked_flow_ids", flow_ids), ("linked_branch_ids", branch_ids)):
+                values = item.get(field, [])
+                if not isinstance(values, list):
+                    warnings.append(f"{item.get(id_key)} 的 {field} 不是数组")
+                elif any(not isinstance(value, str) or value not in known for value in values):
+                    warnings.append(f"{item.get(id_key)} 的 {field} 引用未发布路径")
+    return warnings
+
+
+def coverage_annotations(run_root: Path, records: list[dict]) -> tuple[list[dict], dict, list[str]]:
+    """Join explicit Agent statements by ID; never classify scope or infer a path."""
+    warnings: list[str] = []
+    projection_path = run_root / "内部索引/工作台投影.json"
+    projection = {}
+    if projection_path.is_file():
+        try:
+            projection = json.loads(projection_path.read_text(encoding="utf-8-sig"))
+            if not isinstance(projection, dict) or projection.get("run_id") != run_root.name:
+                raise ValueError("投影不属于当前 Run")
+        except (ValueError, UnicodeError, OSError) as exc:
+            warnings.append(f"分析记录暂不可读取：{exc}")
+            projection = {}
+    entries = projection.get("coverage_gaps", [])
+    if not isinstance(entries, list):
+        warnings.append("coverage_gaps 不是数组；原始覆盖事实仍可读取")
+        entries = []
+    warnings.extend(projection_traceability_warnings(projection))
+    raw_by_id = {item["gap_id"]: item for item in records}
+    annotations: dict[str, dict] = {}
+    duplicates: set[str] = set()
+    for entry in entries:
+        if not isinstance(entry, dict):
+            warnings.append("缺口分析记录不是对象")
+            continue
+        identifier = entry.get("gap_id")
+        if not isinstance(identifier, str) or identifier not in raw_by_id:
+            warnings.append(f"分析记录引用未知 gap_id：{identifier}")
+            continue
+        if identifier in annotations:
+            duplicates.add(identifier)
+        annotations[identifier] = entry
+        if any(key in entry and entry[key] != raw_by_id[identifier][key]
+               for key in ("source", "file_path", "kind", "raw", "coverage_status")):
+            warnings.append(f"{identifier} 的投影与原始覆盖事实不一致；显示原始事实")
+    cases = {item.get("test_case_id") for item in projection.get("test_cases", [])
+             if isinstance(item, dict) and isinstance(item.get("test_case_id"), str)} if isinstance(projection.get("test_cases", []), list) else set()
+    summary = {key: 0 for key in SCOPE_STATUSES}
+    summary.update(total=len(records), designed_in_scope=0)
+    annotated = []
+    for record in records:
+        identifier = record["gap_id"]
+        entry = annotations.get(identifier, {})
+        if identifier in duplicates:
+            warnings.append(f"{identifier} 有重复分析记录；待 Agent 消除歧义")
+            entry = {}
+        item = {**record, **{key: entry[key] for key in ANNOTATION_FIELDS if key in entry}}
+        scope = item.get("scope_status")
+        if scope not in SCOPE_STATUSES:
+            if scope is not None:
+                warnings.append(f"{identifier} 范围状态未识别：{scope}")
+            scope = "unclassified"
+        # This display status describes the presence of a decision, not business scope.
+        item["scope_status"] = scope
+        summary[scope] += 1
+        if scope != "unclassified" and (not isinstance(item.get("scope_reason"), str) or not item["scope_reason"].strip()):
+            warnings.append(f"{identifier} 范围声明缺少依据")
+        linked = item.get("linked_test_case_ids", [])
+        if isinstance(linked, list):
+            unknown = [value for value in linked if not isinstance(value, str) or value not in cases]
+            if unknown:
+                warnings.append(f"{identifier} 引用未发布用例：{unknown}")
+            if scope == "in_scope" and any(isinstance(value, str) and value in cases for value in linked):
+                summary["designed_in_scope"] += 1
+        annotated.append(item)
+    if summary["unclassified"]:
+        warnings.append(f"{summary['unclassified']} 条输入缺口尚无唯一有效的范围声明；不计为补测完成")
+    return annotated, summary, warnings
+
+
 def coverage_page(run_root: Path, *, cursor: int = 0, limit: int = 50,
-                  source: str | None = None, file_path: str | None = None, kind: str | None = None) -> dict:
+                  source: str | None = None, file_path: str | None = None, kind: str | None = None,
+                  scope_status: str | None = None, flow_id: str | None = None, query: str | None = None,
+                  analysis_status: str | None = None, disposition: str | None = None) -> dict:
     if cursor < 0 or not 1 <= limit <= 200:
         raise ValueError("cursor >= 0 且 limit 为 1..200")
+    if scope_status is not None and scope_status not in SCOPE_STATUSES:
+        raise ValueError("scope_status 必须为 in_scope/out_of_scope/unresolved/unclassified")
     path = run_root / "inputs/coverage/combined.json"
     if not path.is_file():
         return {"status": "pending", "items": [], "total": 0, "next_cursor": None}
     data = read_input(path)
-    all_records = gap_records(data)
+    all_records, summary, trace_warnings = coverage_annotations(run_root, gap_records(data))
     records = [r for r in all_records if (source is None or r["source"] == source)
-               and (file_path is None or r["file_path"] == file_path) and (kind is None or r["kind"] == kind)]
+               and (file_path is None or r["file_path"] == file_path) and (kind is None or r["kind"] == kind)
+               and (scope_status is None or r["scope_status"] == scope_status)
+               and (analysis_status is None or r.get("analysis_status") == analysis_status)
+               and (disposition is None or r.get("disposition") == disposition)
+               and (flow_id is None or isinstance(r.get("linked_flow_ids"), list) and flow_id in r["linked_flow_ids"])
+               and (not query or query.casefold() in json.dumps(
+                   [r["gap_id"], r["file_path"], r["raw"]], ensure_ascii=False).casefold())]
     return {"status": data["status"], "message": data.get("message"), "sources": data.get("sources", []),
             "missing": data.get("missing", []), "warnings": data.get("warnings", []),
             "unknown_count": len(data.get("unknown_records", [])), "total": len(records),
+            "scope_summary": summary, "traceability_warnings": trace_warnings,
             "items": records[cursor:cursor + limit],
             "next_cursor": cursor + limit if cursor + limit < len(records) else None,
             "raw_path": str(path)}
