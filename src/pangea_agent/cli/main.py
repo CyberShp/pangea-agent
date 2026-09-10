@@ -72,6 +72,7 @@ def main() -> None:
     asset_list.add_argument("--limit", type=int, default=50)
     asset_list.add_argument("--type")
     asset_list.add_argument("--status")
+    asset_list.add_argument("--exclude-archived", action="store_true")
     asset_list.add_argument("--query")
     asset_list.add_argument("--kind", choices=("semantic", "evidence"))
     asset_list.add_argument("--repository-id")
@@ -107,6 +108,7 @@ def main() -> None:
     asset_metadata.add_argument("--data-root", default="pangea-data")
     asset_metadata.add_argument("--asset-id", required=True)
     asset_metadata.add_argument("--title", required=True)
+    asset_metadata.add_argument("--asset-type", choices=["requirement", "design", "historical_defect", "reference", "coverage", "test_case_example"])
     asset_metadata.add_argument("--repository-id", action="append")
     asset_metadata.add_argument("--module-tag", action="append")
     asset_metadata.add_argument("--language-tag", action="append")
@@ -237,6 +239,7 @@ def main() -> None:
                     status=args.status,
                     query=args.query,
                     knowledge_kind=args.kind,
+                    exclude_archived=args.exclude_archived,
                     repository_id=args.repository_id,
                     module_tag=args.module_tag,
                 ))
@@ -271,6 +274,7 @@ def main() -> None:
                     args.data_root,
                     args.asset_id,
                     title=args.title,
+                    asset_type=args.asset_type,
                     repository_ids=args.repository_id,
                     module_tags=args.module_tag,
                     language_tags=args.language_tag,

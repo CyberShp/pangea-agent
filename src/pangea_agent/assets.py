@@ -411,6 +411,7 @@ def list_assets(
     status: str | None = None,
     query: str | None = None,
     knowledge_kind: str | None = None,
+    exclude_archived: bool = False,
     repository_id: str | None = None,
     module_tag: str | None = None,
 ) -> dict:
@@ -440,6 +441,8 @@ def list_assets(
         else None
     )
     for record in all_records:
+        if exclude_archived and record.status == "archived":
+            continue
         if allowed_types is not None and record.asset_type not in allowed_types:
             continue
         if asset_type and record.asset_type != asset_type:
@@ -918,6 +921,7 @@ def update_asset_metadata(
     asset_id: str,
     *,
     title: str,
+    asset_type: AssetType | None = None,
     repository_ids: list[str] | None = None,
     module_tags: list[str] | None = None,
     language_tags: list[str] | None = None,
@@ -931,6 +935,22 @@ def update_asset_metadata(
 
     def clean(values: list[str] | None) -> list[str]:
         return list(dict.fromkeys(value.strip() for value in values or [] if value.strip()))
+
+    if asset_type is not None and asset_type != record.asset_type:
+        if asset_type not in ASSET_ALLOWED_STEPS:
+            raise ValueError("不支持的资产分类")
+        if record.status == "extracting":
+            raise ValueError("资产解析中，请完成后再修改分类")
+        record.asset_type = asset_type
+        record.revision += 1
+        record.status = "imported"
+        record.review_status = "not_required"
+        record.result_stale = True
+        record.structured_item_count = 0
+        record.normalized_text_path = None
+        record.normalization_path = None
+        record.extraction_task_path = None
+        record.last_error = None
 
     record.title = normalized_title
     record.repository_ids = clean(repository_ids)
