@@ -225,6 +225,7 @@ def main() -> None:
     task_open_cmd.add_argument("--run-id", required=True)
     task_open_cmd.add_argument("--action-id", required=True)
     task_open_cmd.add_argument("--task-id", required=True)
+    task_open_cmd.add_argument("--prepare-source", action="store_true")
 
     input_read_cmd = sub.add_parser("input-read")
     input_read_cmd.add_argument("--data-root", default="pangea-data")
@@ -294,7 +295,8 @@ def main() -> None:
     result_supersede_cmd.add_argument("--task-id", required=True)
     result_supersede_cmd.add_argument("--expected-revision", type=int, required=True)
     result_supersede_cmd.add_argument("--target-record-ids", required=True, help="JSON array")
-    result_supersede_cmd.add_argument("--replacement", required=True, help="JSON object")
+    result_supersede_cmd.add_argument("--replacement", help="JSON object")
+    result_supersede_cmd.add_argument("--edits", help="JSON exact text edits: path, old, new")
     result_supersede_cmd.add_argument("--request-id")
 
     comparison_finding_cmd = sub.add_parser("comparison-finding-write")
@@ -542,7 +544,8 @@ def main() -> None:
             raise SystemExit(1) from exc
     elif args.command == "task-open":
         try:
-            print_success(task_open(args.data_root, args.run_id, args.action_id, args.task_id))
+            print_success(task_open(args.data_root, args.run_id, args.action_id, args.task_id,
+                                    prepare_source=args.prepare_source))
         except Exception as exc:
             print_error(exc)
             raise SystemExit(1) from exc
@@ -634,12 +637,13 @@ def main() -> None:
     elif args.command == "result-supersede":
         try:
             target_record_ids = parse_json_argument(args.target_record_ids)
-            replacement = parse_json_argument(args.replacement)
+            replacement = parse_json_argument(args.replacement) if args.replacement is not None else None
             print_success(result_supersede(
                 args.data_root, args.run_id, args.action_id, args.task_id,
                 expected_revision=args.expected_revision,
                 target_record_ids=target_record_ids,
                 replacement=replacement,
+                edits=parse_json_argument(args.edits) if args.edits is not None else None,
                 request_id=args.request_id,
             ))
         except Exception as exc:

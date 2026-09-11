@@ -9,6 +9,8 @@ history lookup, or fallback to a live working tree is performed here.
 from __future__ import annotations
 
 import base64
+import json
+import re
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -175,15 +177,89 @@ def task_open(
     run_id: str,
     action_id: str,
     task_id: str,
+    *,
+    prepare_source: bool = False,
 ) -> dict[str, Any]:
     """Return the Graph-created task only after checking the real host binding."""
 
     binding, _, _, task = resolve_binding(data_root, run_id, action_id, task_id)
-    return {
+    opened = {
         "format_version": "pangea-task-open-v1",
         "binding": binding.model_dump(mode="json"),
         "task": task,
     }
+    if prepare_source:
+        opened["prepared_source"] = prepare_task_source(data_root, run_id, action_id, task_id, task)
+    return opened
+
+
+def prepare_task_source(data_root: str, run_id: str, action_id: str, task_id: str, task: dict) -> dict:
+    """Deliver literal, authorized source pages; the Agent decides their meaning."""
+    requests = []
+    warnings = []
+    if task.get("task_type") == "source_first_analysis":
+        requests = [{"repo_id": r["repo_id"], "path": r["path"]}
+                    for r in task.get("owned_regions", []) if isinstance(r, dict)]
+    elif task.get("review_stage") == "independent_review":
+        requests = list(task.get("owned_scope_paths", []))
+    elif task.get("task_type") == "source_first_closure":
+        content, cursor = "", None
+        while True:
+            page = input_read(data_root, run_id, action_id, task_id,
+                              input_id="correction_records", cursor=cursor, max_chars=24000)
+            content += page["text"]
+            cursor = page["next_cursor"]
+            if not cursor:
+                break
+        for record in json.loads(content).get("records", []):
+            for ref in record.get("evidence", []):
+                address = None
+                if isinstance(ref, str):
+                    match = re.fullmatch(r"([^:]+):(.+):(\d+)(?:-(\d+))?", ref)
+                    if match:
+                        repo, path, start, end = match.groups()
+                        address = dict(repo_id=repo, path=path, line_start=int(start), line_end=int(end or start))
+                elif isinstance(ref, dict) and all(k in ref for k in ("repo_id", "path", "line_start", "line_end")):
+                    address = {k: ref[k] for k in ("repo_id", "path", "line_start", "line_end")}
+                if address is None:
+                    warnings.append({"finding_record_id": record.get("record_id"), "reference": ref,
+                                     "reason": "explicit_source_address_required"})
+                else:
+                    requests.append({**address, "finding_record_id": record.get("record_id")})
+    # Bound the added prompt independently of potentially large task metadata.
+    limit = min(60000, max(0, int(task.get("effective_context_budget", 0))) // 3)
+    pages, pending, seen = [], [], set()
+    used = 0
+    for request in requests:
+        key = json.dumps(request, sort_keys=True)
+        if key in seen:
+            continue
+        seen.add(key)
+        finding_id = request.get("finding_record_id")
+        args = {k: v for k, v in request.items() if k != "finding_record_id"}
+        while True:
+            if limit - used < 1500:
+                pending.append({"read": args, "finding_record_id": finding_id})
+                break
+            try:
+                page = source_read(data_root, run_id, action_id, task_id,
+                                   **args, view="text", max_chars=min(12000, limit - used - 300))
+            except (SourceAccessError, ValueError) as exc:
+                warnings.append({"read": args, "finding_record_id": finding_id, "reason": str(exc)})
+                break
+            delivered = {"source": page, "finding_record_id": finding_id}
+            size = len(json.dumps(delivered, ensure_ascii=False))
+            if used + size > limit:
+                pending.append({"read": args, "finding_record_id": finding_id})
+                break
+            pages.append(delivered)
+            used += size
+            if not page["next_read"]:
+                break
+            args = page["next_read"]
+    return {"pages": pages, "pending_reads": pending, "warnings": warnings,
+            "source_delivery_complete": not pending and not warnings,
+            "meaning": "Literal source delivery only; completeness does not establish semantic correctness."}
 
 
 def input_read(

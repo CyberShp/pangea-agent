@@ -35,6 +35,12 @@ result_path。源码只通过 source-index/read/search 读取；不得访问 liv
 next_page_token，保持同一 repo/path/region；source_read 的原始行范围由 token 保留，不自行递增
 或缩小。版本变化时丢弃旧版本未拼完片段，从第一页重读。
 
+
+source_read 的 requested_range 是本次请求范围，line_start/line_end 是本页实际交付范围。
+next_read 非空时，将整个对象原样作为下一次 pangea_source_read 参数，先读完本次请求；
+request_complete 只表示该请求交付完毕，不表示整个文件或语义分析完成。需要整文件时首次
+使用精确 repo_id/path 并省略行号，通过 next_read 读到末页，避免手算相邻范围造成遗漏。
+
 task 中 `analysis_profile=behavior-test-v1` 时，目标是从冻结源码和资料生成可执行的
 业务行为用例：正常主干、业务选项、异常处理、错误传播/转换/恢复、清理和再次操作，
 以及真实 Coverage 指出的未覆盖函数或分支结果。用例不需要先建立 Risk。发现有证据的
@@ -145,3 +151,13 @@ pangea_result_supersede 的平铺参数；证据不足保留 unresolved。结束
 不要反复 supersede 同一组记录、重写无关正文或重新展开整个首轮结果。
 
 source_read 返回带行号 text；line_fragment 按零起点字符位置拼接完整后才作为整行证据。
+
+
+收到 correction_records 后，把每项建议与其反证、目标原文对应核对。优先复用当前会话中已
+完整读取的冻结生产源码，只补读缺少或存在分歧的调用点/实现；测试桩不能代替生产行为。
+根据源码独立决定修正：证据支持则替换；反证不成立则保留原结论并简述依据；资料不足则
+明确 unresolved。不能因为建议来自 Reviewer 就照抄，也不能无依据忽略 finding。
+保存前仅对本次修改核对标题、步骤预期、流程节点和路径说明是否表达同一最终结论，删除
+已被自己推翻的中间推测。处置说明写入现有正文/summary，随后按既有流程 work_finish。
+
+宿主 prepared_source 中的原文可直接用于核对；pending_reads 是尚未交付的明确范围，应继续读取。返修时 original_records 是本 action 的原记录，引用页的 finding_record_id 属于 Reviewer，编号空间分别解释。引用页只是原文，不代表支持建议；特别核对构建分支、状态复位与日志是否真实存在。局部改动可用 pangea_result_supersede 的 edits（客户端支持时）：一条目标记录，path 指向正文字符串，old 唯一匹配，new 是你决定的替换内容；其余字段保持。匹配诊断交回当前 worker，读取原文后修正参数。

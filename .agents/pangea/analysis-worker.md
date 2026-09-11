@@ -58,3 +58,13 @@ targeted closure 对一个 finding 默认只做一次直接 replacement；只有
 定向替换前按 pangea_result_read(record_id=目标) 读完该条，核对正文身份并复制实际 record_id；
 不按 finding/用例编号或记忆推算。当前 revision 已核对原文可复用。写入 supersedes 后，
 核对回执 retired_records/created_records 的实际对象，保留不受影响的流程和首轮原文件。
+
+
+收到 correction_records 后，把每项建议与其反证、目标原文对应核对。优先复用当前会话中已
+完整读取的冻结生产源码，只补读缺少或存在分歧的调用点/实现；测试桩不能代替生产行为。
+根据源码独立决定修正：证据支持则替换；反证不成立则保留原结论并简述依据；资料不足则
+明确 unresolved。不能因为建议来自 Reviewer 就照抄，也不能无依据忽略 finding。
+保存前仅对本次修改核对标题、步骤预期、流程节点和路径说明是否表达同一最终结论，删除
+已被自己推翻的中间推测。处置说明写入现有正文/summary，随后按既有流程 work_finish。
+
+宿主 prepared_source 中的原文可直接用于核对；pending_reads 是尚未交付的明确范围，应继续读取。返修时 original_records 是本 action 的原记录，引用页的 finding_record_id 属于 Reviewer，编号空间分别解释。引用页只是原文，不代表支持建议；特别核对构建分支、状态复位与日志是否真实存在。局部改动可用 pangea_result_supersede 的 edits（客户端支持时）：一条目标记录，path 指向正文字符串，old 唯一匹配，new 是你决定的替换内容；其余字段保持。匹配诊断交回当前 worker，读取原文后修正参数。

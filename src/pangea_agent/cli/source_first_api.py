@@ -8,6 +8,7 @@ searches another Run or guesses a replacement task.
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -262,8 +263,23 @@ def validate_source_first_result(
     }
 
 
-def task_open(data_root: str, run_id: str, action_id: str, task_id: str) -> dict[str, Any]:
-    return open_task(data_root, run_id, action_id, task_id)
+def task_open(data_root: str, run_id: str, action_id: str, task_id: str, *, prepare_source: bool = False) -> dict[str, Any]:
+    opened = open_task(data_root, run_id, action_id, task_id, prepare_source=prepare_source)
+    if prepare_source and opened["task"].get("task_type") == "source_first_closure":
+        _, path, _ = _binding_and_result(data_root, run_id, action_id, task_id)
+        material = opened["prepared_source"]
+        remaining = max(0, 60000 - len(json.dumps(material, ensure_ascii=False)))
+        material["original_records"] = []
+        material["pending_original_record_ids"] = []
+        for record in active_records(read_result(path)):
+            value = record.model_dump(mode="json")
+            size = len(json.dumps(value, ensure_ascii=False))
+            if size <= remaining:
+                material["original_records"].append(value)
+                remaining -= size
+            else:
+                material["pending_original_record_ids"].append(record.record_id)
+    return opened
 
 
 def input_read(
@@ -520,7 +536,8 @@ def result_supersede(
     *,
     expected_revision: int,
     target_record_ids: list[str],
-    replacement: dict[str, Any],
+    replacement: dict[str, Any] | None = None,
+    edits: list[dict[str, Any]] | None = None,
     request_id: str | None = None,
 ) -> dict[str, Any]:
     """Append one replacement whose retirement links cannot be hidden in prose."""
@@ -533,13 +550,15 @@ def result_supersede(
         raise ResultStoreError("result_supersede target_record_ids 必须是非空 record_id 数组")
     if len(set(target_record_ids)) != len(target_record_ids):
         raise ResultStoreError("result_supersede target_record_ids 不得重复")
-    if not isinstance(replacement, dict) or "body" not in replacement:
+    if edits is not None and replacement is not None:
+        raise ResultStoreError("只选择 replacement 或 edits")
+    if edits is None and (not isinstance(replacement, dict) or "body" not in replacement):
         raise ResultStoreError("result_supersede replacement 必须是包含 body 的 JSON object")
-    if replacement.get("kind") == "review_decision":
+    if replacement is not None and replacement.get("kind") == "review_decision":
         raise ResultStoreError(
             "review_decision 只能通过 review_decide 的 replace_decision_record_ids 替换"
         )
-    if "supersedes" in replacement:
+    if replacement is not None and "supersedes" in replacement:
         raise ResultStoreError("replacement 不接受 supersedes；请只使用 target_record_ids")
 
     binding, path, task = _binding_and_result(
@@ -547,13 +566,27 @@ def result_supersede(
     )
     if (
         task.get("review_stage") == "comparison_review"
-        and replacement.get("kind") == "finding"
+        and replacement is not None and replacement.get("kind") == "finding"
     ):
         raise ResultStoreError(
             "comparison finding 只能通过 comparison_finding_write 的 "
             "replace_finding_record_ids 替换"
         )
     current = read_result(path)
+    if request_id and request_id in current.receipts:
+        return dict(current.receipts[request_id])
+    if edits is not None:
+        if len(target_record_ids) != 1 or not isinstance(edits, list) or not edits:
+            raise ResultStoreError("edits 需要一个目标记录及非空修改列表")
+        target = next((r for r in active_records(current) if r.record_id == target_record_ids[0]), None)
+        if target is None:
+            raise ResultStoreError("edits 目标不是当前 active 记录")
+        if target.kind in {"review_decision", "finding"}:
+            raise ResultStoreError("该记录须使用专用审查提交入口")
+        if current.revision != expected_revision:
+            raise ResultStoreError(f"revision 已变化：expected={expected_revision}, actual={current.revision}")
+        replacement = {"kind": target.kind, "body": edit_body(target.body, edits),
+                       "evidence": target.evidence, "relates_to": target.relates_to}
     active_ids = {record.record_id for record in active_records(current)}
     unavailable = sorted(set(target_record_ids) - active_ids)
     if unavailable:
@@ -569,6 +602,33 @@ def result_supersede(
         [record],
         request_id=request_id,
     )
+
+
+def edit_body(body: Any, edits: list[dict[str, Any]]) -> Any:
+    """Apply Agent-authored exact text edits; preserve all other content."""
+    updated = deepcopy(body)
+    for index, edit in enumerate(edits):
+        if not isinstance(edit, dict):
+            raise ResultStoreError(f"edits[{index}] 必须是 object")
+        path = edit.get("path", [])
+        old, new = edit.get("old"), edit.get("new")
+        if not isinstance(path, list) or not isinstance(old, str) or not old or not isinstance(new, str):
+            raise ResultStoreError(f"edits[{index}] 需要 path 数组、非空 old 和字符串 new")
+        parent, value = None, updated
+        for key in path:
+            if not ((isinstance(value, dict) and isinstance(key, str) and key in value)
+                    or (isinstance(value, list) and type(key) is int and 0 <= key < len(value))):
+                raise ResultStoreError(f"edits[{index}].path 不存在：{path}")
+            parent, value = value, value[key]
+        count = value.count(old) if isinstance(value, str) else 0
+        if count != 1:
+            raise ResultStoreError(f"edits[{index}] 原文必须唯一匹配：path={path}, matches={count}")
+        changed = value.replace(old, new, 1)
+        if path:
+            parent[path[-1]] = changed
+        else:
+            updated = changed
+    return updated
 
 
 @serialized_run_mutation

@@ -612,7 +612,15 @@ def source_text_page(
         handle = f'{metadata["repo_id"]}:{metadata["path"]}:{first_line}-{last_line}' if last_line >= first_line else None
         if fragment:
             handle += f':chars={fragment["char_start"]}-{fragment["char_end"]}'
+        next_read = None
+        if token:
+            next_read = {"repo_id": metadata["repo_id"], "path": metadata["path"],
+                         "page_token": token}
+            if token_context.get("region_id"):
+                next_read["region_id"] = token_context["region_id"]
         return {**metadata, "line_start": first_line, "line_end": last_line,
+                "requested_range": {"line_start": start, "line_end": token_context["line_end"]},
+                "request_complete": token is None, "next_read": next_read,
                 "text": "" if fragment else "\n".join(f"{start+i}: {lines[i]}" for i in range(position, last)),
                 "line_fragment": fragment, "evidence_handle": handle, "next_page_token": token}
 
