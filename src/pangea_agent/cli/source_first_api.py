@@ -35,6 +35,7 @@ from pangea_agent.inventory.source_access import (
     source_read as read_source,
     source_search as search_source,
     task_open as open_task,
+    prepare_task_source,
 )
 from pangea_agent.graph.workflow_store import (
     load_progress,
@@ -264,14 +265,28 @@ def validate_source_first_result(
 
 
 def task_open(data_root: str, run_id: str, action_id: str, task_id: str, *, prepare_source: bool = False) -> dict[str, Any]:
-    opened = open_task(data_root, run_id, action_id, task_id, prepare_source=prepare_source)
-    if prepare_source and opened["task"].get("task_type") == "source_first_closure":
+    opened = open_task(data_root, run_id, action_id, task_id)
+    if not prepare_source:
+        return opened
+    task = opened["task"]
+    if task.get("task_type") == "source_first_closure":
         _, path, _ = _binding_and_result(data_root, run_id, action_id, task_id)
-        material = opened["prepared_source"]
-        remaining = max(0, 60000 - len(json.dumps(material, ensure_ascii=False)))
-        material["original_records"] = []
-        material["pending_original_record_ids"] = []
-        for record in active_records(read_result(path)):
+        limit = min(60000, max(0, int(task.get("effective_context_budget", 0))) // 3)
+        # Only explicit Reviewer addresses influence ordering; never extract IDs
+        # from prose or infer which semantic records a finding should change.
+        targets = set()
+        for finding in task.get("correction_records", []):
+            body = finding.get("body")
+            refs = body.get("affected_records", []) if isinstance(body, dict) else []
+            if isinstance(refs, list):
+                targets.update(ref["record_id"] for ref in refs if isinstance(ref, dict)
+                               and ref.get("unit_id") == task.get("unit_id")
+                               and isinstance(ref.get("record_id"), str))
+        records = active_records(read_result(path))
+        records.sort(key=lambda record: record.record_id not in targets)
+        material = {"original_records": [], "pending_original_record_ids": []}
+        remaining = limit // 2
+        for record in records:
             value = record.model_dump(mode="json")
             size = len(json.dumps(value, ensure_ascii=False))
             if size <= remaining:
@@ -279,6 +294,28 @@ def task_open(data_root: str, run_id: str, action_id: str, task_id: str, *, prep
                 remaining -= size
             else:
                 material["pending_original_record_ids"].append(record.record_id)
+        remaining = max(0, limit - len(json.dumps(material, ensure_ascii=False)))
+        material.update(prepare_task_source(data_root, run_id, action_id, task_id, task, max_chars=remaining))
+        opened["prepared_source"] = material
+    else:
+        opened["prepared_source"] = prepare_task_source(data_root, run_id, action_id, task_id, task)
+    if task.get("task_type") == "source_first_analysis" and task.get("analysis_profile") == "behavior-test-v1":
+        pages = []
+        pending = []
+        remaining = 12_000
+        for item in task.get("inputs", []):
+            input_id = item["input_id"]
+            if not input_id.startswith("example_"):
+                continue
+            if remaining <= 0:
+                pending.append({"input_id": input_id, "cursor": None})
+                continue
+            page = read_input(data_root, run_id, action_id, task_id, input_id=input_id, max_chars=remaining)
+            pages.append(page)
+            remaining -= len(page["text"])
+            if page["next_cursor"] is not None:
+                pending.append({"input_id": input_id, "cursor": page["next_cursor"]})
+        opened["prepared_examples"] = {"pages": pages, "pending_inputs": pending}
     return opened
 
 
@@ -614,6 +651,11 @@ def edit_body(body: Any, edits: list[dict[str, Any]]) -> Any:
         old, new = edit.get("old"), edit.get("new")
         if not isinstance(path, list) or not isinstance(old, str) or not old or not isinstance(new, str):
             raise ResultStoreError(f"edits[{index}] 需要 path 数组、非空 old 和字符串 new")
+        if isinstance(updated, str) and path:
+            raise ResultStoreError(
+                f"edits[{index}] 当前 body 是字符串；使用 path=[]，old/new 填要替换的唯一文本片段，"
+                "不要按 JSON 对象字段寻址或添加 body 前缀"
+            )
         parent, value = None, updated
         for key in path:
             if not ((isinstance(value, dict) and isinstance(key, str) and key in value)
@@ -622,7 +664,13 @@ def edit_body(body: Any, edits: list[dict[str, Any]]) -> Any:
             parent, value = value, value[key]
         count = value.count(old) if isinstance(value, str) else 0
         if count != 1:
-            raise ResultStoreError(f"edits[{index}] 原文必须唯一匹配：path={path}, matches={count}")
+            preview = value[:1600] if isinstance(value, str) else f"<非字符串字段: {type(value).__name__}>"
+            remaining = max(0, len(value) - 1600) if isinstance(value, str) else 0
+            raise ResultStoreError(
+                f"edits[{index}] 原文必须唯一匹配：path={path}, matches={count}；"
+                f"当前字段原文={preview!r}；未显示字符数={remaining}。"
+                "本次修改未保存；核对当前记录后可用 kind/body 完整替换这一条，省略 edits。"
+            )
         changed = value.replace(old, new, 1)
         if path:
             parent[path[-1]] = changed

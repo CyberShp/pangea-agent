@@ -193,7 +193,7 @@ def task_open(
     return opened
 
 
-def prepare_task_source(data_root: str, run_id: str, action_id: str, task_id: str, task: dict) -> dict:
+def prepare_task_source(data_root: str, run_id: str, action_id: str, task_id: str, task: dict, *, max_chars: int = 60000) -> dict:
     """Deliver literal, authorized source pages; the Agent decides their meaning."""
     requests = []
     warnings = []
@@ -227,7 +227,7 @@ def prepare_task_source(data_root: str, run_id: str, action_id: str, task_id: st
                 else:
                     requests.append({**address, "finding_record_id": record.get("record_id")})
     # Bound the added prompt independently of potentially large task metadata.
-    limit = min(60000, max(0, int(task.get("effective_context_budget", 0))) // 3)
+    limit = min(max_chars, 60000, max(0, int(task.get("effective_context_budget", 0))) // 3)
     pages, pending, seen = [], [], set()
     used = 0
     for request in requests:
@@ -257,6 +257,11 @@ def prepare_task_source(data_root: str, run_id: str, action_id: str, task_id: st
             if not page["next_read"]:
                 break
             args = page["next_read"]
+            if task.get("task_type") == "source_first_closure":
+                # Present one bounded page per citation before spending the
+                # whole handoff on a large reference. The worker can continue.
+                pending.append({"read": args, "finding_record_id": finding_id})
+                break
     return {"pages": pages, "pending_reads": pending, "warnings": warnings,
             "source_delivery_complete": not pending and not warnings,
             "meaning": "Literal source delivery only; completeness does not establish semantic correctness."}
@@ -525,6 +530,8 @@ def source_index(
     normalized_path = _normal_path(path)
     selected = [item for item in files if item.repo_id == repo_id and item.path == normalized_path]
     if not selected:
+        if _file_allowed(repo_id, normalized_path, allowed):
+            raise SourceAccessError(f"当前文件没有 region 索引，但允许读取：{repo_id}:{normalized_path}；使用 source_read 或 source_search 读取冻结内容")
         raise SourceAccessError(f"源码文件不在当前 task scope：{repo_id}:{normalized_path}")
     source_file = selected[0]
     visible_regions = source_file.regions
@@ -808,7 +815,8 @@ def source_search(
     for current_repo, current_path in sorted(allowed):
         if repo_id and current_repo != repo_id:
             continue
-        if normalized_path and current_path != normalized_path:
+        if (normalized_path and current_path != normalized_path
+                and not current_path.startswith(normalized_path.rstrip("/") + "/")):
             continue
         _, lines = _read_frozen_file(repositories, current_repo, current_path)
         for line_number, line in enumerate(lines, 1):

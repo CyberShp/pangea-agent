@@ -127,15 +127,14 @@ def _analysis_allowed_paths(
     """Return frozen files an Analysis worker may read.
 
     Behavior-test analysis needs the complete explicitly requested source
-    contract (for example a public header beside its implementation), even
-    when Planning assigns only function regions from the implementation as
-    owned work. Expanded reference files remain opt-in through the unit's
-    context selection so this does not expose the whole dependency closure.
+    contract and its already frozen references, even when Planning omits a
+    relevant context file. Read access does not assign analysis ownership or
+    require reading every reference. Live files remain outside this boundary.
     """
 
     candidates = list(selected_paths)
     if analysis_profile == "behavior-test-v1":
-        candidates.extend(_scope_paths(expansion, "code_paths"))
+        candidates.extend(_all_scope_paths(expansion))
     allowed: list[dict[str, str]] = []
     seen: set[tuple[str, str]] = set()
     for item in candidates:
@@ -162,6 +161,16 @@ def _freeze_source_first_rubrics(run_dir: Path) -> dict[str, str]:
 
 def _input(input_id: str, path: str | Path, label: str) -> dict[str, str]:
     return {"input_id": input_id, "path": str(path), "label": label}
+
+
+def _example_inputs(state: PangeaState) -> list[dict[str, str]]:
+    manifest = run_directory(state) / "inputs" / "test-case-examples.json"
+    if not manifest.is_file():
+        return []
+    return [
+        _input(f"example_{number:03d}", path, f"用户附件 {Path(path).name}")
+        for number, path in enumerate(read_json(manifest), 1)
+    ]
 
 
 def _analysis_rubric_names(
@@ -318,6 +327,7 @@ def prepare_source_first_inputs(state: PangeaState) -> PangeaState:
         "result_path": str(result_path),
         "rubric_paths": [planning_rubric],
         "inputs": [
+            *_example_inputs(state),
             _input("planning_metadata", compact_path, "源码结构摘要"),
             _input("asset_candidates", inputs / "asset-candidates.json", "候选结构化资料"),
             _input("coverage_gaps", inputs / "coverage-gaps.json", "Coverage 零覆盖提示"),
@@ -610,6 +620,7 @@ def _make_analysis_actions(state: PangeaState, progress: WorkflowProgress, units
         }
         task["inputs"] = [
             _input("selected_inputs", run_directory(state) / "inputs" / "test-case-examples.json", "用户用例示例"),
+            *_example_inputs(state),
             _input("asset_items", run_directory(state) / "inputs" / "asset-items.json", "已选结构化资料"),
             _input("coverage_gaps", run_directory(state) / "inputs" / "coverage-gaps.json", "Coverage 零覆盖提示"),
             *[
@@ -652,6 +663,8 @@ def _prepare_review(state: PangeaState, progress: WorkflowProgress) -> None:
         analysis_profile,
         manifest.get("analysis_language", "c_cpp"),
     )
+    if analysis_profile == "behavior-test-v1" and "behavior_test_review" in frozen_rubrics:
+        review_rubric_names = ["behavior_test_review"]
     review_rubrics = [
         frozen_rubrics[name]
         for name in review_rubric_names
@@ -678,6 +691,7 @@ def _prepare_review(state: PangeaState, progress: WorkflowProgress) -> None:
         "inputs": [
             _input("unit_plan", run_directory(state) / "inputs" / "source-first-plan.json", "中性单元计划"),
             _input("selected_inputs", run_directory(state) / "inputs" / "test-case-examples.json", "用户用例示例"),
+            *_example_inputs(state),
             _input("asset_items", run_directory(state) / "inputs" / "asset-items.json", "已选结构化资料"),
             _input("coverage_gaps", run_directory(state) / "inputs" / "coverage-gaps.json", "Coverage 零覆盖提示"),
             *[

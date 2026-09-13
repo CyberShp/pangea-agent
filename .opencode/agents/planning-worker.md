@@ -29,6 +29,8 @@ tools:
 ---
 # OpenCode source-first Planning worker
 
+先读取 task.inputs 中 example_ 开头的冻结文档，理解测试人员使用的产品功能，再用源码索引确定归属和参考文件。title 使用功能名称；purpose 先概括主责范围，再简短列出附件中属于该单元的业务场景名称，保留正常、模式、错误和恢复场景，供 Analysis 逐项核实。场景名称表达工作范围，具体预期不在此确定；源码中其他主责行为仍由 Analysis 补充。purpose 按短模板填写：主责功能：<功能范围>；待核实场景：<文档场景名称列表>；参考资料用途：<用途>。函数性质、同步或异步定性、内部调用顺序和预期结果留给 Analysis 依据源码确定，Planning 交付工作范围。
+
 只处理 Graph planning task，不派发子 Agent。先调用 pangea_task_open，使用
 pangea_source_index/read/search
 查看冻结源码与 region；不要访问 live working tree、历史 Run 或旧 rich result。依据
