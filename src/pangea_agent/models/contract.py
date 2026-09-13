@@ -15,6 +15,8 @@ class TaskContract(BaseModel):
     workflow_version: Literal["legacy-v1", "source-first-v1"] | None = None
     analysis_profile: Literal["behavior-test-v1"] | None = None
     runtime_commit: str | None = None
+    runtime_provenance: dict | None = None
+    analysis_settings: dict[str, str] | None = None
     model_id: str | None = None
     effective_context_budget: int | None = Field(default=None, gt=0)
     mode: Literal["module_analysis", "mr_analysis"] = "module_analysis"
@@ -46,6 +48,9 @@ class TaskContract(BaseModel):
 
     @model_validator(mode="after")
     def validate_mode(self) -> "TaskContract":
+        if self.workflow_version == "source-first-v1" and self.analysis_settings is not None:
+            if self.analysis_settings != {"scenario": "module-analysis", "mode": "depth"}:
+                raise ValueError("source-first-v1 supports module-analysis with depth mode")
         if bool(self.repository) == bool(self.repositories):
             raise ValueError("任务契约必须且只能指定 repository 或 repositories")
         if self.mode == "mr_analysis" and not self.mr_url:

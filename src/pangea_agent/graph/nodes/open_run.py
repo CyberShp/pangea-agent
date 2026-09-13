@@ -4,6 +4,7 @@ from pangea_agent.agent_io import read_json, write_json
 from pangea_agent.graph.state import PangeaState
 from pangea_agent.graph.workflow_store import load_progress, run_directory
 from pangea_agent.models.contract import TaskContract
+from pangea_agent.runtime_provenance import runtime_identity
 
 
 def open_run(state: PangeaState) -> PangeaState:
@@ -32,9 +33,17 @@ def open_run(state: PangeaState) -> PangeaState:
     frozen_path = run_directory(opened) / "inputs" / "task-contract.json"
     progress = load_progress(opened)
     if progress is None:
+        contract["runtime_provenance"] = {**(contract.get("runtime_provenance") or {}), "agent": runtime_identity()}
         write_json(frozen_path, contract)
         return {**opened, "needs_prepare": True}
-    if not frozen_path.is_file() or read_json(frozen_path) != contract:
+    frozen = read_json(frozen_path) if frozen_path.is_file() else None
+    # The Agent identity is generated at creation, not supplied by direct CLI callers.
+    # Reopening their original request keeps that frozen identity even after an upgrade.
+    if frozen and not (contract.get("runtime_provenance") or {}).get("agent"):
+        agent_identity = (frozen.get("runtime_provenance") or {}).get("agent")
+        if agent_identity:
+            contract["runtime_provenance"] = {**(contract.get("runtime_provenance") or {}), "agent": agent_identity}
+    if frozen != contract:
         raise ValueError("当前 task contract 与 Run 的冻结输入不一致")
     return {
         **opened,

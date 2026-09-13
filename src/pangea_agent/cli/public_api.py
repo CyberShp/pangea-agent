@@ -33,12 +33,15 @@ def system_capabilities(data_root: str) -> dict:
         "workflow_versions": ["legacy-v1", "source-first-v1"],
         "source_first": {
             "version": "source-first-v1",
+            "contract_fields": ["analysis_settings", "runtime_provenance"],
+            "analysis_options": {"scenarios": ["module-analysis"], "modes": ["depth"], "coverage_input": False},
             "tools": [
                 "source_index", "source_read", "source_search", "plan_write",
                 "result_write", "result_read", "comparison_read",
                 "work_finish", "review_decide",
             ],
         },
+        "asset_operations": {"metadata": False, "restore": False, "revisions": False, "item_review": False, "preview": False, "list_filters": False},
         "analysis_languages": ["c_cpp", "lua"],
         "asset_types": [
             "requirement",
