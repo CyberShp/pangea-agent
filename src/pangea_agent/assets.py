@@ -153,7 +153,9 @@ def asset_detail(data_root: str, asset_id: str) -> dict:
     result_path = _asset_result_path(data_root, record)
     if result_path and result_path.is_file():
         result = read_json(result_path)
-    return {"asset": record.model_dump(mode="json"), "result": result}
+    text_path = result_path.parent / "extracted.txt" if result_path else None
+    original_text = text_path.read_text(encoding="utf-8") if text_path and text_path.is_file() else None
+    return {"asset": record.model_dump(mode="json"), "result": result, "normalized_preview": original_text}
 
 
 def _asset_result_path(data_root: str, record: AssetRecord) -> Path | None:
@@ -161,7 +163,15 @@ def _asset_result_path(data_root: str, record: AssetRecord) -> Path | None:
     if not record.result_path:
         return None
     recorded = Path(record.result_path)
-    return _asset_dir(data_root, record.asset_id) / recorded.name
+    root = _asset_dir(data_root, record.asset_id).resolve()
+    try:
+        relative = recorded.resolve().relative_to(root)
+    except ValueError:
+        parts = recorded.parts
+        relative = Path(*parts[parts.index("extraction-attempts"):]) if "extraction-attempts" in parts else Path(recorded.name)
+    resolved = (root / relative).resolve()
+    resolved.relative_to(root)
+    return resolved
 
 
 def analysis_asset_inputs(data_root: str, asset_ids: list[str] | None = None) -> dict:
@@ -216,6 +226,7 @@ def analysis_asset_inputs(data_root: str, asset_ids: list[str] | None = None) ->
                 or payload.get("root_cause")
                 or payload.get("main_flows")
                 or payload.get("acceptance_criteria")
+                or payload.get("expected_results")
                 or payload.get("key_facts")
                 or [],
                 "applicable_modules": payload.get("modules")

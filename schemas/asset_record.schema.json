@@ -18,7 +18,8 @@
         "design",
         "historical_defect",
         "reference",
-        "coverage"
+        "coverage",
+        "test_case_example"
       ],
       "title": "Asset Type",
       "type": "string"

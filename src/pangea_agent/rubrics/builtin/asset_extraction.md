@@ -28,3 +28,10 @@
 ## reference
 
 提取主题、适用模块和可被后续分析直接引用的事实。宣传性描述、重复段落和没有分析价值的目录文字不生成条目。
+
+## test_case_example
+
+提取原文件中的示例用例，保留标题、适用模块、前置条件、操作步骤、预期结果及原文明确关联的问题。
+使用 `preconditions`、`steps`、`expected_results`、`applicable_modules`、`related_problems` 和
+`source_references`。缺失信息留空并在 warnings 中说明，不补造步骤或预期。
+示例用于表达测试方式、适用条件与环境；后续分析仍需核对当前源码和实际条件，不能据此宣称执行通过。

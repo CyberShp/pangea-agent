@@ -11,6 +11,7 @@ AssetType = Literal[
     "historical_defect",
     "reference",
     "coverage",
+    "test_case_example",
 ]
 
 
@@ -71,8 +72,20 @@ class ReferenceItem(StrictModel):
     source_references: list[SourceReference] = Field(min_length=1)
 
 
+class TestCaseExampleItem(StrictModel):
+    item_type: Literal["test_case_example"] = "test_case_example"
+    item_id: str = Field(min_length=1)
+    title: str = Field(min_length=1)
+    preconditions: list[str] = Field(default_factory=list)
+    steps: list[str] = Field(default_factory=list)
+    expected_results: list[str] = Field(default_factory=list)
+    applicable_modules: list[str] = Field(default_factory=list)
+    related_problems: list[str] = Field(default_factory=list)
+    source_references: list[SourceReference] = Field(min_length=1)
+
+
 StructuredAssetItem = Annotated[
-    Union[RequirementItem, DesignItem, HistoricalDefectItem, ReferenceItem],
+    Union[RequirementItem, DesignItem, HistoricalDefectItem, ReferenceItem, TestCaseExampleItem],
     Field(discriminator="item_type"),
 ]
 
@@ -108,7 +121,7 @@ class AssetExtractionTask(StrictModel):
     schema_version: Literal["1.0"] = "1.0"
     task_type: Literal["asset_extraction"] = "asset_extraction"
     asset_id: str = Field(min_length=1)
-    asset_type: Literal["requirement", "design", "historical_defect", "reference"]
+    asset_type: Literal["requirement", "design", "historical_defect", "reference", "test_case_example"]
     title: str = Field(min_length=1)
     source_path: str = Field(min_length=1)
     extracted_text_path: str = Field(min_length=1)

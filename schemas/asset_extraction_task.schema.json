@@ -23,7 +23,8 @@
         "requirement",
         "design",
         "historical_defect",
-        "reference"
+        "reference",
+        "test_case_example"
       ],
       "title": "Asset Type",
       "type": "string"

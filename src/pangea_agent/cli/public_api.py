@@ -49,6 +49,7 @@ def system_capabilities(data_root: str) -> dict:
             "historical_defect",
             "reference",
             "coverage",
+            "test_case_example",
         ],
         "repositories": list_registered_repositories(data_root),
         "report_formats": ["html", "markdown"],

@@ -78,7 +78,7 @@ def main() -> None:
     asset_import.add_argument(
         "--type",
         required=True,
-        choices=("requirement", "design", "historical_defect", "reference", "coverage"),
+        choices=("requirement", "design", "historical_defect", "reference", "coverage", "test_case_example"),
     )
     asset_import.add_argument("--title")
     asset_list = asset_commands.add_parser("list")
