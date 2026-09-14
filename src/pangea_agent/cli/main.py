@@ -35,6 +35,7 @@ from .public_api import (
     show_methodology,
     system_capabilities,
     stop_run,
+    resume_run,
     update_asset_result,
 )
 from .result_check import check_result_json
@@ -93,6 +94,7 @@ def main() -> None:
     asset_extract = asset_commands.add_parser("extract")
     asset_extract.add_argument("--data-root", default="pangea-data")
     asset_extract.add_argument("--asset-id", required=True)
+    asset_extract.add_argument("--restart", action="store_true")
     asset_review = asset_commands.add_parser("review")
     asset_review.add_argument("--data-root", default="pangea-data")
     asset_review.add_argument("--asset-id", required=True)
@@ -171,6 +173,10 @@ def main() -> None:
     run_stop = run_commands.add_parser("stop")
     run_stop.add_argument("--data-root", default="pangea-data")
     run_stop.add_argument("--run-id", required=True)
+
+    run_resume = run_commands.add_parser("resume")
+    run_resume.add_argument("--data-root", default="pangea-data")
+    run_resume.add_argument("--run-id", required=True)
 
     system = sub.add_parser("system")
     system_commands = system.add_subparsers(dest="system_command", required=True)
@@ -413,7 +419,7 @@ def main() -> None:
             elif args.asset_command == "get":
                 print_success(asset_detail(args.data_root, args.asset_id))
             elif args.asset_command == "extract":
-                print_success(prepare_asset_extraction(args.data_root, args.asset_id))
+                print_success(prepare_asset_extraction(args.data_root, args.asset_id, restart=args.restart))
             elif args.asset_command == "review":
                 result = review_asset(args.data_root, args.asset_id, args.decision)
                 print_success(result.model_dump(mode="json"))
@@ -487,6 +493,8 @@ def main() -> None:
                 print_success(run_report(args.data_root, args.run_id, args.format))
             elif args.run_command == "create":
                 print_success(run_module_analysis(args.contract))
+            elif args.run_command == "resume":
+                print_success(resume_run(args.data_root, args.run_id))
             elif args.run_command == "stop":
                 print_success(stop_run(args.data_root, args.run_id))
         except Exception as exc:

@@ -31,7 +31,6 @@ from pangea_agent.graph.workflow_store import (
     project_path,
 )
 from pangea_agent.inventory.languages import detect_analysis_language
-from pangea_agent.inventory.lua_scope_expander import expand_lua_analysis_scope
 from pangea_agent.inventory.lua_source_scanner import build_lua_inventory
 from pangea_agent.inventory.source_access import resolve_binding, expand_owned_files
 from pangea_agent.inventory.source_regions import build_source_index
@@ -199,19 +198,8 @@ def prepare_source_first_inputs(state: PangeaState) -> PangeaState:
     repositories = resolve_repositories_from_contract(contract, state["data_root"])
     requested_scope = list(contract.get("source_scope") or ["."])
     analysis_language = detect_analysis_language(repositories, requested_scope)
-    if analysis_language == "lua":
-        expansion = expand_lua_analysis_scope(repositories, requested_scope)
-    else:
-        from pangea_agent.inventory.scope_expander import expand_analysis_scope
-
-        expansion = expand_analysis_scope(
-            repositories,
-            requested_scope,
-            target=str(contract.get("target", "")),
-            focus=list(contract.get("focus", [])),
-        )
-    from pangea_agent.inventory.scope_expander import budget_automatic_context
-    expansion = budget_automatic_context(expansion)
+    from pangea_agent.inventory.on_demand import requested_files, file_inventory, directory_overview
+    expansion = requested_files(repositories, requested_scope, analysis_language)
     explicit_context = _explicit_context_files(
         repositories,
         list(contract.get("context_scope") or []),
@@ -243,17 +231,20 @@ def prepare_source_first_inputs(state: PangeaState) -> PangeaState:
         for group in expansion.get("groups", [])
         for path in group.get("code_paths", [])
     ))
-    inventory_scope = list(dict.fromkeys(
-        path
-        for group in expansion.get("groups", [])
-        for path in [*group.get("code_paths", []), *group.get("context_paths", [])]
-    ))
-    if analysis_language == "lua":
-        inventory = build_lua_inventory(frozen_repositories, inventory_scope)
-    else:
-        inventory = build_lightweight_inventory(frozen_repositories, inventory_scope)
+    inventory = file_inventory(frozen_repositories, expansion)
     assets = analysis_asset_inputs(state["data_root"], contract.get("asset_ids"))
-    coverage_match = match_coverage_records(assets["coverage_records"], inventory)
+    # Coverage matching needs symbols only when actual coverage records exist.
+    # Pathless legacy coverage still needs global disambiguation.
+    coverage_inventory = {"files": []}
+    if assets["coverage_records"]:
+        paths = [str(r.get("path", "")).replace("\\", "/") for r in assets["coverage_records"]]
+        scan = build_lua_inventory if analysis_language == "lua" else build_lightweight_inventory
+        for repo in frozen_repositories:
+            selected = [f["path"] for f in inventory["files"] if f["repo_id"] == repo["repo_id"]
+                        and ("" in paths or any(p == f["path"] or p.endswith("/" + f["path"]) for p in paths))]
+            if selected:
+                coverage_inventory["files"].extend(scan([repo], selected)["files"])
+    coverage_match = match_coverage_records(assets["coverage_records"], coverage_inventory)
     zero_coverage = _coverage_for_owned_sources(
         relevant_zero_coverage(coverage_match),
         expansion,
@@ -263,15 +254,10 @@ def prepare_source_first_inputs(state: PangeaState) -> PangeaState:
         list(contract.get("test_case_examples", [])),
     )
 
-    compact_metadata = _compact_inventory(inventory, expansion, analysis_language)
-    # Planning chooses ownership from file summaries. Detailed symbols/calls
-    # remain available through the paged source-index/source-search APIs.
-    compact_metadata["files"] = [
-        {key: item[key] for key in ("repo_id", "path", "line_count", "parse_complete") if key in item}
-        for item in compact_metadata.get("files", [])
-    ]
-    budget = expansion.get("context_budget", {})
-    compact_metadata["context_budget"] = {key: value for key, value in budget.items() if key != "omitted"}
+    compact_metadata = {"index_policy": "on-demand-v1", "file_count": inventory["file_count"],
+                        "directories": directory_overview(inventory),
+                        "context_budget": expansion["context_budget"],
+                        "usage": "目录是可检索范围，不是分析义务；按目标定位文件后查询结构，不逐项排除无关文件。"}
     inputs = run_dir / "inputs"
     compact_path = inputs / "planning-metadata.json"
     write_json(compact_path, compact_metadata)
@@ -280,7 +266,7 @@ def prepare_source_first_inputs(state: PangeaState) -> PangeaState:
     write_json(inputs / "coverage-gaps.json", zero_coverage)
     write_json(inputs / "test-case-examples.json", frozen_examples)
     write_json(inputs / "inventory.json", inventory)
-    source_index = build_source_index(inventory)
+    source_index = {**build_source_index(inventory), "index_policy": "on-demand-v1"}
     write_json(source_first_index_path(state), source_index)
     source_manifest = {
         "workflow_version": "source-first-v1",
@@ -399,7 +385,8 @@ def _load_notes_action(state: PangeaState, action: ActionState):
 def _planning_units(state: PangeaState, action: ActionState, task: dict, result) -> list[dict]:
     """Extract explicit unit handles; no Python inference or source splitting."""
 
-    index = read_json(source_first_index_path(state))
+    from pangea_agent.inventory.on_demand import read_index
+    index = read_index(run_directory(state))
     units_by_id: dict[str, dict] = {}
     order: list[str] = []
     latest_records = {}
@@ -451,7 +438,8 @@ def _planning_units(state: PangeaState, action: ActionState, task: dict, result)
 
 
 def _region_lookup(state: PangeaState) -> dict[str, dict]:
-    index = read_json(source_first_index_path(state))
+    from pangea_agent.inventory.on_demand import read_index
+    index = read_index(run_directory(state))
     return {
         str(region["region_id"]): region
         for file in index.get("files", [])
@@ -553,7 +541,7 @@ def _make_analysis_actions(state: PangeaState, progress: WorkflowProgress, units
     all_paths = _all_scope_paths(manifest.get("scope_expansion", {}))
     # Reference choices belong to this unit's Planner, not the Run-wide union.
     required_direct_context_files = (
-        [] if plan_task.get("context_budget", {}).get("policy") == "automatic-references-v1"
+        [] if plan_task.get("context_budget", {}).get("policy") in {"automatic-references-v1", "on-demand-v1"}
         else _required_direct_context_files(manifest)
     )
     frozen_rubrics = {

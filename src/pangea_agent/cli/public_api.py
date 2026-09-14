@@ -13,7 +13,7 @@ from pangea_agent.assets import (
     update_asset_result,
 )
 from pangea_agent.repositories.registry import list_registered_repositories
-from pangea_agent.graph.workflow_store import load_progress, save_progress
+from pangea_agent.graph.workflow_store import load_progress, save_progress, serialized_run_mutation
 from pangea_agent.methodology import (
     complete_methodology_derivation,
     import_methodology_candidates,
@@ -159,6 +159,27 @@ def run_report(data_root: str, run_id: str, report_format: str) -> dict:
     if not _run_summary(path.parent)["report_available"]:
         raise ValueError(f"报告不存在：{path}")
     return {"run_id": run_id, "format": report_format, "path": str(path)}
+
+
+@serialized_run_mutation
+def resume_run(data_root: str, run_id: str) -> dict:
+    state = {"data_root": data_root, "run_id": run_id}
+    progress = load_progress(state)
+    if progress is None:
+        raise ValueError(f"Run 不存在：{run_id}")
+    if progress.workflow_version != "source-first-v1":
+        from .run_module_analysis import resume_module_analysis
+        return resume_module_analysis(run_id, data_root)
+    if progress.lifecycle_status not in {"running", "stopped"}:
+        raise ValueError(f"当前 Run 不可续跑：{progress.lifecycle_status}；保留结果和诊断")
+    for action in progress.actions.values():
+        if action.status == "dispatched" or (action.status == "failed" and action.error == "用户停止 Run"):
+            action.status = "pending"
+            action.action = "continue_agent" if action.task_id else "dispatch_agent"
+    progress.lifecycle_status = "running"
+    save_progress(state, progress)
+    return {"run_id": run_id, "data_root": str(Path(data_root).resolve()),
+            "workflow_version": "source-first-v1", "lifecycle_status": "running", "stage": progress.stage}
 
 
 def stop_run(data_root: str, run_id: str) -> dict:

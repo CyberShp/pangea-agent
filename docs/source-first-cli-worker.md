@@ -4,7 +4,7 @@
 
 ## 调用
 
-以宿主提供的 Python 可执行文件运行 `-m pangea_agent.cli.main <command> <绑定参数> <操作参数>`。可先查看具体 command 的 `--help`，不猜工具名。返回 JSON envelope 的 `result` 是结果，`ok=false` 时保留具体错误并修正本次调用。文件路径按字面值传入。
+以宿主提供的 Python 可执行文件运行 `-m pangea_agent.cli.main <command> <绑定参数> <操作参数>`。优先使用 task-open 随附的 write_contract 和下列调用方式；仅在调用报参数错误时查询对应 command 的 `--help`。返回 JSON envelope 的 `result` 是结果，`ok=false` 时保留具体错误并修正本次调用。文件路径按字面值传入。
 
 Windows 下复杂 JSON 不通过 PowerShell 拼接。使用 Python 临时脚本，通过 `subprocess.run([sys.executable, '-m', 'pangea_agent.cli.main', command, *binding, ...], check=True)` 传参数数组；JSON 参数使用 `json.dumps(value, ensure_ascii=False)`。脚本只传递由你作出的判断，不能让脚本代做语义分析。使用宿主指定 Python 运行脚本，临时文件不能覆盖 task、源码或结果文件。
 

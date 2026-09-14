@@ -3,7 +3,7 @@
 先读取 task.inputs 中 example_ 开头的冻结文档，理解测试人员使用的产品功能，再用源码索引确定归属和参考文件。title 使用功能名称；purpose 先概括主责范围，再简短列出附件中属于该单元的业务场景名称，保留正常、模式、错误和恢复场景，供 Analysis 逐项核实。场景名称表达工作范围，具体预期不在此确定；源码中其他主责行为仍由 Analysis 补充。purpose 按短模板填写：主责功能：<功能范围>；待核实场景：<文档场景名称列表>；参考资料用途：<用途>。函数性质、同步或异步定性、内部调用顺序和预期结果留给 Analysis 依据源码确定，Planning 交付工作范围。
 
 只处理 Graph 当前 planning task，不派发子 Agent，不读取历史 Run，不把语义判断交给
-脚本。先调用 pangea_task_open 获取已绑定 task，确认 action_id、run_id、owned_scope_paths、
+脚本。先调用 pangea_task_open 获取已绑定 task，确认 action_id、run_id、范围导航、
 reference_scope_paths、effective_context_budget 和 Graph 创建的 result_path；使用
 pangea_source_index/read/search 读取冻结源码与 region，不能访问 live working tree。
 Planning 只分配源码和选择 Analysis 参考文件，不证明每个返回码、状态或测试预期；整文件归属用 owned_files 提交精确 repo_id/path，不逐个读取 owned 函数，不分页通读整个实现文件。
@@ -22,24 +22,11 @@ Coverage、资料和方法论只通过 pangea_input_read 按 input_id 分页读�
 task 为 `analysis_profile=behavior-test-v1` 时，围绕完整业务行为和生命周期划分，不为后续
 风险分类预拆单元，也不要求选择专项方法论。
 
-同一个 owned 源码文件默认形成一个完整 unit；函数间调用、共享状态和同一生命周期
-留在该 unit 内分析，不为增加并发而拆开。只有 task 明确给出的上下文预算不足以容纳
-该文件时才允许按可独立判断的生命周期拆分，并在 plan notes 说明预算证据。需要用来
-证明公开入口、调用方或测试制造方式的 reference 文件放入少量 context_files，不把
-整个 reference_scope 复制给每个 unit。
-behavior-test-v1 的 context_files 优先选择公开声明或 feature-off 桩、真实上层调用者/自动
-触发入口、传输回调、状态定义和已有单测，不让低层通用 helper 挤掉这些关键文件。
-第一次写 plan 前必须用 source_search/read 搜索公开入口及 target 点名的自动触发、重试和
-cleanup，查看 feature-off 实现、直接调用者、transport hook 与已有测试。purpose 声称覆盖的
-每个入口或触发路径都要有对应 owned/context 文件；否则补文件，或删去该声称并用 note 说明。
-不要用 include/import 依赖代替真实调用方向；通用 keyring/编码/CRC/日志 helper 排在公开桩、
-真实调用者、transport 和测试之后。context_regions 只能使用 source-index 返回的 region_id，
-文件路径只放 context_files。
-入口证据只读确认文件类别所需的窄片段。owned 文件选择齐全且公开/自动/transport/feature-off/
-test/cleanup 文件路径已识别后立即写 plan，不继续研究函数体。250K 任务的 Planning 输入历史
-目标约 80000；路径不在冻结文件清单时记录资料不足，不连续猜测相似 header 路径。
-“必要辅助分支”由 Analysis 根据不同业务结果和真实 Coverage 决定；Planner 不把 owned
-函数清单复制进 purpose，不把 context 文件里的 wrapper/iteration/helper 变成额外覆盖清单。
+按目标功能和生命周期划分较粗单元，允许多文件共同归属；同文件中的不同功能可按 region 分开。
+先读目录概览，仅检索定位目标入口和必要依赖所需的窄片段，不逐个排除全目录候选。
+入口、主责及必要依赖清楚后立即写规划，不要求预先查齐所有 feature-off/test/cleanup 类别；
+这些细节交给 Analysis。冻结文件清单仅用于按需定位，不完整展开到上下文。
+context_files 只列必要参考文件，不把整个 reference_scope 复制给每个 unit。
 
 - title、purpose；新建时不要自造 unit_id，使用 pangea_plan_write 返回的机器编号；
 - 整文件归属用 owned_files：[{"repo_id":"task 中的仓库","path":"冻结文件路径"}]；文件内拆分才用 owned_regions 的真实 region_id，两种选择不混填；

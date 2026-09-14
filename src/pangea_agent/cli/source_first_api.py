@@ -96,7 +96,8 @@ def _region_id(value: Any) -> str | None:
 
 
 def _plan_diagnostics(run_dir: Path, task: dict[str, Any], result) -> dict[str, Any]:
-    index = read_json(run_dir / "inputs" / "source-index.json")
+    from pangea_agent.inventory.on_demand import read_index
+    index = read_index(run_dir)
     all_regions, required = planning_regions(index, task.get("owned_scope_paths", []))
     owners: dict[str, list[str]] = {}
     unknown: list[dict[str, str]] = []
@@ -268,9 +269,24 @@ def validate_source_first_result(
 
 def task_open(data_root: str, run_id: str, action_id: str, task_id: str, *, prepare_source: bool = False) -> dict[str, Any]:
     opened = open_task(data_root, run_id, action_id, task_id)
+    task = opened["task"]
+    if task.get("context_budget", {}).get("policy") == "on-demand-v1":
+        # APIs resolve the full persisted scope; the prompt receives navigation only.
+        opened["task"] = {key: value for key, value in task.items()
+                          if key not in {"allowed_paths", "owned_scope_paths", "reference_scope_paths"}}
+        opened["task"]["scope_navigation"] = "source-index 按目录/文件分页；source-search 按目标入口检索。无需枚举全范围。"
+    if task.get("task_type") == "source_first_plan":
+        binding, result_path, _ = _binding_and_result(data_root, run_id, action_id, task_id)
+        opened["write_contract"] = {
+            "revision": read_result(result_path).revision,
+            "binding_args": ["--data-root", data_root, "--run-id", run_id, "--action-id", action_id, "--task-id", task_id],
+            "unit_example": {"title": "目标功能", "purpose": "主责行为及必要依赖说明", "owned_files": [{"repo_id": "替换为真实仓库ID", "path": "替换为定位到的冻结路径"}]},
+            "plan_write": ["plan-write", "<binding_args>", "--expected-revision", "<当前revision>", "--unit", "<json.dumps(unit)>"],
+            "finish": ["work-finish", "<binding_args>", "--revision", "<最后一次写入返回的revision>"],
+            "note": "新单元不填unit_id；更新使用返回的unit_id。宿主负责settle，不必再次搜索schema。",
+        }
     if not prepare_source:
         return opened
-    task = opened["task"]
     if task.get("task_type") == "source_first_closure":
         _, path, _ = _binding_and_result(data_root, run_id, action_id, task_id)
         limit = min(60000, max(0, int(task.get("effective_context_budget", 0))) // 3)
@@ -998,7 +1014,8 @@ def plan_write(
         ):
             raise ResultStoreError(f"plan_write unit.{field} 必须是字符串数组")
     binding, path, task = _binding_and_result(data_root, run_id, action_id, task_id, writable=True)
-    expand_owned_files(unit, read_json(path.parents[2] / "inputs" / "source-index.json"), task.get("owned_scope_paths", []))
+    from pangea_agent.inventory.on_demand import read_index
+    expand_owned_files(unit, read_index(path.parents[2]), task.get("owned_scope_paths", []))
     current = read_result(path)
     existing = {item["unit_id"] for item in _effective_plan_units(current)}
     requested_id = unit.get("unit_id")

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shutil
+from uuid import uuid4
 from datetime import datetime
 from pathlib import Path
 
@@ -229,11 +230,11 @@ def analysis_asset_inputs(data_root: str, asset_ids: list[str] | None = None) ->
     }
 
 
-def prepare_asset_extraction(data_root: str, asset_id: str) -> dict:
+def prepare_asset_extraction(data_root: str, asset_id: str, *, restart: bool = False) -> dict:
     record = load_asset(data_root, asset_id)
     if record.status == "archived":
         raise ValueError("已归档资产不能开始提取")
-    if record.status == "extracting":
+    if record.status == "extracting" and not restart:
         action = load_asset_action(data_root, asset_id)
         return {"asset": record.model_dump(mode="json"), "action": action.model_dump(mode="json")}
     source = Path(record.source_path)
@@ -250,11 +251,18 @@ def prepare_asset_extraction(data_root: str, asset_id: str) -> dict:
         _save_record(data_root, record)
         return {"asset": record.model_dump(mode="json"), "action": None}
 
-    extraction = extract_document(source, asset_dir / "attachments")
-    text_path = asset_dir / "extracted.txt"
+    attempt = uuid4().hex
+    attempt_dir = asset_dir / "extraction-attempts" / attempt
+    attempt_dir.mkdir(parents=True)
+    # Preserve the previous action and inputs/result paths before replacing the active pointer.
+    previous_action = asset_action_path(data_root, asset_id)
+    if previous_action.is_file():
+        write_json(attempt_dir / "previous-action.json", read_json(previous_action))
+    extraction = extract_document(source, attempt_dir / "attachments")
+    text_path = attempt_dir / "extracted.txt"
     text_path.write_text(extraction.text, encoding="utf-8")
-    task_path = asset_dir / "extraction-task.json"
-    result_path = asset_dir / "extraction-result.json"
+    task_path = attempt_dir / "extraction-task.json"
+    result_path = attempt_dir / "extraction-result.json"
     task = AssetExtractionTask(
         asset_id=asset_id,
         asset_type=record.asset_type,
@@ -274,7 +282,7 @@ def prepare_asset_extraction(data_root: str, asset_id: str) -> dict:
     record.warnings = extraction.warnings
     _save_record(data_root, record)
     action = ActionState(
-        action_id=f"asset:{asset_id}:extract",
+        action_id=f"asset:{asset_id}:extract:{attempt}",
         action="dispatch_agent",
         role="asset_extraction",
         stage="structured_extraction",

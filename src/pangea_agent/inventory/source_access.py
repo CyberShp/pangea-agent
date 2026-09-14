@@ -78,6 +78,11 @@ def expand_owned_files(unit: dict, index: dict, owned_paths: list[dict]) -> tupl
         if pair not in frozen or pair not in allowed:
             issues.append({"field": "owned_files", "selection": selection, "reason": "file_not_in_frozen_owned_scope"})
             continue
+        if index.get("index_policy") == "on-demand-v1":
+            base = next(f for f in index["files"] if (f["repo_id"], f["path"]) == pair)
+            whole = [r["region_id"] for r in base["regions"] if r["kind"] == "raw" and r["line_start"] == 1 and r["line_end"] == base["line_count"]]
+            expanded.extend(whole)
+            continue
         expanded.extend(key for key, value in regions.items()
                         if key in required and (value.get("repo_id"), value.get("path")) == pair)
     return {**unit, "owned_regions": expanded}, issues
@@ -409,7 +414,8 @@ def _inventory_index(run_dir: Path, task: dict[str, Any]) -> dict[str, Any]:
     if index_path.is_file():
         value = read_json(index_path)
         if isinstance(value, dict) and value.get("format_version") == "pangea-source-index-v1":
-            return value
+            from .on_demand import read_index
+            return read_index(run_dir)
     inventory_path = task.get("inventory_path") or str(run_dir / "inputs" / "inventory.json")
     path = Path(str(inventory_path)).resolve()
     try:
@@ -467,6 +473,15 @@ def source_index(
     manifest = _source_manifest(run_dir, task)
     allowed = _allowed_paths(task, manifest)
     index = _inventory_index(run_dir, task)
+    if path and repo_id and index.get("index_policy") == "on-demand-v1" and (repo_id, _normal_path(path)) in allowed:
+        normalized = _normal_path(path)
+        if not _file_allowed(repo_id, normalized, allowed):
+            raise SourceAccessError(f"源码文件不在当前 task scope：{repo_id}:{normalized}")
+        repositories = _repositories(run_dir, manifest)
+        _read_frozen_file(repositories, repo_id, normalized)
+        from .on_demand import ensure_file_index
+        ensure_file_index(run_dir, repo_id, normalized, repositories[repo_id][0])
+        index = _inventory_index(run_dir, task)
     files = [
         SourceFileIndex.model_validate(item)
         for item in index.get("files", [])
@@ -474,6 +489,15 @@ def source_index(
         and _file_allowed(str(item.get("repo_id", "")), str(item.get("path", "")), allowed)
     ]
     files.sort(key=lambda item: (item.repo_id, item.path))
+    directory = None
+    if path and repo_id:
+        normalized = _normal_path(path)
+        if not any(f.repo_id == repo_id and f.path == normalized for f in files):
+            directory = normalized.rstrip("/")
+            files = [f for f in files if f.repo_id == repo_id and f.path.startswith(directory + "/")]
+            if not files:
+                raise SourceAccessError("目录不在当前 task scope 或没有源码")
+            path = None
     offset = _decode_cursor(cursor)
     owned = {
         (str(item.get("repo_id")), _normal_path(str(item.get("path"))))
@@ -511,7 +535,7 @@ def source_index(
                     "action_id": binding.action_id,
                     "task_id": binding.task_id,
                     "repo_id": repo_id,
-                    "path": None,
+                    "path": directory,
                 },
                 page_token=page_token,
                 max_chars=max_chars,
