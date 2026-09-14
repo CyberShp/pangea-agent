@@ -54,7 +54,16 @@ notes、不猜测归属。写完再次 pangea_result_read，以最新 revision �
 pangea_work_finish。额外规划依据使用客户端当前支持的普通记录类型 `note`，不要自造
 `notes`、`planning_notes` 等分类名。
 只有工具返回 diagnostics.ready=true 且结果非空时才能声明完成。
-空结果、未知 region、函数级 owned region 重复或未分配都交回本 Planner 局部更正。
+空结果、未知 region、函数级 owned region 重复交回本 Planner 局部更正；target-first-v1 的未分配候选按范围 note 处置。
 
 Planning 只负责单元计划，不写 Analysis 风险、DFX、可达性或测试语义。结束时只
 回复：完成 action_id=<task.action_id>。
+
+## target-first-v1 范围规则
+
+task.scope_policy=target-first-v1 时，target 是分析对象，owned_scope_paths 是可选主责候选，
+不是整目录交付义务。先按业务目标选 owned_files/owned_regions，再分单元；必要调用方、
+CHAP 等耦合依赖放 context，其他功能不生成独立用例。同文件包含其他功能时允许按 region
+划分，不受“整文件一个 unit”限制。以源码关系判断，不能只匹配 TLS 等名字。
+用一条范围 note 写清主责、必要依赖和未纳入范围的功能及理由；未分配候选不是自动遗漏，
+但不能漏掉 target 的真实业务路径。旧 task 未声明此 policy 时仍按其冻结范围执行。

@@ -126,3 +126,5 @@ Comparison 新建 `coverage_gap` finding 时同样必须链接 affected unit 拥
 写入前检查：finding_key 不重复；同一 Risk 的入口/制造/Oracle 缺口没有拆成重复 findings；若某条 draft 的 summary/required_check 已承认与另一条是同一根因、由另一条覆盖或应合并，就删除该 draft 并把必要核对合入唯一 Risk finding，不能把“合并处置”只写在文字里却仍输出多条 finding；affected_unit_ids 来自 unit plan；Independent 没有 `blackbox_translation`；每条 `coverage_gap` finding 都直连 affected unit 的真实 Coverage ID；新 finding evidence 非空且在冻结范围，observation 只写该源码行事实；Comparison decision 集合与 Independent finding 集合完全相等；dismissed 有非空源码/契约核对 evidence，Analysis 字段只写 conclusion；confirmed/unresolved 不重复抄 evidence；dismiss source-proven Risk 前已检查所有关联 Scenario 的精确 trigger/oracle/Branch 动作以及顶层 unresolved；私有函数冒充 ready business entry 的主要修改对象是 Scenario/TestCase 时使用一条 `blackbox_translation`，不再建同根因 `incorrect_conclusion`；存在 caller truncation 时已复核相关 disposition 和所有 ready Scenario/TestCase。若 settle 返回错误，只修正同一 `result_path`，不把 Review 裁决交给 Python 或其他 Agent。
 
 最终回复只用一行 `完成 action_id=<task.action_id>`；历史 task 没有 action_id 时才只回复“完成”。
+
+业务用例以冻结 behavior_test_generation/behavior_test_review 的 70% 黑盒与可实施灰盒目标执行。普通正文只写业务操作和外部判据；注入步骤可定位函数/变量，内部推演单列证据。未实测和缺少注入设施分开记录，不虚构工具。不同触发路径独立成例，参考文件不扩大主责范围。

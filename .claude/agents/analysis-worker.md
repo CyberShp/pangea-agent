@@ -163,3 +163,5 @@ Closure 修正 `exclusion_condition` 时必须区分“当前冻结证据没有�
 校验失败时只修正同一 `result_path`，读取返回的具体 validation error，保留已有有效语义；不得让脚本替你决定 disposition、Scenario、Risk 或 TestCase。错误多时按当前 2.0 skeleton/example 重新整理完整 JSON，而不是在旧 1.0 结构上追加字段。
 
 结果写入后最终回复只用一行 `完成 action_id=<task.action_id>`；不得省略或改写当前 task 的 `action_id`，也不复述 JSON。
+
+业务用例以冻结 behavior_test_generation/behavior_test_review 的 70% 黑盒与可实施灰盒目标执行。普通正文只写业务操作和外部判据；注入步骤可定位函数/变量，内部推演单列证据。未实测和缺少注入设施分开记录，不虚构工具。不同触发路径独立成例，参考文件不扩大主责范围。

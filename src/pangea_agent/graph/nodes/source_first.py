@@ -308,6 +308,7 @@ def prepare_source_first_inputs(state: PangeaState) -> PangeaState:
         "workflow_version": "source-first-v1",
         "analysis_profile": contract.get("analysis_profile"),
         "task_type": "source_first_plan",
+        "scope_policy": "target-first-v1",
         "action_id": action_id,
         "run_id": state["run_id"],
         "target": contract["target"],
@@ -670,10 +671,19 @@ def _prepare_review(state: PangeaState, progress: WorkflowProgress) -> None:
         for name in review_rubric_names
         if name in frozen_rubrics
     ]
+    plan = read_json(run_directory(state) / "inputs" / "source-first-plan.json")
+    review_owned = _scope_paths(manifest.get("scope_expansion", {}), "code_paths")
+    review_regions = []
+    if plan.get("scope_policy") == "target-first-v1":
+        lookup = _region_lookup(state)
+        review_regions = [_region_ref(region, lookup) for unit in plan.get("units", []) for region in unit.get("owned_regions", [])]
+        review_owned = list({(item["repo_id"], item["path"]): {"repo_id": item["repo_id"], "path": item["path"]} for item in review_regions}.values())
     task = {
         "format_version": "source-first-task-v1",
         "workflow_version": "source-first-v1",
         "analysis_profile": analysis_profile,
+        "scope_policy": plan.get("scope_policy", "full-owned-v1"),
+        "owned_regions": review_regions,
         "task_type": "source_first_review",
         "review_stage": "independent_review",
         "action_id": action_id,
@@ -683,7 +693,7 @@ def _prepare_review(state: PangeaState, progress: WorkflowProgress) -> None:
         "source_manifest_path": str(run_directory(state) / "inputs" / "source-manifest.json"),
         "source_index_path": str(source_first_index_path(state)),
         "allowed_paths": _all_scope_paths(manifest.get("scope_expansion", {})),
-        "owned_scope_paths": _scope_paths(manifest.get("scope_expansion", {}), "code_paths"),
+        "owned_scope_paths": review_owned,
         "reference_scope_paths": _scope_paths(manifest.get("scope_expansion", {}), "context_paths"),
         "effective_context_budget": state["task_contract"].get("effective_context_budget"),
         "result_path": str(result_path),
@@ -867,6 +877,8 @@ def _source_first_advance(state: PangeaState, progress: WorkflowProgress) -> Pan
         write_json(run_directory(state) / "inputs" / "source-first-plan.json", {
             "format_version": "pangea-plan-v1",
             "revision": result.revision,
+            "scope_policy": task.get("scope_policy", "full-owned-v1"),
+            "scope_notes": [record.body for record in active_records(result) if record.kind in {"note", "summary", "unresolved"}],
             "units": units,
             "unresolved": plan_unresolved,
         })

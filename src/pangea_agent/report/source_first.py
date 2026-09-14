@@ -46,7 +46,7 @@ def _body_text(body: Any) -> str:
 _CASE_LEVELS = {
     "business_blackbox": "业务黑盒",
     "interface_contract": "接口契约",
-    "developer_assisted": "开发协助",
+    "developer_assisted": "业务灰盒",
     "whitebox_support": "白盒辅助",
 }
 
@@ -627,6 +627,14 @@ def _behavior_markdown(
         level: sum(_case_level(record) == level for record in case_records)
         for level in [*_CASE_LEVELS, "unclassified"]
     }
+    ready_count = sum(
+        _case_level(record) in {"business_blackbox", "developer_assisted"}
+        and (_body_mapping(record.body) or {}).get("execution_readiness") == "ready"
+        for record in case_records
+    )
+    ratio = f"{ready_count / len(case_records):.1%}" if case_records else "无可统计用例"
+    if any(record.kind == "test_case_group" for record in case_records):
+        ratio = "包含旧用例组，独立用例比例待复核"
     formal_case_records = [
         record for record in case_records
         if _case_level(record) in {"business_blackbox", "developer_assisted"}
@@ -645,7 +653,9 @@ def _behavior_markdown(
         f"- 风险用例：`{purpose_counts['risk']}`",
         f"- 测试目的未声明：`{purpose_counts['unclassified']}`",
         f"- 产品黑盒：`{level_counts['business_blackbox']}`",
-        f"- 产品行为（需要开发准备环境）：`{level_counts['developer_assisted']}`",
+        f"- 业务灰盒（含定点故障注入）：`{level_counts['developer_assisted']}`",
+        f"- 可实施黑盒与灰盒（作者声明）：`{ready_count}/{len(case_records)}`，`{ratio}`；目标 ≥70%。",
+        "- 上述比例只汇总有效记录的显式层级和 ready 声明，未提供声明的不计入分子；语义达标以 Reviewer 结论为准，定向修正后的记录不冒充已独立复核。",
         f"- 开发辅助附录：`{level_counts['interface_contract'] + level_counts['whitebox_support'] + level_counts['unclassified']}`",
         "",
     ])
@@ -685,6 +695,9 @@ def _behavior_markdown(
     add_records("Coverage 与分析依据", delivery, {"evidence", "blackbox_translation"})
     add_records("待确认事项", delivery, {"unresolved"})
     add_records("其他交付说明", delivery, {"summary", "note"})
+    add_records("业务用例质量复核", [item for item in records if item[0].get("stage") == "comparison_review" and item[0].get("status") == "accepted"], {"summary", "note", "review_decision", "review_finding", "unresolved"})
+    if accepted_closure_units:
+        lines.extend(["> 定向修正由原分析 Worker 完成；修正后的内容不代表已接受额外独立复核。", ""])
     if progress.get("blocking_reason"):
         lines.extend(["## Attention", "", _body_text(progress["blocking_reason"]), ""])
     return "\n".join(lines).rstrip() + "\n"
@@ -702,6 +715,7 @@ _NAV_TITLES = {
     "Coverage 与分析依据",
     "待确认事项",
     "其他交付说明",
+    "业务用例质量复核",
     "Revision ledger",
     "Review binding",
     "Agent records",

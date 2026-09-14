@@ -233,6 +233,9 @@ def prepare_asset_extraction(data_root: str, asset_id: str) -> dict:
     record = load_asset(data_root, asset_id)
     if record.status == "archived":
         raise ValueError("已归档资产不能开始提取")
+    if record.status == "extracting":
+        action = load_asset_action(data_root, asset_id)
+        return {"asset": record.model_dump(mode="json"), "action": action.model_dump(mode="json")}
     source = Path(record.source_path)
     asset_dir = _asset_dir(data_root, asset_id)
 

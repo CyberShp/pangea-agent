@@ -91,3 +91,12 @@ Planning 的 region 页只呈现函数级责任坐标；branch/type/raw 是后�
 `notes`、`planning_notes` 等分类名。
 只有 plan_create/plan_update 返回 diagnostics.ready=true 后才能完成；空结果、未知/重复/未分配的
 函数级责任坐标或缺 completion 都不能冒充完成。最终只回复：完成 action_id=<task.action_id>。
+
+## target-first-v1 范围规则
+
+task.scope_policy=target-first-v1 时，target 是分析对象，owned_scope_paths 是可选主责候选，
+不是整目录交付义务。先按业务目标选 owned_files/owned_regions，再分单元；必要调用方、
+CHAP 等耦合依赖放 context，其他功能不生成独立用例。同文件包含其他功能时允许按 region
+划分，不受“整文件一个 unit”限制。以源码关系判断，不能只匹配 TLS 等名字。
+用一条范围 note 写清主责、必要依赖和未纳入范围的功能及理由；未分配候选不是自动遗漏，
+但不能漏掉 target 的真实业务路径。旧 task 未声明此 policy 时仍按其冻结范围执行。

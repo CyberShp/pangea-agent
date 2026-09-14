@@ -128,7 +128,9 @@ def _plan_diagnostics(run_dir: Path, task: dict[str, Any], result) -> dict[str, 
         "selection_issues": selection_issues,
         "duplicate_owned_regions": duplicate,
         "unassigned_owned_regions": sorted(required - set(owners)),
-        "ready": bool(units) and not selection_issues and not unknown and not duplicate and required <= set(owners),
+        "scope_policy": task.get("scope_policy", "full-owned-v1"),
+        "ready": bool(units) and not selection_issues and not unknown and not duplicate
+        and (task.get("scope_policy") == "target-first-v1" or required <= set(owners)),
     }
 
 
