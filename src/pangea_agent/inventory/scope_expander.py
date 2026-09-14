@@ -15,6 +15,7 @@ GENERIC_TERMS = {"analysis", "feature", "include", "module", "source", "test", "
 MAX_TARGET_CONTEXT_PER_GROUP = 8
 MAX_CALLER_CONTEXT_FILES_PER_GROUP = 24
 MAX_CALLER_CONTEXT_DEPTH = 8
+MAX_AUTOMATIC_CONTEXT_FILES_PER_REPOSITORY = 64
 _CALL_RE = re.compile(r"\b([A-Za-z_]\w{5,})\s*\(")
 _MEMBER_CALL_RE = re.compile(r"(?:->|\.)\s*([A-Za-z_]\w*)\s*\(")
 _FUNCTION_POINTER_RE = re.compile(r"\(\s*\*\s*([A-Za-z_]\w*)\s*\)\s*\(")
@@ -173,6 +174,54 @@ def expand_analysis_scope(repositories: list[dict], requested_scopes: list[str],
         "caller_context_truncations": caller_context_truncations,
         "boundary": "source_scope = explicit scope + same-stem companion sources; context_scope = declared implementations + unique direct callee definitions + inline/function-pointer dependencies + bounded transitive callers + target-related config/docs/tests; caller budgets are resource guards, not semantic completion",
     }
+
+
+def budget_automatic_context(expansion: dict, limit: int = MAX_AUTOMATIC_CONTEXT_FILES_PER_REPOSITORY) -> dict:
+    """Bound automatic snapshot references, never assign semantic relevance.
+
+    Called only for new source-first runs, before explicit context is added.
+    Round-robin dependency categories so a large helper family cannot consume
+    the entire resource budget. Keep the omitted paths/reasons as diagnostics.
+    """
+    owned = {(g["repo_id"], p) for g in expansion.get("groups", []) for p in g.get("code_paths", [])}
+    categories: dict[str, dict[str, list[dict]]] = {}
+    for item in expansion.get("context_files", []):
+        if (item["repo_id"], item["path"]) in owned:
+            continue
+        category = item.get("reason", "reference").split(":", 1)[0]
+        categories.setdefault(item["repo_id"], {}).setdefault(category, []).append(item)
+    selected: set[tuple[str, str]] = set()
+    omitted = []
+    for repo_id, buckets in categories.items():
+        queues = [iter(sorted(items, key=lambda x: x["path"])) for _, items in sorted(buckets.items())]
+        count = 0
+        while queues:
+            remaining = []
+            for queue in queues:
+                item = next(queue, None)
+                if item is None:
+                    continue
+                remaining.append(queue)
+                key = (repo_id, item["path"])
+                if key in selected:
+                    continue
+                if count < limit:
+                    selected.add(key)
+                    count += 1
+                else:
+                    omitted.append(item)
+            queues = remaining
+    for group in expansion.get("groups", []):
+        group["context_paths"] = [p for p in group.get("context_paths", []) if (group["repo_id"], p) in selected]
+    expansion["context_files"] = [i for i in expansion.get("context_files", []) if (i["repo_id"], i["path"]) in selected]
+    expansion["context_budget"] = {
+        "policy": "automatic-references-v1", "files_per_repository": limit,
+        "selected_file_count": len(selected),
+        "omitted_file_count": len({(i["repo_id"], i["path"]) for i in omitted}),
+        "omitted": omitted,
+        "meaning": "资源预算，不是相关性判定；未冻结的依赖不能被解释为不存在。用户明确指定的 context_scope 不受此预算限制。",
+    }
+    return expansion
 
 
 def _transitive_caller_context(

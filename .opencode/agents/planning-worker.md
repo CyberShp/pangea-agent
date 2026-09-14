@@ -94,6 +94,8 @@ Planning 的 region 页只呈现函数级责任坐标；branch/type/raw 是后�
 
 ## target-first-v1 范围规则
 
+task.context_budget 记录自动参考文件的资源预算及截断数量；这不是相关性判断。先在冻结范围内按需搜索，证据不足时用范围 note 说明缺少的依赖，不把未冻结解释为实现不存在，也不为读完候选索引而遍历全仓。
+
 task.scope_policy=target-first-v1 时，target 是分析对象，owned_scope_paths 是可选主责候选，
 不是整目录交付义务。先按业务目标选 owned_files/owned_regions，再分单元；必要调用方、
 CHAP 等耦合依赖放 context，其他功能不生成独立用例。同文件包含其他功能时允许按 region

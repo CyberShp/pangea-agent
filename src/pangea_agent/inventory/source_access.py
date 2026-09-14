@@ -198,7 +198,9 @@ def prepare_task_source(data_root: str, run_id: str, action_id: str, task_id: st
     requests = []
     warnings = []
     if task.get("task_type") == "source_first_analysis":
-        requests = [{"repo_id": r["repo_id"], "path": r["path"]}
+        requests = [{"repo_id": r["repo_id"], "path": r["path"],
+                     **({"line_start": r["line_start"], "line_end": r["line_end"]}
+                        if r.get("line_start") and r.get("line_end") else {})}
                     for r in task.get("owned_regions", []) if isinstance(r, dict)]
     elif task.get("review_stage") == "independent_review":
         requests = list(task.get("owned_scope_paths", []))

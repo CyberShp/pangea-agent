@@ -210,6 +210,8 @@ def prepare_source_first_inputs(state: PangeaState) -> PangeaState:
             target=str(contract.get("target", "")),
             focus=list(contract.get("focus", [])),
         )
+    from pangea_agent.inventory.scope_expander import budget_automatic_context
+    expansion = budget_automatic_context(expansion)
     explicit_context = _explicit_context_files(
         repositories,
         list(contract.get("context_scope") or []),
@@ -262,6 +264,14 @@ def prepare_source_first_inputs(state: PangeaState) -> PangeaState:
     )
 
     compact_metadata = _compact_inventory(inventory, expansion, analysis_language)
+    # Planning chooses ownership from file summaries. Detailed symbols/calls
+    # remain available through the paged source-index/source-search APIs.
+    compact_metadata["files"] = [
+        {key: item[key] for key in ("repo_id", "path", "line_count", "parse_complete") if key in item}
+        for item in compact_metadata.get("files", [])
+    ]
+    budget = expansion.get("context_budget", {})
+    compact_metadata["context_budget"] = {key: value for key, value in budget.items() if key != "omitted"}
     inputs = run_dir / "inputs"
     compact_path = inputs / "planning-metadata.json"
     write_json(compact_path, compact_metadata)
@@ -309,6 +319,7 @@ def prepare_source_first_inputs(state: PangeaState) -> PangeaState:
         "analysis_profile": contract.get("analysis_profile"),
         "task_type": "source_first_plan",
         "scope_policy": "target-first-v1",
+        "context_budget": compact_metadata["context_budget"],
         "action_id": action_id,
         "run_id": state["run_id"],
         "target": contract["target"],
@@ -540,7 +551,11 @@ def _make_analysis_actions(state: PangeaState, progress: WorkflowProgress, units
     source_index_path = plan_task["source_index_path"]
     manifest = read_json(Path(source_manifest_path))
     all_paths = _all_scope_paths(manifest.get("scope_expansion", {}))
-    required_direct_context_files = _required_direct_context_files(manifest)
+    # Reference choices belong to this unit's Planner, not the Run-wide union.
+    required_direct_context_files = (
+        [] if plan_task.get("context_budget", {}).get("policy") == "automatic-references-v1"
+        else _required_direct_context_files(manifest)
+    )
     frozen_rubrics = {
         path.stem: str(path)
         for path in (run_directory(state) / "inputs" / "methodologies" / "builtin").glob("*.md")

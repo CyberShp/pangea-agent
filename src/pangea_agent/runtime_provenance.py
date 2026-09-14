@@ -19,7 +19,7 @@ def runtime_identity() -> dict:
     except (OSError, subprocess.SubprocessError):
         pass
     hashes = {}
-    for directory, pattern in [("src/pangea_agent", "*.py"), (".agents/pangea", "*.md"), (".opencode/agents", "*.md"), (".opencode/plugins", "*.ts"), (".opencode/commands", "*.md"), (".opencode/skills", "*.md")]:
+    for directory, pattern in [("src/pangea_agent", "*.py"), ("docs", "source-first-cli-worker.md"), (".agents/pangea", "*.md"), (".opencode/agents", "*.md"), (".opencode/plugins", "*.ts"), (".opencode/commands", "*.md"), (".opencode/skills", "*.md")]:
         for file in sorted((root / directory).rglob(pattern)):
             hashes[file.relative_to(root).as_posix()] = hashlib.sha256(file.read_bytes()).hexdigest()
     try:
