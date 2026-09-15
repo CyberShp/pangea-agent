@@ -174,15 +174,20 @@ def resume_run(data_root: str, run_id: str) -> dict:
     if progress.lifecycle_status not in {"running", "stopped"}:
         raise ValueError(f"当前 Run 不可续跑：{progress.lifecycle_status}；保留结果和诊断")
     for action in progress.actions.values():
-        if action.status == "dispatched" or (action.status == "failed" and action.error == "用户停止 Run"):
+        if action.status in {"dispatched", "paused"} or (action.status == "failed" and action.error == "用户停止 Run"):
             action.status = "pending"
             action.action = "continue_agent" if action.task_id else "dispatch_agent"
+            action.attention_required = False
+            action.execution_started_at_ms = None
+            action.execution_finished_at_ms = None
+    progress.needs_user = False
     progress.lifecycle_status = "running"
     save_progress(state, progress)
     return {"run_id": run_id, "data_root": str(Path(data_root).resolve()),
             "workflow_version": "source-first-v1", "lifecycle_status": "running", "stage": progress.stage}
 
 
+@serialized_run_mutation
 def stop_run(data_root: str, run_id: str) -> dict:
     state = {"data_root": data_root, "run_id": run_id}
     progress = load_progress(state)
@@ -190,9 +195,14 @@ def stop_run(data_root: str, run_id: str) -> dict:
         raise ValueError(f"Run 不存在：{run_id}")
     if progress.lifecycle_status == "complete":
         raise ValueError("已经完成的 Run 不能停止")
+    import time
+    now = int(time.time() * 1000)
     progress.lifecycle_status = "stopped"
     for action in progress.actions.values():
         if action.status in {"pending", "dispatched", "settled"}:
+            if action.execution_started_at_ms is not None and action.execution_finished_at_ms is None:
+                action.execution_elapsed_ms += max(0, now - action.execution_started_at_ms)
+                action.execution_finished_at_ms = now
             action.status = "failed"
             action.error = "用户停止 Run"
     save_progress(state, progress)
@@ -219,5 +229,84 @@ __all__ = [
     "show_methodology",
     "system_capabilities",
     "stop_run",
+    "execution_event",
+    "deliver_current",
     "update_asset_result",
 ]
+
+
+@serialized_run_mutation
+def execution_event(data_root: str, run_id: str, action_id: str, task_id: str,
+                    event: str, reason: str = "", budget_ms: int | None = None, automatic: bool = False) -> dict:
+    """Host execution facts only; never decide semantic quality."""
+    import time
+    state = {"data_root": data_root, "run_id": run_id}
+    progress = load_progress(state)
+    if progress is None or progress.workflow_version != "source-first-v1":
+        raise ValueError("source-first Run 不存在")
+    action = progress.actions.get(action_id)
+    if action is None or not task_id or action.task_id != task_id:
+        raise ValueError("执行事件与当前 action/task 绑定不一致")
+    if progress.lifecycle_status != "running" or action.status == "accepted":
+        raise ValueError("当前 action 不再执行")
+    now = int(time.time() * 1000)
+    if event == "started":
+        if action.status != "dispatched":
+            raise ValueError("启动事件必须来自已绑定 action")
+        action.execution_started_at_ms = now
+        action.execution_finished_at_ms = None
+        action.execution_budget_ms = budget_ms
+        action.worker_turns += 1
+        if automatic:
+            action.auto_continuations += 1
+    elif event in {"finished", "paused"}:
+        if action.execution_started_at_ms is not None and action.execution_finished_at_ms is None:
+            action.execution_elapsed_ms += max(0, now - action.execution_started_at_ms)
+        action.execution_finished_at_ms = now
+        if event == "paused":
+            action.status = "paused"
+            action.attention_required = True
+            action.error = reason or "宿主暂停，保留已保存结果"
+            progress.needs_user = True
+    else:
+        raise ValueError("未知执行事件")
+    save_progress(state, progress)
+    return action.model_dump(mode="json")
+
+
+@serialized_run_mutation
+def deliver_current(data_root: str, run_id: str) -> dict:
+    """Close an explicitly stopped correction run without claiming review success."""
+    from pangea_agent.graph.nodes.finalize_workflow import finalize_workflow
+    from pangea_agent.graph.result_store import read_result
+    state = {"data_root": data_root, "run_id": run_id, "workflow_version": "source-first-v1"}
+    progress = load_progress(state)
+    if progress is None or progress.workflow_version != "source-first-v1" or progress.stage != "closing":
+        raise ValueError("仅允许交付 source-first 定向修正阶段的当前结果")
+    if progress.lifecycle_status != "stopped":
+        raise ValueError("须先停止执行并确认 worker 已结束，再交付当前结果")
+    for action in progress.actions.values():
+        if action.role != "closure" or action.status == "accepted":
+            continue
+        run_dir = (Path(data_root) / "runs" / run_id).resolve()
+        task_file = Path(action.task_path).resolve()
+        task_file.relative_to(run_dir)
+        task = read_json(task_file)
+        result_file = Path(task["result_path"]).resolve()
+        result_file.relative_to(run_dir)
+        result = read_result(result_file)
+        if result.binding.run_id != run_id or result.binding.action_id != action.action_id:
+            raise ValueError("closure 结果绑定不一致，保留结果等待修复")
+        if result.binding.task_id not in {action.task_id, "pending"}:
+            raise ValueError("closure worker 绑定不一致")
+        # A pending seed is unchanged analysis, not a correction delivery.
+        if result.binding.task_id == action.task_id and result.revision > task.get("base_revision", result.revision):
+            action.delivery_revision = result.revision
+        action.status = "paused"
+        action.error = "用户结束定向修正；本单元未完成的修正不视为通过"
+    progress.partial_delivery = True
+    progress.quality_status = "UNRESOLVED"
+    progress.needs_user = False
+    progress.degradations.append({"kind": "partial_delivery", "message": "用户结束返修并交付当前结果；未完成修正和未解决事项保留，未做新一轮复核"})
+    save_progress(state, progress)
+    return finalize_workflow(state)

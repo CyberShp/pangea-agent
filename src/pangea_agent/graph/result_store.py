@@ -244,6 +244,9 @@ def _atomic_mutate(path: Path, mutate: Callable[[NotesResult], tuple[NotesResult
     with _file_lock(lock_path):
         current = _load(path)
         updated, response = mutate(current)
+        if updated.records != current.records:
+            import time
+            updated = updated.model_copy(update={"last_record_write_at_ms": int(time.time() * 1000)})
         if updated.model_dump(mode="json") != current.model_dump(mode="json"):
             path.parent.mkdir(parents=True, exist_ok=True)
             write_json(path, updated.model_dump(mode="json"))

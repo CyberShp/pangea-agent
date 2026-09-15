@@ -35,6 +35,8 @@ from .public_api import (
     show_methodology,
     system_capabilities,
     stop_run,
+    deliver_current,
+    execution_event,
     resume_run,
     update_asset_result,
 )
@@ -174,6 +176,18 @@ def main() -> None:
     run_stop.add_argument("--data-root", default="pangea-data")
     run_stop.add_argument("--run-id", required=True)
 
+    run_deliver = run_commands.add_parser("deliver-current")
+    run_deliver.add_argument("--data-root", default="pangea-data")
+    run_deliver.add_argument("--run-id", required=True)
+    execution = run_commands.add_parser("execution")
+    execution.add_argument("--data-root", required=True)
+    execution.add_argument("--run-id", required=True)
+    execution.add_argument("--action-id", required=True)
+    execution.add_argument("--task-id", required=True)
+    execution.add_argument("--event", choices=("started", "finished", "paused"), required=True)
+    execution.add_argument("--reason", default="")
+    execution.add_argument("--budget-ms", type=int)
+    execution.add_argument("--automatic", action="store_true")
     run_resume = run_commands.add_parser("resume")
     run_resume.add_argument("--data-root", default="pangea-data")
     run_resume.add_argument("--run-id", required=True)
@@ -495,6 +509,10 @@ def main() -> None:
                 print_success(run_module_analysis(args.contract))
             elif args.run_command == "resume":
                 print_success(resume_run(args.data_root, args.run_id))
+            elif args.run_command == "deliver-current":
+                print_success(deliver_current(args.data_root, args.run_id))
+            elif args.run_command == "execution":
+                print_success(execution_event(args.data_root, args.run_id, args.action_id, args.task_id, args.event, args.reason, args.budget_ms, args.automatic))
             elif args.run_command == "stop":
                 print_success(stop_run(args.data_root, args.run_id))
         except Exception as exc:

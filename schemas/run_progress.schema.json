@@ -69,10 +69,74 @@
             "dispatched",
             "settled",
             "accepted",
+            "paused",
             "failed"
           ],
           "title": "Status",
           "type": "string"
+        },
+        "execution_started_at_ms": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Execution Started At Ms"
+        },
+        "execution_finished_at_ms": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Execution Finished At Ms"
+        },
+        "execution_elapsed_ms": {
+          "default": 0,
+          "title": "Execution Elapsed Ms",
+          "type": "integer"
+        },
+        "execution_budget_ms": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Execution Budget Ms"
+        },
+        "worker_turns": {
+          "default": 0,
+          "title": "Worker Turns",
+          "type": "integer"
+        },
+        "auto_continuations": {
+          "default": 0,
+          "title": "Auto Continuations",
+          "type": "integer"
+        },
+        "delivery_revision": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Delivery Revision"
         },
         "error": {
           "anyOf": [
@@ -644,6 +708,11 @@
       },
       "title": "Completed Closure Units",
       "type": "array"
+    },
+    "partial_delivery": {
+      "default": false,
+      "title": "Partial Delivery",
+      "type": "boolean"
     },
     "actions": {
       "additionalProperties": {

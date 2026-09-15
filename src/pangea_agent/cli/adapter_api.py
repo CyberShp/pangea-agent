@@ -575,6 +575,7 @@ def next_actions(data_root: str, run_id: str, limit: int = 8) -> dict:
         "workflow_version": progress.workflow_version,
         "lifecycle_status": progress.lifecycle_status,
         "stage": progress.stage,
+        "attention_required": progress.needs_user,
         "actions": actions,
     }
 

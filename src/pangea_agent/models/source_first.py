@@ -181,6 +181,7 @@ class CompletionDeclaration(SourceFirstModel):
 
 class NotesResult(SourceFirstModel):
     format_version: Literal["pangea-notes-v1"] = "pangea-notes-v1"
+    last_record_write_at_ms: int | None = None
     binding: SourceBinding
     revision: int = Field(ge=0)
     records: list[NoteRecord] = Field(default_factory=list)

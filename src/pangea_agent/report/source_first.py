@@ -312,6 +312,8 @@ def _case_markdown(
         f"- **用例层级**：`{level}`（{_CASE_LEVELS.get(level, '未分类')}）",
         f"- **测试目的**：`{purpose}`（{_CASE_PURPOSES.get(purpose, '归属未声明')}）",
         f"- **入口**：{body.get('entry') or '未提供'}",
+        f"- **执行条件**：{ {'ready': '具备执行条件（不代表实测通过）', 'needs_instrumentation': '待补注入设施', 'unknown': '待补执行条件'}.get(str(body.get('execution_readiness')), '未标注')}",
+        *(_markdown_list(body["readiness_reason"]) if body.get("readiness_reason") else []),
         f"- **执行状态**：`{body.get('execution_status') or '未声明'}`",
         "",
         "##### 前置条件",
@@ -514,7 +516,9 @@ def _behavior_markdown(
         diagram_assets = {}
     lifecycle = str(progress.get("lifecycle_status", "running"))
     quality = str(progress.get("quality_status") or "UNRESOLVED")
-    if lifecycle == "complete" and quality == "PASS":
+    if progress.get("partial_delivery"):
+        delivery_message = "用户结束定向修正，交付截至停止时已保存的结果；部分修正未完成，未解决事项和未复核内容保留，质量状态为 UNRESOLVED。"
+    elif lifecycle == "complete" and quality == "PASS":
         delivery_message = "用例分析与审核已完成；该状态不代表被测系统已经执行通过。"
     elif lifecycle == "complete":
         delivery_message = (
@@ -540,13 +544,13 @@ def _behavior_markdown(
     accepted_closure_units = {
         str(action.get("task", {}).get("unit_id"))
         for action, _result in records
-        if action.get("stage") == "targeted_closure" and action.get("status") == "accepted"
+        if action.get("stage") == "targeted_closure" and (action.get("status") == "accepted" or action.get("delivery_revision") is not None)
     }
     delivery: list[tuple[dict, Any]] = []
     for action, result in records:
         stage = action.get("stage")
         unit_id = str(action.get("task", {}).get("unit_id"))
-        if stage == "targeted_closure" and action.get("status") == "accepted":
+        if stage == "targeted_closure" and (action.get("status") == "accepted" or action.get("delivery_revision") is not None):
             delivery.append((action, result))
         elif stage == "unit_analysis" and unit_id not in accepted_closure_units:
             delivery.append((action, result))
@@ -574,6 +578,7 @@ def _behavior_markdown(
         kinds: set[str] | None,
         levels: set[str] | None = None,
         purposes: set[str] | None = None,
+        readiness: str | None = None,
     ) -> None:
         lines.extend([f"## {title}", ""])
         found = False
@@ -584,6 +589,8 @@ def _behavior_markdown(
                 if (kinds is None or record.kind in kinds)
                 and (levels is None or _case_level(record) in levels)
                 and (purposes is None or _case_purpose(record) in purposes)
+                and (record.kind not in {"test_case", "test_case_group"}
+                     or (isinstance(record.body, dict) and str(record.body.get("execution_readiness")) in {"needs_instrumentation", "unknown"}) == (readiness == "needs_setup"))
             ]
             for record in chosen:
                 found = True
@@ -693,6 +700,7 @@ def _behavior_markdown(
         {"test_case", "test_case_group"},
         {"interface_contract", "whitebox_support", "unclassified"},
     )
+    add_records("待补执行条件的用例（不计入可执行用例）", delivery, {"test_case", "test_case_group"}, readiness="needs_setup")
     add_records("风险依据", delivery, {"risk"})
     add_records("Coverage 与分析依据", delivery, {"evidence", "blackbox_translation"})
     add_records("待确认事项", delivery, {"unresolved"})
@@ -967,6 +975,7 @@ def write_source_first_reports(state: dict, *, progress: dict | None = None) -> 
                 "quality_status": progress.get("quality_status"),
                 "analysis_profile": profile,
                 "review_mode": review_mode,
+                "partial_delivery": progress.get("partial_delivery", False),
                 "first_finish_revisions": progress.get("first_finish_revisions", {}),
                 "accepted_revisions": progress.get("accepted_revisions", {}),
                 "files": ["report.md", "report.html", *sorted(diagram_assets)],

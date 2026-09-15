@@ -863,7 +863,23 @@ def review_correction_routes(result, known_unit_ids: set[str]) -> tuple[str | No
 
 
 def _source_first_advance(state: PangeaState, progress: WorkflowProgress) -> PangeaState:
-    current = [action for action in progress.actions.values() if action.status in {"pending", "dispatched", "settled"}]
+    # Accept completed closures independently; paused siblings must still block
+    # automatic finalization, but never hide another unit's successful writes.
+    if progress.stage == "closing":
+        for action in progress.actions.values():
+            if action.role == "closure" and action.status == "settled":
+                _task, result = _load_notes_action(state, action)
+                action.status = "accepted"
+                unit_id = action.action_id.rsplit(":", 1)[-1]
+                if unit_id not in progress.completed_closure_units:
+                    progress.completed_closure_units.append(unit_id)
+                progress.accepted_revisions[action.action_id] = result.revision
+        closures = [a for a in progress.actions.values() if a.role == "closure"]
+        if closures and all(a.status == "accepted" for a in closures):
+            progress.quality_status = "UNRESOLVED"
+            progress.stage = "reporting"
+        save_progress(state, progress)
+    current = [action for action in progress.actions.values() if action.status in {"pending", "dispatched", "settled", "paused"}]
     if not current or any(action.status != "settled" for action in current):
         return {**state, "ready_to_finalize": progress.stage == "reporting", "lifecycle_status": progress.lifecycle_status, "stage": progress.stage, "agent_actions": [
             action.model_dump(mode="json") for action in current if action.status == "pending"
@@ -1066,6 +1082,7 @@ def _source_first_advance(state: PangeaState, progress: WorkflowProgress) -> Pan
                 "action_id": closure_action_id,
                 "original_task_path": origin.task_path,
                 "original_result_path": original_result_path,
+                "execution_budget_ms": 900000 if (state["task_contract"].get("analysis_settings") or {}).get("mode") == "speed" else 1800000,
                 "base_revision": original.revision,
                 "current_revision": original.revision,
                 "correction_records": correction_records,
@@ -1085,6 +1102,7 @@ def _source_first_advance(state: PangeaState, progress: WorkflowProgress) -> Pan
             }
             write_json(closure_task_path, closure_task)
             write_json(closure_result_path, original.model_copy(update={
+                "last_record_write_at_ms": None,
                 "binding": SourceBinding(
                     data_root=str(Path(state["data_root"]).resolve()),
                     run_id=state["run_id"],

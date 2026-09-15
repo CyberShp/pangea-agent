@@ -71,3 +71,19 @@ target-first-v1 的主责范围以中性 unit_plan 的 owned_regions 为准。ow
 字段别名或展示映射问题不作为语义返修理由；审核其实际操作与预期，不要求重复格式改写。
 
 复核 flow 时沿用冻结的 behavior-flow-v1 字段合同。若仅有 entry_points/paths 而缺 nodes/edges，明确指出该条记录无法成图，由原 worker 按现有业务内容定向补齐；不因此重做整单元分析，不由宿主猜测节点和连线。
+
+## 集中复核与返修收敛
+
+优先核对可执行入口、源码/需求支撑的主要外部判据、不同触发路径的分离、关键失败及
+清理恢复和有依据的风险。内部函数调用/位运算断言代替业务操作时，指出具体记录和缺少
+的入口、触发或外部判据；合法灰盒注入和有真实测试桩的开发辅助用例不按关键词否定。
+同一 unit 的同类问题集中成一个 finding，列出各条 record_id 和各自缺失环节；不要只给
+“全部业务化”这样的泛泛要求。标题润色和个人措辞偏好不触发返修。
+
+原 worker 只对这些记录集中处理一次，复用已读源码，补读仅限具体争议点。不因调整文字
+重新推演整个模块，不反复替换已满足要求的记录。无法补齐执行手段的用例标 execution_readiness=needs_instrumentation/unknown，
+保留条件和依据；无法裁定的问题保留 unresolved，结束本轮，不追求消灭所有待确认项。
+在已有 summary 正文保存 finding_dispositions 数组，每项含 finding_record_id、
+disposition（accepted/rejected/unresolved）、reason、updated_record_ids。
+宿主只展示这些明确处置，不根据写入次数、关键词或版本号推断已解决数量。
+修正后按现有流程结束，不自动启动新一轮语义复核；未解决项不得写为通过。

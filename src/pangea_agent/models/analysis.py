@@ -642,7 +642,14 @@ class ValidationFailureRecord(StrictModel):
 
 
 class ActionState(AgentAction):
-    status: Literal["pending", "dispatched", "settled", "accepted", "failed"] = "pending"
+    status: Literal["pending", "dispatched", "settled", "accepted", "paused", "failed"] = "pending"
+    execution_started_at_ms: int | None = None
+    execution_finished_at_ms: int | None = None
+    execution_elapsed_ms: int = 0
+    execution_budget_ms: int | None = None
+    worker_turns: int = 0
+    auto_continuations: int = 0
+    delivery_revision: int | None = None
     error: str | None = None
     validation_failures: int = Field(default=0, ge=0)
     repeated_validation_failures: int = Field(default=0, ge=0)
@@ -671,6 +678,7 @@ class WorkflowProgress(StrictModel):
     analysis_units: list[AnalysisUnit] = Field(default_factory=list)
     completed_analysis_units: list[str] = Field(default_factory=list)
     completed_closure_units: list[str] = Field(default_factory=list)
+    partial_delivery: bool = False
     actions: dict[str, ActionState] = Field(default_factory=dict)
     degradations: list[dict] = Field(default_factory=list)
     errors: list[dict] = Field(default_factory=list)

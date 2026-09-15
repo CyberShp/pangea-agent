@@ -77,6 +77,26 @@ Planning 的说明是待完成的工作范围，具体行为仍由 Analysis 核�
 - 预期：更新成功，原连接及对应设备仍可查询到。
 - 清理：断开本次连接并确认移除，将目标密钥恢复为 A。
 
+## 可执行性：在本轮生成时完成，不新增转换回合
+
+每条正式用例先核实“业务前提 → 实际入口/工具 → 操作 → 外部判据 → 恢复”。
+不能把调用内部函数 foo(A,B)、检查返回值 A|B 或校验变量为假直接作为测试步骤和主要预期。
+追溯这些判断对应的配置、建链、设备发现、I/O 或管理操作；函数和变量推演放 source_evidence。
+不要只把函数名换成中文，必须保留实际可执行的命令/API/界面入口或明确引用共用操作 note。
+日志是观察手段之一；有可核实的连接、设备、配置或 I/O 结果时，把它们写入主要判据。
+
+灰盒允许定位内部注入点，但必须写明现有可用注入工具/桩、注入值与时机、外部业务触发、
+外部结果和撤销方式。只有源码/附件证明存在可运行测试桩，且任务确实需要该类测试时，
+才保留直接函数调用，并归入开发辅助附录；不能默认测试人员有任意函数调用能力。
+
+沿用 behavior-test-case-v1，统一填写现有 execution_readiness：ready、needs_instrumentation 或 unknown。
+ready 表示执行入口、操作和判据已核实，不表示实测通过；缺少设备本身不等于入口未知。
+无法核实执行入口/注入工具时保留已有结论，execution_readiness=needs_instrumentation（缺注入设施）或 unknown（入口等尚未核实），
+readiness_reason 列出具体缺少的执行手段，不计入可执行用例；不编造命令、
+API、日志文本或测试桩。只有内部推演、尚无测试场景的内容保存为 note/evidence。
+
+已保存后发现上述问题，只集中替换受影响记录，不重做整单元。正常业务拒绝不自动成为风险。
+
 ## 保存方式
 
 使用当前工具直接提交 object 作为 body，每条用例保存一份。正文只展开前置、操作、预期、
@@ -103,6 +123,8 @@ Planning 的说明是待完成的工作范围，具体行为仍由 Analysis 核�
   "coverage_refs": [],
   "risk_refs": [],
   "variants": [],
+  "execution_readiness": "ready",
+  "readiness_reason": "入口、操作和主要判据已核实",
   "execution_status": "not_run",
   "source_evidence": ["当前任务已核实的 repo_id:path:line"]
 }
@@ -229,7 +251,7 @@ summary 使用简短 Markdown 索引，按以下顺序填写当前任务事实�
 连接/请求、调用阶段、注入值或延迟、次数/时间窗及撤销。延迟应落在目标超时计时区间内且
 超过真实阈值；不能假定“3 秒延迟必然超时”。撤桩后验证业务恢复。
 
-body 可附 execution_readiness=ready/needs_instrumentation/unknown，以及简短 readiness_reason。
+body 统一填写 execution_readiness=ready/needs_instrumentation/unknown，以及简短 readiness_reason。
 ready 表示设计入口、触发设施和观测有依据，不代表实测通过，execution_status 仍为 not_run。
 需要开发新增桩点但尚无设施时标 needs_instrumentation，保留灰盒设计但不计入可实施分子；
 已有设施只因当前未连接设备而未实测，不应因此降级。不能虚构 CLI、调试开关或报文工具。
