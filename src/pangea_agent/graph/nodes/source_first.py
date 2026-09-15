@@ -654,6 +654,7 @@ def _make_analysis_actions(state: PangeaState, progress: WorkflowProgress, units
 def _prepare_review(state: PangeaState, progress: WorkflowProgress) -> None:
     # The Reviewer is a newly dispatched task; the host binds it before any
     # source/result operation.  The comparison continuation reuses this ID.
+    fast = (state["task_contract"].get("analysis_settings") or {}).get("mode") == "speed"
     action_id = f"{state['run_id']}:review"
     task_path = source_first_task_path(state, "review")
     result_path = source_first_result_path(state, "review")
@@ -688,7 +689,8 @@ def _prepare_review(state: PangeaState, progress: WorkflowProgress) -> None:
         "scope_policy": plan.get("scope_policy", "full-owned-v1"),
         "owned_regions": review_regions,
         "task_type": "source_first_review",
-        "review_stage": "independent_review",
+        "review_stage": "comparison_review" if fast else "independent_review",
+        "review_mode": "speed" if fast else "depth",
         "action_id": action_id,
         "run_id": state["run_id"],
         "target": state["task_contract"]["target"],
@@ -713,6 +715,9 @@ def _prepare_review(state: PangeaState, progress: WorkflowProgress) -> None:
             ],
         ],
     }
+    if fast:
+        version_path, version_id = _write_comparison_version_set(state, progress, None)
+        task.update(version_set_path=str(version_path), version_set_id=version_id)
     write_json(task_path, task)
     initialize_result(
         result_path,
@@ -727,7 +732,7 @@ def _prepare_review(state: PangeaState, progress: WorkflowProgress) -> None:
         action_id=action_id,
         action="dispatch_agent",
         role="review",
-        stage="independent_review",
+        stage="comparison_review" if fast else "independent_review",
         task_path=str(task_path),
     ))
 
@@ -735,7 +740,7 @@ def _prepare_review(state: PangeaState, progress: WorkflowProgress) -> None:
 def _write_comparison_version_set(
     state: PangeaState,
     progress: WorkflowProgress,
-    review_action: ActionState,
+    review_action: ActionState | None,
 ) -> tuple[Path, str]:
     """Freeze the exact accepted revisions that comparison may inspect."""
 
@@ -756,20 +761,21 @@ def _write_comparison_version_set(
             "result_path": result_path,
             "revision": result.revision,
         })
-    if review_action.status != "accepted" or not review_action.task_id:
-        raise ValueError("independent review 尚未绑定并接受，不能生成 comparison version set")
-    review_task = read_json(Path(review_action.task_path))
-    review_result_path = review_task.get("result_path")
-    if not isinstance(review_result_path, str):
-        raise ValueError("independent review 缺少 result_path")
-    review_result = read_result(Path(review_result_path))
-    entries.append({
-        "role": "independent_review",
-        "action_id": review_action.action_id,
-        "task_id": review_action.task_id,
-        "result_path": review_result_path,
-        "revision": review_result.revision,
-    })
+    if review_action is not None:
+        if review_action.status != "accepted" or not review_action.task_id:
+            raise ValueError("independent review 尚未绑定并接受，不能生成 comparison version set")
+        review_task = read_json(Path(review_action.task_path))
+        review_result_path = review_task.get("result_path")
+        if not isinstance(review_result_path, str):
+            raise ValueError("independent review 缺少 result_path")
+        review_result = read_result(Path(review_result_path))
+        entries.append({
+            "role": "independent_review",
+            "action_id": review_action.action_id,
+            "task_id": review_action.task_id,
+            "result_path": review_result_path,
+            "revision": review_result.revision,
+        })
     identity = {
         "run_id": state["run_id"],
         "workflow_version": "source-first-v1",
@@ -1083,7 +1089,7 @@ def _source_first_advance(state: PangeaState, progress: WorkflowProgress) -> Pan
                     data_root=str(Path(state["data_root"]).resolve()),
                     run_id=state["run_id"],
                     action_id=closure_action_id,
-                    task_id="pending",
+                    task_id=origin.task_id,
                 ),
                 "completion": None,
                 "receipts": {},

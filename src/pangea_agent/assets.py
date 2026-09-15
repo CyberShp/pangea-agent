@@ -274,16 +274,44 @@ def prepare_asset_extraction(data_root: str, asset_id: str, *, restart: bool = F
     text_path.write_text(extraction.text, encoding="utf-8")
     task_path = attempt_dir / "extraction-task.json"
     result_path = attempt_dir / "extraction-result.json"
+    # Freeze only the selected type's instructions and schema for this attempt.
+    rubric = project_path("src", "pangea_agent", "rubrics", "builtin", "asset_extraction.md").read_text(encoding="utf-8")
+    instructions = rubric.split("## ", 1)[0] + "## " + record.asset_type + "\n" + rubric.split("## " + record.asset_type + "\n", 1)[1].split("\n## ", 1)[0]
+    schema = read_json(project_path("schemas", "asset_extraction_result.schema.json"))
+    item_schema = schema["properties"]["items"]["items"]
+    selected_ref = item_schema["discriminator"]["mapping"][record.asset_type]
+    schema["properties"]["items"]["items"] = {"$ref": selected_ref}
+    definitions = schema["$defs"]
+    keep = {}
+    def references(value):
+        if isinstance(value, dict):
+            if "$ref" in value:
+                yield value["$ref"].rsplit("/", 1)[-1]
+            for child in value.values():
+                yield from references(child)
+        elif isinstance(value, list):
+            for child in value:
+                yield from references(child)
+
+    pending = [selected_ref.rsplit("/", 1)[-1]]
+    while pending:
+        name = pending.pop()
+        if name in keep:
+            continue
+        keep[name] = definitions[name]
+        pending.extend(references(keep[name]))
+    schema["$defs"] = keep
+    schema_path = attempt_dir / "result-schema.json"
+    write_json(schema_path, schema)
     task = AssetExtractionTask(
         asset_id=asset_id,
         asset_type=record.asset_type,
         title=record.title,
         source_path=record.source_path,
         extracted_text_path=str(text_path),
+        extraction_instructions=instructions,
         attachments=[item.__dict__ for item in extraction.attachments],
-        result_schema_path=str(
-            project_path("schemas", "asset_extraction_result.schema.json")
-        ),
+        result_schema_path=str(schema_path),
         result_path=str(result_path),
     )
     write_json(task_path, task.model_dump(mode="json"))
@@ -330,7 +358,9 @@ def _accept_extraction_result(
         item.item_type for item in result.items if item.item_type != record.asset_type
     }
     if invalid_types:
-        raise ValueError(f"提取结果类型与资产类型不一致：{sorted(invalid_types)}")
+        raise ValueError(f"提取结果类型与资产类型不一致：expected={record.asset_type}；"
+                         f"条目={[(item.item_id, item.item_type) for item in result.items if item.item_type != record.asset_type]}；"
+                         "请原 worker 修正同一 result_path，不改 asset_id、不机械转换类型")
     result_path = Path(
         record.result_path
         or _asset_dir(data_root, record.asset_id) / "extraction-result.json"

@@ -316,24 +316,26 @@ def _case_markdown(
         "",
         "##### 前置条件",
         "",
-        *_markdown_list(body.get("preconditions"), "未提供"),
+        *_markdown_list(body.get("preconditions", body.get("precondition")), "未提供"),
         "",
         "##### 操作与预期",
         "",
     ]
-    steps = [item for item in _items(body.get("steps")) if isinstance(item, dict)]
+    steps = [item for item in _items(body.get("steps", body.get("test_steps"))) if isinstance(item, dict)]
     if steps:
         lines.extend([
             "| # | 测试人员动作 | 对应预期 |",
             "|---:|---|---|",
             *[
-                f"| {index} | {_markdown_cell(step.get('action'))} | "
-                f"{_markdown_cell(step.get('expected'))} |"
+                f"| {index} | {_markdown_cell(step.get('action', step.get('step')))} | "
+                f"{_markdown_cell(step.get('expected', step.get('expected_result')))} |"
                 for index, step in enumerate(steps, 1)
             ],
         ])
     else:
         lines.append("- 未提供可执行步骤。")
+    if body.get("expected_results"):
+        lines.extend(["", "##### 整体预期（原文单独提供）", "", *_markdown_list(body["expected_results"], "未提供")])
     variants = [item for item in _items(body.get("variants")) if isinstance(item, dict)]
     if variants:
         lines.extend([
@@ -938,6 +940,7 @@ def write_source_first_reports(state: dict, *, progress: dict | None = None) -> 
         if contract_path.is_file():
             frozen_contract = read_json(contract_path)
             if isinstance(frozen_contract, dict):
+                contract = frozen_contract
                 profile = frozen_contract.get("analysis_profile")
     diagram_assets: dict[str, str] = {}
     markdown = (
@@ -945,6 +948,11 @@ def write_source_first_reports(state: dict, *, progress: dict | None = None) -> 
         if profile == "behavior-test-v1"
         else _markdown(state, progress, records)
     )
+    review_mode = (contract.get("analysis_settings") or {}).get("mode", "depth")
+    if profile == "behavior-test-v1":
+        review_label = "速度型：直接审核首轮结果，未执行独立盲审" if review_mode == "speed" else "标准型：独立盲审后对照复核"
+        title, separator, rest = markdown.partition("\n")
+        markdown = title + separator + "\n复核模式：" + review_label + "。执行完成情况以本报告状态为准。\n" + rest
     for relative_path, content in diagram_assets.items():
         _atomic_text(run_directory(state) / relative_path, content)
     _atomic_text(markdown_path, markdown)
@@ -958,6 +966,7 @@ def write_source_first_reports(state: dict, *, progress: dict | None = None) -> 
                 "lifecycle_status": progress.get("lifecycle_status"),
                 "quality_status": progress.get("quality_status"),
                 "analysis_profile": profile,
+                "review_mode": review_mode,
                 "first_finish_revisions": progress.get("first_finish_revisions", {}),
                 "accepted_revisions": progress.get("accepted_revisions", {}),
                 "files": ["report.md", "report.html", *sorted(diagram_assets)],

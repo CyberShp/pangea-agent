@@ -13,7 +13,7 @@
 
 `analysis_profile=behavior-test-v1` 的一期 source-first 任务以可执行业务行为用例为交付主体：
 正常主干、业务分支、异常处理与传播、清理恢复和真实 Coverage 补测。用例无需先建立 Risk；
-专项风险搜寻、完整六维 DFX 分类和领域扩展不属于该 profile 的必做交付。旧 Run 仍按其冻结
+随业务阅读完成轻量风险识别并保存有依据的风险，优先关联已有用例；不另做完整六维扫描。旧 Run 仍按其冻结
 合同和 rubric 解释。
 
 已有用例不作为长期管理资产。用户可以在单次 Run 中提供少量用例示例，它们只用于表达和环境参考。
@@ -71,8 +71,8 @@
 - 测试用例必须包含前置条件、步骤、预期结果、观测方式和清理/恢复。
 - 每条正式风险必须由至少一个测试用例关联；只有 Agent 基于冻结源码确认无法从受支持业务入口到达时才能例外，并记录不可达原因和源码证据。分支、边界、正常流程和 Coverage 用例可以不关联风险。Python 只检查处置是否完整和编号是否存在，不裁决可达性；Reviewer 负责审核不可达结论。
 - 最终质量门禁输出 `PASS` 或 `UNRESOLVED`；不能把未完成工作描述为完成。
-- source-first notes 使用稳定外壳保存 Agent 原文；`behavior-test-v1` 的普通正文是文本或
-  Markdown，不恢复旧富结构语义字段门禁。其他正式产物优先使用 `schemas/` 中的结构。
+- source-first notes 使用稳定外壳保存 Agent 原文；`behavior-test-v1` 用例与流程按冻结 rubric 提交 object，summary/note 可用文本或
+  Markdown；保留旧正文可读，不恢复富结构语义门禁。其他正式产物优先使用 `schemas/` 中的结构。
 
 ## 实现约定
 
@@ -88,7 +88,7 @@
 - 共享范围只包括 graph、schema、rubric 和 CLI 契约；客户端专有的命令、会话轨迹和 Agent 调用方式不得写入共享方法论。
 - Python 不调用模型 API，也不做语义拆分。一个 Planning Agent 按功能模块或文件族规划单元。
 - 首轮 analysis 最多同时派发 8 个互不重叠单元，总单元数不受 8 限制；worker 不得再派发子 Agent。
-- analysis 结果齐备后先启动 1 个盲审 Reviewer。`independent_review` task 不包含 analysis result；Graph 接受盲审后，以 `continue_agent` 续接同一 Reviewer 的真实 `task_id` 执行 `comparison_review`，再向该会话开放盲审与首轮结果做对照裁决。Comparison 不是第二次完整分析，也不再启动新的 Reviewer 或第三个复核 Agent。
+- 标准型 analysis 结果齐备后先启动 1 个盲审 Reviewer。`independent_review` task 不包含 analysis result；Graph 接受盲审后，以 `continue_agent` 续接同一 Reviewer 的真实 `task_id` 执行 `comparison_review`，再向该会话开放盲审与首轮结果做对照裁决。Comparison 不是第二次完整分析，也不再启动新的 Reviewer 或第三个复核 Agent。
 - comparison review 保留的 finding 只为受影响单元生成一次 `targeted_closure`；该 action 必须续接对应单元首轮 analysis worker 的真实 `task_id`，在 Workflow 预先复制的 closure 结果中定向补齐，不能创建替代 worker，也不能修改原始 analysis 结果。
 - 主 Agent 只执行 CLI 返回的 action。DSH 在子 Agent 回合结束后直接调用 `pangea_action_settle`；该工具在一次调用内完成校验和推进，不得预先调用 `pangea_action_validate`。不得自行填写或修正语义结果。
 - Graph 创建的新 task 必须写入与 action 相同的不可变 `action_id`；worker 最终只回显这个编号。DSH 并发完成通知必须按回显的 exact `action_id` 逐项 settle，不得根据子任务 UUID、单元名、通知顺序或记忆猜测，也不得把已经 settled 的 action 当成另一个 repair 的待处理 action。这个编号只用于确定性路由，不参与语义校验。
@@ -111,3 +111,5 @@
   `pangea-data/repositories/` 用户源码保护和 Windows / PowerShell 兼容要求
   都有现实用途；不得仅为减少代码、状态、检查或抽象而弱化它们。
 - 普通交流和不涉及代码的研究不适用本策略。
+
+- 速度型 analysis_settings.mode=speed 跳过盲审，派发一个直接审核首轮结果的 Reviewer，沿用 comparison/closure 合同；旧 Run 遵循冻结设置，缺省为标准型。外部 ACP 单元分析最多三个并发，状态变更顺序执行。

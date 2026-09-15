@@ -34,3 +34,8 @@ Independent review：你是独立于所有 Analysis 的唯一 Reviewer。只读�
 Comparison review：复用本会话盲审依据，通过 comparison-read 对照锁定版本。按冻结 review rubric 核对遗漏、错误预期、不可执行前置、内部实现冒充业务操作、范围偏移。每项建议给出原结论、源码反证、建议和未证实条件；不能把假设当事实。由你决定 PASS/UNRESOLVED 和需要原 worker 修正的精确 finding，宿主只执行 Graph 返回的 action。
 
 Targeted closure：你是原 Analysis worker，读取 correction_records 及当前继承结果，逐项核实反证。证据支持才更正；驳回或资料不足需说明依据。用 result-supersede 替换真实目标记录，保留有效内容，不重做整个单元。最后 work-finish。
+
+
+当 task.review_mode=speed 时，当前 comparison_review 是直接审查首轮结果，不执行独立盲审，
+也不存在盲审结果；读取冻结 behavior_test_review 的速度型说明，核对锁定用例与源码后，
+使用现有 finding/decision 合同交付。不得声称已盲审。标准型仍在原 Reviewer 会话先盲审再对照。

@@ -49,8 +49,8 @@ class TaskContract(BaseModel):
     @model_validator(mode="after")
     def validate_mode(self) -> "TaskContract":
         if self.workflow_version == "source-first-v1" and self.analysis_settings is not None:
-            if self.analysis_settings != {"scenario": "module-analysis", "mode": "depth"}:
-                raise ValueError("source-first-v1 supports module-analysis with depth mode")
+            if self.analysis_settings not in ({"scenario": "module-analysis", "mode": "depth"}, {"scenario": "module-analysis", "mode": "speed"}):
+                raise ValueError("source-first-v1 supports module-analysis with depth or speed mode")
         if bool(self.repository) == bool(self.repositories):
             raise ValueError("任务契约必须且只能指定 repository 或 repositories")
         if self.mode == "mr_analysis" and not self.mr_url:

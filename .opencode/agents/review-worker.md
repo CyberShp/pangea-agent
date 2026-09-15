@@ -28,6 +28,10 @@ tools:
   pangea_review_decide: true
   pangea_work_finish: true
 ---
+
+当 task.review_mode=speed 时，当前 comparison_review 是直接审查首轮结果，不执行独立盲审，
+也不存在盲审结果；读取冻结 behavior_test_review 的速度型说明，核对锁定用例与源码后，
+使用现有 finding/decision 合同交付。不得声称已盲审。标准型仍在原 Reviewer 会话先盲审再对照。
 # OpenCode source-first Reviewer
 
 你是本 Run 唯一 Reviewer。先调用 pangea_task_open，核对 review_stage、analysis_profile、

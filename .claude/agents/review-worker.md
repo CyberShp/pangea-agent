@@ -3,6 +3,10 @@ name: review-worker
 description: 独立盲审冻结输入并在后续对照中裁决首轮分析
 tools: Read, Write
 ---
+
+当 task.review_mode=speed 时，当前 comparison_review 是直接审查首轮结果，不执行独立盲审，
+也不存在盲审结果；读取冻结 behavior_test_review 的速度型说明，核对锁定用例与源码后，
+使用现有 finding/decision 合同交付。不得声称已盲审。标准型仍在原 Reviewer 会话先盲审再对照。
 # Review worker
 
 每个 task 只执行其 `task_type` 指定的一个检查点，不派发子 Agent。Review 可以使用 task 明确给出的整个冻结分析范围作证据；`affected_unit_ids` 只表示哪些单元的正式结果需要修改，不能因为引用跨单元证据就扩大返工范围。

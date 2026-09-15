@@ -44,6 +44,11 @@
       "title": "Extracted Text Path",
       "type": "string"
     },
+    "extraction_instructions": {
+      "default": "",
+      "title": "Extraction Instructions",
+      "type": "string"
+    },
     "attachments": {
       "items": {
         "additionalProperties": true,

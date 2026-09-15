@@ -138,7 +138,14 @@ test_level 按实际操作及观测确定：
 每条连线对应已描述的实际操作，连接失败后的节点只清理该场景实际创建的资源。
 同一入口且实际触发路径、外部操作顺序、判据和恢复均相同的参数变体共用一条路径，输入差别保留在用例中；例如不同错误
 密钥均为“连接 → 被拒绝 → 确认无连接”，可以关联这条路径。带重连恢复的用例另有路径。
-源码的协议消息状态不转写为这张产品流程图的节点。示例外壳如下：
+源码的协议消息状态不转写为这张产品流程图的节点。
+每个 unit 的 flow 正文统一采用 behavior-flow-v1 object，固定字段为 format_version、flow_id、
+title、description、nodes、edges、paths、source_evidence。下面是字段合同，示例内容仅作说明。
+不要改为只有 trigger/entry_points/paths 的另一种外壳；入口表达为 kind=entry 的节点，
+触发条件写在 edges.condition/paths.condition，paths.node_ids 按实际顺序引用 nodes.id。
+保存前由当前 worker 核对字段和引用；发现自己写了另一种外壳，只替换该 flow 原记录，
+保留已核实的业务内容和用例关联，不重做源码分析。Python 不补造节点或推断路径。
+示例外壳如下：
 
 ```json
 {
@@ -234,3 +241,21 @@ ready 表示设计入口、触发设施和观测有依据，不代表实测通�
 
 首轮完成前优先转化有价值的白盒候选：查业务入口、外部故障触发、灰盒注入。确实无法
 转化时如实保留辅助用例和原因，不为比例编造业务预期。已有代码证据和内部分析不丢弃。
+
+
+## 随业务分析完成轻量风险识别
+
+风险识别是本 profile 的分析责任，不是可省略的选项。在阅读本单元源码和设计业务用例时，
+同时检查异常分支、资源释放、错误传播、状态一致性及恢复。复用已读源码，仅对具体疑点
+补读调用链；不另做全量风险扫描、不要求六维逐项报告、不设风险数量目标。
+正常拒绝非法输入不等于产品风险。有证据支持可能造成泄漏、挂死、错误响应或状态异常的
+失效条件时，单独保存 kind=risk 的 body object：risk_id、title、trigger、system_result、
+external_observation、exclusion_condition、source_evidence、linked_test_case_ids。
+区分已证实行为、推测与未证实条件，不能将 Reviewer 对用例质量的 finding 当作产品缺陷。
+优先关联已有用例；仅触发路径尚未覆盖时新增独立用例，不为风险重复生成相同用例。
+没有发现有依据的风险时，在已有 summary 中简述实际检查范围及结论；不生成空风险、
+不宣称未检查的内容安全。无法验证的具体疑点保留依据与待确认条件。
+
+用例 body 必须采用本文件的 behavior-test-case-v1 object：preconditions、steps[{action,expected}]、
+external_observations、cleanup、variants[{input,expected}]。不要改成 precondition/test_steps/step，
+也不重复生成顶层 expected_results。每条记录保存完整用例；每步动作与对应预期成对。

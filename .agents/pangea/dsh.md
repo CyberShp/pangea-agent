@@ -67,7 +67,7 @@ DFX、可达性、单元边界、finding 与用例质量由 Agent/Reviewer 保�
 
 ## 审核与报告
 
-Graph 先派发一个盲审 Reviewer（independent_review），接受后用同一 Reviewer
+标准型 Graph 先派发一个盲审 Reviewer（independent_review），接受后用同一 Reviewer
 task 续接 comparison_review，Comparison 才能读取 Graph 锁定的版本集合。仅由
 Comparison 的 finding 决定一次 targeted closure，closure 续接对应首轮 worker；
 不新增终审层。Reviewer 结论不足时保持 UNRESOLVED。
@@ -84,3 +84,5 @@ quality/needs_user 和 Agent 原文 records；空语义投影显示“待解析/
 身份问题要求选择时才向用户提问。
 最终摘要中的函数、状态码、业务选项和清理入口必须复用当前 task 或正式报告的原名，
 不得为了说得顺口改名或补写源码中不存在的动作。
+
+速度型 analysis_settings.mode=speed 由 Graph 直接派发 comparison_review，锁定首轮结果但没有盲审产物；只执行实际返回 action，不自行补建盲审。

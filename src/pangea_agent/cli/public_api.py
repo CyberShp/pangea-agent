@@ -34,7 +34,7 @@ def system_capabilities(data_root: str) -> dict:
         "source_first": {
             "version": "source-first-v1",
             "contract_fields": ["analysis_settings", "runtime_provenance"],
-            "analysis_options": {"scenarios": ["module-analysis"], "modes": ["depth"], "coverage_input": False},
+            "analysis_options": {"scenarios": ["module-analysis"], "modes": ["depth", "speed"], "coverage_input": False},
             "tools": [
                 "source_index", "source_read", "source_search", "plan_write",
                 "result_write", "result_read", "comparison_read",

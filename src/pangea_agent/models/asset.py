@@ -125,6 +125,7 @@ class AssetExtractionTask(StrictModel):
     title: str = Field(min_length=1)
     source_path: str = Field(min_length=1)
     extracted_text_path: str = Field(min_length=1)
+    extraction_instructions: str = ""
     attachments: list[dict] = Field(default_factory=list)
     result_schema_path: str = Field(
         default="schemas/asset_extraction_result.schema.json", min_length=1
