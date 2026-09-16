@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 
 from pangea_agent.agent_io import read_json, write_json
-from pangea_agent.documents.coverage import parse_coverage_xlsx
+from pangea_agent.documents.coverage import parse_coverage_xlsx, parse_coverage_combined
 from pangea_agent.documents.extract import extract_document
 from pangea_agent.graph.workflow_store import project_path
 from pangea_agent.models.asset import (
@@ -82,8 +82,8 @@ def import_asset(
     if not source_path.is_file():
         raise ValueError(f"资产来源不是文件：{source_path}")
     if asset_type == "coverage":
-        if source_path.suffix.lower() != ".xlsx":
-            raise ValueError("Coverage 当前只支持 XLSX")
+        if source_path.suffix.lower() not in {".xlsx", ".json"}:
+            raise ValueError("Coverage 支持 XLSX 或查询 combined JSON")
         destination_root = Path(data_root) / "coverage"
     else:
         if source_path.suffix.lower() not in DOCUMENT_SUFFIXES:
@@ -190,6 +190,7 @@ def analysis_asset_inputs(data_root: str, asset_ids: list[str] | None = None) ->
     candidates: list[dict] = []
     items: dict[str, dict] = {}
     coverage_records: list[dict] = []
+    coverage_diagnostics: list[dict] = []
     for raw_record in records:
         record = AssetRecord.model_validate(raw_record)
         if selected is not None and record.asset_id not in selected:
@@ -201,6 +202,9 @@ def analysis_asset_inputs(data_root: str, asset_ids: list[str] | None = None) ->
             continue
         result = read_json(result_path)
         if record.asset_type == "coverage":
+            coverage_diagnostics.append({"asset_id": record.asset_id,
+                                         **(result.get("acquisition") or {}),
+                                         "warnings": result.get("warnings", [])})
             for number, coverage in enumerate(result.get("records", []), 1):
                 coverage_records.append({
                     **coverage,
@@ -238,6 +242,7 @@ def analysis_asset_inputs(data_root: str, asset_ids: list[str] | None = None) ->
         "candidates": candidates,
         "items": items,
         "coverage_records": coverage_records,
+        "coverage_diagnostics": coverage_diagnostics,
     }
 
 
@@ -252,13 +257,18 @@ def prepare_asset_extraction(data_root: str, asset_id: str, *, restart: bool = F
     asset_dir = _asset_dir(data_root, asset_id)
 
     if record.asset_type == "coverage":
-        records, warnings = parse_coverage_xlsx(source)
+        if source.suffix.lower() == ".json":
+            result = parse_coverage_combined(source)
+        else:
+            records, warnings = parse_coverage_xlsx(source)
+            result = {"records": records, "warnings": warnings}
+        records, warnings = result["records"], result["warnings"]
         result_path = asset_dir / "coverage.json"
-        write_json(result_path, {"records": records, "warnings": warnings})
+        write_json(result_path, result)
         record.result_path = str(result_path)
         record.structured_item_count = len(records)
         record.warnings = warnings
-        record.status = "available" if records else "no_items"
+        record.status = "available" if records or result.get("acquisition", {}).get("status") in {"success", "partial"} else "no_items"
         _save_record(data_root, record)
         return {"asset": record.model_dump(mode="json"), "action": None}
 

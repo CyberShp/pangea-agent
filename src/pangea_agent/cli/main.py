@@ -41,6 +41,7 @@ from .public_api import (
     update_asset_result,
 )
 from .result_check import check_result_json
+from pangea_agent.documents.coverage_query import query_coverage
 from .run_module_analysis import resume_module_analysis, run_module_analysis
 from .source_first_api import (
     comparison_finding_write,
@@ -74,6 +75,12 @@ def main() -> None:
     resume.add_argument("--data-root", default="pangea-data")
     assets = sub.add_parser("assets")
     asset_commands = assets.add_subparsers(dest="asset_command", required=True)
+    coverage_query = asset_commands.add_parser("query-coverage")
+    coverage_query.add_argument("--data-root", default="pangea-data")
+    coverage_query.add_argument("--product", required=True)
+    coverage_query.add_argument("--version", required=True)
+    coverage_query.add_argument("--module", required=True)
+    coverage_query.add_argument("--b-version", default="")
     asset_import = asset_commands.add_parser("import")
     asset_import.add_argument("--data-root", default="pangea-data")
     asset_import.add_argument("--path", required=True)
@@ -418,7 +425,12 @@ def main() -> None:
             raise SystemExit(1) from exc
     elif args.command == "assets":
         try:
-            if args.asset_command == "import":
+            if args.asset_command == "query-coverage":
+                print_success(query_coverage(args.data_root, {
+                    "product": args.product, "c_version": args.version,
+                    "module": args.module, "b_version": args.b_version,
+                }))
+            elif args.asset_command == "import":
                 result = import_asset(args.data_root, args.path, args.type, args.title)
                 print_success(result.model_dump(mode="json"))
             elif args.asset_command == "list":

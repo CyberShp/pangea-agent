@@ -264,6 +264,7 @@ def prepare_source_first_inputs(state: PangeaState) -> PangeaState:
     write_json(inputs / "asset-candidates.json", assets["candidates"])
     write_json(inputs / "asset-items.json", assets["items"])
     write_json(inputs / "coverage-gaps.json", zero_coverage)
+    write_json(inputs / "coverage-diagnostics.json", assets["coverage_diagnostics"])
     write_json(inputs / "test-case-examples.json", frozen_examples)
     write_json(inputs / "inventory.json", inventory)
     source_index = {**build_source_index(inventory), "index_policy": "on-demand-v1"}
@@ -280,6 +281,7 @@ def prepare_source_first_inputs(state: PangeaState) -> PangeaState:
         "coverage_diagnostics": {
             "ambiguous": len(coverage_match["ambiguous"]),
             "unmatched": len(coverage_match["unmatched"]),
+            "acquisitions": assets["coverage_diagnostics"],
         },
         "parse_failures_by_role": compact_metadata.get("parse_failures_by_role", {}),
         "source_index_path": str(source_first_index_path(state)),
@@ -329,6 +331,7 @@ def prepare_source_first_inputs(state: PangeaState) -> PangeaState:
             _input("planning_metadata", compact_path, "源码结构摘要"),
             _input("asset_candidates", inputs / "asset-candidates.json", "候选结构化资料"),
             _input("coverage_gaps", inputs / "coverage-gaps.json", "Coverage 零覆盖提示"),
+            _input("coverage_diagnostics", inputs / "coverage-diagnostics.json", "Coverage 查询状态、缺失来源与警告；空数据不代表没有缺口"),
             _input("methodology_catalog", inputs / "methodologies" / "catalog.json", "方法论目录"),
             _input("unit_planning_rubric", planning_rubric, "单元规划方法"),
         ],
@@ -627,6 +630,8 @@ def _make_analysis_actions(state: PangeaState, progress: WorkflowProgress, units
             *_example_inputs(state),
             _input("asset_items", run_directory(state) / "inputs" / "asset-items.json", "已选结构化资料"),
             _input("coverage_gaps", run_directory(state) / "inputs" / "coverage-gaps.json", "Coverage 零覆盖提示"),
+            *([_input("coverage_diagnostics", run_directory(state) / "inputs" / "coverage-diagnostics.json", "Coverage 查询状态、缺失来源与警告；空数据不代表没有缺口")]
+              if (run_directory(state) / "inputs" / "coverage-diagnostics.json").is_file() else []),
             *[
                 _input(f"rubric_{Path(path).stem}", path, f"方法论 {Path(path).stem}")
                 for path in task["rubric_paths"]
@@ -709,6 +714,8 @@ def _prepare_review(state: PangeaState, progress: WorkflowProgress) -> None:
             *_example_inputs(state),
             _input("asset_items", run_directory(state) / "inputs" / "asset-items.json", "已选结构化资料"),
             _input("coverage_gaps", run_directory(state) / "inputs" / "coverage-gaps.json", "Coverage 零覆盖提示"),
+            *([_input("coverage_diagnostics", run_directory(state) / "inputs" / "coverage-diagnostics.json", "Coverage 查询状态、缺失来源与警告；空数据不代表没有缺口")]
+              if (run_directory(state) / "inputs" / "coverage-diagnostics.json").is_file() else []),
             *[
                 _input(f"rubric_{Path(path).stem}", path, f"方法论 {Path(path).stem}")
                 for path in review_rubrics

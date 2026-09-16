@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from pangea_agent.agent_io import read_json
+from pangea_agent.documents.coverage_query import local_query_skill
 from pangea_agent.assets import (
     archive_asset,
     asset_detail,
@@ -30,6 +31,7 @@ from pangea_agent.report import reports_are_complete
 
 def system_capabilities(data_root: str) -> dict:
     return {
+        "coverage_query_skill": local_query_skill(),
         "workflow_versions": ["legacy-v1", "source-first-v1"],
         "source_first": {
             "version": "source-first-v1",

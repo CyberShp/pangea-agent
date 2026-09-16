@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from .extract import DependencyUnavailableError
@@ -125,7 +126,20 @@ def match_coverage_records(records: list[dict], inventory: dict) -> dict:
     ambiguous: list[dict] = []
     for record in records:
         requested_path = str(record.get("path", "")).replace("\\", "/").strip("/")
-        if requested_path:
+        if record.get("coverage_type") in {"line", "branch"} and "line" in record:
+            # Query line/block/branch IDs are coverage-tool coordinates, not
+            # parser branch IDs. Match the file and exact line, never invent a
+            # true/false condition or select one of several same-name files.
+            candidates = [
+                {"repo_id": file["repo_id"], "path": file["path"], "line": record["line"]}
+                for file in inventory.get("files", [])
+                if requested_path and (
+                    file["path"].replace("\\", "/").strip("/") == requested_path
+                    or requested_path.endswith("/" + file["path"].replace("\\", "/").strip("/"))
+                )
+                and 1 <= record["line"] <= file.get("line_count", 0)
+            ]
+        elif requested_path:
             candidates = [
                 {
                     "repo_id": file["repo_id"],
@@ -144,11 +158,7 @@ def match_coverage_records(records: list[dict], inventory: dict) -> dict:
             ]
         else:
             candidates = symbols.get(record["function"], [])
-        meaning = (
-            "branch_execution_reference_only"
-            if record.get("coverage_type") == "branch"
-            else "function_execution_reference_only"
-        )
+        meaning = f"{record.get('coverage_type', 'function')}_execution_reference_only"
         item = {**record, "matches": candidates, "meaning": meaning}
         if len(candidates) == 1:
             matched.append(item)
@@ -157,6 +167,60 @@ def match_coverage_records(records: list[dict], inventory: dict) -> dict:
         else:
             unmatched.append(item)
     return {"matched": matched, "ambiguous": ambiguous, "unmatched": unmatched}
+
+
+def parse_coverage_combined(path: Path) -> dict:
+    """Translate query facts into existing Coverage records without semantics."""
+    data = json.loads(path.read_text(encoding="utf-8-sig"))
+    if not isinstance(data, dict) or data.get("status") not in {"success", "partial", "no_data", "error"}:
+        raise ValueError("需要含 status 的覆盖率 combined JSON")
+    warnings = list(data.get("warnings") or [])
+    records, seen = [], set()
+    for kind in ("function", "line", "branch"):
+        key = {"function": "uncovered_functions", "line": "uncovered_lines", "branch": "uncovered_branches"}[kind]
+        groups = data.get(key, [])
+        if not isinstance(groups, list):
+            raise ValueError(f"{key} 必须是数组")
+        for group in groups:
+            if not isinstance(group, dict) or not group.get("source") or not group.get("file_path"):
+                warnings.append(f"{key} 记录缺少 source/file_path；原始记录保留，未作为可定位缺口")
+                continue
+            values = group.get(key, [])
+            if not isinstance(values, list):
+                warnings.append(f"{key} 明细不是数组；原始记录保留")
+                continue
+            for raw in values:
+                record = {"coverage_type": kind, "source": group["source"],
+                          "path": group["file_path"], "file_path": group["file_path"],
+                          "count": 0, "raw": raw}
+                if kind == "function":
+                    function = raw.get("function") if isinstance(raw, dict) else raw
+                    if not isinstance(function, str) or not function.strip():
+                        warnings.append(f"{group['file_path']} 存在无法定位的函数记录")
+                        continue
+                    record["function"] = function
+                else:
+                    line = raw.get("line") if isinstance(raw, dict) else raw
+                    if isinstance(line, bool) or not str(line).isdigit() or int(line) < 1:
+                        warnings.append(f"{group['file_path']} 存在无效行号；原始记录保留")
+                        continue
+                    record["line"] = int(line)
+                    if kind == "branch":
+                        if not isinstance(raw, dict) or str(raw.get("count")) != "0":
+                            warnings.append(f"{group['file_path']}:{line} 分支计数非零或未知，未作为零覆盖缺口")
+                            continue
+                        record.update(block=raw.get("block"), branch=raw.get("branch"))
+                if isinstance(raw, dict) and "count" in raw and str(raw["count"]) != "0":
+                    warnings.append(f"{group['file_path']} 存在非零或未知计数，未作为零覆盖缺口")
+                    continue
+                identity = json.dumps(record, sort_keys=True, ensure_ascii=False)
+                if identity not in seen:
+                    seen.add(identity)
+                    records.append(record)
+    return {"records": records if data["status"] in {"success", "partial"} else [],
+            "warnings": warnings,
+            "acquisition": {key: data.get(key) for key in
+                            ("status", "message", "sources", "missing", "query_input", "query_resolution")}}
 
 
 def relevant_zero_coverage(report: dict) -> list[dict]:
