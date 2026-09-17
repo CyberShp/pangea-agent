@@ -1,5 +1,9 @@
 # 业务行为用例生成
 
+## 每个单元的交付语言
+
+无论单元序号、调用方式或是否为定向修正，面向用户的标题、说明、操作、预期、流程节点和总结均使用中文。函数名、源码符号、命令、API、协议字段保留原文。机器字段名及枚举保持合同原样，不能把 title/description 等键翻译为中文。仅使用本任务提供的冻结规则，不假设其他单元或此前会话已代为满足要求。
+
 适用于 `analysis_profile=behavior-test-v1`。交付主体是测试人员可执行的简短业务用例，
 同时保留完整主责源码的行为对应、流程和证据。
 
@@ -281,3 +285,41 @@ external_observation、exclusion_condition、source_evidence、linked_test_case_
 用例 body 必须采用本文件的 behavior-test-case-v1 object：preconditions、steps[{action,expected}]、
 external_observations、cleanup、variants[{input,expected}]。不要改成 precondition/test_steps/step，
 也不重复生成顶层 expected_results。每条记录保存完整用例；每步动作与对应预期成对。
+
+## Coverage 的设计目的与关联
+
+先读取本任务冻结的 coverage_gaps 和 coverage_diagnostics，区分有效缺口、查询无数据、未匹配及范围外记录。对本单元相关的有效缺口，沿实际调用链核实业务触发条件；同函数或行号重叠不是补测成立的依据。每个缺口在现有 summary/分析记录中有去向：新增补测、实质补充已有用例、复用已有用例，或具体执行缺口。可以按同一触发路径合并说明并列出真实 ID，不增加独立报告或分析轮次。
+
+purpose 表达主要设计目的，coverage_refs 表达与本次真实缺口的关联：
+- 因真实缺口新增用例，或实质补充触发步骤、输入、注入条件：purpose=coverage，并填写 coverage_refs。
+- 已有 branch 用例的步骤已能触发该缺口：保持 branch，只补关联和处置说明，不重复生成。
+- 已确认风险的验证同时覆盖缺口：保持 risk，补充 coverage_refs。
+- 没有真实匹配缺口：不编造 coverage_refs，不为数量改标签。
+- 需要但缺少注入设施：说明具体缺少什么，保留源码依据；设计就绪、未执行和实测覆盖分别表达。
+
+以下仅演示字段写法，COV-示例必须替换为本任务真实 ID，业务命令和响应也必须从当前输入核实：
+```json
+{
+  "format_version": "behavior-test-case-v1",
+  "case_id": "TC-示例",
+  "title": "依赖服务超时后恢复请求",
+  "purpose": "coverage",
+  "test_level": "developer_assisted",
+  "preconditions": ["已核实业务入口与现有定点延迟注入设施，记录原配置"],
+  "steps": [
+    {"action": "通过现有设施在目标请求的依赖响应处注入超过实现超时阈值的延迟，再从业务入口发起请求", "expected": "外部收到源码证实的超时结果，本次资源按该路径释放"},
+    {"action": "撤销延迟，再发起同类业务请求", "expected": "请求恢复成功，无前次请求残留影响"}
+  ],
+  "cleanup": ["撤销注入并恢复原配置"],
+  "coverage_refs": ["COV-示例"],
+  "execution_readiness": "unknown",
+  "readiness_reason": "示例；实际用例必须核实设施、参数和外部判据",
+  "execution_status": "not_run"
+}
+```
+
+## 单元内业务转换与格式自查
+
+interface_contract 只用于有依据的公开接口契约验证；内部 helper 并不因可调用就成为公开接口。若本单元候选用例集中为 call 某函数、检查返回值，先从调用方追到产品 CLI/RPC/配置/服务入口，改写实际触发步骤、外部预期与清理，而不是只改 test_level 或翻译标题。确实只有开发测试桩可执行的内容按真实边界保留辅助分类，说明缺少的业务触发手段。
+
+保存 flow 时逐项对照本文件 behavior-flow-v1 示例：节点键是 id、kind、label、description，连线使用 source_step_key、target_step_key、condition；paths.node_ids 引用已有节点。不使用 node_id/name 或中文机器字段替换正式合同。发现偏差，只替换当前 unit 的受影响记录并保留稳定 ID、用例关联及其他正确记录；不得重做其他 unit。

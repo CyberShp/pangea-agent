@@ -1,5 +1,9 @@
 # 业务行为独立审查
 
+## 每个单元的交付语言
+
+无论单元序号、调用方式或是否为定向修正，面向用户的标题、说明、操作、预期、流程节点和总结均使用中文。函数名、源码符号、命令、API、协议字段保留原文。机器字段名及枚举保持合同原样，不能把 title/description 等键翻译为中文。仅使用本任务提供的冻结规则，不假设其他单元或此前会话已代为满足要求。
+
 适用于 analysis_profile=behavior-test-v1 的 Reviewer。读取 task.review_stage 区分以下工作。
 
 ## independent_review
@@ -87,3 +91,9 @@ target-first-v1 的主责范围以中性 unit_plan 的 owned_regions 为准。ow
 disposition（accepted/rejected/unresolved）、reason、updated_record_ids。
 宿主只展示这些明确处置，不根据写入次数、关键词或版本号推断已解决数量。
 修正后按现有流程结束，不自动启动新一轮语义复核；未解决项不得写为通过。
+
+## 单元间交付一致性与 Coverage 处置
+
+逐单元核对中文交付、真实业务入口以及 behavior-flow-v1 字段；其他单元正常不代表当前单元符合要求。出现整单元 interface_contract 或 call helper 步骤时，核实是否真正公开接口，指出需要转换的实际业务操作，不只要求换标签。不要求为了统一而重新设计正常单元。
+
+Comparison 结合首轮冻结缺口核对：本单元相关缺口是否有新增/补充/复用用例或具体处置；操作能否触发该路径；coverage_refs 是否真实；缺口驱动的新补测是否误标 branch；复用的 branch/risk 不应强改 coverage。没有输入时不得编造补测，关联不是实测覆盖率。把具体遗漏集中交回原 worker，只修正受影响记录，不新增审核轮次或重跑其他单元。

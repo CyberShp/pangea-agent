@@ -112,6 +112,27 @@ def _case_purpose(record: Any) -> str:
     return "unclassified"
 
 
+def _coverage_summary(state: dict, case_records: list) -> dict:
+    """Count explicit IDs only; never infer execution or semantic coverage."""
+    path = run_directory(state) / "inputs" / "coverage-gaps.json"
+    try:
+        gaps = read_json(path)
+        known = {str(row["coverage_id"]) for row in gaps if isinstance(row, dict) and row.get("coverage_id")} if isinstance(gaps, list) else None
+    except (OSError, ValueError):
+        known = None
+    refs = set()
+    for record in case_records:
+        body = _body_mapping(record.body) or {}
+        for ref in body.get("coverage_refs", []) if isinstance(body.get("coverage_refs"), list) else []:
+            value = ref.get("coverage_id") if isinstance(ref, dict) else ref
+            if isinstance(value, str) and value:
+                refs.add(value)
+    return {"valid_gaps": len(known) if known is not None else None,
+            "coverage_cases": sum(_case_purpose(record) == "coverage" for record in case_records),
+            "linked_valid_gaps": len(refs & known) if known is not None else None,
+            "unverified_refs": len(refs - known) if known is not None else len(refs)}
+
+
 def _markdown_list(value: Any, empty: str = "无") -> list[str]:
     values = _items(value)
     if not values:
@@ -652,11 +673,17 @@ def _behavior_markdown(
         purpose: sum(_case_purpose(record) == purpose for record in formal_case_records)
         for purpose in [*_CASE_PURPOSES, "unclassified"]
     }
+    coverage_summary = _coverage_summary(state, case_records)
     lines.extend([
         "## 用例总览",
         "",
         "以下数量来自 Analysis 的显式声明；Python 不根据函数名或正文猜测测试目的和层级。",
         "",
+        f"- 本次有效 Coverage 缺口：{coverage_summary['valid_gaps'] if coverage_summary['valid_gaps'] is not None else '未记录/不可读取'}",
+        f"- 全部层级 Coverage 补测用例：{coverage_summary['coverage_cases']}",
+        f"- 全部用例显式关联的去重有效缺口：{coverage_summary['linked_valid_gaps'] if coverage_summary['linked_valid_gaps'] is not None else '无法核实'}",
+        f"- 未能由冻结缺口核实的引用：{coverage_summary['unverified_refs']}",
+        "- 关联仅表示作者声明，不代表执行通过或覆盖率提升。未解决原因见本报告的分析记录及待确认项。",
         f"- 分支用例：`{purpose_counts['branch']}`",
         f"- 未覆盖用例：`{purpose_counts['coverage']}`",
         f"- 风险用例：`{purpose_counts['risk']}`",
