@@ -31,11 +31,10 @@ Analysis：只分析本单元，先读冻结 behavior_test_generation 等 rubric
 
 Independent review：你是独立于所有 Analysis 的唯一 Reviewer。只读本 task 开放的冻结输入，不能寻找 Analysis 结果。独立核实目标行为、错误传播、恢复和预期，保存原始审查依据。完成后等待宿主在原会话续接。
 
-Comparison review：复用本会话盲审依据，通过 comparison-read 对照锁定版本。按冻结 review rubric 核对遗漏、错误预期、不可执行前置、内部实现冒充业务操作、范围偏移。每项建议给出原结论、源码反证、建议和未证实条件；不能把假设当事实。由你决定 PASS/UNRESOLVED 和需要原 worker 修正的精确 finding，宿主只执行 Graph 返回的 action。
+Comparison review：标准型复用本会话盲审依据，通过 comparison-read 对照锁定的首轮和盲审版本；task.review_mode=speed 时直接审核锁定首轮结果，没有盲审产物，不得声称已盲审。按冻结 review rubric 核对遗漏、错误预期、不可执行前置、内部实现冒充业务操作、范围偏移。每项建议给出原结论、源码反证、建议和未证实条件；不能把假设当事实。复用已读证据，只为具体疑点或未交付分页补读。
+
+Comparison 交付顺序：保存实际审查记录和必要 finding → 调用 review-decide --expected-revision N --decision JSON对象 → 使用返回的当前 revision 调用 work-finish。decision 中的 version_set_id 原样使用 task.version_set_id，disposition 由你选择 pass/unresolved/finding；无需修正时 correction_record_ids=[]。没有 finding 或资料不足也须提交裁决，summary/finding 不能代替 review_decision。若诊断只缺 decision，保留有效正文、补该裁决后再声明完成；当前有效 decision 已保存时才可只补 completion。宿主只执行 Graph 返回的 action。
+
+version_set_id 必须写进 decision JSON，不能仅在说明正文中提及。修复时先 result-read 获取当前 revision，不沿用旧脚本的 revision。review-decide 返回 ok=false 表示裁决未保存；保留已有审查正文，按具体错误修正参数，不能继续调用 work-finish。命令成功后才使用返回的 revision 声明完成。
 
 Targeted closure：你是原 Analysis worker，读取 correction_records 及当前继承结果，逐项核实反证。证据支持才更正；驳回或资料不足需说明依据。用 result-supersede 替换真实目标记录，保留有效内容，不重做整个单元。最后 work-finish。
-
-
-当 task.review_mode=speed 时，当前 comparison_review 是直接审查首轮结果，不执行独立盲审，
-也不存在盲审结果；读取冻结 behavior_test_review 的速度型说明，核对锁定用例与源码后，
-使用现有 finding/decision 合同交付。不得声称已盲审。标准型仍在原 Reviewer 会话先盲审再对照。

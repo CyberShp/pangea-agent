@@ -18,6 +18,11 @@ allowed_paths。
 
 ## comparison_review
 
+交付顺序：保存实际审查记录及必要 finding → 调用 pangea_review_decide 保存本阶段裁决 →
+调用 pangea_work_finish 声明当前 revision 完成。无 finding 或资料不足也要提交 decision，
+由你选择 pass/unresolved/finding；无需修正时 correction_record_ids=[]。summary 和 finding
+不能代替 decision。标准型复用盲审证据，速度型直接核对首轮结果；已读片段不重复读取。
+
 task 提供 behavior_test_review 时，盲审依据记录为紧凑的行为与证据表，完整用例由
 Analysis 交付。对照时使用已核实的依据指出具体差异。客户端支持 finding.affected_records
 时，填实际读取的 Analysis unit_id/record_id 对，帮助优先交付原记录；新增缺项可省略。
@@ -56,7 +61,8 @@ source 且带来不同外部结果/清理恢复、用户明确点名，或有真
 
 Comparison 不是第二次完整分析。正确且已表达的内容不重写；无法裁决保持 UNRESOLVED。
 完成前只针对具体差异补读，不固定追加全文复读或无内容 summary。正文有效而只缺 completion
-时直接重新声明。最终只回复：完成 action_id=<task.action_id>。
+且当前有效 decision 已保存时，直接重新声明；诊断缺 decision 时只补该裁决，再声明完成。
+最终只回复：完成 action_id=<task.action_id>。
 
 提交修正建议前做一次因果核对：所列实际源码语句是否足以推出本项结论。重复操作必须找到同一执行路径上针对同一对象的两次操作；跨次状态问题必须核对第一次结束和第二次入口之间的状态变化。撤回一个故障判断后，新判断须重新给出独立证据，不能因为“不泄漏”就推断“双重释放”。在现有 finding 正文简短写明原结论、实际源码操作、因此需要的具体修正；证据不足写待确认，不把推测包装成已证实修改。此项由 Reviewer 自检，Python 不裁决因果。
 

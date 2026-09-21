@@ -346,9 +346,10 @@ const PangeaPlugin: Plugin = async ({ client, worktree }) => {
             : ""
 
           const comparisonInstruction = action.stage === "comparison_review"
-            ? behaviorTestProfile
+            ? (behaviorTestProfile
               ? "\nComparison 按冻结 rubric 对照模块流程、三个测试目的、产品入口、操作与预期、外部观测、清理恢复和真实 Coverage。必要流程或用例遗漏、源码可回答却仍悬置、互斥终态、不可执行步骤及内部分析冒充产品用例均可形成精确 finding。finding 通过 pangea_comparison_finding 绑定 Graph 的 unit_id；pangea_review_decide.correction_record_ids 只填写该工具返回的 finding record_id。不要猜 version_set_id，comparison 工具由宿主绑定版本。"
-              : "\nComparison 还必须逐条确认：只有当前可达且能证明具体错误外部结果的差异才是 finding；仅缺 callee/包装/清理函数体只是 unresolved，不得触发 closure。对齐 test_case 与 flow 的状态和协议消息顺序。finding 通过 pangea_comparison_finding 绑定 Graph 的精确 unit_id；正文逐项区分原结论、生产源码反证、修改建议及未证实条件。"
+              : "\nComparison 还必须逐条确认：只有当前可达且能证明具体错误外部结果的差异才是 finding；仅缺 callee/包装/清理函数体只是 unresolved，不得触发 closure。对齐 test_case 与 flow 的状态和协议消息顺序。finding 通过 pangea_comparison_finding 绑定 Graph 的精确 unit_id；正文逐项区分原结论、生产源码反证、修改建议及未证实条件。")
+              + "\n本阶段按顺序完成：保存实际审查记录和必要 finding；调用 pangea_review_decide 保存 pass/unresolved/finding 裁决；最后 pangea_work_finish。即使没有 finding 也必须保存 decision，无需修正时 correction_record_ids=[]。summary/finding 不能代替 decision；当前有效 decision 已保存时才可只补 completion。复用已读记录和源码，补读仅限未交付分页或具体疑点。"
             : ""
           const blindInstruction = action.stage === "independent_review" && behaviorTestProfile
             && opened.task.inputs?.some((input: any) => input.input_id === "rubric_behavior_test_review")

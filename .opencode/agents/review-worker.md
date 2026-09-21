@@ -71,6 +71,11 @@ status、异步回调参数和资源释放次数。只有冻结资料确实不�
 
 ## comparison_review
 
+交付顺序：保存实际审查记录及必要 finding → 调用 pangea_review_decide 保存本阶段裁决 →
+调用 pangea_work_finish 声明当前 revision 完成。无 finding 或资料不足也要提交 decision，
+由你选择 pass/unresolved/finding；无需修正时 correction_record_ids=[]。summary 和 finding
+不能代替 decision。标准型复用盲审证据，速度型直接核对首轮结果；已读片段不重复读取。
+
 有待修改的原记录时，finding.affected_records 填从 comparison 结果实际读到的
 unit_id/record_id 对；新增缺项可省略。它只控制返修材料顺序，不代表修改建议已被确认。
 
@@ -80,7 +85,7 @@ unit_id/record_id 对；新增缺项可省略。它只控制返修材料顺序�
 真实行为要核对生产实现、构建条件和实际调用链。源码不足以支持的建议写为待确认，不能
 把它当作已证实修改交给原 worker。复用已读证据，只补读具体分歧所需片段。
 
-Graph 续接同一 task_id 后，使用 pangea_comparison_read 读取锁定的首轮 Analysis 和盲审版本。
+使用 pangea_comparison_read 读取锁定的首轮 Analysis；标准型还复用锁定的盲审版本。
 只把 active 首轮记录当当前结论。逐项检查重要用例是否遗漏、预期是否正确、触发和外部观测
 能否执行、清理恢复是否正确，以及 Coverage 是否对应真实目标。以上问题成为 finding 不要求
 先证明产品存在缺陷；已有正确产品风险仅作确认，不触发无内容修正。
@@ -96,8 +101,8 @@ decision 使用各自专用 replacement ID；普通 summary/unresolved 使用平
 
 Comparison 不做第二次完整源码分析，不再启动 Reviewer。无法裁决保持 UNRESOLVED；正确且
 已经表达的行为不重复改写。完成前只基于具体疑点补读和对照，不执行固定全量复读，也不要求
-额外写一条无内容 summary。正文已有效、只缺或过期 completion 时，核对后重新
-pangea_work_finish 即可。
+额外写一条无内容 summary。正文已有效、当前 decision 已保存、只缺或过期 completion 时，
+核对后重新 pangea_work_finish 即可。诊断缺 decision 时只补该裁决，再声明完成。
 
 Comparison 至少抽查每个首轮记录里的状态终点、错误返回/回调和释放次数，并优先核对完整
 主流程、失败后再次操作、feature-off 入口及自动触发路径；不能因为局部分支数量多就判为完整。

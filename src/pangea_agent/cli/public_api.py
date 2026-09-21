@@ -4,6 +4,7 @@ from pathlib import Path
 
 from pangea_agent.agent_io import read_json
 from pangea_agent.documents.coverage_query import local_query_skill
+from pangea_agent.execution_metrics import summarize_execution
 from pangea_agent.assets import (
     archive_asset,
     asset_detail,
@@ -146,6 +147,7 @@ def run_detail(data_root: str, run_id: str) -> dict:
     summary = _run_summary(run_dir)
     progress_path = run_dir / "progress.json"
     summary["progress"] = read_json(progress_path) if progress_path.is_file() else None
+    summary["execution_metrics"] = summarize_execution(summary["progress"] or {})
     summary["reports"] = {
         "html": str(run_dir / "report.html") if summary["report_available"] else None,
         "markdown": str(run_dir / "report.md") if summary["report_available"] else None,

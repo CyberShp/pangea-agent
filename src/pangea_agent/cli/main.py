@@ -42,6 +42,7 @@ from .public_api import (
 )
 from .result_check import check_result_json
 from pangea_agent.documents.coverage_query import query_coverage
+from pangea_agent.report.asset_comparison import compare_run_assets
 from .run_module_analysis import resume_module_analysis, run_module_analysis
 from .source_first_api import (
     comparison_finding_write,
@@ -173,6 +174,10 @@ def main() -> None:
     run_get = run_commands.add_parser("get")
     run_get.add_argument("--data-root", default="pangea-data")
     run_get.add_argument("--run-id", required=True)
+    asset_comparison = run_commands.add_parser("compare-assets")
+    asset_comparison.add_argument("--data-root", default="pangea-data")
+    asset_comparison.add_argument("--baseline-run-id", required=True)
+    asset_comparison.add_argument("--candidate-run-id", required=True)
     report = run_commands.add_parser("report")
     report.add_argument("--data-root", default="pangea-data")
     report.add_argument("--run-id", required=True)
@@ -515,6 +520,8 @@ def main() -> None:
                 print_success(list_runs(args.data_root, cursor=args.cursor, limit=args.limit))
             elif args.run_command == "get":
                 print_success(run_detail(args.data_root, args.run_id))
+            elif args.run_command == "compare-assets":
+                print_success(compare_run_assets(args.data_root, args.baseline_run_id, args.candidate_run_id))
             elif args.run_command == "report":
                 print_success(run_report(args.data_root, args.run_id, args.format))
             elif args.run_command == "create":
