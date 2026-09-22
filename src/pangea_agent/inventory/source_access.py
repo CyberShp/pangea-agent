@@ -177,6 +177,35 @@ def resolve_binding(
     return binding, run_dir, action, task
 
 
+def compact_task_view(task: dict[str, Any]) -> dict[str, Any]:
+    """Project a frozen task for context delivery, without changing its authority.
+
+    Deferred fields remain available through bound, paginated input-read calls.
+    This is a character-size decision only, never a selection of semantic relevance.
+    """
+    view, deferred = {}, {}
+    remaining = 8000
+    scopes = {"allowed_paths", "all_scope_paths", "owned_scope_paths", "reference_scope_paths"}
+    identities = {"format_version", "task_type", "run_id", "action_id", "task_id", "unit_id",
+                  "role", "stage", "review_stage", "review_mode", "version_set_id",
+                  "result_path", "analysis_profile", "execution_budget_ms"}
+    # Reserve ordinary small routing fields before spending the delivery budget
+    # on descriptions; every deferred value remains available without alteration.
+    for key in sorted(task, key=lambda name: name not in identities):
+        value = task[key]
+        size = len(json.dumps({key: value}, ensure_ascii=False))
+        if key not in scopes and size <= min(2048, remaining):
+            view[key] = value
+            remaining -= size
+        else:
+            deferred[key] = {"input_id": f"task:{key}"}
+            if isinstance(value, (list, dict)):
+                deferred[key]["count"] = len(value)
+    view["deferred_fields"] = deferred
+    view["scope_navigation"] = "source-index/source-search 按需导航；deferred_fields 用 input-read --input-id ID 分页读取，不全量枚举依赖范围。"
+    return view
+
+
 def task_open(
     data_root: str,
     run_id: str,
@@ -297,19 +326,25 @@ def input_read(
         if isinstance(item, dict) and item.get("input_id") and item.get("path")
     }
     item = declared.get(input_id)
-    if item is None:
+    # Declared input IDs retain precedence for compatibility with old Runs.
+    field = input_id.removeprefix("task:") if input_id.startswith("task:") else None
+    if item is None and field in task:
+        item = {"label": f"task.{field}"}
+        content = json.dumps(task[field], ensure_ascii=False)
+    elif item is None:
         raise SourceAccessError(f"input_id 不在当前 task scope：{input_id}")
-    path = Path(str(item["path"])).resolve()
-    try:
-        path.relative_to(run_dir)
-    except ValueError as exc:
-        raise SourceAccessError("冻结输入路径越出当前 Run 数据边界") from exc
-    if not path.is_file():
-        raise SourceAccessError(f"冻结输入不存在：{input_id}")
-    try:
-        content = path.read_text(encoding="utf-8", errors="replace")
-    except OSError as exc:
-        raise SourceAccessError(f"冻结输入不可读取：{input_id}") from exc
+    else:
+        path = Path(str(item["path"])).resolve()
+        try:
+            path.relative_to(run_dir)
+        except ValueError as exc:
+            raise SourceAccessError("冻结输入路径越出当前 Run 数据边界") from exc
+        if not path.is_file():
+            raise SourceAccessError(f"冻结输入不存在：{input_id}")
+        try:
+            content = path.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            raise SourceAccessError(f"冻结输入不可读取：{input_id}") from exc
     offset = _decode_cursor(cursor)
     page = content[offset : offset + max_chars]
     next_cursor = _encode_cursor(offset + len(page)) if offset + len(page) < len(content) else None

@@ -27,6 +27,7 @@ from pangea_agent.graph.result_store import (
     supersession_map,
 )
 from pangea_agent.inventory.source_access import (
+    compact_task_view,
     input_read as read_input,
     resolve_binding,
     expand_owned_files,
@@ -270,11 +271,9 @@ def validate_source_first_result(
 def task_open(data_root: str, run_id: str, action_id: str, task_id: str, *, prepare_source: bool = False) -> dict[str, Any]:
     opened = open_task(data_root, run_id, action_id, task_id)
     task = opened["task"]
-    if task.get("context_budget", {}).get("policy") == "on-demand-v1":
-        # APIs resolve the full persisted scope; the prompt receives navigation only.
-        opened["task"] = {key: value for key, value in task.items()
-                          if key not in {"allowed_paths", "owned_scope_paths", "reference_scope_paths"}}
-        opened["task"]["scope_navigation"] = "source-index 按目录/文件分页；source-search 按目标入口检索。无需枚举全范围。"
+    # All stages (including old frozen Runs) get a bounded view. Permissions
+    # and preparation still resolve the original task, never this projection.
+    opened["task"] = compact_task_view(task)
     if task.get("task_type") == "source_first_plan":
         binding, result_path, _ = _binding_and_result(data_root, run_id, action_id, task_id)
         opened["write_contract"] = {
