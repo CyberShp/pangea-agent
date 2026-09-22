@@ -260,6 +260,8 @@ def _record_markdown(
     if record.kind in {"test_case", "test_case_group"}:
         return _case_markdown(record, unit_id=unit_id, anchors=anchors or {})
     mapping = _body_mapping(record.body)
+    if record.kind == "flow" and mapping and mapping.get("format_version") == "module-flow-text-v1":
+        return str(mapping.get("text") or _body_text(mapping)) + "\n\n源码依据：\n" + _body_text(mapping.get("source_evidence", []))
     return _mapping_markdown(mapping) if mapping is not None else _nested_record_text(record.body)
 
 
@@ -532,6 +534,7 @@ def _behavior_markdown(
     progress: dict,
     records: list[tuple[dict, Any]],
     diagram_assets: dict[str, str] | None = None,
+    scene: dict | None = None,
 ) -> str:
     if diagram_assets is None:
         diagram_assets = {}
@@ -549,10 +552,10 @@ def _behavior_markdown(
     else:
         delivery_message = "分析仍在进行，当前报告不是最终交付。"
     lines = [
-        "# PANGEA 业务行为测试用例报告",
+        f"# PANGEA {scene['label'] if scene else '业务行为测试用例'}报告",
         "",
         f"- Run: `{progress.get('run_id', state.get('run_id', ''))}`",
-        "- Analysis profile: `behavior-test-v1`",
+        f"- Analysis profile: `{'behavior-test-v2' if scene else 'behavior-test-v1'}`",
         f"- Lifecycle: `{lifecycle}`",
         f"- Quality: `{quality}`",
         "- 质量范围：业务行为用例的生成与审核；未附实际执行证据时，不代表被测产品或 Coverage 已通过。",
@@ -601,6 +604,8 @@ def _behavior_markdown(
         purposes: set[str] | None = None,
         readiness: str | None = None,
     ) -> None:
+        if scene and not scene["presentation"]["risks"] and title in {"风险用例", "风险依据"}:
+            return
         lines.extend([f"## {title}", ""])
         found = False
         for action, result in selected:
@@ -629,7 +634,7 @@ def _behavior_markdown(
                         unit_id=unit_id,
                         anchors=anchors,
                     )
-                    if record.kind == "flow"
+                    if record.kind == "flow" and scene is None
                     else _record_markdown(record, unit_id=unit_id, anchors=anchors)
                 )
                 anchor = _record_anchor(unit_id, record.record_id)
@@ -673,20 +678,31 @@ def _behavior_markdown(
         purpose: sum(_case_purpose(record) == purpose for record in formal_case_records)
         for purpose in [*_CASE_PURPOSES, "unclassified"]
     }
+    if scene:
+        lines.extend(["## 覆盖数据来源与匹配诊断", ""])
+        try:
+            match = read_json(run_directory(state) / "inputs" / "coverage-match-summary.json")
+            lines.extend([
+                f"- 输入来源：{len(match.get('sources', []))}；位置匹配：{len(match.get('matched', []))}；未匹配：{len(match.get('unmatched', []))}；匹配歧义：{len(match.get('ambiguous', []))}。",
+                "- 位置匹配不代表数据版本已核实，也不代表实测覆盖或补测已执行。", "",
+                _body_text(match.get("sources", [])), "", str(match.get("note", "")), "",
+            ])
+        except (OSError, ValueError, TypeError):
+            lines.extend(["匹配诊断不可读取，不能据此推定没有缺口。", ""])
     coverage_summary = _coverage_summary(state, case_records)
     lines.extend([
         "## 用例总览",
         "",
         "以下数量来自 Analysis 的显式声明；Python 不根据函数名或正文猜测测试目的和层级。",
         "",
-        f"- 本次有效 Coverage 缺口：{coverage_summary['valid_gaps'] if coverage_summary['valid_gaps'] is not None else '未记录/不可读取'}",
+        f"- {'本次输入匹配 Coverage 缺口' if scene else '本次有效 Coverage 缺口'}：{coverage_summary['valid_gaps'] if coverage_summary['valid_gaps'] is not None else '未记录/不可读取'}",
         f"- 全部层级 Coverage 补测用例：{coverage_summary['coverage_cases']}",
         f"- 全部用例显式关联的去重有效缺口：{coverage_summary['linked_valid_gaps'] if coverage_summary['linked_valid_gaps'] is not None else '无法核实'}",
         f"- 未能由冻结缺口核实的引用：{coverage_summary['unverified_refs']}",
         "- 关联仅表示作者声明，不代表执行通过或覆盖率提升。未解决原因见本报告的分析记录及待确认项。",
         f"- 分支用例：`{purpose_counts['branch']}`",
         f"- 未覆盖用例：`{purpose_counts['coverage']}`",
-        f"- 风险用例：`{purpose_counts['risk']}`",
+        *([f"- 风险用例：`{purpose_counts['risk']}`"] if scene is None or scene["presentation"]["risks"] else ["- 本次未开展风险分析。"]),
         f"- 测试目的未声明：`{purpose_counts['unclassified']}`",
         f"- 产品黑盒：`{level_counts['business_blackbox']}`",
         f"- 业务灰盒（含定点故障注入）：`{level_counts['developer_assisted']}`",
@@ -731,7 +747,9 @@ def _behavior_markdown(
     add_records("风险依据", delivery, {"risk"})
     add_records("Coverage 与分析依据", delivery, {"evidence", "blackbox_translation"})
     add_records("待确认事项", delivery, {"unresolved"})
-    add_records("其他交付说明", delivery, {"summary", "note"})
+    if scene and not scene["presentation"]["risks"]:
+        add_records("超出场景职责的用例声明（原文保留，待核对）", delivery, {"test_case", "test_case_group"}, {"business_blackbox", "developer_assisted"}, {"risk"})
+    add_records("其他交付说明", delivery, {"summary", "note", *({"risk"} if scene and not scene["presentation"]["risks"] else set())})
     add_records("业务用例质量复核", [item for item in records if item[0].get("stage") == "comparison_review" and item[0].get("status") == "accepted"], {"summary", "note", "review_decision", "review_finding", "unresolved"})
     if accepted_closure_units:
         lines.extend(["> 定向修正由原分析 Worker 完成；修正后的内容不代表已接受额外独立复核。", ""])
@@ -977,14 +995,16 @@ def write_source_first_reports(state: dict, *, progress: dict | None = None) -> 
             if isinstance(frozen_contract, dict):
                 contract = frozen_contract
                 profile = frozen_contract.get("analysis_profile")
+    from pangea_agent.analysis_scenarios import frozen_scene
+    scene = frozen_scene(run_directory(state), contract)
     diagram_assets: dict[str, str] = {}
     markdown = (
-        _behavior_markdown(state, progress, records, diagram_assets)
-        if profile == "behavior-test-v1"
+        _behavior_markdown(state, progress, records, diagram_assets, scene=scene)
+        if profile in {"behavior-test-v1", "behavior-test-v2"}
         else _markdown(state, progress, records)
     )
     review_mode = (contract.get("analysis_settings") or {}).get("mode", "depth")
-    if profile == "behavior-test-v1":
+    if profile in {"behavior-test-v1", "behavior-test-v2"}:
         review_label = "速度型：直接审核首轮结果，未执行独立盲审" if review_mode == "speed" else "标准型：独立盲审后对照复核"
         title, separator, rest = markdown.partition("\n")
         markdown = title + separator + "\n复核模式：" + review_label + "。执行完成情况以本报告状态为准。\n" + rest

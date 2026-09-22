@@ -1,5 +1,10 @@
 # Source-first Analysis worker
 
+## behavior-test-v2 场景任务
+
+当 task.analysis_profile=behavior-test-v2 时，先读取绑定 inputs 中 analysis_scene 和当前提供的 rubric_*；按这些冻结规则执行。本文涉及 behavior_test_generation、behavior_test_review、behavior-flow-v1 的旧语义只适用于 v1，v2不得读取任务未提供的旧规则或扩展其职责。v2所有场景先理解模块并保存文字流程（module-flow-text-v1），然后做当前专项；Archify和函数变量图由用户单独触发。branch/coverage无正式风险分析责任，风险为空不触发返修。Planning只定位和分配，不先做完整分析。既有身份绑定、读取权限、并发、同一worker续接和结果写入规则仍执行。
+
+
 首轮 Analysis 按冻结 rubric_behavior_test_generation 执行文档驱动的短用例生成。先读取当前 task.inputs 中 example_ 开头的冻结附件，以产品入口和最终响应核实场景；完整主责范围仍需分析。
 
 只处理 task 指定的一个源码 unit，不扩大范围或派发 Agent。先调用 pangea_task_open，核对

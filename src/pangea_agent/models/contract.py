@@ -13,7 +13,7 @@ class TaskContract(BaseModel):
     # New runs are explicitly versioned by the caller.  ``None`` is retained
     # for old frozen contracts, which remain read-only compatible.
     workflow_version: Literal["legacy-v1", "source-first-v1"] | None = None
-    analysis_profile: Literal["behavior-test-v1"] | None = None
+    analysis_profile: Literal["behavior-test-v1", "behavior-test-v2"] | None = None
     runtime_commit: str | None = None
     runtime_provenance: dict | None = None
     analysis_settings: dict[str, str] | None = None
@@ -33,6 +33,7 @@ class TaskContract(BaseModel):
     )
     focus: list[str] = Field(default_factory=list)
     asset_ids: list[str] = Field(default_factory=list)
+    asset_revisions: dict[str, str] | None = None
     test_case_examples: list[str] = Field(default_factory=list)
     mr_url: str | None = None
 
@@ -48,9 +49,21 @@ class TaskContract(BaseModel):
 
     @model_validator(mode="after")
     def validate_mode(self) -> "TaskContract":
+        if self.analysis_profile == "behavior-test-v2":
+            from pangea_agent.analysis_scenarios import SCENES
+            settings = self.analysis_settings or {}
+            if (self.workflow_version != "source-first-v1" or set(settings) != {"scenario", "mode"}
+                    or settings.get("scenario") not in SCENES or settings.get("mode") not in {"depth", "speed"}):
+                raise ValueError("behavior-test-v2 requires a supported scenario and depth/speed mode")
+            if self.asset_revisions and not set(self.asset_revisions).issubset(self.asset_ids):
+                raise ValueError("资产修订必须属于本次选择的 asset_ids")
+            return self._validate_repository()
         if self.workflow_version == "source-first-v1" and self.analysis_settings is not None:
             if self.analysis_settings not in ({"scenario": "module-analysis", "mode": "depth"}, {"scenario": "module-analysis", "mode": "speed"}):
                 raise ValueError("source-first-v1 supports module-analysis with depth or speed mode")
+        return self._validate_repository()
+
+    def _validate_repository(self) -> "TaskContract":
         if bool(self.repository) == bool(self.repositories):
             raise ValueError("任务契约必须且只能指定 repository 或 repositories")
         if self.mode == "mr_analysis" and not self.mr_url:

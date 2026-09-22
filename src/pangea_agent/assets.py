@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import shutil
+import hashlib
+import json
 from uuid import uuid4
 from datetime import datetime
 from pathlib import Path
@@ -141,7 +143,7 @@ def list_assets(
     page = records[cursor : cursor + limit]
     next_cursor = cursor + len(page)
     return {
-        "items": [item.model_dump(mode="json") for item in page],
+        "items": [{**item.model_dump(mode="json"), "input_revision": asset_input_revision(data_root, item)} for item in page],
         "next_cursor": next_cursor if next_cursor < len(records) else None,
         "total": len(records),
     }
@@ -155,7 +157,7 @@ def asset_detail(data_root: str, asset_id: str) -> dict:
         result = read_json(result_path)
     text_path = result_path.parent / "extracted.txt" if result_path else None
     original_text = text_path.read_text(encoding="utf-8") if text_path and text_path.is_file() else None
-    return {"asset": record.model_dump(mode="json"), "result": result, "normalized_preview": original_text}
+    return {"asset": {**record.model_dump(mode="json"), "input_revision": asset_input_revision(data_root, record)}, "result": result, "normalized_preview": original_text}
 
 
 def _asset_result_path(data_root: str, record: AssetRecord) -> Path | None:
@@ -174,25 +176,38 @@ def _asset_result_path(data_root: str, record: AssetRecord) -> Path | None:
     return resolved
 
 
-def analysis_asset_inputs(data_root: str, asset_ids: list[str] | None = None) -> dict:
+def _asset_snapshot(data_root: str, record: AssetRecord, *, parse_result: bool = True) -> tuple[str, dict | None]:
+    path = _asset_result_path(data_root, record)
+    content = path.read_bytes() if path and path.is_file() else b""
+    metadata = record.model_dump(mode="json")
+    if load_asset(data_root, record.asset_id).model_dump(mode="json") != metadata:
+        raise ValueError(f"资产输入已变更，请重新选择：{record.asset_id}")
+    revision = hashlib.sha256(json.dumps(metadata, sort_keys=True, ensure_ascii=False).encode() + b"\0" + content).hexdigest()
+    return revision, json.loads(content) if content and parse_result else None
+
+
+def asset_input_revision(data_root: str, record: AssetRecord) -> str:
+    return _asset_snapshot(data_root, record, parse_result=False)[0]
+
+
+def analysis_asset_inputs(data_root: str, asset_ids: list[str] | None = None, *, expected_revisions: dict[str, str] | None = None) -> dict:
     # ``None`` is the catalog-management view (all available assets).  A Run
     # contract always supplies a list, where an empty list means no assets.
     selected = None if asset_ids is None else set(asset_ids)
-    page = list_assets(data_root, limit=200)
-    records = page["items"]
-    if page["next_cursor"] is not None:
-        cursor = page["next_cursor"]
-        while cursor is not None:
-            next_page = list_assets(data_root, cursor=cursor, limit=200)
-            records.extend(next_page["items"])
-            cursor = next_page["next_cursor"]
+    # Only read result bytes for selected assets. Catalog pagination carries
+    # fingerprints for the UI and must not make a Run hash unrelated assets.
+    records = [AssetRecord.model_validate(read_json(path))
+               for path in _assets_root(data_root).glob("*/asset.json")
+               if selected is None or path.parent.name in selected]
+    records.sort(key=lambda item: (item.created_at, item.asset_id), reverse=True)
 
     candidates: list[dict] = []
     items: dict[str, dict] = {}
     coverage_records: list[dict] = []
     coverage_diagnostics: list[dict] = []
-    for raw_record in records:
-        record = AssetRecord.model_validate(raw_record)
+    snapshots: list[dict] = []
+    consumed: set[str] = set()
+    for record in records:
         if selected is not None and record.asset_id not in selected:
             continue
         if record.status != "available" or not record.result_path:
@@ -200,9 +215,16 @@ def analysis_asset_inputs(data_root: str, asset_ids: list[str] | None = None) ->
         result_path = _asset_result_path(data_root, record)
         if result_path is None or not result_path.is_file():
             continue
-        result = read_json(result_path)
+        revision, result = _asset_snapshot(data_root, record)
+        if expected_revisions is not None and record.asset_id in expected_revisions and revision != expected_revisions[record.asset_id]:
+            raise ValueError(f"资产输入已变更，请重新选择：{record.asset_id}")
+        consumed.add(record.asset_id)
+        snapshots.append({"asset_id": record.asset_id, "input_revision": revision,
+                          "metadata": record.model_dump(mode="json"), "result": result})
         if record.asset_type == "coverage":
             coverage_diagnostics.append({"asset_id": record.asset_id,
+                                         "input_revision": revision,
+                                         "record_count": len(result.get("records", [])),
                                          **(result.get("acquisition") or {}),
                                          "warnings": result.get("warnings", [])})
             for number, coverage in enumerate(result.get("records", []), 1):
@@ -238,11 +260,14 @@ def analysis_asset_inputs(data_root: str, asset_ids: list[str] | None = None) ->
                 or [],
                 "source_references": payload.get("source_references", []),
             })
+    if expected_revisions is not None and selected is not None and selected - consumed:
+        raise ValueError(f"选定资产不可用或未完成解析：{', '.join(sorted(selected - consumed))}")
     return {
         "candidates": candidates,
         "items": items,
         "coverage_records": coverage_records,
         "coverage_diagnostics": coverage_diagnostics,
+        "snapshots": snapshots,
     }
 
 

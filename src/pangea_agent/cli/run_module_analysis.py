@@ -79,9 +79,11 @@ def run_module_analysis(contract_path: str) -> dict:
             "html_report_path": progress.html_report_path if progress else None,
         }
         return response
-    except Exception:
+    except Exception as exc:
         run_dir = Path(state["data_root"]) / "runs" / run_id
-        if allocated_run and not (run_dir / "progress.json").is_file():
+        if contract.get("analysis_profile") == "behavior-test-v2" and not (run_dir / "progress.json").is_file():
+            write_json(run_dir / "inputs" / "preparation-error.json", {"run_id": run_id, "stage": "input_preparation", "error": str(exc)})
+        elif allocated_run and not (run_dir / "progress.json").is_file():
             shutil.rmtree(run_dir, ignore_errors=True)
         raise
 
