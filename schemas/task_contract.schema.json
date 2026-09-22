@@ -37,7 +37,10 @@
     "analysis_profile": {
       "anyOf": [
         {
-          "const": "behavior-test-v1",
+          "enum": [
+            "behavior-test-v1",
+            "behavior-test-v2"
+          ],
           "type": "string"
         },
         {
@@ -58,6 +61,34 @@
       ],
       "default": null,
       "title": "Runtime Commit"
+    },
+    "runtime_provenance": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Runtime Provenance"
+    },
+    "analysis_settings": {
+      "anyOf": [
+        {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Analysis Settings"
     },
     "model_id": {
       "anyOf": [
@@ -124,7 +155,6 @@
       "type": "array"
     },
     "context_scope": {
-      "description": "仅用于理解和证据定位的冻结上下文路径；不产生源码覆盖义务，且不会触发展开声明实现。",
       "anyOf": [
         {
           "items": {
@@ -137,6 +167,7 @@
         }
       ],
       "default": null,
+      "description": "仅用于理解和证据定位的冻结上下文路径；不产生源码覆盖义务，且不会触发展开声明实现。",
       "title": "Context Scope"
     },
     "focus": {
@@ -152,6 +183,21 @@
       },
       "title": "Asset Ids",
       "type": "array"
+    },
+    "asset_revisions": {
+      "anyOf": [
+        {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Asset Revisions"
     },
     "test_case_examples": {
       "items": {

@@ -31,12 +31,15 @@ from pangea_agent.report import reports_are_complete
 
 
 def system_capabilities(data_root: str) -> dict:
+    from pangea_agent.analysis_scenarios import PROFILE, scene_options
     return {
         "coverage_query_skill": local_query_skill(),
         "workflow_versions": ["legacy-v1", "source-first-v1"],
         "source_first": {
             "version": "source-first-v1",
-            "contract_fields": ["analysis_settings", "runtime_provenance"],
+            "contract_fields": ["analysis_settings", "runtime_provenance", "analysis_profile", "asset_revisions"],
+            "analysis_profiles": ["behavior-test-v1", PROFILE],
+            "analysis_options_by_profile": {PROFILE: scene_options()},
             "analysis_options": {"scenarios": ["module-analysis"], "modes": ["depth", "speed"], "coverage_input": False},
             "tools": [
                 "source_index", "source_read", "source_search", "plan_write",

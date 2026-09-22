@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from pangea_agent.agent_io import read_json, write_json
+from pangea_agent.analysis_scenarios import PROFILE, freeze_scene, frozen_scene, scene_rubric_paths, scene_task_inputs
 from pangea_agent.assets import analysis_asset_inputs
 from pangea_agent.documents.coverage import match_coverage_records, relevant_zero_coverage
 from pangea_agent.graph.result_store import active_records, initialize_result, read_result
@@ -132,7 +133,7 @@ def _analysis_allowed_paths(
     """
 
     candidates = list(selected_paths)
-    if analysis_profile == "behavior-test-v1":
+    if analysis_profile in {"behavior-test-v1", PROFILE}:
         candidates.extend(_all_scope_paths(expansion))
     allowed: list[dict[str, str]] = []
     seen: set[tuple[str, str]] = set()
@@ -148,6 +149,8 @@ def _analysis_allowed_paths(
 def _freeze_source_first_rubrics(run_dir: Path) -> dict[str, str]:
     source = project_path("src", "pangea_agent", "rubrics", "builtin")
     destination = run_dir / "inputs" / "methodologies" / "builtin"
+    if destination.is_dir():
+        return {path.stem: str(path) for path in destination.glob("*.md")}
     destination.mkdir(parents=True, exist_ok=True)
     frozen: dict[str, str] = {}
     for path in sorted(source.glob("*.md")):
@@ -193,6 +196,11 @@ def prepare_source_first_inputs(state: PangeaState) -> PangeaState:
 
     contract = state["task_contract"]
     run_dir = run_directory(state)
+    scene = freeze_scene(run_dir, contract)
+    assets = analysis_asset_inputs(state["data_root"], contract.get("asset_ids"),
+                                  expected_revisions=(contract.get("asset_revisions") or {}) if scene else None)
+    if scene and scene["coverage_requirement"] == "required" and not assets["coverage_diagnostics"]:
+        raise ValueError("COVERAGE_INPUT_REQUIRED: 覆盖率分析需要已解析的覆盖率资产；请先查询或导入数据")
     freeze_enabled_methodologies(state["data_root"], run_dir, state["run_id"])
     frozen_rubrics = _freeze_source_first_rubrics(run_dir)
     repositories = resolve_repositories_from_contract(contract, state["data_root"])
@@ -232,7 +240,6 @@ def prepare_source_first_inputs(state: PangeaState) -> PangeaState:
         for path in group.get("code_paths", [])
     ))
     inventory = file_inventory(frozen_repositories, expansion)
-    assets = analysis_asset_inputs(state["data_root"], contract.get("asset_ids"))
     # Coverage matching needs symbols only when actual coverage records exist.
     # Pathless legacy coverage still needs global disambiguation.
     coverage_inventory = {"files": []}
@@ -265,6 +272,14 @@ def prepare_source_first_inputs(state: PangeaState) -> PangeaState:
     write_json(inputs / "asset-items.json", assets["items"])
     write_json(inputs / "coverage-gaps.json", zero_coverage)
     write_json(inputs / "coverage-diagnostics.json", assets["coverage_diagnostics"])
+    if scene:
+        write_json(inputs / "asset-snapshots.json", assets["snapshots"])
+        write_json(inputs / "coverage-match-summary.json", {
+            "format_version": "coverage-match-summary-v1", "sources": assets["coverage_diagnostics"],
+            "matched": coverage_match["matched"], "unmatched": coverage_match["unmatched"],
+            "ambiguous": coverage_match["ambiguous"],
+            "note": "按来源分别解释；空缺口不是100%覆盖，版本适用性由Agent根据输入核实。",
+        })
     write_json(inputs / "test-case-examples.json", frozen_examples)
     write_json(inputs / "inventory.json", inventory)
     source_index = {**build_source_index(inventory), "index_policy": "on-demand-v1"}
@@ -325,8 +340,10 @@ def prepare_source_first_inputs(state: PangeaState) -> PangeaState:
         "effective_context_budget": contract.get("effective_context_budget"),
         "result_format": "pangea-plan-v1",
         "result_path": str(result_path),
-        "rubric_paths": [planning_rubric],
+        "rubric_paths": [planning_rubric, *(scene_rubric_paths(run_dir, scene, "planning", []) if scene else [])],
         "inputs": [
+            *scene_task_inputs(run_dir, scene),
+            *([_input("scene_planning_rubric", path, "场景规划职责") for path in scene_rubric_paths(run_dir, scene, "planning", [])] if scene else []),
             *_example_inputs(state),
             _input("planning_metadata", compact_path, "源码结构摘要"),
             _input("asset_candidates", inputs / "asset-candidates.json", "候选结构化资料"),
@@ -336,6 +353,8 @@ def prepare_source_first_inputs(state: PangeaState) -> PangeaState:
             _input("unit_planning_rubric", planning_rubric, "单元规划方法"),
         ],
     }
+    if scene:
+        task["scenario"] = scene["id"]
     write_json(task_path, task)
     initialize_result(
         result_path,
@@ -537,6 +556,7 @@ def _required_direct_context_files(manifest: dict) -> list[str]:
 
 
 def _make_analysis_actions(state: PangeaState, progress: WorkflowProgress, units: list[dict], plan_task: dict) -> None:
+    scene = frozen_scene(run_directory(state), state["task_contract"])
     lookup = _region_lookup(state)
     source_manifest_path = plan_task["source_manifest_path"]
     source_index_path = plan_task["source_index_path"]
@@ -633,10 +653,16 @@ def _make_analysis_actions(state: PangeaState, progress: WorkflowProgress, units
             *([_input("coverage_diagnostics", run_directory(state) / "inputs" / "coverage-diagnostics.json", "Coverage 查询状态、缺失来源与警告；空数据不代表没有缺口")]
               if (run_directory(state) / "inputs" / "coverage-diagnostics.json").is_file() else []),
             *[
-                _input(f"rubric_{Path(path).stem}", path, f"方法论 {Path(path).stem}")
+                _input(f"rubric_{'user_' if Path(path).parent.name == 'user' else ''}{Path(path).stem}", path, f"方法论 {Path(path).stem}")
                 for path in task["rubric_paths"]
             ],
         ]
+        if scene:
+            task["scenario"] = scene["id"]
+            task["rubric_paths"] = scene_rubric_paths(run_directory(state), scene, "analysis", unit.get("methodology_ids", []))
+            task["inputs"] = [item for item in task["inputs"] if not item["input_id"].startswith("rubric_")]
+            task["inputs"].extend(scene_task_inputs(run_directory(state), scene))
+            task["inputs"].extend(_input(f"rubric_{'user_' if Path(path).parent.name == 'user' else ''}{Path(path).stem}", path, f"方法论 {Path(path).stem}") for path in task["rubric_paths"])
         write_json(task_path, task)
         initialize_result(
             result_path,
@@ -660,6 +686,7 @@ def _prepare_review(state: PangeaState, progress: WorkflowProgress) -> None:
     # The Reviewer is a newly dispatched task; the host binds it before any
     # source/result operation.  The comparison continuation reuses this ID.
     fast = (state["task_contract"].get("analysis_settings") or {}).get("mode") == "speed"
+    scene = frozen_scene(run_directory(state), state["task_contract"])
     action_id = f"{state['run_id']}:review"
     task_path = source_first_task_path(state, "review")
     result_path = source_first_result_path(state, "review")
@@ -681,6 +708,9 @@ def _prepare_review(state: PangeaState, progress: WorkflowProgress) -> None:
         if name in frozen_rubrics
     ]
     plan = read_json(run_directory(state) / "inputs" / "source-first-plan.json")
+    if scene:
+        review_rubrics = scene_rubric_paths(run_directory(state), scene, "review", [
+            name for unit in plan.get("units", []) for name in unit.get("methodology_ids", [])])
     review_owned = _scope_paths(manifest.get("scope_expansion", {}), "code_paths")
     review_regions = []
     if plan.get("scope_policy") == "target-first-v1":
@@ -717,7 +747,7 @@ def _prepare_review(state: PangeaState, progress: WorkflowProgress) -> None:
             *([_input("coverage_diagnostics", run_directory(state) / "inputs" / "coverage-diagnostics.json", "Coverage 查询状态、缺失来源与警告；空数据不代表没有缺口")]
               if (run_directory(state) / "inputs" / "coverage-diagnostics.json").is_file() else []),
             *[
-                _input(f"rubric_{Path(path).stem}", path, f"方法论 {Path(path).stem}")
+                _input(f"rubric_{'user_' if Path(path).parent.name == 'user' else ''}{Path(path).stem}", path, f"方法论 {Path(path).stem}")
                 for path in review_rubrics
             ],
         ],
@@ -725,6 +755,9 @@ def _prepare_review(state: PangeaState, progress: WorkflowProgress) -> None:
     if fast:
         version_path, version_id = _write_comparison_version_set(state, progress, None)
         task.update(version_set_path=str(version_path), version_set_id=version_id)
+    if scene:
+        task["scenario"] = scene["id"]
+        task["inputs"].extend(scene_task_inputs(run_directory(state), scene))
     write_json(task_path, task)
     initialize_result(
         result_path,

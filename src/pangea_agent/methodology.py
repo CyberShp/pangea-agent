@@ -544,11 +544,8 @@ def _ensure_selection_catalog(
     expected = _selection_catalog(manifest)
     if catalog_path.is_file():
         current = FrozenMethodologyCatalog.model_validate(read_json(catalog_path))
-        comparable_expected = expected
-        if not current.builtin_methodologies:
-            comparable_expected = expected.model_copy(update={
-                "builtin_methodologies": [],
-            })
+        # Builtins are a frozen catalog, not the currently installed catalog.
+        comparable_expected = expected.model_copy(update={"builtin_methodologies": current.builtin_methodologies})
         if current != comparable_expected:
             raise ValueError("Run 冻结方法论精简目录与冻结清单不一致")
     else:
@@ -723,16 +720,14 @@ def methodology_manifest(task_path: str | Path) -> dict:
             ),
         })
     return {
-        "unit_id": task.get("unit", {}).get("unit_id"),
+        "unit_id": task.get("unit_id") or task.get("unit", {}).get("unit_id"),
         "items": items,
     }
 
 
 def run_methodology_manifests(run_dir: str | Path) -> list[dict]:
     analysis_dir = Path(run_dir) / "agent-tasks" / "analysis"
-    if not analysis_dir.is_dir():
-        return []
     return [
         methodology_manifest(path)
-        for path in sorted(analysis_dir.glob("*.json"))
+        for path in sorted([*analysis_dir.glob("*.json"), *(Path(run_dir) / "agent-tasks" / "source-first").glob("analysis-*.json")])
     ]

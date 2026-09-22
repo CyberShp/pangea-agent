@@ -316,7 +316,7 @@ def task_open(data_root: str, run_id: str, action_id: str, task_id: str, *, prep
         opened["prepared_source"] = material
     else:
         opened["prepared_source"] = prepare_task_source(data_root, run_id, action_id, task_id, task)
-    if task.get("task_type") == "source_first_analysis" and task.get("analysis_profile") == "behavior-test-v1":
+    if task.get("task_type") == "source_first_analysis" and task.get("analysis_profile") in {"behavior-test-v1", "behavior-test-v2"}:
         pages = []
         pending = []
         remaining = 12_000

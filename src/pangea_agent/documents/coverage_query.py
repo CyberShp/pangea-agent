@@ -24,7 +24,7 @@ def local_query_skill() -> dict:
 
 def query_coverage(data_root: str, query: dict, *, timeout: float = 300) -> dict:
     """One combined query; keep acquisition facts separate from analysis verdicts."""
-    from pangea_agent.assets import import_asset, prepare_asset_extraction
+    from pangea_agent.assets import import_asset, prepare_asset_extraction, asset_detail
     from pangea_agent.documents.coverage import parse_coverage_combined
 
     for key in ("product", "c_version", "module"):
@@ -81,7 +81,7 @@ def query_coverage(data_root: str, query: dict, *, timeout: float = 300) -> dict
             asset = import_asset(data_root, str(prepared), "coverage",
                                  f"内网覆盖率 · {query['product']} / {query['c_version']} / {query['module']}")
             extracted = prepare_asset_extraction(data_root, asset.asset_id)
-            result["asset"] = extracted["asset"]
+            result["asset"] = asset_detail(data_root, asset.asset_id)["asset"]
             result["record_count"] = extracted["asset"]["structured_item_count"]
         if result["status"] == "no_data" and not result.get("message"):
             result["message"] = "查询未返回覆盖数据，请核对产品、版本和模块；不能解释为没有覆盖缺口"

@@ -1,0 +1,7 @@
+# 风险分析职责
+
+先理解对象模块文字流程，然后围绕真实失效条件、传播、后果、外部观测和排除条件开展风险分析。按对象使用现有DFX/SFMEA经验，不要求六维齐全、风险数量或无依据评分。
+正式风险保存kind=risk，包含risk_id/title/trigger/system_result/external_observation/exclusion_condition/source_evidence/linked_test_case_ids；区分当前行为、正确预期和已证实问题。
+每个正式风险关联可实施业务验证用例，优先复用；有源码证据证明业务入口不可达时说明依据。不为展示填充空风险或把正常拒绝误判缺陷。risk用途用例使用purpose=risk和真实risk_refs。
+需求/设计支撑正确预期；历史缺陷必须核实当前版本适用性。Coverage只辅助风险排序与关联，不自动变成全量补测任务。风险为零时记录实际检查范围和结论，不宣称对象安全。
+Reviewer聚焦证据、触发可制造性、传播/后果、外部判据、清理恢复及用例关联；缺注入设施标needs_instrumentation，不假称已执行。
