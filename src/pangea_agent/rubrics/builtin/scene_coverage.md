@@ -1,6 +1,6 @@
 # 覆盖率分析职责
 
-先读coverage_match_summary、coverage_diagnostics和coverage_gaps，核实来源、测量批次、版本、路径及函数/行/分支粒度，再理解对象模块主干文字流程和缺口调用链。
+先读coverage_match_summary、coverage_diagnostics和coverage_gaps，核实来源、测量批次、版本、路径及函数/行/分支粒度，再理解对象模块主干结构化业务流程和缺口调用链。
 只围绕相关真实缺口深入补测，不变成全模块风险或全分支扫描。缺口新增/实质补充用例使用purpose=coverage和真实coverage_refs；复用已有branch用例保留purpose。每个相关缺口在summary说明新增、补充、复用、不可达依据或具体执行条件缺口。
 路径重叠不证明触发；沿产品入口核实触发条件、外部判据、故障注入、清理和再次操作。需要新增桩点标needs_instrumentation，不能把调用私有函数当黑盒测试。
 需求、设计、历史缺陷和方法论用于解释预期与缺口测试价值；无关历史问题不扩展对象。不存在正式风险分析责任，不建风险账本，不强求risk_refs。

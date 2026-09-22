@@ -18,8 +18,8 @@
 
 新建四场景使用 `analysis_profile=behavior-test-v2`，复用 source-first-v1 Graph；职责读取当前 Run
 冻结的 `inputs/analysis-scene.json` 与 scene_* rubric。模块分析保留综合行为；风险分析保留风险板块；
-分支与覆盖率分析不承担正式风险账本责任、不要求 risk_refs。四场景均先交付模块文字流程
-（module-flow-text-v1），nodes/edges/paths 为可选辅助；Archify 与函数变量图只由用户单独触发。
+分支与覆盖率分析不承担正式风险账本责任、不要求 risk_refs。四场景均先交付结构化模块流程
+（behavior-flow-v1），保留 nodes/edges/paths，text 不能替代流程结构；Archify 与函数变量图只由用户单独触发。
 Coverage 通过资产进入，冻结已选输入内容指纹、来源及匹配诊断；不得在恢复时重新查询或替换版本。
 不将上述规则补写入旧合同或旧 rubric，不增加语义门禁、完整复核轮次或替代 worker。
 

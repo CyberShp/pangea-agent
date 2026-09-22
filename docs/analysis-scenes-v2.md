@@ -21,8 +21,8 @@ asset-snapshots.json 保存选定的元数据、解析正文和指纹；coverage
 
 ## 交付与展示
 
-四场景均先保存 kind=flow，正文使用 module-flow-text-v1 的 flow_id/title/text/source_evidence。
-nodes、edges、paths 可选；Python 不以这些字段缺失阻断结果。Agent 与 Reviewer 决定流程
+四场景均先保存 kind=flow，正文恢复 behavior-flow-v1 的 flow_id/title/description/nodes/edges/paths/source_evidence。
+text 仅作补充，不替代节点、连线及路径；source_evidence 保留在记录中，业务流程页面不展示。旧纯文本记录保持可读，不自动拆分节点。Python 不增加语义阻断。Agent 与 Reviewer 决定流程
 是否准确完整、覆盖数据是否适用、用例是否可实施。文字流程不是 Archify 绘图输入 schema。
 
 模块保留综合业务、轻量风险及可选补测；风险专项保留现有风险板块；分支和覆盖率不要求

@@ -2,7 +2,7 @@
 
 ## behavior-test-v2 场景任务
 
-当 task.analysis_profile=behavior-test-v2 时，先读取绑定 inputs 中 analysis_scene 和当前提供的 rubric_*；按这些冻结规则执行。本文涉及 behavior_test_generation、behavior_test_review、behavior-flow-v1 的旧语义只适用于 v1，v2不得读取任务未提供的旧规则或扩展其职责。v2所有场景先理解模块并保存文字流程（module-flow-text-v1），然后做当前专项；Archify和函数变量图由用户单独触发。branch/coverage无正式风险分析责任，风险为空不触发返修。Planning只定位和分配，不先做完整分析。既有身份绑定、读取权限、并发、同一worker续接和结果写入规则仍执行。
+当 task.analysis_profile=behavior-test-v2 时，先读取绑定 inputs 中 analysis_scene 和当前提供的 rubric_*；按这些冻结规则执行。本文涉及 behavior_test_generation、behavior_test_review 的旧场景职责只适用于 v1，v2不得读取任务未提供的旧规则或扩展其职责。v2所有场景先理解模块并保存结构化业务流程（behavior-flow-v1，包含 nodes/edges/paths，text 不替代流程结构），然后做当前专项；Archify和函数变量图由用户单独触发。branch/coverage无正式风险分析责任，风险为空不触发返修。Planning只定位和分配，不先做完整分析。既有身份绑定、读取权限、并发、同一worker续接和结果写入规则仍执行。
 
 
 先读取 task.inputs 中 example_ 开头的冻结文档，理解测试人员使用的产品功能，再用源码索引确定归属和参考文件。title 使用功能名称；purpose 先概括主责范围，再简短列出附件中属于该单元的业务场景名称，保留正常、模式、错误和恢复场景，供 Analysis 逐项核实。场景名称表达工作范围，具体预期不在此确定；源码中其他主责行为仍由 Analysis 补充。purpose 按短模板填写：主责功能：<功能范围>；待核实场景：<文档场景名称列表>；参考资料用途：<用途>。函数性质、同步或异步定性、内部调用顺序和预期结果留给 Analysis 依据源码确定，Planning 交付工作范围。
