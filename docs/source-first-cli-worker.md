@@ -10,8 +10,8 @@ Windows 下复杂 JSON 不通过 PowerShell 拼接。使用 Python 临时脚本�
 
 ## 现有命令
 
-- `task-open`：读取当前任务。核对 role/stage、target、inputs、allowed_paths、owned_regions 与 result_path。宿主已交付的 task 和源码片段可复用。
-- `input-read --input-id ID`：读冻结 rubric、用户附件、coverage、修正记录。按 next_cursor 分页。
+- `task-open`：读取当前任务的精简视图。核对 role/stage、target、inputs、owned_regions 与 result_path。大字段和全范围清单不内联；`task.deferred_fields` 给出其 input_id。先按需读取当前单元归属、目标与冻结 rubric，不为获取依赖权限而遍历全范围。
+- `input-read --input-id ID`：读冻结 rubric、用户附件、coverage、修正记录，也可用 `task:字段名` 分页读取当前绑定任务的原始字段。按 next_cursor 续读，默认每页 12000 字符；JSON 字段须拼接所需完整分页后解析，不把分页片段当完整 JSON。源码通过 source-index/search/read 按疑点读取，不一次性回灌整个清单或全文。宿主未预读源码不表示源码缺失。
 - `source-index --view compact`：文件导航；文件内拆分才读取 region。`source-read --repo-id ID --path PATH --view text` 可加行号；`source-search --query TEXT --view compact` 搜索冻结范围。续读保留原筛选参数，只替换 page-token/cursor。
 - `result-read --view compact`：获取 revision 和当前记录。`result-write --expected-revision N --records JSON数组` 增量保存，每条普通记录使用 kind、body；kind 使用 task/rubric 支持的 note、summary、flow、test_case、risk、unresolved 等，不另造格式。
 - `plan-write --expected-revision N --unit JSON对象`：保存计划单元，整文件归属用 owned_files，文件内范围用实际 owned_regions；新建不自造 unit_id，更新带回真实 unit_id。
