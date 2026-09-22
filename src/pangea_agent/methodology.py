@@ -587,14 +587,15 @@ def freeze_enabled_methodologies(
             continue
         relative_path = Path("user") / f"{record.methodology_id}.md"
         staging_path = staging_root / relative_path
-        content = _methodology_markdown(record)
-        staging_path.write_text(content, encoding="utf-8")
+        # Freeze and hash identical UTF-8 bytes, without Windows newline translation.
+        content = _methodology_markdown(record).encode("utf-8")
+        staging_path.write_bytes(content)
         enabled.append({
             "methodology_id": record.methodology_id,
             "origin": "user",
             "title": record.title,
             "path": str(destination_root / relative_path),
-            "content_sha256": sha256(content.encode("utf-8")).hexdigest(),
+            "content_sha256": sha256(content).hexdigest(),
             "source_item_ids": record.source_item_ids,
             "applicable_when": record.applicable_when,
             "exceptions": record.exceptions,
