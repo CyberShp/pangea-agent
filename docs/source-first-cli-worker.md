@@ -8,6 +8,25 @@
 
 Windows 下复杂 JSON 不通过 PowerShell 拼接。使用 Python 临时脚本，通过 `subprocess.run([sys.executable, '-m', 'pangea_agent.cli.main', command, *binding, ...], check=True)` 传参数数组；JSON 参数使用 `json.dumps(value, ensure_ascii=False)`。脚本只传递由你作出的判断，不能让脚本代做语义分析。使用宿主指定 Python 运行脚本，临时文件不能覆盖 task、源码或结果文件。
 
+读取输出先解析 JSON，再展示内容。禁止 `stdout[:N]`、截取正文前几行或按字符裁剪 JSON：中文转义会膨胀输出，裁剪后规则、记录和分页游标都可能丢失。按 CLI 返回的 cursor/page-token 分页，不自行截断。每次展示一页；规则文本解码后按原换行显示，其余对象缩进显示。Windows 临时脚本显式配置 UTF-8，避免解码后的中文再次按本地代码页输出：
+
+```python
+sys.stdout.reconfigure(encoding="utf-8")
+response = subprocess.run(
+    [sys.executable, "-m", "pangea_agent.cli.main", command, *binding, *args],
+    capture_output=True, text=True, encoding="utf-8", check=True,
+)
+envelope = json.loads(response.stdout)
+result = envelope.get("result")
+if envelope.get("ok") and isinstance(result, dict) and isinstance(result.get("text"), str):
+    print(json.dumps({key: value for key, value in result.items() if key != "text"}, ensure_ascii=False, indent=2))
+    print(result["text"])
+else:
+    print(json.dumps(envelope, ensure_ascii=False, indent=2))
+```
+
+输出被宿主截断时，用原绑定和 CLI 的分页参数补读缺失部分；不能把截断页视作已完整阅读。共同规则、场景规则及选定方法论按当前 task.rubric_paths 与 inputs 的 input_id 对应读取，续接复用同一会话已完整读取的冻结版本。
+
 ## 现有命令
 
 - `task-open`：读取当前任务的精简视图。核对 role/stage、target、inputs、owned_regions 与 result_path。大字段和全范围清单不内联；`task.deferred_fields` 给出其 input_id。先按需读取当前单元归属、目标与冻结 rubric，不为获取依赖权限而遍历全范围。
@@ -15,7 +34,7 @@ Windows 下复杂 JSON 不通过 PowerShell 拼接。使用 Python 临时脚本�
 - `source-index --view compact`：文件导航；文件内拆分才读取 region。`source-read --repo-id ID --path PATH --view text` 可加行号；`source-search --query TEXT --view compact` 搜索冻结范围。续读保留原筛选参数，只替换 page-token/cursor。
 - `result-read --view compact`：获取 revision 和当前记录。`result-write --expected-revision N --records JSON数组` 增量保存，每条普通记录使用 kind、body；kind 使用 task/rubric 支持的 note、summary、flow、test_case、risk、unresolved 等，不另造格式。
 - `plan-write --expected-revision N --unit JSON对象`：保存计划单元，整文件归属用 owned_files，文件内范围用实际 owned_regions；新建不自造 unit_id，更新带回真实 unit_id。
-- `result-supersede --expected-revision N --target-record-ids JSON数组 --replacement JSON对象`：原 worker 定向更正原记录，保留无关正文。先回读真实 record_id，不从用例编号推测。
+- `result-supersede --expected-revision N --target-record-ids JSON数组 --replacement JSON对象`：原 worker 定向更正原记录，保留无关正文。先回读真实 record_id，不从用例编号推测。仅修改文本时优先用 `--edits [{"path":[],"old":"唯一原文","new":"更正文字"}]`，不同时传 replacement。完整 replacement 省略 kind 时继承同类型目标；混合类型目标必须显式指定 kind，失败不会退休原记录。
 - `comparison-read --version-set-id ID --view compact`：只在 comparison 阶段读取 task 指定的锁定版本。
 - `comparison-finding-write --expected-revision N --unit-ids JSON数组 --finding JSON对象`：保存有源码反证的具体修正建议。
 - `review-decide --expected-revision N --decision JSON对象`：按当前冻结 review rubric 和 task 的 version_set_id 做决定；修正记录使用刚返回的 Comparison finding record_id。
@@ -33,8 +52,34 @@ Independent review：你是独立于所有 Analysis 的唯一 Reviewer。只读�
 
 Comparison review：标准型复用本会话盲审依据，通过 comparison-read 对照锁定的首轮和盲审版本；task.review_mode=speed 时直接审核锁定首轮结果，没有盲审产物，不得声称已盲审。按冻结 review rubric 核对遗漏、错误预期、不可执行前置、内部实现冒充业务操作、范围偏移。每项建议给出原结论、源码反证、建议和未证实条件；不能把假设当事实。复用已读证据，只为具体疑点或未交付分页补读。
 
+已确认 expected、步骤或变体与源码/可复现执行相矛盾时，必须提交 comparison-finding-write；“核心覆盖目标仍成立”不能使错误预期合格，不能仅写 note 后 unresolved。finding 指明原记录、反例输入、实际结果和需修改文字；设施不足的其他事实可另外 unresolved。
+
 Comparison 交付顺序：保存实际审查记录和必要 finding → 调用 review-decide --expected-revision N --decision JSON对象 → 使用返回的当前 revision 调用 work-finish。decision 中的 version_set_id 原样使用 task.version_set_id，disposition 由你选择 pass/unresolved/finding；无需修正时 correction_record_ids=[]。没有 finding 或资料不足也须提交裁决，summary/finding 不能代替 review_decision。若诊断只缺 decision，保留有效正文、补该裁决后再声明完成；当前有效 decision 已保存时才可只补 completion。宿主只执行 Graph 返回的 action。
 
 version_set_id 必须写进 decision JSON，不能仅在说明正文中提及。修复时先 result-read 获取当前 revision，不沿用旧脚本的 revision。review-decide 返回 ok=false 表示裁决未保存；保留已有审查正文，按具体错误修正参数，不能继续调用 work-finish。命令成功后才使用返回的 revision 声明完成。
 
 Targeted closure：你是原 Analysis worker，读取 correction_records 及当前继承结果，逐项核实反证。证据支持才更正；驳回或资料不足需说明依据。用 result-supersede 替换真实目标记录，保留有效内容，不重做整个单元。最后 work-finish。
+
+## 当前回合的可执行证据
+
+当任务提供现成 C 编译器且范围是小型算术/宏代码时，在当前 Run 的独立证据目录创建最小驱动，编译冻结源码的副本并执行。不得改冻结源码；缺失外部依赖只可用明确标注的桩隔离，并说明与真实产品环境的差异。保存驱动、编译命令、输入、stdout/stderr、退出码及与原 expected 的对照，通过现有 note/evidence 引用这些文件。除零等未定义行为使用独立子进程并保留实际退出，不把崩溃后的状态写成保证。没有编译器/隔离设施时明确标注静态推导和缺口，不能宣称实测。Reviewer在当前审查回合复核具体执行证据；closure由原Worker按finding修正，不新增整轮审查。
+
+执行证据不能只写“driver.exe stdout”作为假想路径。每个命令使用参数数组和明确 cwd；将真实输出与退出码一起写成当前 Run 内的文件，再在 note/evidence 引用该文件。例如（变量由当前任务实际路径填写）：
+
+```python
+from pathlib import Path
+import json, subprocess
+
+def capture(argv, cwd, evidence_file):
+    result = subprocess.run(argv, cwd=cwd, capture_output=True, timeout=60)
+    evidence = {
+        "argv": argv, "cwd": str(cwd), "exit_code": result.returncode,
+        "stdout": result.stdout.decode("utf-8", errors="replace"),
+        "stderr": result.stderr.decode("utf-8", errors="replace"),
+    }
+    Path(evidence_file).write_text(json.dumps(evidence, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(json.dumps(evidence, ensure_ascii=False, indent=2))
+    return result.returncode
+```
+
+先记录编译命令，退出码为 0 才执行生成的程序；可执行文件使用绝对路径。每个正常/异常样例单独执行，除零退出不覆盖其他样例日志。驱动里的预期若失败，应把实际输出用于复核并保留失败证据；只编译成功、命令找不到或日志为空不能写“实测通过”。报告中的 C 调用若要作为可执行步骤，直接复用已编译驱动中的变量声明、赋值和调用语句；宏的可写参数不能写成 `work=1` 作为实参，须先 `int work=1;` 再传 `work`。当前 Run 新写的驱动只证明局部代码行为，不把直接内部函数调用归类为产品业务黑盒。

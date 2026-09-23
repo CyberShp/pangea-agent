@@ -183,6 +183,10 @@ def _record_title(record: Any) -> str:
             return title
         if identifier:
             return f"`{identifier}`"
+        if body.get("format_version") == "review-note-v1":
+            return "复核说明"
+        return {"summary": "分析说明", "note": "分析记录", "review_decision": "复核结论",
+                "review_finding": "复核发现", "unresolved": "待确认事项"}.get(record.kind, "结构化记录")
     if record.kind == "summary":
         return "分析说明"
     text = _body_text(record.body).strip().splitlines()[0] if record.body is not None else ""
@@ -606,6 +610,7 @@ def _behavior_markdown(
     ) -> None:
         if scene and not scene["presentation"]["risks"] and title in {"风险用例", "风险依据"}:
             return
+        section_start = len(lines)
         lines.extend([f"## {title}", ""])
         found = False
         for action, result in selected:
@@ -649,7 +654,7 @@ def _behavior_markdown(
                 if record.relates_to:
                     lines.extend(["关联：", "", _body_text(record.relates_to), ""])
         if not found:
-            lines.extend(["- 当前没有此类有效记录。", ""])
+            del lines[section_start:]
 
     case_records = []
     for _action, result in delivery:
@@ -708,7 +713,7 @@ def _behavior_markdown(
         f"- 业务灰盒（含定点故障注入）：`{level_counts['developer_assisted']}`",
         f"- 可实施黑盒与灰盒（作者声明）：`{ready_count}/{len(case_records)}`，`{ratio}`；目标 ≥70%。",
         "- 上述比例只汇总有效记录的显式层级和 ready 声明，未提供声明的不计入分子；语义达标以 Reviewer 结论为准，定向修正后的记录不冒充已独立复核。",
-        f"- 开发辅助附录：`{level_counts['interface_contract'] + level_counts['whitebox_support'] + level_counts['unclassified']}`",
+        f"- 接口与白盒等辅助用例（含待补执行条件）：`{level_counts['interface_contract'] + level_counts['whitebox_support'] + level_counts['unclassified']}`",
         "",
     ])
     add_records(

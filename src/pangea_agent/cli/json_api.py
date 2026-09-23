@@ -11,7 +11,9 @@ API_VERSION = "1.0"
 def print_success(result: Any) -> None:
     print(json.dumps(
         {"api_version": API_VERSION, "ok": True, "result": result},
-        ensure_ascii=False,
+        # Workers may decode Windows pipes as UTF-8 while Python uses a local
+        # code page. ASCII JSON preserves the exact Unicode payload in both.
+        ensure_ascii=True,
     ))
 
 
@@ -30,5 +32,5 @@ def print_error(exc: Exception) -> None:
             "error": {"code": exc.__class__.__name__, "message": str(exc),
                       **({"detail": detail} if detail else {})},
         },
-        ensure_ascii=False,
+        ensure_ascii=True,
     ))

@@ -641,13 +641,31 @@ def result_supersede(
             raise ResultStoreError(f"revision 已变化：expected={expected_revision}, actual={current.revision}")
         replacement = {"kind": target.kind, "body": edit_body(target.body, edits),
                        "evidence": target.evidence, "relates_to": target.relates_to}
-    active_ids = {record.record_id for record in active_records(current)}
+    active = {record.record_id: record for record in active_records(current)}
+    active_ids = set(active)
     unavailable = sorted(set(target_record_ids) - active_ids)
     if unavailable:
         raise ResultStoreError(
             "result_supersede 只能退休当前 active 的精确 record_id："
             f"不可用={unavailable}"
         )
+    if "kind" not in replacement:
+        kinds = {active[record_id].kind for record_id in target_record_ids}
+        if len(kinds) != 1:
+            raise ResultStoreError(
+                "result_supersede 多目标类型不同；replacement 必须显式指定 kind："
+                f"目标类型={sorted(kinds)}；原记录未退休"
+            )
+        replacement = {**replacement, "kind": kinds.pop()}
+        if replacement["kind"] == "review_decision":
+            raise ResultStoreError(
+                "review_decision 只能通过 review_decide 的 replace_decision_record_ids 替换"
+            )
+        if replacement["kind"] == "finding" and task.get("review_stage") == "comparison_review":
+            raise ResultStoreError(
+                "comparison finding 只能通过 comparison_finding_write 的 "
+                "replace_finding_record_ids 替换"
+            )
     record = {**replacement, "supersedes": list(target_record_ids)}
     return append_records(
         path,

@@ -55,10 +55,10 @@ def planning_regions(index: dict, owned_paths: list[dict]) -> tuple[dict[str, di
 
 def expand_owned_files(unit: dict, index: dict, owned_paths: list[dict]) -> tuple[dict, list[dict]]:
     """Expand only the Planner's explicit frozen file selections; retain raw notes."""
-    if "owned_files" not in unit:
+    if "owned_files" not in unit or (unit.get("owned_files") == [] and unit.get("owned_regions")):
         return unit, []
     issues = []
-    if "owned_regions" in unit:
+    if unit.get("owned_regions"):
         issues.append({"field": "owned_files", "reason": "choose_owned_files_or_owned_regions"})
     choices = unit.get("owned_files")
     if not isinstance(choices, list) or not choices:
