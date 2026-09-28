@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import os
+from functools import partial
+from pathlib import Path
 
 from .adapter_api import (
     bind_action,
@@ -14,7 +17,7 @@ from .adapter_api import (
     validate_asset_action,
 )
 from .init_data import init_data
-from .json_api import print_error, print_success
+from .json_api import print_error as emit_error, print_success as emit_success
 from .public_api import (
     archive_asset,
     asset_detail,
@@ -63,8 +66,28 @@ from .source_first_api import (
 )
 
 
+def _add_json_argument(parser: argparse.ArgumentParser, name: str, *, required: bool = False, help: str) -> None:
+    group = parser.add_mutually_exclusive_group(required=required)
+    group.add_argument(f"--{name}", help=help)
+    group.add_argument(f"--{name}-file", help=f"UTF-8 file containing {help}")
+
+
+def _json_payload(args: argparse.Namespace, name: str):
+    value = getattr(args, name)
+    filename = getattr(args, f"{name}_file")
+    if filename is not None:
+        path = Path(filename).resolve()
+        scratch = os.environ.get("PANGEA_WORKER_SCRATCH")
+        if scratch is not None and not path.is_relative_to(Path(scratch).resolve()):
+            raise ValueError("JSON payload file must be inside PANGEA_WORKER_SCRATCH")
+        value = path.read_text(encoding="utf-8-sig")
+    return parse_json_argument(value) if value is not None else None
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="pangea")
+    parser.add_argument("--output", choices=("json", "readable"), default="json",
+                        help="Output format; readable uses UTF-8 and displays result.text with its original newlines")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("init-data")
     result_check = sub.add_parser("check-result-json")
@@ -320,7 +343,7 @@ def main() -> None:
     result_write_cmd.add_argument("--action-id", required=True)
     result_write_cmd.add_argument("--task-id", required=True)
     result_write_cmd.add_argument("--expected-revision", type=int, required=True)
-    result_write_cmd.add_argument("--records", required=True, help="JSON array")
+    _add_json_argument(result_write_cmd, "records", required=True, help="JSON array")
     result_write_cmd.add_argument("--request-id")
 
     result_supersede_cmd = sub.add_parser("result-supersede")
@@ -329,9 +352,9 @@ def main() -> None:
     result_supersede_cmd.add_argument("--action-id", required=True)
     result_supersede_cmd.add_argument("--task-id", required=True)
     result_supersede_cmd.add_argument("--expected-revision", type=int, required=True)
-    result_supersede_cmd.add_argument("--target-record-ids", required=True, help="JSON array")
-    result_supersede_cmd.add_argument("--replacement", help="JSON object")
-    result_supersede_cmd.add_argument("--edits", help="JSON exact text edits: path, old, new")
+    _add_json_argument(result_supersede_cmd, "target-record-ids", required=True, help="JSON array")
+    _add_json_argument(result_supersede_cmd, "replacement", help="JSON object")
+    _add_json_argument(result_supersede_cmd, "edits", help="JSON exact text edits: path, old, new")
     result_supersede_cmd.add_argument("--request-id")
 
     comparison_finding_cmd = sub.add_parser("comparison-finding-write")
@@ -340,9 +363,9 @@ def main() -> None:
     comparison_finding_cmd.add_argument("--action-id", required=True)
     comparison_finding_cmd.add_argument("--task-id", required=True)
     comparison_finding_cmd.add_argument("--expected-revision", type=int, required=True)
-    comparison_finding_cmd.add_argument("--unit-ids", required=True, help="JSON array")
-    comparison_finding_cmd.add_argument("--finding", required=True, help="JSON object")
-    comparison_finding_cmd.add_argument("--replace-finding-record-ids", help="JSON array")
+    _add_json_argument(comparison_finding_cmd, "unit-ids", required=True, help="JSON array")
+    _add_json_argument(comparison_finding_cmd, "finding", required=True, help="JSON object")
+    _add_json_argument(comparison_finding_cmd, "replace-finding-record-ids", help="JSON array")
     comparison_finding_cmd.add_argument("--request-id")
 
     result_read_cmd = sub.add_parser("result-read")
@@ -364,7 +387,7 @@ def main() -> None:
     result_repair_cmd.add_argument("--action-id", required=True)
     result_repair_cmd.add_argument("--task-id", required=True)
     result_repair_cmd.add_argument("--expected-sha256", required=True)
-    result_repair_cmd.add_argument("--records", required=True, help="JSON array resent by the same Agent")
+    _add_json_argument(result_repair_cmd, "records", required=True, help="JSON array resent by the same Agent")
 
     comparison_read_cmd = sub.add_parser("comparison-read")
     comparison_read_cmd.add_argument("--data-root", default="pangea-data")
@@ -396,7 +419,7 @@ def main() -> None:
     plan_write_cmd.add_argument("--action-id", required=True)
     plan_write_cmd.add_argument("--task-id", required=True)
     plan_write_cmd.add_argument("--expected-revision", type=int, required=True)
-    plan_write_cmd.add_argument("--unit", required=True, help="JSON object")
+    _add_json_argument(plan_write_cmd, "unit", required=True, help="JSON object")
     plan_write_cmd.add_argument("--request-id")
 
     review_decide_cmd = sub.add_parser("review-decide")
@@ -405,10 +428,12 @@ def main() -> None:
     review_decide_cmd.add_argument("--action-id", required=True)
     review_decide_cmd.add_argument("--task-id", required=True)
     review_decide_cmd.add_argument("--expected-revision", type=int, required=True)
-    review_decide_cmd.add_argument("--decision", required=True, help="JSON object")
-    review_decide_cmd.add_argument("--replace-decision-record-ids", help="JSON array")
+    _add_json_argument(review_decide_cmd, "decision", required=True, help="JSON object")
+    _add_json_argument(review_decide_cmd, "replace-decision-record-ids", help="JSON array")
     review_decide_cmd.add_argument("--request-id")
     args = parser.parse_args()
+    print_success = partial(emit_success, readable=args.output == "readable")
+    print_error = partial(emit_error, readable=args.output == "readable")
 
     if args.command == "init-data":
         init_data()
@@ -643,7 +668,7 @@ def main() -> None:
             raise SystemExit(1) from exc
     elif args.command == "result-write":
         try:
-            records = parse_json_argument(args.records)
+            records = _json_payload(args, "records")
             print_success(result_write(
                 args.data_root, args.run_id, args.action_id, args.task_id,
                 expected_revision=args.expected_revision, records=records,
@@ -665,13 +690,9 @@ def main() -> None:
             raise SystemExit(1) from exc
     elif args.command == "comparison-finding-write":
         try:
-            unit_ids = parse_json_argument(args.unit_ids)
-            finding = parse_json_argument(args.finding)
-            replace_finding_record_ids = (
-                parse_json_argument(args.replace_finding_record_ids)
-                if args.replace_finding_record_ids
-                else None
-            )
+            unit_ids = _json_payload(args, "unit_ids")
+            finding = _json_payload(args, "finding")
+            replace_finding_record_ids = _json_payload(args, "replace_finding_record_ids")
             print_success(comparison_finding_write(
                 args.data_root, args.run_id, args.action_id, args.task_id,
                 expected_revision=args.expected_revision,
@@ -685,14 +706,14 @@ def main() -> None:
             raise SystemExit(1) from exc
     elif args.command == "result-supersede":
         try:
-            target_record_ids = parse_json_argument(args.target_record_ids)
-            replacement = parse_json_argument(args.replacement) if args.replacement is not None else None
+            target_record_ids = _json_payload(args, "target_record_ids")
+            replacement = _json_payload(args, "replacement")
             print_success(result_supersede(
                 args.data_root, args.run_id, args.action_id, args.task_id,
                 expected_revision=args.expected_revision,
                 target_record_ids=target_record_ids,
                 replacement=replacement,
-                edits=parse_json_argument(args.edits) if args.edits is not None else None,
+                edits=_json_payload(args, "edits"),
                 request_id=args.request_id,
             ))
         except Exception as exc:
@@ -700,7 +721,7 @@ def main() -> None:
             raise SystemExit(1) from exc
     elif args.command == "result-repair":
         try:
-            records = parse_json_argument(args.records)
+            records = _json_payload(args, "records")
             print_success(result_repair(
                 args.data_root, args.run_id, args.action_id, args.task_id,
                 expected_sha256=args.expected_sha256, records=records,
@@ -732,7 +753,7 @@ def main() -> None:
             raise SystemExit(1) from exc
     elif args.command == "plan-write":
         try:
-            unit = parse_json_argument(args.unit)
+            unit = _json_payload(args, "unit")
             print_success(plan_write(
                 args.data_root, args.run_id, args.action_id, args.task_id,
                 expected_revision=args.expected_revision, unit=unit,
@@ -743,12 +764,8 @@ def main() -> None:
             raise SystemExit(1) from exc
     elif args.command == "review-decide":
         try:
-            decision = parse_json_argument(args.decision)
-            replace_decision_record_ids = (
-                parse_json_argument(args.replace_decision_record_ids)
-                if args.replace_decision_record_ids
-                else None
-            )
+            decision = _json_payload(args, "decision")
+            replace_decision_record_ids = _json_payload(args, "replace_decision_record_ids")
             print_success(review_decide(
                 args.data_root, args.run_id, args.action_id, args.task_id,
                 expected_revision=args.expected_revision, decision=decision,

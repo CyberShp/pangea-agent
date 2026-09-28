@@ -4,25 +4,31 @@
 
 ## 调用
 
-以宿主提供的 Python 可执行文件运行 `-m pangea_agent.cli.main <command> <绑定参数> <操作参数>`。优先使用 task-open 随附的 write_contract 和下列调用方式；仅在调用报参数错误时查询对应 command 的 `--help`。返回 JSON envelope 的 `result` 是结果，`ok=false` 时保留具体错误并修正本次调用。文件路径按字面值传入。
+直接使用宿主提供的 Python 可执行文件运行 CLI。`--output readable` 是全局参数，放在命令名前：它以 UTF-8 输出完整 envelope 元数据，保留 ok、binding、revision、paging、header 等字段，再把 result.text 按原换行显示。其余对象缩进显示；可读输出不是单个 JSON 文档。省略该参数或使用 `--output json` 时保持原 ASCII JSON envelope，供程序解析。业务错误仍返回 `ok=false` 和非零退出码，参数错误仍由 argparse 报错；不要忽略 `$LASTEXITCODE`。
 
-Windows 下复杂 JSON 不通过 PowerShell 拼接。使用 Python 临时脚本，通过 `subprocess.run([sys.executable, '-m', 'pangea_agent.cli.main', command, *binding, ...], check=True)` 传参数数组；JSON 参数使用 `json.dumps(value, ensure_ascii=False)`。脚本只传递由你作出的判断，不能让脚本代做语义分析。使用宿主指定 Python 运行脚本，临时文件不能覆盖 task、源码或结果文件。
+以下变量均使用宿主提供的真实路径和绑定值，不自行推断：
 
-读取输出先解析 JSON，再展示内容。禁止 `stdout[:N]`、截取正文前几行或按字符裁剪 JSON：中文转义会膨胀输出，裁剪后规则、记录和分页游标都可能丢失。按 CLI 返回的 cursor/page-token 分页，不自行截断。每次展示一页；规则文本解码后按原换行显示，其余对象缩进显示。Windows 临时脚本显式配置 UTF-8，避免解码后的中文再次按本地代码页输出：
+```powershell
+$pangeaPython = '<宿主提供的Python绝对路径>'
+$binding = @('--data-root', '<data_root>', '--run-id', '<run_id>', '--action-id', '<action_id>', '--task-id', '<task_id>')
+& $pangeaPython -m pangea_agent.cli.main --output readable task-open @binding
+& $pangeaPython -m pangea_agent.cli.main --output readable input-read @binding --input-id '<input_id>'
+```
 
-```python
-sys.stdout.reconfigure(encoding="utf-8")
-response = subprocess.run(
-    [sys.executable, "-m", "pangea_agent.cli.main", command, *binding, *args],
-    capture_output=True, text=True, encoding="utf-8", check=True,
-)
-envelope = json.loads(response.stdout)
-result = envelope.get("result")
-if envelope.get("ok") and isinstance(result, dict) and isinstance(result.get("text"), str):
-    print(json.dumps({key: value for key, value in result.items() if key != "text"}, ensure_ascii=False, indent=2))
-    print(result["text"])
-else:
-    print(json.dumps(envelope, ensure_ascii=False, indent=2))
+优先使用 task-open 随附的 write_contract 和下列调用方式；仅在调用报参数错误时查询对应 command 的 `--help`。禁止 `stdout[:N]`、截取正文前几行或按字符裁剪输出。按返回的 cursor/page-token 分页，每次展示完整一页。
+
+Windows 下复杂 JSON 保存为 UTF-8 数据文件（接受 BOM），通过显式 `*-file` 参数提交，不需要为每次 CLI 调用生成 Python 包装脚本。载荷只保存你已作出的判断；逐次调用 CLI 并使用刚返回的 revision，不生成循环提交多个单元的业务脚本。`--unit-file`、`--records-file` 分别与原 `--unit`、`--records` 互斥；其余现有 JSON 参数也有对应的 `-file` 形式：target-record-ids、replacement、edits、unit-ids、finding、replace-finding-record-ids、decision、replace-decision-record-ids。内联参数只解析 JSON，不把非法 JSON 当作路径。
+
+宿主设置 `PANGEA_WORKER_SCRATCH` 时，载荷文件必须放在该 worker 的 scratch 内，CLI 会在解析符号链接后的路径上检查归属。没有该环境变量的人类 CLI 调用可指定任意显式文件。此限制只约束 CLI 的 JSON 载荷文件读取，不是操作系统文件隔离；不能覆盖 task、冻结源码、结果文件或其他 worker 的文件。例中内容、路径及 revision 应替换为本次分析作出的实际判断和刚返回的值：
+
+```powershell
+$unitFile = Join-Path $env:PANGEA_WORKER_SCRATCH 'unit.json'
+@'
+{"title":"目标功能","purpose":"主责行为及必要依赖说明","owned_files":[{"repo_id":"真实仓库ID","path":"真实冻结路径"}],"context_files":[]}
+'@ | Set-Content -LiteralPath $unitFile -Encoding UTF8
+& $pangeaPython -m pangea_agent.cli.main --output readable plan-write @binding --expected-revision 0 --unit-file $unitFile
+# 普通记录同样使用 UTF-8 JSON 数组文件：
+& $pangeaPython -m pangea_agent.cli.main --output readable result-write @binding --expected-revision '<刚返回的revision>' --records-file '<scratch内records.json>'
 ```
 
 输出被宿主截断时，用原绑定和 CLI 的分页参数补读缺失部分；不能把截断页视作已完整阅读。共同规则、场景规则及选定方法论按当前 task.rubric_paths 与 inputs 的 input_id 对应读取，续接复用同一会话已完整读取的冻结版本。
@@ -33,7 +39,7 @@ else:
 - `input-read --input-id ID`：读冻结 rubric、用户附件、coverage、修正记录，也可用 `task:字段名` 分页读取当前绑定任务的原始字段。按 next_cursor 续读，默认每页 12000 字符；JSON 字段须拼接所需完整分页后解析，不把分页片段当完整 JSON。源码通过 source-index/search/read 按疑点读取，不一次性回灌整个清单或全文。宿主未预读源码不表示源码缺失。
 - `source-index --view compact`：文件导航；文件内拆分才读取 region。`source-read --repo-id ID --path PATH --view text` 可加行号；`source-search --query TEXT --view compact` 搜索冻结范围。续读保留原筛选参数，只替换 page-token/cursor。
 - `result-read --view compact`：获取 revision 和当前记录。`result-write --expected-revision N --records JSON数组` 增量保存，每条普通记录使用 kind、body；kind 使用 task/rubric 支持的 note、summary、flow、test_case、risk、unresolved 等，不另造格式。
-- `plan-write --expected-revision N --unit JSON对象`：保存计划单元，整文件归属用 owned_files，文件内范围用实际 owned_regions；新建不自造 unit_id，更新带回真实 unit_id。
+- `plan-write --expected-revision N --unit-file JSON文件`（或 `--unit JSON对象`）：每次提交一个单元对象，根字段为 title、purpose 及归属，不包 units 数组或整份 plan。整文件归属 owned_files 使用 `{repo_id,path}` 对象数组；可选 context_files 使用字符串数组，格式为 `仓库ID:冻结相对路径`，无依赖用 `[]`。文件内范围用 source-index 实际返回的 owned_regions；新建不自造 unit_id，更新带回真实 unit_id；逐次使用刚返回的 revision。
 - `result-supersede --expected-revision N --target-record-ids JSON数组 --replacement JSON对象`：原 worker 定向更正原记录，保留无关正文。先回读真实 record_id，不从用例编号推测。仅修改文本时优先用 `--edits [{"path":[],"old":"唯一原文","new":"更正文字"}]`，不同时传 replacement。完整 replacement 省略 kind 时继承同类型目标；混合类型目标必须显式指定 kind，失败不会退休原记录。
 - `comparison-read --version-set-id ID --view compact`：只在 comparison 阶段读取 task 指定的锁定版本。
 - `comparison-finding-write --expected-revision N --unit-ids JSON数组 --finding JSON对象`：保存有源码反证的具体修正建议。

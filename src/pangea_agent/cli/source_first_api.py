@@ -279,10 +279,10 @@ def task_open(data_root: str, run_id: str, action_id: str, task_id: str, *, prep
         opened["write_contract"] = {
             "revision": read_result(result_path).revision,
             "binding_args": ["--data-root", data_root, "--run-id", run_id, "--action-id", action_id, "--task-id", task_id],
-            "unit_example": {"title": "目标功能", "purpose": "主责行为及必要依赖说明", "owned_files": [{"repo_id": "替换为真实仓库ID", "path": "替换为定位到的冻结路径"}]},
-            "plan_write": ["plan-write", "<binding_args>", "--expected-revision", "<当前revision>", "--unit", "<json.dumps(unit)>"],
+            "unit_example": {"title": "目标功能", "purpose": "主责行为及必要依赖说明", "owned_files": [{"repo_id": "替换为真实仓库ID", "path": "替换为定位到的冻结路径"}], "context_files": []},
+            "plan_write": ["plan-write", "<binding_args>", "--expected-revision", "<当前revision>", "--unit-file", "<当前worker scratch内的UTF-8 JSON文件>"],
             "finish": ["work-finish", "<binding_args>", "--revision", "<最后一次写入返回的revision>"],
-            "note": "新单元不填unit_id；更新使用返回的unit_id。宿主负责settle，不必再次搜索schema。",
+            "note": "每次--unit-file只提交一个单元对象，根字段为title、purpose及归属，不包units数组或整份plan。owned_files为{repo_id,path}对象数组；context_files为字符串数组，使用仓库ID:冻结相对路径，无依赖用[]。新单元不填unit_id；更新使用返回的unit_id；逐次使用刚返回的revision。宿主负责settle，不必再次搜索schema。",
         }
     if not prepare_source:
         return opened
