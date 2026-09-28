@@ -208,6 +208,13 @@ def prepare_source_first_inputs(state: PangeaState) -> PangeaState:
     analysis_language = detect_analysis_language(repositories, requested_scope)
     from pangea_agent.inventory.on_demand import requested_files, file_inventory, directory_overview
     expansion = requested_files(repositories, requested_scope, analysis_language)
+    # Query scope limits owned targets; explicit context remains independently readable.
+    coverage_scopes = [d.get("scope") for d in assets["coverage_diagnostics"]
+                       if isinstance(d.get("scope"), dict) and d["scope"].get("requested")]
+    if contract.get("analysis_settings", {}).get("scenario") == "coverage-analysis" and coverage_scopes:
+        from pangea_agent.documents.coverage import in_query_scopes
+        for group in expansion.get("groups", []):
+            group["code_paths"] = [p for p in group["code_paths"] if in_query_scopes(p, coverage_scopes)]
     explicit_context = _explicit_context_files(
         repositories,
         list(contract.get("context_scope") or []),
@@ -248,7 +255,7 @@ def prepare_source_first_inputs(state: PangeaState) -> PangeaState:
         scan = build_lua_inventory if analysis_language == "lua" else build_lightweight_inventory
         for repo in frozen_repositories:
             selected = [f["path"] for f in inventory["files"] if f["repo_id"] == repo["repo_id"]
-                        and ("" in paths or any(p == f["path"] or p.endswith("/" + f["path"]) for p in paths))]
+                        and ("" in paths or any(p == f["path"] or p.endswith("/" + f["path"]) or f["path"].endswith("/" + p) for p in paths))]
             if selected:
                 coverage_inventory["files"].extend(scan([repo], selected)["files"])
     coverage_match = match_coverage_records(assets["coverage_records"], coverage_inventory)
@@ -278,7 +285,7 @@ def prepare_source_first_inputs(state: PangeaState) -> PangeaState:
             "format_version": "coverage-match-summary-v1", "sources": assets["coverage_diagnostics"],
             "matched": coverage_match["matched"], "unmatched": coverage_match["unmatched"],
             "ambiguous": coverage_match["ambiguous"],
-            "note": "按来源分别解释；空缺口不是100%覆盖，版本适用性由Agent根据输入核实。",
+            "note": "按来源分别解释；空缺口不是100%覆盖，版本适用性由Agent根据输入核实。coverage_state=indeterminate 且 count=null 的分支为未判定，需单独分析，不能算明确未覆盖或已覆盖。",
         })
     write_json(inputs / "test-case-examples.json", frozen_examples)
     write_json(inputs / "inventory.json", inventory)

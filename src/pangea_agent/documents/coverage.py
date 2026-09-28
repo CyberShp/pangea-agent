@@ -136,6 +136,7 @@ def match_coverage_records(records: list[dict], inventory: dict) -> dict:
                 if requested_path and (
                     file["path"].replace("\\", "/").strip("/") == requested_path
                     or requested_path.endswith("/" + file["path"].replace("\\", "/").strip("/"))
+                    or file["path"].replace("\\", "/").strip("/").endswith("/" + requested_path)
                 )
                 and 1 <= record["line"] <= file.get("line_count", 0)
             ]
@@ -149,6 +150,7 @@ def match_coverage_records(records: list[dict], inventory: dict) -> dict:
                 for file in inventory.get("files", [])
                 if (
                     file["path"].replace("\\", "/").strip("/") == requested_path
+                    or file["path"].replace("\\", "/").strip("/").endswith("/" + requested_path)
                     or requested_path.endswith(
                         "/" + file["path"].replace("\\", "/").strip("/")
                     )
@@ -172,16 +174,38 @@ def match_coverage_records(records: list[dict], inventory: dict) -> dict:
 def parse_coverage_combined(path: Path) -> dict:
     """Translate query facts into existing Coverage records without semantics."""
     data = json.loads(path.read_text(encoding="utf-8-sig"))
-    if not isinstance(data, dict) or data.get("status") not in {"success", "partial", "no_data", "error"}:
+    if not isinstance(data, dict) or data.get("status") not in {"success", "partial", "no_data", "scope_not_found", "error"}:
         raise ValueError("需要含 status 的覆盖率 combined JSON")
     warnings = list(data.get("warnings") or [])
+    modern = isinstance(data.get("uncovered"), dict)
+    sources = sorted({g.get("source") for groups in (data.get("uncovered", {}), data.get("indeterminate", {}))
+                      for items in groups.values() if isinstance(items, list) for g in items if g.get("source")}
+                     | {r["source"] for r in data.get("summary", {}).get("per_source", []) if r.get("source")})
+    preferred = data.get("query_input", {}).get("source") or data.get("source_semantics", {}).get("preferred") or "summary"
+    selected = preferred if preferred in sources else (sources[0] if sources else None)
+    if modern and selected and selected != preferred:
+        warnings.append(f"首选来源 {preferred} 缺失，实际采用 {selected}；不同来源未合并")
+    scope = data.get("scope") or data.get("meta", {}).get("scope", {})
+    requested = str(scope.get("requested", "")).replace("\\", "/").strip("/").casefold()
     records, seen = [], set()
     for kind in ("function", "line", "branch"):
         key = {"function": "uncovered_functions", "line": "uncovered_lines", "branch": "uncovered_branches"}[kind]
-        groups = data.get(key, [])
+        groups = data.get("uncovered", {}).get({"function": "functions", "line": "lines", "branch": "branches"}[kind], []) if modern else data.get(key, [])
+        if modern and kind == "branch":
+            groups = [*groups, *[{**g, key: g.get("indeterminate_branches", []), "indeterminate": True}
+                                for g in data.get("indeterminate", {}).get("branches", [])]]
         if not isinstance(groups, list):
             raise ValueError(f"{key} 必须是数组")
         for group in groups:
+            if modern and isinstance(group, dict):
+                if group.get("source") != selected:
+                    continue
+                group = {**group, "file_path": group.get("relative_path")}
+                file_path = str(group.get("file_path") or "").replace("\\", "/")
+                parent = file_path.rsplit("/", 1)[0].casefold()
+                if requested and not (parent == requested or (scope.get("recursive", True) and parent.startswith(requested + "/"))):
+                    warnings.append(f"报告路径不在所选目录内：{file_path}；未作为分析目标")
+                    continue
             if not isinstance(group, dict) or not group.get("source") or not group.get("file_path"):
                 warnings.append(f"{key} 记录缺少 source/file_path；原始记录保留，未作为可定位缺口")
                 continue
@@ -192,7 +216,9 @@ def parse_coverage_combined(path: Path) -> dict:
             for raw in values:
                 record = {"coverage_type": kind, "source": group["source"],
                           "path": group["file_path"], "file_path": group["file_path"],
-                          "count": 0, "raw": raw}
+                          "count": None if group.get("indeterminate") else 0, "raw": raw,
+                          "coverage_state": "indeterminate" if group.get("indeterminate") else "uncovered",
+                          "platform_path": group.get("platform_path")}
                 if kind == "function":
                     function = raw.get("function") if isinstance(raw, dict) else raw
                     if not isinstance(function, str) or not function.strip():
@@ -206,21 +232,24 @@ def parse_coverage_combined(path: Path) -> dict:
                         continue
                     record["line"] = int(line)
                     if kind == "branch":
-                        if not isinstance(raw, dict) or str(raw.get("count")) != "0":
+                        if not isinstance(raw, dict) or str(raw.get("count")) != ("-" if group.get("indeterminate") else "0"):
                             warnings.append(f"{group['file_path']}:{line} 分支计数非零或未知，未作为零覆盖缺口")
                             continue
                         record.update(block=raw.get("block"), branch=raw.get("branch"))
-                if isinstance(raw, dict) and "count" in raw and str(raw["count"]) != "0":
+                if isinstance(raw, dict) and "count" in raw and str(raw["count"]) != ("-" if group.get("indeterminate") else "0"):
                     warnings.append(f"{group['file_path']} 存在非零或未知计数，未作为零覆盖缺口")
                     continue
-                identity = json.dumps(record, sort_keys=True, ensure_ascii=False)
+                identity = (record["source"], record["path"], kind, record.get("function"),
+                            record.get("line"), record.get("block"), record.get("branch"), record["coverage_state"])
                 if identity not in seen:
                     seen.add(identity)
                     records.append(record)
     return {"records": records if data["status"] in {"success", "partial"} else [],
             "warnings": warnings,
-            "acquisition": {key: data.get(key) for key in
-                            ("status", "message", "sources", "missing", "query_input", "query_resolution")}}
+            "acquisition": {**{key: data.get(key) for key in
+                            ("status", "message", "sources", "missing", "query_input", "query_resolution",
+                             "scope", "summary", "snapshot", "source_semantics", "pagination")},
+                            "selected_source": selected if modern else None}}
 
 
 def relevant_zero_coverage(report: dict) -> list[dict]:
@@ -233,3 +262,15 @@ def relevant_zero_coverage(report: dict) -> list[dict]:
             and (record.get("true_count") == 0 or record.get("false_count") == 0)
         )
     ]
+
+
+def in_query_scopes(path: str, scopes: list[dict]) -> bool:
+    """Match whole directory segments, including repository prefixes before module."""
+    parent = path.replace("\\", "/").rsplit("/", 1)[0].casefold()
+    for scope in scopes:
+        requested = str(scope["requested"]).replace("\\", "/").strip("/").casefold()
+        if parent == requested or parent.endswith("/" + requested):
+            return True
+        if scope.get("recursive", True) and (parent.startswith(requested + "/") or "/" + requested + "/" in "/" + parent + "/"):
+            return True
+    return False

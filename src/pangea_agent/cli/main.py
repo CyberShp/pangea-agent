@@ -80,7 +80,10 @@ def main() -> None:
     coverage_query.add_argument("--data-root", default="pangea-data")
     coverage_query.add_argument("--product", required=True)
     coverage_query.add_argument("--version", required=True)
-    coverage_query.add_argument("--module", required=True)
+    coverage_query.add_argument("--module", default="")
+    coverage_query.add_argument("--scope", default="")
+    coverage_query.add_argument("--no-recursive", action="store_true")
+    coverage_query.add_argument("--source", default="summary")
     coverage_query.add_argument("--b-version", default="")
     asset_import = asset_commands.add_parser("import")
     asset_import.add_argument("--data-root", default="pangea-data")
@@ -433,7 +436,8 @@ def main() -> None:
             if args.asset_command == "query-coverage":
                 print_success(query_coverage(args.data_root, {
                     "product": args.product, "c_version": args.version,
-                    "module": args.module, "b_version": args.b_version,
+                    "module": args.module, "scope": args.scope, "recursive": not args.no_recursive,
+                    "source": args.source, "b_version": args.b_version,
                 }))
             elif args.asset_command == "import":
                 result = import_asset(args.data_root, args.path, args.type, args.title)
