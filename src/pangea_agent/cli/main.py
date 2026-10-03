@@ -234,9 +234,11 @@ def main() -> None:
     execution.add_argument("--reason", default="")
     execution.add_argument("--budget-ms", type=int)
     execution.add_argument("--automatic", action="store_true")
+    execution.add_argument("--execution-id", help="Stable host turn ID; reuse for retries of the same turn")
     run_resume = run_commands.add_parser("resume")
     run_resume.add_argument("--data-root", default="pangea-data")
     run_resume.add_argument("--run-id", required=True)
+    run_resume.add_argument("--host-quiescent", action="store_true", help="Host verified no prior worker is executing")
 
     system = sub.add_parser("system")
     system_commands = system.add_subparsers(dest="system_command", required=True)
@@ -568,11 +570,11 @@ def main() -> None:
             elif args.run_command == "derivation-options":
                 print_success(derivation_options(args.data_root, args.run_id))
             elif args.run_command == "resume":
-                print_success(resume_run(args.data_root, args.run_id))
+                print_success(resume_run(args.data_root, args.run_id, host_quiescent=args.host_quiescent))
             elif args.run_command == "deliver-current":
                 print_success(deliver_current(args.data_root, args.run_id))
             elif args.run_command == "execution":
-                print_success(execution_event(args.data_root, args.run_id, args.action_id, args.task_id, args.event, args.reason, args.budget_ms, args.automatic))
+                print_success(execution_event(args.data_root, args.run_id, args.action_id, args.task_id, args.event, args.reason, args.budget_ms, args.automatic, execution_id=args.execution_id))
             elif args.run_command == "stop":
                 print_success(stop_run(args.data_root, args.run_id))
         except Exception as exc:

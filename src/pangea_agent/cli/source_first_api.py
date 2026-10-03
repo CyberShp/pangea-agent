@@ -56,9 +56,13 @@ def _binding_and_result(
     writable: bool = False,
 ) -> tuple[SourceBinding, Path, dict[str, Any]]:
     binding, run_dir, action, task = resolve_binding(data_root, run_id, action_id, task_id)
-    if writable and action.get("status") not in {"dispatched", "settled"}:
+    if writable:
+        progress = load_progress({"data_root": data_root, "run_id": run_id})
+        if progress is None or progress.lifecycle_status != "running" or progress.partial_delivery:
+            raise ResultStoreError("Run 已停止或正在冻结交付，不能修改已保存结果")
+    if writable and action.get("status") != "dispatched":
         raise ResultStoreError(
-            f"Action 已接受或当前不可修改：status={action.get('status')!r}"
+            f"Action 已提交或当前不可修改：status={action.get('status')!r}"
         )
     result_path = task.get("result_path")
     if not isinstance(result_path, str) or not result_path:
