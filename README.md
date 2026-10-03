@@ -4,6 +4,39 @@
 
 Python 只负责确定性工作：文件发现、语言识别、源码结构解析、Coverage 匹配、状态、JSON 契约、聚合和报告。单元规划、源码理解、独立复核和资料提取由当前客户端派发 Agent 完成。Python 不调用模型 API。
 
+## 已有 Run 定向补充与文件变更分析
+
+已完成或已停止的 source-first Run 可以派生独立新 Run。定向补充沿用父 Run 冻结源码；
+文件变更分析读取当前工作仓库，并冻结指定文件的前后哈希、差异、删除及基线缺失状态。
+父 Run、旧结果和 Provider 会话不被复用为新结果。历史记录按索引分页读取，Planning
+只规划本次目标或变化影响，必要依赖由 Agent 判定；复核方式及最多三个并发 worker 保持不变。
+
+```powershell
+python -m pangea_agent.cli.main runs derivation-options --data-root 'pangea-data' --run-id '父Run-ID'
+python -m pangea_agent.cli.main runs derive --data-root 'pangea-data' --parent-run-id '父Run-ID' --request 'incremental-request.json'
+```
+
+`incremental-request.json` 示例（记录必须以 action_id 与 record_id 联合定位）：
+
+```json
+{
+  "mode": "supplement",
+  "instruction": "只补充断链后的资源释放场景",
+  "selected_unit_ids": ["unit-0001"],
+  "selected_records": [],
+  "changed_paths": []
+}
+```
+
+文件变更模式使用 `mode: "changed-files"` 和 `changed_paths: ["src/tls.c"]`；
+多仓库使用 `repo_id:src/tls.c`。也可以通过现有 `runs create --contract` 传入
+`incremental_request`，同时明确 `parent_run_id`。本次输入都冻结在子 Run 中，恢复时
+不重新读取父 Run 或活动资产。历史覆盖率仅供版本适用性复核，不能当作新执行的测量结果。
+如果当前范围源码全部被删除，需要提供仍存在的受影响源码范围，不能用旧源码冒充当前实现。
+
+机械回归：`python verification/incremental_smoke.py`。该脚本验证独立 Run、源快照、
+文件差异、精确记录引用、父 Run 字节不变、父 Run 不可用后的恢复与输入读取，以及原复核模式。
+
 ## 初始化
 
 支持 Windows x86-64 和 Python 3.10～3.12：

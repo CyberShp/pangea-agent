@@ -1009,6 +1009,13 @@ def write_source_first_reports(state: dict, *, progress: dict | None = None) -> 
         else _markdown(state, progress, records)
     )
     review_mode = (contract.get("analysis_settings") or {}).get("mode", "depth")
+    incremental = contract.get("incremental_request")
+    if incremental:
+        label = "定向补充" if incremental["mode"] == "supplement" else "文件变更分析"
+        source = "父 Run 冻结源码" if incremental["mode"] == "supplement" else "本次冻结的当前仓库源码"
+        title, separator, rest = markdown.partition("\n")
+        markdown = (title + separator + f"\n本次为{label}，父 Run：`{incremental['parent_run_id']}`。源码基线：{source}。"
+                    "父记录仅供参考，不计为本次已接受结果；本报告仅覆盖本次目标。历史覆盖率不是本次执行测量。\n" + rest)
     if profile in {"behavior-test-v1", "behavior-test-v2"}:
         review_label = "速度型：直接审核首轮结果，未执行独立盲审" if review_mode == "speed" else "标准型：独立盲审后对照复核"
         title, separator, rest = markdown.partition("\n")

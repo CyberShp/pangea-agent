@@ -37,7 +37,8 @@ def system_capabilities(data_root: str) -> dict:
         "workflow_versions": ["legacy-v1", "source-first-v1"],
         "source_first": {
             "version": "source-first-v1",
-            "contract_fields": ["analysis_settings", "runtime_provenance", "analysis_profile", "asset_revisions"],
+            "contract_fields": ["analysis_settings", "runtime_provenance", "analysis_profile", "asset_revisions", "incremental_request"],
+            "incremental_analysis": {"modes": ["supplement", "changed-files"], "parent_results": "reference-only", "independent_child_run": True},
             "analysis_profiles": ["behavior-test-v1", PROFILE],
             "analysis_options_by_profile": {PROFILE: scene_options()},
             "analysis_options": {"scenarios": ["module-analysis"], "modes": ["depth", "speed"], "coverage_input": False},
@@ -151,6 +152,12 @@ def run_detail(data_root: str, run_id: str) -> dict:
     progress_path = run_dir / "progress.json"
     summary["progress"] = read_json(progress_path) if progress_path.is_file() else None
     summary["execution_metrics"] = summarize_execution(summary["progress"] or {})
+    contract_path = run_dir / "inputs" / "task-contract.json"
+    contract = read_json(contract_path) if contract_path.is_file() else {}
+    summary["incremental_request"] = contract.get("incremental_request")
+    if summary["incremental_request"]:
+        changes_path = run_dir / "inputs" / "incremental" / "changes.json"
+        summary["incremental_changes"] = read_json(changes_path) if changes_path.is_file() else None
     summary["reports"] = {
         "html": str(run_dir / "report.html") if summary["report_available"] else None,
         "markdown": str(run_dir / "report.md") if summary["report_available"] else None,
