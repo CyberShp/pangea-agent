@@ -45,8 +45,9 @@ from .public_api import (
 )
 from .result_check import check_result_json
 from pangea_agent.documents.coverage_query import query_coverage
+from pangea_agent.documents.incremental import derivation_options
 from pangea_agent.report.asset_comparison import compare_run_assets
-from .run_module_analysis import resume_module_analysis, run_module_analysis
+from .run_module_analysis import resume_module_analysis, run_module_analysis, derive_run
 from .source_first_api import (
     comparison_finding_write,
     comparison_read,
@@ -210,6 +211,13 @@ def main() -> None:
     report.add_argument("--format", required=True, choices=("html", "markdown"))
     run_create = run_commands.add_parser("create")
     run_create.add_argument("--contract", required=True)
+    derive = run_commands.add_parser("derive")
+    derive.add_argument("--data-root", default="pangea-data")
+    derive.add_argument("--parent-run-id", required=True)
+    derive.add_argument("--request", required=True, help="UTF-8 JSON incremental_request file")
+    options = run_commands.add_parser("derivation-options")
+    options.add_argument("--data-root", default="pangea-data")
+    options.add_argument("--run-id", required=True)
     run_stop = run_commands.add_parser("stop")
     run_stop.add_argument("--data-root", default="pangea-data")
     run_stop.add_argument("--run-id", required=True)
@@ -555,6 +563,10 @@ def main() -> None:
                 print_success(run_report(args.data_root, args.run_id, args.format))
             elif args.run_command == "create":
                 print_success(run_module_analysis(args.contract))
+            elif args.run_command == "derive":
+                print_success(derive_run(args.data_root, args.parent_run_id, args.request))
+            elif args.run_command == "derivation-options":
+                print_success(derivation_options(args.data_root, args.run_id))
             elif args.run_command == "resume":
                 print_success(resume_run(args.data_root, args.run_id))
             elif args.run_command == "deliver-current":
