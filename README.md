@@ -37,6 +37,23 @@ python -m pangea_agent.cli.main runs derive --data-root 'pangea-data' --parent-r
 机械回归：`python verification/incremental_smoke.py`。该脚本验证独立 Run、源快照、
 文件差异、精确记录引用、父 Run 字节不变、父 Run 不可用后的恢复与输入读取，以及原复核模式。
 
+## 执行进展与恢复
+
+`runs get` 的 `execution_view` 展示冻结计划单元数、当前动作、实际保存修订与记录数、
+最后一次记录保存、已保留成果、暂停原因和恢复位置。`settled`/`accepted` 表示提交状态，
+不等于测试执行通过；轮询时间与 Provider 活动不会冒充有效产出。旧 Run 没有记录的时间保持未知。
+
+宿主使用 `runs execution --execution-id '<本回合稳定ID>'` 上报 started/finished/paused；
+同回合重试沿用 ID，新回合更换 ID。重复事件不累加耗时或回合数，旧回合事件不能暂停新回合。
+宿主确认旧进程和请求均已停止后，才可调用 `runs resume --host-quiescent`。
+普通 resume 遇到已绑定 worker 的 dispatched、paused 或停止动作只返回
+`requires_host_quiescence`，不会把“已标记停止”误当成 Provider 已取消。
+已保存完成声明的动作恢复时直接提交；已提交动作与记录不重跑，其他动作续接原 worker。
+
+停止后结果不可继续写入。结束定向修正先冻结当前修订并持久化报告阶段，再组装 UNRESOLVED
+部分报告；组装中断后恢复仅继续报告，重复交付返回原报告，不重新派发 worker。
+机械与故障恢复回归：`python verification/observability_recovery.py`。
+
 ## 初始化
 
 支持 Windows x86-64 和 Python 3.10～3.12：
