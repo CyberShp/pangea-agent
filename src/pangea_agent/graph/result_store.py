@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterator
 
 from pangea_agent.agent_io import read_json, write_json
+from pangea_agent.flow_schema import check_flow_structure, format_flow_errors
 from pangea_agent.models.source_first import (
     CompletionDeclaration,
     NoteRecord,
@@ -28,6 +29,15 @@ from pangea_agent.models.source_first import (
 
 class ResultStoreError(ValueError):
     """A deterministic result-store contract error."""
+
+
+def _check_flow_record(offset: int, kind: Any, body: Any) -> None:
+    """flow 记录的格式契约（字段、id 引用）；不判断语义，也不改写记录。"""
+    if kind != "flow":
+        return
+    errors = check_flow_structure(body)
+    if errors:
+        raise ResultStoreError(format_flow_errors(offset, errors))
 
 
 class RevisionConflict(ResultStoreError):
@@ -199,6 +209,7 @@ def repair_result_shell(
         for offset, item in enumerate(records):
             if not isinstance(item, dict) or "body" not in item:
                 raise ResultStoreError(f"record[{offset}] 必须包含 body")
+            _check_flow_record(offset, item.get("kind") or "note", item["body"])
             generated.append(NoteRecord(
                 record_id=f"rec-{offset + 1:06d}",
                 kind=str(item.get("kind") or "note"),
@@ -301,6 +312,7 @@ def append_records(
             kind = item.get("kind", "note")
             if not isinstance(kind, str) or not kind:
                 raise ResultStoreError(f"record[{offset}].kind 必须是非空字符串")
+            _check_flow_record(offset, kind, item["body"])
             if kind not in _KNOWN_KINDS:
                 warnings.append({
                     "kind": "unknown_record_kind",

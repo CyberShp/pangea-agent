@@ -17,7 +17,7 @@ from typing import Any
 from pangea_agent.agent_io import read_json
 from pangea_agent.graph.result_store import read_result, supersession_map
 from pangea_agent.graph.workflow_store import run_directory
-from pangea_agent.report.flow_diagram import render_flow_svg
+from pangea_agent.report.flow_section import flow_section_markdown
 
 
 def _atomic_text(path: Path, value: str) -> None:
@@ -81,6 +81,27 @@ _FIELD_LABELS = {
     "unit": "分析单元",
     "unresolved_id": "待确认编号",
     "what_is_known": "已确认事实",
+    "attach_to": "挂接位置",
+    "case_ids": "对应用例",
+    "condition": "条件",
+    "description": "说明",
+    "edges": "连线",
+    "evidence": "证据",
+    "expected": "预期",
+    "explanation": "解释",
+    "flow_id": "流程编号",
+    "format_version": "格式版本",
+    "kind": "类型",
+    "label": "名称",
+    "node_ids": "节点序列",
+    "nodes": "节点",
+    "path_id": "路径编号",
+    "paths": "路径",
+    "relates_to": "关联",
+    "result": "结果",
+    "role": "流程角色",
+    "steps": "步骤",
+    "text": "文字说明",
 }
 
 
@@ -267,59 +288,6 @@ def _record_markdown(
     if record.kind == "flow" and mapping and mapping.get("format_version") == "module-flow-text-v1":
         return str(mapping.get("text") or _body_text(mapping)) + "\n\n源码依据：\n" + _body_text(mapping.get("source_evidence", []))
     return _mapping_markdown(mapping) if mapping is not None else _nested_record_text(record.body)
-
-
-def _flow_markdown(
-    record: Any,
-    asset_path: str,
-    diagram_assets: dict[str, str],
-    *,
-    unit_id: str,
-    anchors: dict[tuple[str, str, str], str],
-) -> str:
-    body = _body_mapping(record.body)
-    if body is None or body.get("format_version") != "behavior-flow-v1":
-        return _record_markdown(record, unit_id=unit_id, anchors=anchors)
-    svg, warnings = render_flow_svg(body, asset_path)
-    if svg:
-        diagram_assets[asset_path] = svg
-    lines = []
-    description = str(body.get("description") or "")
-    if description:
-        lines.extend([description, ""])
-    if svg:
-        lines.extend([f"![{body.get('title') or '模块行为流程图'}]({asset_path})", ""])
-    for warning in warnings:
-        lines.append(f"> 图形提示：{warning}")
-    if warnings:
-        lines.append("")
-    paths = [item for item in _items(body.get("paths")) if isinstance(item, dict)]
-    if paths:
-        lines.extend([
-            "#### 流程路径说明",
-            "",
-            "| 路径 | 条件与准备 | 处理、结果及恢复 | 对应用例 |",
-            "|---|---|---|---|",
-        ])
-        for path in paths:
-            path_title = path.get("title") or path.get("path_id") or "未命名路径"
-            cases = "、".join(
-                _reference_markdown(
-                    item,
-                    current_unit=unit_id,
-                    identifier_key="case_id",
-                    anchors=anchors,
-                )
-                for item in _items(path.get("case_ids"))
-            ) or "未关联"
-            lines.append(
-                f"| {_markdown_cell(path_title)} | {_markdown_cell(path.get('condition'))} | "
-                f"{_markdown_cell(path.get('explanation'))} | {_markdown_cell(cases)} |"
-            )
-    evidence = _items(body.get("source_evidence"))
-    if evidence:
-        lines.extend(["", "#### 源码证据", "", *_markdown_list(evidence)])
-    return "\n".join(lines).rstrip()
 
 
 def _case_markdown(
@@ -626,22 +594,7 @@ def _behavior_markdown(
             for record in chosen:
                 found = True
                 unit_id = str(action.get("task", {}).get("unit_id") or "unit")
-                slug = re.sub(
-                    r"[^A-Za-z0-9_.-]+",
-                    "-",
-                    f"{unit_id}-{record.record_id}",
-                ).strip("-")
-                body = (
-                    _flow_markdown(
-                        record,
-                        f"report-assets/{slug or 'flow'}.svg",
-                        diagram_assets,
-                        unit_id=unit_id,
-                        anchors=anchors,
-                    )
-                    if record.kind == "flow" and scene is None
-                    else _record_markdown(record, unit_id=unit_id, anchors=anchors)
-                )
+                body = _record_markdown(record, unit_id=unit_id, anchors=anchors)
                 anchor = _record_anchor(unit_id, record.record_id)
                 lines.extend([
                     f"### `{unit_id}` · {_record_title(record)} <!--pangea-record:{anchor}-->",
@@ -716,11 +669,32 @@ def _behavior_markdown(
         f"- 接口与白盒等辅助用例（含待补执行条件）：`{level_counts['interface_contract'] + level_counts['whitebox_support'] + level_counts['unclassified']}`",
         "",
     ])
-    add_records(
-        "模块流程说明",
-        delivery,
-        {"flow", "branch", "scenario"},
-    )
+    def other_flow_record(unit_id: str, record: Any) -> list[str]:
+        anchor = _record_anchor(unit_id, record.record_id)
+        lines_out = [
+            f"### `{unit_id}` · {_record_title(record)} <!--pangea-record:{anchor}-->",
+            "",
+            _record_markdown(record, unit_id=unit_id, anchors=anchors),
+            "",
+        ]
+        if record.evidence or record.relates_to:
+            lines_out.extend(["<details><summary>证据与关联</summary>", ""])
+            lines_out.extend(f"- 证据：{_body_text(item).replace(chr(10), ' ')}" for item in _items(record.evidence))
+            lines_out.extend(f"- 关联：{_body_text(item).replace(chr(10), ' ')}" for item in _items(record.relates_to))
+            lines_out.extend(["", "</details>", ""])
+        return lines_out
+
+    lines.extend(flow_section_markdown(
+        [
+            (str(action.get("task", {}).get("unit_id") or "unit"), active_and_retired(result)[0])
+            for action, result in delivery
+        ],
+        diagram_assets=diagram_assets,
+        reference=lambda value, unit_id, key: _reference_markdown(
+            value, current_unit=unit_id, identifier_key=key, anchors=anchors,
+        ),
+        other_record_markdown=other_flow_record,
+    ))
     add_records(
         "分支用例",
         delivery,
@@ -821,19 +795,34 @@ def _html(markdown: str, embedded_assets: dict[str, str] | None = None) -> str:
             ordered_titles.append(title)
 
     chunks: list[str] = []
-    in_list = False
+    in_list = ""
     in_detail = False
+    in_fold = False
     index = 0
 
     def close_list() -> None:
         nonlocal in_list
         if in_list:
-            chunks.append("</ul>")
-            in_list = False
+            chunks.append(f"</{in_list}>")
+            in_list = ""
+
+    def open_list(tag: str) -> None:
+        nonlocal in_list
+        if in_list != tag:
+            close_list()
+            chunks.append(f"<{tag}>")
+            in_list = tag
+
+    def close_fold() -> None:
+        nonlocal in_fold
+        close_list()
+        if in_fold:
+            chunks.append("</details>")
+            in_fold = False
 
     def close_detail() -> None:
         nonlocal in_detail
-        close_list()
+        close_fold()
         if in_detail:
             chunks.append("</div></details>")
             in_detail = False
@@ -850,6 +839,17 @@ def _html(markdown: str, embedded_assets: dict[str, str] | None = None) -> str:
                 chunks.append(
                     f'<p class="muted">流程图资源：{html.escape(image_match.group(2))}</p>'
                 )
+            index += 1
+            continue
+        fold_match = re.fullmatch(r"<details><summary>([^<]*)</summary>", line.strip())
+        if fold_match:
+            close_fold()
+            chunks.append(f'<details class="fold"><summary>{_inline_html(fold_match.group(1))}</summary>')
+            in_fold = True
+            index += 1
+            continue
+        if line.strip() == "</details>":
+            close_fold()
             index += 1
             continue
         if line.startswith("```"):
@@ -907,8 +907,9 @@ def _html(markdown: str, embedded_assets: dict[str, str] | None = None) -> str:
                 close_detail()
             if level == 3 and title.startswith("`"):
                 id_attr = f' id="{record_id}"' if record_id else ""
+                open_attr = " open" if title.endswith("〔主流程〕") else ""
                 chunks.append(
-                    f'<details{id_attr} class="record"><summary>{_inline_html(title)}</summary><div class="record-body">'
+                    f'<details{id_attr} class="record"{open_attr}><summary>{_inline_html(title)}</summary><div class="record-body">'
                 )
                 in_detail = True
             else:
@@ -919,10 +920,14 @@ def _html(markdown: str, embedded_assets: dict[str, str] | None = None) -> str:
             continue
         stripped = line.lstrip()
         if stripped.startswith("- "):
-            if not in_list:
-                chunks.append("<ul>")
-                in_list = True
+            open_list("ul")
             chunks.append(f"<li>{_inline_html(stripped[2:])}</li>")
+            index += 1
+            continue
+        ordered = re.match(r"^\d+\.\s+(.*)$", stripped)
+        if ordered:
+            open_list("ol")
+            chunks.append(f"<li>{_inline_html(ordered.group(1))}</li>")
             index += 1
             continue
         close_list()
@@ -965,6 +970,7 @@ def _html(markdown: str, embedded_assets: dict[str, str] | None = None) -> str:
         'details.record{margin:12px 0;border:1px solid var(--line);border-radius:10px;background:#fff}'
         'details.record>summary{cursor:pointer;font-weight:650;padding:12px 14px;background:var(--panel);'
         'border-radius:10px}.record-body{padding:4px 16px 16px}'
+        'details.fold{margin:10px 0;color:var(--muted)}details.fold>summary{cursor:pointer}ol{margin:8px 0 14px;padding-left:23px}'
         '.flow-svg{overflow-x:auto;margin:14px 0 20px;padding:14px;border:1px solid var(--line);'
         'border-radius:10px;background:#fbfcfe}.flow-svg svg{display:block;width:100%;min-width:680px}'
         '.flow-node rect{fill:#fff;stroke-width:2}.flow-kind{fill:#667085;font-size:11px}'

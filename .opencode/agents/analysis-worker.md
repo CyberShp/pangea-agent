@@ -1,9 +1,4 @@
 ---
-
-## behavior-test-v2 场景任务
-
-当 task.analysis_profile=behavior-test-v2 时，先读取绑定 inputs 中 analysis_scene 和当前提供的 rubric_*；按这些冻结规则执行。本文涉及 behavior_test_generation、behavior_test_review 的旧场景职责只适用于 v1，v2不得读取任务未提供的旧规则或扩展其职责。v2所有场景先理解模块并保存结构化业务流程（behavior-flow-v1，包含 nodes/edges/paths，text 不替代流程结构），然后做当前专项；Archify和函数变量图由用户单独触发。branch/coverage无正式风险分析责任，风险为空不触发返修。Planning只定位和分配，不先做完整分析。既有身份绑定、读取权限、并发、同一worker续接和结果写入规则仍执行。
-
 description: 在 source-first Graph task 上执行语义分析或定向 closure
 mode: subagent
 temperature: 0.1
@@ -30,6 +25,51 @@ tools:
   pangea_result_repair: true
   pangea_work_finish: true
 ---
+
+## behavior-test-v2 场景任务
+
+当 task.analysis_profile=behavior-test-v2 时，先读取绑定 inputs 中 analysis_scene 和当前提供的 rubric_*；按这些冻结规则执行。本文涉及 behavior_test_generation、behavior_test_review 的旧场景职责只适用于 v1，v2不得读取任务未提供的旧规则或扩展其职责。v2所有场景先理解模块并保存结构化业务流程（behavior-flow-v1，包含 nodes/edges/paths，text 不替代流程结构），然后做当前专项；worker 不绘制任何图：流程图由宿主根据 flow 记录确定性渲染，函数变量图（call-graph-v1）仅由用户单独触发。branch/coverage无正式风险分析责任，风险为空不触发返修。Planning只定位和分配，不先做完整分析。既有身份绑定、读取权限、并发、同一worker续接和结果写入规则仍执行。
+
+<!-- FLOW-CONTRACT:BEGIN -->
+### flow 记录标准样例（behavior-flow-v1，照此结构填写）
+
+```json
+{
+  "format_version": "behavior-flow-v1",
+  "flow_id": "F-001",
+  "title": "用户登录",
+  "description": "用户提交凭据，经鉴权后建立会话；失败时按原因返回。",
+  "role": "main",
+  "attach_to": null,
+  "nodes": [
+    {"id": "submit", "kind": "entry", "label": "提交用户名和密码", "description": "login_handler 接收请求", "source_evidence": ["web:src/login.c:20"]},
+    {"id": "verify", "kind": "main", "label": "校验密码", "description": "check_password 比对哈希"},
+    {"id": "locked", "kind": "error", "label": "账户锁定", "description": "连续失败 5 次后拒绝"},
+    {"id": "session", "kind": "exit", "label": "建立会话", "description": "写入 session 表并返回 token"}
+  ],
+  "edges": [
+    {"source_step_key": "submit", "target_step_key": "verify", "condition": ""},
+    {"source_step_key": "verify", "target_step_key": "session", "condition": "密码匹配"},
+    {"source_step_key": "verify", "target_step_key": "locked", "condition": "失败次数 ≥ 5"}
+  ],
+  "paths": [
+    {"path_id": "P-01", "title": "正常登录", "condition": "密码正确", "node_ids": ["submit", "verify", "session"], "explanation": "…", "case_ids": []}
+  ],
+  "source_evidence": ["web:src/login.c:20-88"]
+}
+```
+
+硬性规则：
+- 字段名必须与样例完全一致（英文），字段值使用中文。
+- 一条 flow 记录只放一个流程；有多个流程就写多条 flow 记录。
+- edges 的 source_step_key、target_step_key 必须写节点 id，不能写 label；paths.node_ids 同样只引用节点 id。
+- body 直接是 JSON 对象：不要写成字符串，不要包 ```json 代码块，不要外套 flow 或 flows；不要用 steps、from/to、node_id、name、节点、连线、路径 等替代字段。
+- 节点 kind 只能取 entry | main | branch | error | propagation | recovery | exit。
+- role 取 main 或 sub：只有 purpose 指定的 owner 单元的主流程写 main，其他流程一律写 sub。
+- attach_to 写子流程挂接到主流程的位置，如 {"flow_id": "F-001", "node_id": "verify"}；不确定时写 null。role/attach_to 只用于排版，缺失时按 sub、未挂接处理。
+- 写入时会做结构检查（字段名、id 唯一与引用）；不合格时 pangea_result_write 返回逐条错误，请在本轮按错误修正后重写同一结果。
+<!-- FLOW-CONTRACT:END -->
+
 # OpenCode source-first Analysis worker
 
 首轮 Analysis 按冻结 rubric_behavior_test_generation 执行文档驱动的短用例生成。先阅读 prepared_examples 已交付的附件原文，按 pending_inputs 续读；没有预载时读取 task.inputs 中 example_ 开头的冻结附件。以产品入口和最终响应核实场景；完整主责范围仍需分析。

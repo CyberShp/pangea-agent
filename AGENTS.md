@@ -19,7 +19,8 @@
 新建四场景使用 `analysis_profile=behavior-test-v2`，复用 source-first-v1 Graph；职责读取当前 Run
 冻结的 `inputs/analysis-scene.json` 与 scene_* rubric。模块分析保留综合行为；风险分析保留风险板块；
 分支与覆盖率分析不承担正式风险账本责任、不要求 risk_refs。四场景均先交付结构化模块流程
-（behavior-flow-v1），保留 nodes/edges/paths，text 不能替代流程结构；Archify 与函数变量图只由用户单独触发。
+（behavior-flow-v1），保留 nodes/edges/paths，text 不能替代流程结构；worker 不绘制任何图，流程图由宿主根据
+flow 记录确定性渲染，函数变量图（call-graph-v1）只由用户单独触发。
 Coverage 通过资产进入，冻结已选输入内容指纹、来源及匹配诊断；不得在恢复时重新查询或替换版本。
 不将上述规则补写入旧合同或旧 rubric，不增加语义门禁、完整复核轮次或替代 worker。
 
@@ -40,6 +41,7 @@ Coverage 通过资产进入，冻结已选输入内容指纹、来源及匹配�
 - 硬阻断只允许用于当前 action 身份或绑定不成立、路径越出受控数据边界、冻结输入/结果文件损坏，或产物不可读取到下游完全无法继续的情况。即使产物不可读取，也只能保持当前 Run 等待同一 Agent 修复，不能由 Python 否决语义、改派 Agent 或把未审结论写成失败结论。
 - 重试次数、运行时长和 token 消耗由 Agent 宿主负责停止失控执行；Python 可以记录次数和提示升级处理，但不得仅因达到固定次数而获得判定语义 action/Run 失败的权限。
 - 机械检查不得根据关键词、行号重叠、数量、措辞、finding category 或测试用例内容判断分析质量，也不得增加测试用例语义门禁。
+- `kind=flow` 记录的结构校验（`flow_schema.check_flow_structure`：body 为对象、format_version、字段名、节点 id 唯一、edges/paths 的 id 引用）属于格式契约，不属于语义门禁：写入时不合格即拒绝本次写入并逐条返回中文错误，由同一 worker 在本轮修正后重写；Python 不自动修复、不补造节点，也不判断节点 kind/label 的业务含义或流程是否完整（交给 Reviewer）。
 - 新增或扩大 schema、门禁、自动修复、结果提交工具或 action 自动化之前，方案必须先向用户说明：当前已验证的失败、准备新增的确定性行为、可能误拦有效结果的场景、Python 获得与明确不获得的权限，以及为何不能通过简化合同、Agent 规则或客户端限权解决。用户明确确认前不得实施。
 - 门禁失败不得丢弃已经完成的有效语义内容、改派 Agent、重做整个分析或由主 Agent/Python 代修；只把精确错误交回同一 Agent 修正同一 `result_path`。若不能给出具体可修正字段和确定性依据，该检查不得作为阻断门禁。
 - 新增检查的验收必须同时包含：合法语义结果能够通过、非致命不一致只降级且流程能够继续、不可消费或安全边界错误才进入等待修复、同一 Agent 修正后能够继续，以及未完成不会被报告为成功。只证明“能拦住错误”不算完成。

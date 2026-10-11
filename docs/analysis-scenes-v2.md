@@ -21,13 +21,13 @@ asset-snapshots.json 保存选定的元数据、解析正文和指纹；coverage
 
 ## 交付与展示
 
-四场景均先保存 kind=flow，正文恢复 behavior-flow-v1 的 flow_id/title/description/nodes/edges/paths/source_evidence。
-text 仅作补充，不替代节点、连线及路径；source_evidence 保留在记录中，业务流程页面不展示。旧纯文本记录保持可读，不自动拆分节点。Python 不增加语义阻断。Agent 与 Reviewer 决定流程
-是否准确完整、覆盖数据是否适用、用例是否可实施。文字流程不是 Archify 绘图输入 schema。
+四场景均先保存 kind=flow，正文为 behavior-flow-v1 的 flow_id/title/description/role/attach_to/nodes/edges/paths/source_evidence。
+text 仅作补充，不替代节点、连线及路径；source_evidence 保留在记录中，业务流程页面不展示。旧纯文本记录保持可读，不自动拆分节点。写入时 Python 只做 flow 结构检查（字段名、节点 id 引用；flow_schema.check_flow_structure），不合格即拒写并返回逐条中文错误，由同一 worker 本轮修正；不自动修复、不补造节点，也不增加语义阻断。Agent 与 Reviewer 决定流程
+是否准确完整、覆盖数据是否适用、用例是否可实施。文字流程（module-flow-text-v1）不生成流程图。
 
 模块保留综合业务、轻量风险及可选补测；风险专项保留现有风险板块；分支和覆盖率不要求
 正式风险账本。页面、讨论、CSV/XLSX 和报告按冻结场景展示；异常出现的风险原文保留供核对。
-报告不自动生成流程 SVG。用户单独创建 Archify 或函数变量图，保存 source_records 精确版本；
+worker 不绘制任何图：报告的“模块流程说明”按 role/attach_to 先主流程后子流程排版，并由宿主根据 flow 记录确定性渲染流程 SVG。函数变量图（call-graph-v1）只由用户单独触发，保存 source_records 精确版本；
 逻辑 flow_id 加 unit_id 用于查找同一流程的历史图，旧快照不会被新结论覆盖。
 
 ## 验证入口与边界
