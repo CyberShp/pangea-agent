@@ -5,6 +5,33 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
+class IncrementalRecordRef(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    action_id: str = Field(min_length=1)
+    record_id: str = Field(min_length=1)
+
+
+class IncrementalRequest(BaseModel):
+    """Explicit user input; never an inferred semantic impact assessment."""
+    model_config = ConfigDict(extra="forbid")
+    parent_run_id: str = Field(min_length=1)
+    mode: Literal["supplement", "changed-files"]
+    instruction: str = ""
+    selected_unit_ids: list[str] = Field(default_factory=list)
+    selected_records: list[IncrementalRecordRef] = Field(default_factory=list)
+    changed_paths: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_request(self) -> "IncrementalRequest":
+        if self.mode == "changed-files" and not self.changed_paths:
+            raise ValueError("文件变更分析需要明确 changed_paths")
+        if self.mode == "supplement" and not self.instruction.strip():
+            raise ValueError("定向补充需要 instruction 说明补充目标")
+        if self.mode == "supplement" and self.changed_paths:
+            raise ValueError("定向补充使用父 Run 冻结源码；文件变更请选 changed-files")
+        return self
+
+
 class TaskContract(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -16,6 +43,7 @@ class TaskContract(BaseModel):
     analysis_profile: Literal["behavior-test-v1", "behavior-test-v2"] | None = None
     runtime_commit: str | None = None
     runtime_provenance: dict | None = None
+    incremental_request: IncrementalRequest | None = None
     analysis_settings: dict[str, str] | None = None
     model_id: str | None = None
     effective_context_budget: int | None = Field(default=None, gt=0)
@@ -49,6 +77,8 @@ class TaskContract(BaseModel):
 
     @model_validator(mode="after")
     def validate_mode(self) -> "TaskContract":
+        if self.incremental_request and self.workflow_version != "source-first-v1":
+            raise ValueError("增量分析仅支持 source-first-v1 独立新 Run")
         if self.analysis_profile == "behavior-test-v2":
             from pangea_agent.analysis_scenarios import SCENES
             settings = self.analysis_settings or {}

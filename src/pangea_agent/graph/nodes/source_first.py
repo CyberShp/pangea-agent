@@ -11,6 +11,7 @@ import hashlib
 import json
 import re
 import shutil
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,9 @@ from pangea_agent.agent_io import read_json, write_json
 from pangea_agent.analysis_scenarios import PROFILE, freeze_scene, frozen_scene, scene_rubric_paths, scene_task_inputs
 from pangea_agent.assets import analysis_asset_inputs
 from pangea_agent.documents.coverage import match_coverage_records, relevant_zero_coverage
+from pangea_agent.documents.incremental import (
+    prepare_incremental, incremental_assets, finish_incremental, attach_incremental_inputs,
+)
 from pangea_agent.graph.result_store import active_records, initialize_result, read_result
 from pangea_agent.graph.state import PangeaState
 from pangea_agent.graph.workflow_store import (
@@ -196,28 +200,51 @@ def prepare_source_first_inputs(state: PangeaState) -> PangeaState:
 
     contract = state["task_contract"]
     run_dir = run_directory(state)
+    incremental = prepare_incremental(state)
     scene = freeze_scene(run_dir, contract)
-    assets = analysis_asset_inputs(state["data_root"], contract.get("asset_ids"),
+    assets = incremental_assets(incremental) if incremental else analysis_asset_inputs(state["data_root"], contract.get("asset_ids"),
                                   expected_revisions=(contract.get("asset_revisions") or {}) if scene else None)
     if scene and scene["coverage_requirement"] == "required" and not assets["coverage_diagnostics"]:
         raise ValueError("COVERAGE_INPUT_REQUIRED: 覆盖率分析需要已解析的覆盖率资产；请先查询或导入数据")
     freeze_enabled_methodologies(state["data_root"], run_dir, state["run_id"])
     frozen_rubrics = _freeze_source_first_rubrics(run_dir)
-    repositories = resolve_repositories_from_contract(contract, state["data_root"])
+    supplement = incremental and incremental["request"]["mode"] == "supplement"
+    repositories = incremental["repositories"] if supplement else resolve_repositories_from_contract(contract, state["data_root"])
     requested_scope = list(contract.get("source_scope") or ["."])
-    analysis_language = detect_analysis_language(repositories, requested_scope)
+    analysis_language = incremental["parent_manifest"]["analysis_language"] if incremental else detect_analysis_language(repositories, requested_scope)
     from pangea_agent.inventory.on_demand import requested_files, file_inventory, directory_overview
-    expansion = requested_files(repositories, requested_scope, analysis_language)
+    expansion = deepcopy(incremental["parent_manifest"]["scope_expansion"]) if supplement else requested_files(repositories, requested_scope, analysis_language)
+    if incremental and not supplement:
+        roots = {r["repo_id"]: Path(r["source_root"]).resolve() for r in repositories}
+        groups = {g["repo_id"]: g for g in expansion["groups"]}
+        for repo, relative in incremental["changed_keys"]:
+            path = (roots[repo] / relative).resolve()
+            path.relative_to(roots[repo])
+            if path.is_dir():
+                raise ValueError(f"changed_paths 需要具体文件，不能是目录：{repo}:{relative}")
+            if path.is_file() and relative not in groups[repo]["code_paths"]:
+                groups[repo]["code_paths"].append(relative)
     # Query scope limits owned targets; explicit context remains independently readable.
     coverage_scopes = [d.get("scope") for d in assets["coverage_diagnostics"]
                        if isinstance(d.get("scope"), dict) and d["scope"].get("requested")]
-    if contract.get("analysis_settings", {}).get("scenario") == "coverage-analysis" and coverage_scopes:
+    if contract.get("analysis_settings", {}).get("scenario") == "coverage-analysis" and coverage_scopes and not incremental:
         from pangea_agent.documents.coverage import in_query_scopes
         for group in expansion.get("groups", []):
             group["code_paths"] = [p for p in group["code_paths"] if in_query_scopes(p, coverage_scopes)]
+    context_scope = list(contract.get("context_scope") or [])
+    if incremental:
+        # The parent's already explicit context remains readable when present;
+        # deleted files are historical inputs, never current source ownership.
+        context_scope = []
+        for group in incremental["parent_manifest"]["scope_expansion"]["groups"]:
+            repository = next(r for r in repositories if r["repo_id"] == group["repo_id"])
+            owned = next(g["code_paths"] for g in expansion["groups"] if g["repo_id"] == group["repo_id"])
+            for relative in group.get("context_paths", []):
+                if relative not in owned and (Path(repository["source_root"]) / relative).is_file():
+                    context_scope.append(f"{group['repo_id']}:{relative}")
     explicit_context = _explicit_context_files(
         repositories,
-        list(contract.get("context_scope") or []),
+        context_scope,
         expansion,
     )
     if explicit_context:
@@ -263,9 +290,11 @@ def prepare_source_first_inputs(state: PangeaState) -> PangeaState:
         relevant_zero_coverage(coverage_match),
         expansion,
     )
+    if incremental:
+        zero_coverage = read_json(incremental["root"] / "coverage-gaps.json")
     frozen_examples = _freeze_test_case_examples(
         state,
-        list(contract.get("test_case_examples", [])),
+        incremental["examples"] if incremental else list(contract.get("test_case_examples", [])),
     )
 
     compact_metadata = {"index_policy": "on-demand-v1", "file_count": inventory["file_count"],
@@ -287,6 +316,13 @@ def prepare_source_first_inputs(state: PangeaState) -> PangeaState:
             "ambiguous": coverage_match["ambiguous"],
             "note": "按来源分别解释；空缺口不是100%覆盖，版本适用性由Agent根据输入核实。coverage_state=indeterminate 且 count=null 的分支为未判定，需单独分析，不能算明确未覆盖或已覆盖。",
         })
+        if incremental and (incremental["root"] / "coverage-match-summary.json").is_file():
+            previous_coverage = read_json(incremental["root"] / "coverage-match-summary.json")
+            write_json(inputs / "coverage-match-summary.json", {
+                **previous_coverage, "historical_reference": True,
+                "parent_run_id": incremental["request"]["parent_run_id"],
+                "note": "父 Run 冻结覆盖率，未经本次执行复测；需核验版本适用性。" + str(previous_coverage.get("note", "")),
+            })
     write_json(inputs / "test-case-examples.json", frozen_examples)
     write_json(inputs / "inventory.json", inventory)
     source_index = {**build_source_index(inventory), "index_policy": "on-demand-v1"}
@@ -309,7 +345,12 @@ def prepare_source_first_inputs(state: PangeaState) -> PangeaState:
         "source_index_path": str(source_first_index_path(state)),
     }
     source_manifest_path = inputs / "source-manifest.json"
+    if incremental:
+        source_manifest["coverage_diagnostics"] = {
+            **incremental["parent_manifest"].get("coverage_diagnostics", {}), "historical_reference": True,
+        }
     write_json(source_manifest_path, source_manifest)
+    finish_incremental(incremental, run_dir.resolve(), source_manifest)
     write_json(inputs / "source-first-plan.json", {
         "format_version": "pangea-plan-v1",
         "units": [],
@@ -362,6 +403,7 @@ def prepare_source_first_inputs(state: PangeaState) -> PangeaState:
     }
     if scene:
         task["scenario"] = scene["id"]
+    attach_incremental_inputs(run_dir, task)
     write_json(task_path, task)
     initialize_result(
         result_path,
@@ -670,6 +712,7 @@ def _make_analysis_actions(state: PangeaState, progress: WorkflowProgress, units
             task["inputs"] = [item for item in task["inputs"] if not item["input_id"].startswith("rubric_")]
             task["inputs"].extend(scene_task_inputs(run_directory(state), scene))
             task["inputs"].extend(_input(f"rubric_{'user_' if Path(path).parent.name == 'user' else ''}{Path(path).stem}", path, f"方法论 {Path(path).stem}") for path in task["rubric_paths"])
+        attach_incremental_inputs(run_directory(state), task)
         write_json(task_path, task)
         initialize_result(
             result_path,
@@ -765,6 +808,7 @@ def _prepare_review(state: PangeaState, progress: WorkflowProgress) -> None:
     if scene:
         task["scenario"] = scene["id"]
         task["inputs"].extend(scene_task_inputs(run_directory(state), scene))
+    attach_incremental_inputs(run_directory(state), task)
     write_json(task_path, task)
     initialize_result(
         result_path,

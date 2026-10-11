@@ -989,8 +989,8 @@ def validate_action(data_root: str, run_id: str, action_id: str) -> dict:
     }
 
 
-@serialized_run_mutation
-def settle_action(data_root: str, run_id: str, action_id: str) -> dict:
+def _settle_action(data_root: str, run_id: str, action_id: str) -> dict:
+    """Settle while the caller owns the Run mutation lock."""
     state = _state(data_root, run_id)
     progress = load_progress(state)
     if progress is None or action_id not in progress.actions:
@@ -1041,3 +1041,8 @@ def settle_action(data_root: str, run_id: str, action_id: str) -> dict:
     progress.actions[action_id].status = "settled"
     save_progress(state, progress)
     return resume_module_analysis(run_id, data_root)
+
+
+@serialized_run_mutation
+def settle_action(data_root: str, run_id: str, action_id: str) -> dict:
+    return _settle_action(data_root, run_id, action_id)

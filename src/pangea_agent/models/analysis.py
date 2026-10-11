@@ -643,6 +643,8 @@ class ValidationFailureRecord(StrictModel):
 
 class ActionState(AgentAction):
     status: Literal["pending", "dispatched", "settled", "accepted", "paused", "failed"] = "pending"
+    execution_id: str | None = None
+    execution_ids: list[str] = Field(default_factory=list)
     execution_started_at_ms: int | None = None
     execution_finished_at_ms: int | None = None
     execution_elapsed_ms: int = 0

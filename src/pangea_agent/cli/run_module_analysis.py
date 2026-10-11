@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import shutil
+import tempfile
 from datetime import date
 from pathlib import Path
 
@@ -77,6 +78,7 @@ def run_module_analysis(contract_path: str) -> dict:
             "accepted_revisions": progress.accepted_revisions if progress else {},
             "report_path": progress.report_path if progress else None,
             "html_report_path": progress.html_report_path if progress else None,
+            "incremental_request": contract.get("incremental_request"),
         }
         return response
     except Exception as exc:
@@ -93,3 +95,25 @@ def resume_module_analysis(run_id: str, data_root: str = "pangea-data") -> dict:
     if not contract_path.is_file():
         raise ValueError(f"冻结 task contract 不存在，不能恢复 Run：{contract_path}")
     return run_module_analysis(str(contract_path))
+
+
+def derive_run(data_root: str, parent_run_id: str, request_path: str) -> dict:
+    from pangea_agent.documents.incremental import _run, derivation_options
+    from pangea_agent.models.contract import IncrementalRequest
+    parent = _run(data_root, parent_run_id)
+    options = derivation_options(data_root, parent_run_id)
+    if not options["can_derive"]:
+        raise ValueError(options["blocked_reason"])
+    raw = json.loads(Path(request_path).read_text(encoding="utf-8-sig"))
+    if raw.get("parent_run_id", parent_run_id) != parent_run_id:
+        raise ValueError("request 的 parent_run_id 与命令不一致")
+    request = IncrementalRequest.model_validate({**raw, "parent_run_id": parent_run_id}).model_dump(mode="json")
+    contract = json.loads((parent / "inputs/task-contract.json").read_text(encoding="utf-8"))
+    for field in ("run_id", "runtime_commit", "runtime_provenance"):
+        contract.pop(field, None)
+    contract.update(data_root=str(Path(data_root).resolve()), incremental_request=request)
+    # The request is transport only. The graph freezes its own independent copy.
+    with tempfile.TemporaryDirectory(prefix="pangea-derive-") as temporary:
+        path = Path(temporary) / "contract.json"
+        write_json(path, contract)
+        return run_module_analysis(str(path))

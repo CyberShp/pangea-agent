@@ -45,8 +45,9 @@ from .public_api import (
 )
 from .result_check import check_result_json
 from pangea_agent.documents.coverage_query import query_coverage
+from pangea_agent.documents.incremental import derivation_options
 from pangea_agent.report.asset_comparison import compare_run_assets
-from .run_module_analysis import resume_module_analysis, run_module_analysis
+from .run_module_analysis import resume_module_analysis, run_module_analysis, derive_run
 from .source_first_api import (
     comparison_finding_write,
     comparison_read,
@@ -210,6 +211,13 @@ def main() -> None:
     report.add_argument("--format", required=True, choices=("html", "markdown"))
     run_create = run_commands.add_parser("create")
     run_create.add_argument("--contract", required=True)
+    derive = run_commands.add_parser("derive")
+    derive.add_argument("--data-root", default="pangea-data")
+    derive.add_argument("--parent-run-id", required=True)
+    derive.add_argument("--request", required=True, help="UTF-8 JSON incremental_request file")
+    options = run_commands.add_parser("derivation-options")
+    options.add_argument("--data-root", default="pangea-data")
+    options.add_argument("--run-id", required=True)
     run_stop = run_commands.add_parser("stop")
     run_stop.add_argument("--data-root", default="pangea-data")
     run_stop.add_argument("--run-id", required=True)
@@ -226,9 +234,11 @@ def main() -> None:
     execution.add_argument("--reason", default="")
     execution.add_argument("--budget-ms", type=int)
     execution.add_argument("--automatic", action="store_true")
+    execution.add_argument("--execution-id", help="Stable host turn ID; reuse for retries of the same turn")
     run_resume = run_commands.add_parser("resume")
     run_resume.add_argument("--data-root", default="pangea-data")
     run_resume.add_argument("--run-id", required=True)
+    run_resume.add_argument("--host-quiescent", action="store_true", help="Host verified no prior worker is executing")
 
     system = sub.add_parser("system")
     system_commands = system.add_subparsers(dest="system_command", required=True)
@@ -555,12 +565,16 @@ def main() -> None:
                 print_success(run_report(args.data_root, args.run_id, args.format))
             elif args.run_command == "create":
                 print_success(run_module_analysis(args.contract))
+            elif args.run_command == "derive":
+                print_success(derive_run(args.data_root, args.parent_run_id, args.request))
+            elif args.run_command == "derivation-options":
+                print_success(derivation_options(args.data_root, args.run_id))
             elif args.run_command == "resume":
-                print_success(resume_run(args.data_root, args.run_id))
+                print_success(resume_run(args.data_root, args.run_id, host_quiescent=args.host_quiescent))
             elif args.run_command == "deliver-current":
                 print_success(deliver_current(args.data_root, args.run_id))
             elif args.run_command == "execution":
-                print_success(execution_event(args.data_root, args.run_id, args.action_id, args.task_id, args.event, args.reason, args.budget_ms, args.automatic))
+                print_success(execution_event(args.data_root, args.run_id, args.action_id, args.task_id, args.event, args.reason, args.budget_ms, args.automatic, execution_id=args.execution_id))
             elif args.run_command == "stop":
                 print_success(stop_run(args.data_root, args.run_id))
         except Exception as exc:
