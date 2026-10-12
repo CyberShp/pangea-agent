@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import json
+import multiprocessing
 from pathlib import Path
 from unittest.mock import patch
 
@@ -13,6 +15,15 @@ from pangea_agent.cli.run_module_analysis import run_module_analysis
 from pangea_agent.cli.source_first_api import comparison_finding_write, plan_write, result_read, result_write, review_decide, work_finish
 from pangea_agent.execution_view import execution_view
 from pangea_agent.graph.result_store import read_result
+from pangea_agent.runtime_timing import runtime_timing
+
+
+def write_concurrent_timings(data_root, run_id, process_id):
+    for number in range(500):
+        with runtime_timing(data_root, run_id,
+                            {"call_id": f"{process_id}:{number}", "action_id": "concurrent-日志"},
+                            "concurrent_fixture", "sample"):
+            pass
 
 
 class RecoveryChecks(unittest.TestCase):
@@ -92,6 +103,81 @@ class RecoveryChecks(unittest.TestCase):
         self.assertEqual(before, after)
         self.assertEqual(before["kind"], "records_saved")
         self.assertIsNone(detail["quality_status"])
+
+    def test_runtime_timings_cover_completion_and_planning_without_record_content(self):
+        events = [json.loads(line) for line in (self.run / "runtime-timing.jsonl").read_text(encoding="utf-8").splitlines()]
+        phases = {(event["operation"], event["phase"]) for event in events if event["status"] == "ok"}
+        self.assertTrue({("work_finish", "completion_write"), ("work_finish", "binding_and_result"),
+                         ("work_finish", "progress_save"), ("settle", "validate_result"),
+                         ("settle", "graph_advance"), ("planning_advance", "load_and_expand_plan"),
+                         ("planning_advance", "freeze_plan"), ("planning_advance", "create_analysis_tasks")} <= phases)
+        for event in events:
+            self.assertEqual(event["run_id"], self.run_id)
+            self.assertTrue(event["action_id"])
+            self.assertEqual(event["duration_clock"], "monotonic")
+            self.assertTrue(event["at"].endswith("+00:00"))
+            if event["status"] != "start":
+                self.assertGreaterEqual(event["duration_ms"], 0)
+        self.assertNotIn("fault regression fixture", json.dumps(events))
+        self.assertNotIn("owned_files", json.dumps(events))
+
+    def test_timing_write_failure_does_not_change_completion_or_mask_revision_error(self):
+        action = self.analysis[0]
+        worker = self.bind(action)
+        self.write(action, worker, finish=False, settle=False)
+        revision = read_result(self.task(action)["result_path"]).revision
+        original_open = Path.open
+
+        def open_except_timing(path, *args, **kwargs):
+            if path.name == "runtime-timing.jsonl":
+                raise OSError("fixture timing disk error")
+            return original_open(path, *args, **kwargs)
+
+        with patch.object(Path, "open", open_except_timing):
+            with self.assertRaisesRegex(ValueError, "revision"):
+                work_finish(str(self.root), self.run_id, action, worker, revision=revision + 100)
+            work_finish(str(self.root), self.run_id, action, worker, revision=revision)
+            settle_action(str(self.root), self.run_id, action)
+        self.assertEqual(self.progress()["actions"][action]["status"], "settled")
+
+    def test_failed_completion_records_duration_and_preserves_result(self):
+        action = self.analysis[0]
+        worker = self.bind(action)
+        self.write(action, worker, finish=False, settle=False)
+        result_path = Path(self.task(action)["result_path"])
+        before = result_path.read_bytes()
+        with self.assertRaisesRegex(ValueError, "revision"):
+            work_finish(str(self.root), self.run_id, action, worker, revision=999)
+        self.assertEqual(before, result_path.read_bytes())
+        events = [json.loads(line) for line in (self.run / "runtime-timing.jsonl").read_text(encoding="utf-8").splitlines()]
+        failures = [event for event in events if event["action_id"] == action and event["status"] == "error"]
+        self.assertEqual({event["phase"] for event in failures}, {"completion_write", "total"})
+        self.assertEqual(len({event["call_id"] for event in failures}), 1)
+
+    def test_concurrent_timing_writers_preserve_complete_unique_jsonl_records(self):
+        context = multiprocessing.get_context("spawn")
+        children = [context.Process(target=write_concurrent_timings,
+                                    args=(str(self.root), self.run_id, number)) for number in range(3)]
+        try:
+            for child in children:
+                child.start()
+            for child in children:
+                child.join(30)
+                self.assertEqual(child.exitcode, 0)
+        finally:
+            for child in children:
+                if child.is_alive():
+                    child.terminate()
+                    child.join(5)
+        raw = (self.run / "runtime-timing.jsonl").read_text(encoding="utf-8")
+        self.assertTrue(raw.endswith("\n"))
+        events = [json.loads(line) for line in raw.splitlines()]
+        concurrent = [event for event in events if event["operation"] == "concurrent_fixture"]
+        # A busy log may drop observations; every retained record must be whole.
+        self.assertGreater(len(concurrent), 0)
+        self.assertLessEqual(len(concurrent), 3000)
+        self.assertEqual(len({(event["call_id"], event["status"]) for event in concurrent}), len(concurrent))
+        self.assertTrue(all(event["action_id"] == "concurrent-日志" for event in concurrent))
 
     def test_stop_preserves_settled_and_blocks_every_result_write(self):
         first = self.analysis[0]

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from uuid import uuid4
 
 from pydantic import ValidationError
 
@@ -63,6 +64,7 @@ from pangea_agent.models.analysis import (
 )
 from pangea_agent.graph.schema_contract import sha256_file
 from pangea_agent.models.asset import AssetExtractionResult
+from pangea_agent.runtime_timing import runtime_timing
 
 
 REPEATED_REPAIR_ATTENTION_AFTER = 3
@@ -990,22 +992,32 @@ def validate_action(data_root: str, run_id: str, action_id: str) -> dict:
 
 
 def _settle_action(data_root: str, run_id: str, action_id: str) -> dict:
+    identity = {"action_id": action_id, "task_id": None, "call_id": str(uuid4()), "execution_id": None}
+    with runtime_timing(data_root, run_id, identity, "settle", "total"):
+        return _settle_action_timed(data_root, run_id, action_id, identity)
+
+
+def _settle_action_timed(data_root: str, run_id: str, action_id: str, identity: dict) -> dict:
     """Settle while the caller owns the Run mutation lock."""
     state = _state(data_root, run_id)
-    progress = load_progress(state)
+    with runtime_timing(data_root, run_id, identity, "settle", "progress_load"):
+        progress = load_progress(state)
     if progress is None or action_id not in progress.actions:
         raise ValueError(f"Action 不存在：{action_id}")
     action = progress.actions[action_id]
+    identity.update(task_id=action.task_id, execution_id=action.execution_id)
     if action.status == "accepted":
         return next_actions(data_root, run_id)
     if action.status == "settled":
-        return resume_module_analysis(run_id, data_root)
+        with runtime_timing(data_root, run_id, identity, "settle", "graph_advance"):
+            return resume_module_analysis(run_id, data_root)
     if progress.lifecycle_status != "running":
         raise ValueError("Run 当前不接受 Agent 结果")
     if action.status != "dispatched" or not action.task_id:
         raise ValueError("Action 必须先绑定真实 Agent 会话")
 
-    validation = _validate_action(data_root, run_id, action_id)
+    with runtime_timing(data_root, run_id, identity, "settle", "validate_result"):
+        validation = _validate_action(data_root, run_id, action_id)
     if validation["status"] != "valid":
         current = load_progress(state)
         if current is None:
@@ -1035,12 +1047,14 @@ def _settle_action(data_root: str, run_id: str, action_id: str) -> dict:
         )
         return payload
 
-    progress = load_progress(state)
-    if progress is None:
-        raise ValueError(f"Run 不存在：{run_id}")
-    progress.actions[action_id].status = "settled"
-    save_progress(state, progress)
-    return resume_module_analysis(run_id, data_root)
+    with runtime_timing(data_root, run_id, identity, "settle", "progress_save"):
+        progress = load_progress(state)
+        if progress is None:
+            raise ValueError(f"Run 不存在：{run_id}")
+        progress.actions[action_id].status = "settled"
+        save_progress(state, progress)
+    with runtime_timing(data_root, run_id, identity, "settle", "graph_advance"):
+        return resume_module_analysis(run_id, data_root)
 
 
 @serialized_run_mutation

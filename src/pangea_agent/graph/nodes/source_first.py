@@ -39,6 +39,7 @@ from pangea_agent.inventory.languages import detect_analysis_language
 from pangea_agent.inventory.lua_source_scanner import build_lua_inventory
 from pangea_agent.inventory.source_access import resolve_binding, expand_owned_files
 from pangea_agent.inventory.source_regions import build_source_index
+from pangea_agent.runtime_timing import runtime_timing
 from pangea_agent.inventory.source_scanner import build_lightweight_inventory
 from pangea_agent.methodology import freeze_enabled_methodologies
 from pangea_agent.models.analysis import ActionState, RepositoryRef, WorkflowProgress
@@ -977,8 +978,11 @@ def _source_first_advance(state: PangeaState, progress: WorkflowProgress) -> Pan
         ]}
     if progress.stage == "planning":
         action = next(action for action in current if action.role == "planning")
-        task, result = _load_notes_action(state, action)
-        units = _planning_units(state, action, task, result)
+        timing_identity = {"action_id": action.action_id, "task_id": action.task_id,
+                           "execution_id": action.execution_id}
+        with runtime_timing(state["data_root"], state["run_id"], timing_identity, "planning_advance", "load_and_expand_plan"):
+            task, result = _load_notes_action(state, action)
+            units = _planning_units(state, action, task, result)
         plan_unresolved: list[dict[str, Any]] = []
         if not units:
             # A completed notes shell with no explicit dispatchable unit is
@@ -990,14 +994,15 @@ def _source_first_advance(state: PangeaState, progress: WorkflowProgress) -> Pan
                 "message": "Planning 未提供带 owned_regions 的可调度单元；原文已保留",
                 "record_ids": [record.record_id for record in result.records],
             })
-        write_json(run_directory(state) / "inputs" / "source-first-plan.json", {
-            "format_version": "pangea-plan-v1",
-            "revision": result.revision,
-            "scope_policy": task.get("scope_policy", "full-owned-v1"),
-            "scope_notes": [record.body for record in active_records(result) if record.kind in {"note", "summary", "unresolved"}],
-            "units": units,
-            "unresolved": plan_unresolved,
-        })
+        with runtime_timing(state["data_root"], state["run_id"], timing_identity, "planning_advance", "freeze_plan"):
+            write_json(run_directory(state) / "inputs" / "source-first-plan.json", {
+                "format_version": "pangea-plan-v1",
+                "revision": result.revision,
+                "scope_policy": task.get("scope_policy", "full-owned-v1"),
+                "scope_notes": [record.body for record in active_records(result) if record.kind in {"note", "summary", "unresolved"}],
+                "units": units,
+                "unresolved": plan_unresolved,
+            })
         if not units:
             action.action = "continue_agent"
             action.status = "pending"
@@ -1007,7 +1012,8 @@ def _source_first_advance(state: PangeaState, progress: WorkflowProgress) -> Pan
                     "agent_actions": [action.model_dump(mode="json")]}
         progress.actions[action.action_id].status = "accepted"
         progress.accepted_revisions[action.action_id] = result.revision
-        _make_analysis_actions(state, progress, units, task)
+        with runtime_timing(state["data_root"], state["run_id"], timing_identity, "planning_advance", "create_analysis_tasks"):
+            _make_analysis_actions(state, progress, units, task)
         progress.stage = "analyzing"
         save_progress(state, progress)
         return {**state, "lifecycle_status": progress.lifecycle_status, "stage": progress.stage, "agent_actions": [

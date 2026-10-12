@@ -11,6 +11,7 @@ import json
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from pangea_agent.agent_io import read_json
 from pangea_agent.graph.result_store import (
@@ -45,6 +46,7 @@ from pangea_agent.graph.workflow_store import (
     source_first_version_set_path,
 )
 from pangea_agent.models.source_first import ReviewDecision, SourceBinding
+from pangea_agent.runtime_timing import runtime_timing
 
 
 def _binding_and_result(
@@ -980,21 +982,30 @@ def work_finish(
     note: str = "",
     request_id: str | None = None,
 ) -> dict[str, Any]:
-    binding, path, _ = _binding_and_result(data_root, run_id, action_id, task_id, writable=True)
-    response = declare_completion(
-        path,
-        binding,
-        revision,
-        complete=complete,
-        note=note,
-        request_id=request_id,
-    )
-    state = {"data_root": data_root, "run_id": run_id}
-    progress = load_progress(state)
-    if progress is not None:
-        progress.first_finish_revisions.setdefault(action_id, int(response["revision"]))
-        save_progress(state, progress)
-    return response
+    identity = {"action_id": action_id, "task_id": task_id, "call_id": str(uuid4()),
+                "request_id": request_id, "execution_id": None}
+    with runtime_timing(data_root, run_id, identity, "work_finish", "total"):
+        with runtime_timing(data_root, run_id, identity, "work_finish", "binding_and_result"):
+            binding, path, _ = _binding_and_result(data_root, run_id, action_id, task_id, writable=True)
+        state = {"data_root": data_root, "run_id": run_id}
+        with runtime_timing(data_root, run_id, identity, "work_finish", "progress_load"):
+            progress = load_progress(state)
+            if progress is not None:
+                identity["execution_id"] = progress.actions[action_id].execution_id
+        with runtime_timing(data_root, run_id, identity, "work_finish", "completion_write"):
+            response = declare_completion(
+                path,
+                binding,
+                revision,
+                complete=complete,
+                note=note,
+                request_id=request_id,
+            )
+        if progress is not None:
+            with runtime_timing(data_root, run_id, identity, "work_finish", "progress_save"):
+                progress.first_finish_revisions.setdefault(action_id, int(response["revision"]))
+                save_progress(state, progress)
+        return response
 
 
 @serialized_run_mutation
