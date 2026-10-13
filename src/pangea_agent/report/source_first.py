@@ -138,18 +138,27 @@ def _coverage_summary(state: dict, case_records: list) -> dict:
     path = run_directory(state) / "inputs" / "coverage-gaps.json"
     try:
         gaps = read_json(path)
-        known = {str(row["coverage_id"]) for row in gaps if isinstance(row, dict) and row.get("coverage_id")} if isinstance(gaps, list) else None
+        known = {row["coverage_id"] for row in gaps if isinstance(row, dict) and isinstance(row.get("coverage_id"), str) and row["coverage_id"]} if isinstance(gaps, list) else None
     except (OSError, ValueError):
         known = None
     refs = set()
+    linked_cases = 0
+    linked_coverage_cases = 0
     for record in case_records:
         body = _body_mapping(record.body) or {}
-        for ref in body.get("coverage_refs", []) if isinstance(body.get("coverage_refs"), list) else []:
+        case_refs = set()
+        for ref in _items(body.get("coverage_refs")):
             value = ref.get("coverage_id") if isinstance(ref, dict) else ref
             if isinstance(value, str) and value:
-                refs.add(value)
+                case_refs.add(value)
+        refs.update(case_refs)
+        if known is not None and case_refs & known:
+            linked_cases += 1
+            linked_coverage_cases += body.get("purpose") == "coverage"
     return {"valid_gaps": len(known) if known is not None else None,
-            "coverage_cases": sum(_case_purpose(record) == "coverage" for record in case_records),
+            "coverage_cases": sum((_body_mapping(record.body) or {}).get("purpose") == "coverage" for record in case_records),
+            "linked_cases": linked_cases if known is not None else None,
+            "linked_coverage_cases": linked_coverage_cases if known is not None else None,
             "linked_valid_gaps": len(refs & known) if known is not None else None,
             "unverified_refs": len(refs - known) if known is not None else len(refs)}
 
@@ -518,7 +527,7 @@ def _behavior_markdown(
         delivery_message = "用例分析与审核已完成；该状态不代表被测系统已经执行通过。"
     elif lifecycle == "complete":
         delivery_message = (
-            "分析流程已经结束；当前冻结范围内的用例可以使用，但仍有待确认事项，"
+            "分析流程已经结束；已保存当前冻结范围内的分析结果，仍有待确认事项，"
             "整体质量状态保持 UNRESOLVED。"
         )
     else:
@@ -654,7 +663,8 @@ def _behavior_markdown(
         "以下数量来自 Analysis 的显式声明；Python 不根据函数名或正文猜测测试目的和层级。",
         "",
         f"- {'本次输入匹配 Coverage 缺口' if scene else '本次有效 Coverage 缺口'}：{coverage_summary['valid_gaps'] if coverage_summary['valid_gaps'] is not None else '未记录/不可读取'}",
-        f"- 全部层级 Coverage 补测用例：{coverage_summary['coverage_cases']}",
+        f"- 关联有效缺口的用例：{coverage_summary['linked_cases'] if coverage_summary['linked_cases'] is not None else '无法核实'}（其中新增补测用例：{coverage_summary['linked_coverage_cases'] if coverage_summary['linked_coverage_cases'] is not None else '无法核实'}）",
+        f"- 全部层级新增补测用例：{coverage_summary['coverage_cases']}",
         f"- 全部用例显式关联的去重有效缺口：{coverage_summary['linked_valid_gaps'] if coverage_summary['linked_valid_gaps'] is not None else '无法核实'}",
         f"- 未能由冻结缺口核实的引用：{coverage_summary['unverified_refs']}",
         "- 关联仅表示作者声明，不代表执行通过或覆盖率提升。未解决原因见本报告的分析记录及待确认项。",

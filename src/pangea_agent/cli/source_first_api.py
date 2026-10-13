@@ -490,6 +490,7 @@ def result_write(
         expected_revision,
         records,
         request_id=request_id,
+        record_contracts=task.get("record_contracts"),
     )
 
 
@@ -584,6 +585,7 @@ def comparison_finding_write(
         expected_revision,
         [record],
         request_id=request_id,
+        record_contracts=task.get("record_contracts"),
     )
 
 
@@ -679,6 +681,7 @@ def result_supersede(
         expected_revision,
         [record],
         request_id=request_id,
+        record_contracts=task.get("record_contracts"),
     )
 
 
@@ -730,7 +733,7 @@ def result_repair(
     records: list[dict[str, Any]],
     expected_sha256: str,
 ) -> dict[str, Any]:
-    binding, path, _ = _binding_and_result(
+    binding, path, task = _binding_and_result(
         data_root, run_id, action_id, task_id, writable=True
     )
     return repair_result_shell(
@@ -738,6 +741,7 @@ def result_repair(
         binding,
         records,
         expected_sha256=expected_sha256,
+        record_contracts=task.get("record_contracts"),
     )
 
 
@@ -1069,6 +1073,7 @@ def plan_write(
         expected_revision,
         [{"kind": "unit_plan", "body": saved_unit, "relates_to": [unit_id]}],
         request_id=request_id,
+        record_contracts=task.get("record_contracts"),
     )
     response["unit_id"] = unit_id
     response["operation"] = operation
@@ -1131,6 +1136,7 @@ def review_decide(
         expected_revision,
         [{"kind": "review_decision", "body": decision, "supersedes": targets}],
         request_id=request_id,
+        record_contracts=task.get("record_contracts"),
     )
 
 

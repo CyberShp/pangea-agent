@@ -169,3 +169,42 @@ ready 表示设计入口、触发设施和观测有依据，不代表实测通�
 不同触发路径独立用例，同一路径相同判据及恢复的数据变体可以合并variants。无新增用例的有效结论保存summary和流程，不交空文件。
 
 任务提供现成小型 C 执行设施时，在当前 Run 用冻结源码和最小驱动核实算术/宏反例，并在现有 note/evidence 记录命令、输入、实际输出及退出码。驱动和依赖桩须随证据保存；这只是局部代码执行，不能声称产品入口或实际 Coverage 已验证。无现成设施则明确静态推导及缺口。
+
+## 正式风险的保存格式
+
+仅在冻结场景承担正式风险责任时保存 risk；分支与覆盖率场景的产品疑点仍保存为 note/unresolved。
+
+<!-- RISK-CONTRACT:BEGIN -->
+当前 task 的 `record_contracts.risk=behavior-risk-v1` 时，`kind=risk` 的 body 直接使用以下对象格式。
+示例只说明结构；实际触发、结果、观测及排除条件由当前冻结证据决定。
+
+```json
+{
+  "format_version": "behavior-risk-v1",
+  "risk_id": "R-001",
+  "title": "请求取消后仍占用连接资源",
+  "trigger": "连接已分配，处理期间收到取消请求并进入提前返回路径",
+  "system_result": "该路径跳过连接释放，连接仍记为占用",
+  "external_observation": "可通过已提供的连接资源指标观察占用未恢复；产品入口触发方式尚待核实",
+  "exclusion_condition": "若实际构建中的调用方保证取消后释放该连接，则排除上述泄漏；当前已读范围尚未发现该保证",
+  "source_evidence": ["示例仓库:src/request.c:40-58"],
+  "linked_test_case_ids": []
+}
+```
+
+硬性格式规则：
+
+- body 直接是对象，不外套 risk，不用内层 body 包正文，不提交字符串或代码块。
+- risk_id、title、trigger、system_result、external_observation、exclusion_condition 是非空字符串。
+  未核实的入口、观测设施或排除条件应如实说明证据缺口；格式完整不表示这些事实已证实。
+- source_evidence 是非空数组，每项采用 `repo_id:path:line` 或 `repo_id:path:line-line`。
+  执行日志、驱动及其他证据保留在独立 evidence/note 中，不把执行日志路径写作源码行号引用。
+- linked_test_case_ids 是数组，可以暂空或省略；正式交付的风险用例关联与不可达依据由 Reviewer 按场景审核。
+- 使用 external_observation、system_result、linked_test_case_ids，不使用 observed、result、test_case_refs。
+  flow_refs 放在相关测试用例中，风险通过 linked_test_case_ids 关联用例。
+- 正式风险正文不包含 remediation_hint、fix、patch、suggested_patch；本 Run 的交付是分析证据。
+- 写入时只检查上述结构；不合格会逐条报错，由同一 worker 在本轮修正后重写。
+  检查不判断风险是否真实、影响程度或证据是否足够，不补造字段，不把格式错误判成 Run 失败。
+
+旧 Run 以其 task 和冻结 rubric 为准，不追溯追加本格式要求。
+<!-- RISK-CONTRACT:END -->

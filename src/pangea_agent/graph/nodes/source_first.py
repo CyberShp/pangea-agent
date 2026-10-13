@@ -404,6 +404,7 @@ def prepare_source_first_inputs(state: PangeaState) -> PangeaState:
     }
     if scene:
         task["scenario"] = scene["id"]
+        task["record_contracts"] = dict(scene.get("record_contracts", {}))
     attach_incremental_inputs(run_dir, task)
     write_json(task_path, task)
     initialize_result(
@@ -709,6 +710,7 @@ def _make_analysis_actions(state: PangeaState, progress: WorkflowProgress, units
         ]
         if scene:
             task["scenario"] = scene["id"]
+            task["record_contracts"] = dict(scene.get("record_contracts", {}))
             task["rubric_paths"] = scene_rubric_paths(run_directory(state), scene, "analysis", unit.get("methodology_ids", []))
             task["inputs"] = [item for item in task["inputs"] if not item["input_id"].startswith("rubric_")]
             task["inputs"].extend(scene_task_inputs(run_directory(state), scene))
@@ -808,6 +810,7 @@ def _prepare_review(state: PangeaState, progress: WorkflowProgress) -> None:
         task.update(version_set_path=str(version_path), version_set_id=version_id)
     if scene:
         task["scenario"] = scene["id"]
+        task["record_contracts"] = dict(scene.get("record_contracts", {}))
         task["inputs"].extend(scene_task_inputs(run_directory(state), scene))
     attach_incremental_inputs(run_directory(state), task)
     write_json(task_path, task)

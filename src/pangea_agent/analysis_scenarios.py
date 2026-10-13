@@ -5,6 +5,7 @@ from copy import deepcopy
 from pathlib import Path
 
 from pangea_agent.agent_io import read_json, write_json
+from pangea_agent.risk_schema import RISK_FORMAT
 
 PROFILE = "behavior-test-v2"
 SCENES = {
@@ -26,6 +27,7 @@ def scene_spec(scenario: str) -> dict:
         "analysis_rubrics": ["scene_common_generation", "scene_flow", f"scene_{name}"],
         "review_rubrics": ["scene_common_review", "scene_flow", f"scene_{name}"],
         "planning_rubrics": ["scene_planning"],
+        "record_contracts": {"risk": RISK_FORMAT},
         "presentation": {"risks": risk != "none", "coverage": coverage, "textual_flow": True},
     }
 

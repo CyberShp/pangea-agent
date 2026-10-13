@@ -45,7 +45,7 @@ DSH subagent，并在同一次调用中用 Graph 的 data_root、run_id、action
   relation/enum/引用问题只记录 warning 并保留原文；空结果或缺少 completion 不能
   伪装完成。
 - 只允许按返回的 exact action_id 结算；不得根据子任务 UUID、单元名、通知顺序
-  或记忆猜测 action。最多同时派发 8 个 action。
+  或记忆猜测 action。analysis 和 targeted_closure 最多三个 worker 并发；Graph/result 写入串行。
 
 ## Worker 工具边界
 

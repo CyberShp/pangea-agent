@@ -1,7 +1,11 @@
 # 风险分析职责
 
 先理解对象模块结构化业务流程，然后围绕真实失效条件、传播、后果、外部观测和排除条件开展风险分析。按对象使用现有DFX/SFMEA经验，不要求六维齐全、风险数量或无依据评分。
-正式风险保存kind=risk，包含risk_id/title/trigger/system_result/external_observation/exclusion_condition/source_evidence/linked_test_case_ids；区分当前行为、正确预期和已证实问题。
+正式风险保存kind=risk，包含risk_id/title/trigger/system_result/external_observation/exclusion_condition/source_evidence/linked_test_case_ids；格式版本按当前task.record_contracts，Analysis按已提供的冻结scene_common_generation样例提交。区分当前行为、正确预期和已证实问题。
 每个正式风险关联可实施业务验证用例，优先复用；有源码证据证明业务入口不可达时说明依据。不为展示填充空风险或把正常拒绝误判缺陷。risk用途用例使用purpose=risk和真实risk_refs。
 需求/设计支撑正确预期；历史缺陷必须核实当前版本适用性。Coverage只辅助风险排序与关联，不自动变成全量补测任务。风险为零时记录实际检查范围和结论，不宣称对象安全。
 Reviewer聚焦证据、触发可制造性、传播/后果、外部判据、清理恢复及用例关联；缺注入设施标needs_instrumentation，不假称已执行。
+
+正式风险需有可追溯的失效依据：当前行为违反冻结需求/设计中的正确预期，或源码可证明未定义行为、越界、数据破坏/丢失、资源泄漏、竞态等失效机制。写清具体触发、执行后的状态及影响；仅存在错误分支不足以证明风险。参数校验失败、设计内拒绝、预期错误码和异步受理中间态本身是正常行为；若同时造成不应有的状态破坏、错误传播或恢复失败，应按该失效记录风险。
+外部观测描述可核实的现象及当前观测缺口。已证实的失效不因业务入口尚未核实或缺少外部观测/注入设施而消失；相应验证用例如实标unknown或needs_instrumentation，并说明依据，不把静态推导写成已复现。仅有猜测、尚不能确定是否违背正确预期时记待确认，并说明缺少的证据。
+未发现风险是合法结论：说明实际检查的入口、路径或生命周期范围、依据及尚未确认的边界。Reviewer不得仅因风险为空提出补造要求。

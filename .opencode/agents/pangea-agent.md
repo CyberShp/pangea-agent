@@ -60,7 +60,7 @@ repository 或 commit 信息拼进路径。
 
 1. 对 Graph 返回的 exact action_id 调用 pangea_action_dispatch；该宿主工具会先创建
    worker session 并 bind，之后才发送任务；continue_agent 会续接原 task_id。
-2. 每批最多并发 8 个 action；不要另用内置 task 创建 source-first worker。
+2. analysis 和 targeted_closure 最多三个 worker 并发，Graph/result 写入串行；不要另用内置 task 创建 source-first worker。
 3. pangea_action_dispatch 等 worker 完成并声明结果后，按 exact action_id settle；
    宿主执行出错或结果尚未完成时，保留同一 action 并返回具体续接原因。不调用独立
    validate，也不按回显顺序猜 action。

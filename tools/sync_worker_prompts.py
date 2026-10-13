@@ -1,10 +1,9 @@
-"""把 scene_flow.md 中的 flow 契约块同步到各客户端的 analysis-worker 提示词。
+"""同步 analysis-worker 的冻结 flow 规则指针，不复制契约正文。
 
-唯一来源：src/pangea_agent/rubrics/builtin/scene_flow.md 中
-``<!-- FLOW-CONTRACT:BEGIN -->`` 与 ``<!-- FLOW-CONTRACT:END -->`` 之间的内容。
+scene_flow.md 是 v2 flow 契约的源码；运行时只读取当前 task 冻结的版本。
 
 用法：
-    python tools/sync_worker_prompts.py          # 写入/更新三个副本
+    python tools/sync_worker_prompts.py          # 更新三个客户端的指针
     python tools/sync_worker_prompts.py --check  # 只检查，存在漂移时退出码为 1
 """
 
@@ -21,9 +20,14 @@ TARGETS = (
     ROOT / ".opencode" / "agents" / "analysis-worker.md",
     ROOT / ".agents" / "pangea" / "analysis-worker.md",
 )
-BEGIN = "<!-- FLOW-CONTRACT:BEGIN -->"
-END = "<!-- FLOW-CONTRACT:END -->"
+BEGIN = "<!-- FLOW-REFERENCE:BEGIN -->"
+END = "<!-- FLOW-REFERENCE:END -->"
+CONTRACT_BEGIN = "<!-- FLOW-CONTRACT:BEGIN -->"
+CONTRACT_END = "<!-- FLOW-CONTRACT:END -->"
 ANCHOR = "## behavior-test-v2 场景任务"
+REFERENCE = f"""{BEGIN}
+flow 字段与样例读取当前 task.inputs 中 rubric_scene_flow 对应的冻结 scene_flow.md 的 FLOW-CONTRACT 段，并读完分页；不读取工作树最新版代替。behavior-test-v1 或更早任务未提供 scene_flow 时，按该任务已冻结的生成 rubric 与结果合同执行，不追加新场景规则。
+{END}"""
 
 
 def _read(path: Path) -> tuple[str, str]:
@@ -32,23 +36,18 @@ def _read(path: Path) -> tuple[str, str]:
     return text.replace("\r\n", "\n"), newline
 
 
-def extract_block(text: str) -> str:
-    """返回包含首尾标记在内的契约块（LF 换行）。"""
-    start = text.find(BEGIN)
-    end = text.find(END)
-    if start < 0 or end < start:
-        raise ValueError(f"{SOURCE} 中缺少 {BEGIN} / {END} 标记")
-    return text[start:end + len(END)]
-
-
-def apply_block(text: str, block: str) -> str:
-    """替换已有契约块；没有时插入到 behavior-test-v2 段落之后。"""
-    start = text.find(BEGIN)
-    if start >= 0:
-        end = text.find(END, start)
-        if end < 0:
-            raise ValueError("目标文件只有起始标记，缺少结束标记")
-        return text[:start] + block + text[end + len(END):]
+def apply_reference(text: str) -> str:
+    """将旧内联契约或已有指针更新为冻结输入引用。"""
+    if BEGIN in text and CONTRACT_BEGIN in text:
+        raise ValueError("目标同时包含冻结指针与内联契约，请删除重复的内联契约")
+    for begin, end in ((BEGIN, END), (CONTRACT_BEGIN, CONTRACT_END)):
+        start = text.find(begin)
+        if start < 0:
+            continue
+        stop = text.find(end, start)
+        if stop < 0:
+            raise ValueError(f"目标文件只有起始标记 {begin}，缺少 {end}")
+        return text[:start] + REFERENCE + text[stop + len(end):]
     anchor = text.find(ANCHOR)
     if anchor < 0:
         raise ValueError(f"目标文件缺少 {ANCHOR} 段落")
@@ -60,15 +59,17 @@ def apply_block(text: str, block: str) -> str:
     paragraph_end = text.find("\n", paragraph_start)
     if paragraph_end < 0:
         paragraph_end = len(text)
-    return text[:paragraph_end] + "\n\n" + block + text[paragraph_end:]
+    return text[:paragraph_end] + "\n\n" + REFERENCE + text[paragraph_end:]
 
 
 def sync(check: bool) -> list[Path]:
-    block = extract_block(_read(SOURCE)[0])
+    source, _ = _read(SOURCE)
+    if CONTRACT_BEGIN not in source or CONTRACT_END not in source:
+        raise ValueError(f"{SOURCE} 中缺少 FLOW-CONTRACT 标记")
     drifted: list[Path] = []
     for target in TARGETS:
         text, newline = _read(target)
-        updated = apply_block(text, block)
+        updated = apply_reference(text)
         if updated == text:
             continue
         drifted.append(target)

@@ -19,6 +19,7 @@ from typing import Any, Callable, Iterator
 
 from pangea_agent.agent_io import read_json, write_json
 from pangea_agent.flow_schema import check_flow_structure, format_flow_errors
+from pangea_agent.risk_schema import RISK_FORMAT, check_risk_structure, format_risk_errors
 from pangea_agent.models.source_first import (
     CompletionDeclaration,
     NoteRecord,
@@ -31,13 +32,18 @@ class ResultStoreError(ValueError):
     """A deterministic result-store contract error."""
 
 
-def _check_flow_record(offset: int, kind: Any, body: Any) -> None:
-    """flow 记录的格式契约（字段、id 引用）；不判断语义，也不改写记录。"""
-    if kind != "flow":
-        return
-    errors = check_flow_structure(body)
-    if errors:
-        raise ResultStoreError(format_flow_errors(offset, errors))
+def _check_record_contract(
+    offset: int, kind: Any, body: Any, record_contracts: dict[str, str] | None,
+) -> None:
+    """按任务冻结格式检查本次写入；旧任务未声明 risk 契约时沿用原格式。"""
+    if kind == "flow":
+        errors = check_flow_structure(body)
+        if errors:
+            raise ResultStoreError(format_flow_errors(offset, errors))
+    elif kind == "risk" and (record_contracts or {}).get("risk") == RISK_FORMAT:
+        errors = check_risk_structure(body)
+        if errors:
+            raise ResultStoreError(format_risk_errors(offset, errors))
 
 
 class RevisionConflict(ResultStoreError):
@@ -170,6 +176,7 @@ def repair_result_shell(
     records: list[dict[str, Any]],
     *,
     expected_sha256: str,
+    record_contracts: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Replace only an unreadable result shell using content resent by its bound Agent."""
 
@@ -209,7 +216,7 @@ def repair_result_shell(
         for offset, item in enumerate(records):
             if not isinstance(item, dict) or "body" not in item:
                 raise ResultStoreError(f"record[{offset}] 必须包含 body")
-            _check_flow_record(offset, item.get("kind") or "note", item["body"])
+            _check_record_contract(offset, item.get("kind") or "note", item["body"], record_contracts)
             generated.append(NoteRecord(
                 record_id=f"rec-{offset + 1:06d}",
                 kind=str(item.get("kind") or "note"),
@@ -289,6 +296,7 @@ def append_records(
     records: list[dict[str, Any]],
     *,
     request_id: str | None = None,
+    record_contracts: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Append a small batch and return generated record IDs and warnings."""
 
@@ -312,7 +320,7 @@ def append_records(
             kind = item.get("kind", "note")
             if not isinstance(kind, str) or not kind:
                 raise ResultStoreError(f"record[{offset}].kind 必须是非空字符串")
-            _check_flow_record(offset, kind, item["body"])
+            _check_record_contract(offset, kind, item["body"], record_contracts)
             if kind not in _KNOWN_KINDS:
                 warnings.append({
                     "kind": "unknown_record_kind",

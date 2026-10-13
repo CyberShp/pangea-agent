@@ -2,6 +2,9 @@
 
 保留综合能力：完整主责业务行为、正常/分支/边界/异常传播/清理恢复用例；随阅读完成轻量风险识别；有真实Coverage时开展相关补测。不串行执行三套完整专项，不要求六维逐项或风险数量。
 先按scene_flow交付对象结构化业务流程，再设计用例。正常拒绝非法输入不是产品缺陷。
-有源码依据的失效风险单独保存kind=risk，正文包含risk_id/title/trigger/system_result/external_observation/exclusion_condition/source_evidence/linked_test_case_ids；优先关联已有用例。确认无法从受支持业务入口触发时写不可达依据，由Reviewer审核，不由Python判定。
+有源码依据的失效风险单独保存kind=risk，包含risk_id/title/trigger/system_result/external_observation/exclusion_condition/source_evidence/linked_test_case_ids；格式版本按当前task.record_contracts，Analysis按已提供的冻结scene_common_generation样例提交。优先关联已有用例。确认无法从受支持业务入口触发时写不可达依据，由Reviewer审核，不由Python判定。
 Coverage先读coverage_gaps和coverage_match_summary，区分无数据、未匹配、范围外和有效缺口。每个相关缺口在summary说明新增/补充/复用用例或具体执行缺口。新增补测purpose=coverage；已有branch/risk用例只补真实coverage_refs，不改标签造数量。
 Reviewer检查综合业务行为、有依据风险是否记录及关联、有效Coverage是否有去向；不要求风险非空、不推定未发现风险等于安全。
+
+轻量风险识别只记录有具体依据的失效：当前行为违反冻结需求/设计的正确预期，或源码可证明未定义行为、越界、数据破坏/丢失、资源泄漏、竞态等。参数校验失败、设计内拒绝、预期错误码和异步受理中间态本身不是风险；伴随不应有的状态破坏、错误传播或恢复失败时，记录该失效及影响。仅有猜测或正确预期尚未确认时记待确认，说明证据缺口。
+已证实的失效不因业务入口尚未核实或缺少外部观测/注入设施而删除；验证用例如实标unknown或needs_instrumentation，说明现有证据与缺口。未发现风险时在summary说明实际检查范围、依据和未确认边界，不为风险非空扩大成完整DFX扫描。

@@ -42,6 +42,7 @@ Coverage 通过资产进入，冻结已选输入内容指纹、来源及匹配�
 - 重试次数、运行时长和 token 消耗由 Agent 宿主负责停止失控执行；Python 可以记录次数和提示升级处理，但不得仅因达到固定次数而获得判定语义 action/Run 失败的权限。
 - 机械检查不得根据关键词、行号重叠、数量、措辞、finding category 或测试用例内容判断分析质量，也不得增加测试用例语义门禁。
 - `kind=flow` 记录的结构校验（`flow_schema.check_flow_structure`：body 为对象、format_version、字段名、节点 id 唯一、edges/paths 的 id 引用）属于格式契约，不属于语义门禁：写入时不合格即拒绝本次写入并逐条返回中文错误，由同一 worker 在本轮修正后重写；Python 不自动修复、不补造节点，也不判断节点 kind/label 的业务含义或流程是否完整（交给 Reviewer）。
+- 新任务声明 `record_contracts.risk=behavior-risk-v1` 时，同样只校验 risk 的格式、字段与引用形态；旧任务沿用冻结规则。不合格由同一 worker 修正同一结果，Python 不判风险真实性、不补造正文、不据此判 action/Run 失败。
 - 新增或扩大 schema、门禁、自动修复、结果提交工具或 action 自动化之前，方案必须先向用户说明：当前已验证的失败、准备新增的确定性行为、可能误拦有效结果的场景、Python 获得与明确不获得的权限，以及为何不能通过简化合同、Agent 规则或客户端限权解决。用户明确确认前不得实施。
 - 门禁失败不得丢弃已经完成的有效语义内容、改派 Agent、重做整个分析或由主 Agent/Python 代修；只把精确错误交回同一 Agent 修正同一 `result_path`。若不能给出具体可修正字段和确定性依据，该检查不得作为阻断门禁。
 - 新增检查的验收必须同时包含：合法语义结果能够通过、非致命不一致只降级且流程能够继续、不可消费或安全边界错误才进入等待修复、同一 Agent 修正后能够继续，以及未完成不会被报告为成功。只证明“能拦住错误”不算完成。
@@ -74,14 +75,9 @@ Coverage 通过资产进入，冻结已选输入内容指纹、来源及匹配�
 - Git 信息只作为版本描述；普通源码目录同样可以分析。
 - 测试用例优先用黑盒语言表达，函数、变量和行号只作为证据。
 
-## 输出要求
+## 运行规则入口
 
-- 风险必须包含复现条件、系统结果、外部观测和排除条件。
-- 测试用例必须包含前置条件、步骤、预期结果、观测方式和清理/恢复。
-- 每条正式风险必须由至少一个测试用例关联；只有 Agent 基于冻结源码确认无法从受支持业务入口到达时才能例外，并记录不可达原因和源码证据。分支、边界、正常流程和 Coverage 用例可以不关联风险。Python 只检查处置是否完整和编号是否存在，不裁决可达性；Reviewer 负责审核不可达结论。
-- 最终质量门禁输出 `PASS` 或 `UNRESOLVED`；不能把未完成工作描述为完成。
-- source-first notes 使用稳定外壳保存 Agent 原文；`behavior-test-v1` 用例与流程按冻结 rubric 提交 object，summary/note 可用文本或
-  Markdown；保留旧正文可读，不恢复富结构语义门禁。其他正式产物优先使用 `schemas/` 中的结构。
+Desktop 外部 source-first worker 读取 `docs/source-first-cli-worker.md`；内部 DSH 使用 `.agents/pangea/`，OpenCode 使用 `.opencode/agents/`，独立 Claude 使用 `CLAUDE.md` 指定的本客户端协议。实际加载与发布复制关系见 `docs/worker-instruction-loading.md`。分析输出内容以当前 task 冻结的 rubric 为准，开发规则不替代运行合同；旧 Run 不追读工作树的新场景规则。
 
 ## 实现约定
 
@@ -99,27 +95,8 @@ Coverage 通过资产进入，冻结已选输入内容指纹、来源及匹配�
 - 首轮 analysis 最多同时派发 3 个互不重叠单元，总单元数不受 3 限制；worker 不得再派发子 Agent。
 - 标准型 analysis 结果齐备后先启动 1 个盲审 Reviewer。`independent_review` task 不包含 analysis result；Graph 接受盲审后，以 `continue_agent` 续接同一 Reviewer 的真实 `task_id` 执行 `comparison_review`，再向该会话开放盲审与首轮结果做对照裁决。Comparison 不是第二次完整分析，也不再启动新的 Reviewer 或第三个复核 Agent。
 - comparison review 保留的 finding 只为受影响单元生成一次 `targeted_closure`；该 action 必须续接对应单元首轮 analysis worker 的真实 `task_id`，在 Workflow 预先复制的 closure 结果中定向补齐，不能创建替代 worker，也不能修改原始 analysis 结果。
-- 主 Agent 只执行 CLI 返回的 action。DSH 在子 Agent 回合结束后直接调用 `pangea_action_settle`；该工具在一次调用内完成校验和推进，不得预先调用 `pangea_action_validate`。不得自行填写或修正语义结果。
-- Graph 创建的新 task 必须写入与 action 相同的不可变 `action_id`；worker 最终只回显这个编号。DSH 并发完成通知必须按回显的 exact `action_id` 逐项 settle，不得根据子任务 UUID、单元名、通知顺序或记忆猜测，也不得把已经 settled 的 action 当成另一个 repair 的待处理 action。这个编号只用于确定性路由，不参与语义校验。
-- Workflow 创建正式 task 时同时创建唯一 `result_path` 和对应结果骨架。客户端与 Adapter 不得另建、改名或从其他结果文件兜底读取。
-- `adapter settle` 返回 `validation.status=invalid` 时，主 Agent 按 `repair_action` 续接同一个 `task_id`，把错误交回原 worker 修正同一 `result_path` 后再次 settle。普通结果校验失败不推进 Action，也不停止 Run；同一错误连续 3 次或该 action 累计修复 6 次只提示宿主停止盲试，Python 不把 Run 判死。Run/action/task、冻结输入或约定 task_id 损坏才属于流程错误。
+- 生命周期调用只使用 Graph 返回并绑定的 exact data_root/run_id/action_id/task_id；实现需保持原 worker 续接、唯一 result_path、有效内容保留和同一结果修复。具体客户端命令只放对应运行入口，禁止混用客户端。
 - Python 只校验 schema、真实 ID、路径归属、引用关系和流程结构等确定性契约，不根据行号重叠、finding category 或测试用例内容推翻 Agent/Reviewer 的语义结论。Coverage 只提供当前 `source_scope` 中唯一匹配的零覆盖提示，不强制生成测试用例。
-
-## Private House Code Policy
-
-<!-- PRIVATE_HOUSE_CODE_PROJECT_POLICY_V1 -->
-
-- 当 `gpt-5.6-sol` 或 `gpt-5.6-terra` 在本仓库规划、编写、修改、调试、
-  测试、重构、审查或维护代码时，必须先完整读取
-  `.agents/skills/private-house-code/SKILL.md`，并在该代码任务中遵循它。
-- 仅当边界确实存在歧义时，才按 Skill 指引读取随附的校准示例；不要把上游
-  评测记录或全局配套说明当作项目任务指引。
-- 用户明确要求、本 `AGENTS.md`、真实安全与数据完整性边界、已发布兼容性和
-  必需测试与 Skill 冲突时，前者优先。
-- 本项目现有的 schema 契约、源码证据可追溯性、`UNRESOLVED` 真实性、
-  `pangea-data/repositories/` 用户源码保护和 Windows / PowerShell 兼容要求
-  都有现实用途；不得仅为减少代码、状态、检查或抽象而弱化它们。
-- 普通交流和不涉及代码的研究不适用本策略。
 
 - 速度型 analysis_settings.mode=speed 跳过盲审，派发一个直接审核首轮结果的 Reviewer，沿用 comparison/closure 合同；旧 Run 遵循冻结设置，缺省为标准型。外部 ACP 单元分析最多三个并发，状态变更顺序执行。
 
