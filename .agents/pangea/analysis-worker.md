@@ -2,7 +2,7 @@
 
 ## behavior-test-v2 场景任务
 
-当 task.analysis_profile=behavior-test-v2 时，先读取绑定 inputs 中 analysis_scene 和当前提供的 rubric_*；按这些冻结规则执行。本文涉及 behavior_test_generation、behavior_test_review 的旧场景职责只适用于 v1，v2不得读取任务未提供的旧规则或扩展其职责。v2所有场景先理解模块并保存结构化业务流程（behavior-flow-v1，包含 nodes/edges/paths，text 不替代流程结构），然后做当前专项；worker 不绘制任何图：流程图由宿主根据 flow 记录确定性渲染，函数变量图（call-graph-v1）仅由用户单独触发。branch/coverage无正式风险分析责任，风险为空不触发返修。Planning只定位和分配，不先做完整分析。既有身份绑定、读取权限、并发、同一worker续接和结果写入规则仍执行。
+当 task.analysis_profile=behavior-test-v2 时，先读取绑定 inputs 中 analysis_scene 和当前提供的 rubric_*；按这些冻结规则执行。本文涉及 behavior_test_generation、behavior_test_review 的旧场景职责只适用于 v1，v2不得读取任务未提供的旧规则或扩展其职责。v2所有场景先理解模块并保存结构化业务流程（behavior-flow-v1，包含 nodes/edges/paths，text 不替代流程结构），然后做当前专项；worker 不绘制任何图：流程图由宿主根据 flow 记录确定性渲染，函数变量图（call-graph-v1）仅由用户单独触发。branch/coverage无正式风险分析责任，风险为空不触发返修。Planning只定位和分配，不先做完整分析。既有身份绑定、读取权限、并发、同一worker续接和结果写入规则仍执行。 risk 场景另交检查账本，证据附引文。
 
 <!-- FLOW-REFERENCE:BEGIN -->
 flow 字段与样例读取当前 task.inputs 中 rubric_scene_flow 对应的冻结 scene_flow.md 的 FLOW-CONTRACT 段，并读完分页；不读取工作树最新版代替。behavior-test-v1 或更早任务未提供 scene_flow 时，按该任务已冻结的生成 rubric 与结果合同执行，不追加新场景规则。
@@ -60,3 +60,7 @@ prepared_source.original_records 是本 action 的原记录，已完整交付且
 核对返修建议时，把源码实际发生的操作与建议声称的操作逐一对应：重复操作必须指出同一执行路径上的两次操作及同一对象；跨次操作必须核对第一次结束后的实际状态和第二次入口。撤回旧判断后，新的判断仍须独立证据，不能由旧判断不成立推出相反故障。每项处置在已有 summary 中简述“接受/驳回/待确认、源码依据、修改后的记录编号”，不新增独立复核阶段。
 
 业务用例按当前任务全部冻结 rubric 的黑盒与可实施灰盒要求执行。普通正文只写业务操作和外部判据；注入步骤可定位函数/变量，内部推演单列证据。execution_readiness 与 readiness_reason 如实区分 ready、needs_instrumentation 和 unknown，不虚构设施或实测。不同触发路径独立成例，参考文件不扩大主责范围。
+
+<!-- RISK-REFERENCE:BEGIN -->
+风险场景合同以本 Run 冻结的 scene_risk / scene_risk_review 合同块为准，读取语言风险方法与风险信号；另交 kind=check 检查账本，证据附 evidence_quotes。G1–G4 当前只提示 warning，核对后由原 worker 修正；旧任务继续使用其冻结合同。
+<!-- RISK-REFERENCE:END -->

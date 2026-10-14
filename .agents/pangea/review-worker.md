@@ -2,7 +2,7 @@
 
 ## behavior-test-v2 场景任务
 
-当 task.analysis_profile=behavior-test-v2 时，先读取绑定 inputs 中 analysis_scene 和当前提供的 rubric_*；按这些冻结规则执行。本文涉及 behavior_test_generation、behavior_test_review 的旧场景职责只适用于 v1，v2不得读取任务未提供的旧规则或扩展其职责。v2所有场景先理解模块并保存结构化业务流程（behavior-flow-v1，包含 nodes/edges/paths，text 不替代流程结构），然后做当前专项；worker 不绘制任何图：流程图由宿主根据 flow 记录确定性渲染，函数变量图（call-graph-v1）仅由用户单独触发。branch/coverage无正式风险分析责任，风险为空不触发返修。Planning只定位和分配，不先做完整分析。既有身份绑定、读取权限、并发、同一worker续接和结果写入规则仍执行。
+当 task.analysis_profile=behavior-test-v2 时，先读取绑定 inputs 中 analysis_scene 和当前提供的 rubric_*；按这些冻结规则执行。本文涉及 behavior_test_generation、behavior_test_review 的旧场景职责只适用于 v1，v2不得读取任务未提供的旧规则或扩展其职责。v2所有场景先理解模块并保存结构化业务流程（behavior-flow-v1，包含 nodes/edges/paths，text 不替代流程结构），然后做当前专项；worker 不绘制任何图：流程图由宿主根据 flow 记录确定性渲染，函数变量图（call-graph-v1）仅由用户单独触发。branch/coverage无正式风险分析责任，风险为空不触发返修。Planning只定位和分配，不先做完整分析。既有身份绑定、读取权限、并发、同一worker续接和结果写入规则仍执行。 risk 场景另交检查账本，证据附引文。
 
 
 你是唯一 Reviewer。先调用 pangea_task_open 核对 review_stage、analysis_profile、冻结 inputs
@@ -77,3 +77,7 @@ Comparison 不是第二次完整分析。正确且已表达的内容不重写；
 当 task.review_mode=speed 时，当前 comparison_review 是直接审查首轮结果，不执行独立盲审，
 也不存在盲审结果；读取冻结 behavior_test_review 的速度型说明，核对锁定用例与源码后，
 使用现有 finding/decision 合同交付。不得声称已盲审。标准型仍在原 Reviewer 会话先盲审再对照。
+
+<!-- RISK-REFERENCE:BEGIN -->
+风险场景合同以本 Run 冻结的 scene_risk / scene_risk_review 合同块为准，读取语言风险方法与风险信号；另交 kind=check 检查账本，证据附 evidence_quotes。G1–G4 当前只提示 warning，核对后由原 worker 修正；旧任务继续使用其冻结合同。
+<!-- RISK-REFERENCE:END -->

@@ -57,6 +57,9 @@ _CASE_PURPOSES = {
 }
 
 _FIELD_LABELS = {
+    "evidence_quotes": "源码引文", "check_id": "检查编号", "lens": "检查镜头",
+    "object": "检查对象", "hypothesis": "假设", "conclusion": "结论", "reasoning": "依据",
+    "sites": "位置", "signal_ids": "关联信号", "risk_ids": "关联风险",
     "action_id": "Action",
     "analysis_profile": "分析模式",
     "associated_cases": "关联用例",
@@ -270,6 +273,10 @@ def _mapping_markdown(body: dict[str, Any]) -> str:
         if key == "title" or (key in {"risk_id", "unresolved_id", "note_id"} and title):
             continue
         label = _FIELD_LABELS.get(key, key.replace("_", " "))
+        if key == 'evidence_quotes':
+            from pangea_agent.report.risk_method import quotes_markdown
+            lines.extend([f'##### {label}', '', quotes_markdown(value), ''])
+            continue
         if isinstance(value, list):
             lines.extend([f"##### {label}", "", *_markdown_list(value), ""])
         elif isinstance(value, dict):
@@ -611,6 +618,8 @@ def _behavior_markdown(
                     body,
                     "",
                 ])
+                if scene and scene.get('method_version') == 'risk-method-v1':
+                    lines.extend(f'> 引文与源码不符（待核对）：{w.get("message", "")}' for w in result.warnings if w.get('kind') == 'evidence_quote_mismatch' and w.get('record_id') == record.record_id)
                 if record.evidence:
                     lines.extend(["证据：", "", _body_text(record.evidence), ""])
                 if record.relates_to:
@@ -674,11 +683,17 @@ def _behavior_markdown(
         f"- 测试目的未声明：`{purpose_counts['unclassified']}`",
         f"- 产品黑盒：`{level_counts['business_blackbox']}`",
         f"- 业务灰盒（含定点故障注入）：`{level_counts['developer_assisted']}`",
-        f"- 可实施黑盒与灰盒（作者声明）：`{ready_count}/{len(case_records)}`，`{ratio}`；目标 ≥70%。",
+        ("- 风险场景不设黑盒比例目标；用例层级按实际操作如实声明。" if scene and scene.get('presentation', {}).get('blackbox_target') is False else f"- 可实施黑盒与灰盒（作者声明）：`{ready_count}/{len(case_records)}`，`{ratio}`；目标 ≥70%。"),
         "- 上述比例只汇总有效记录的显式层级和 ready 声明，未提供声明的不计入分子；语义达标以 Reviewer 结论为准，定向修正后的记录不冒充已独立复核。",
         f"- 接口与白盒等辅助用例（含待补执行条件）：`{level_counts['interface_contract'] + level_counts['whitebox_support'] + level_counts['unclassified']}`",
         "",
     ])
+    if scene and scene.get('presentation', {}).get('check_ledger'):
+        from pangea_agent.report.risk_method import ledger_markdown, review_markdown
+        ledger, checks = ledger_markdown(delivery, anchors)
+        totals = {c: sum(r.body.get('conclusion') == c for r in checks) for c in ('confirmed', 'excluded', 'unresolved', 'not_applicable')}
+        risk_count = sum(r.kind == 'risk' for _, result in delivery for r in active_and_retired(result)[0])
+        lines.extend([f'- 风险记录：{risk_count}', f'- 检查账本：{len(checks)} 条（已证实 {totals["confirmed"]}／已排除 {totals["excluded"]}／待确认 {totals["unresolved"]}／不适用 {totals["not_applicable"]}）', '', *ledger, *review_markdown(records)])
     def other_flow_record(unit_id: str, record: Any) -> list[str]:
         anchor = _record_anchor(unit_id, record.record_id)
         lines_out = [
@@ -748,6 +763,7 @@ def _behavior_markdown(
 
 
 _NAV_TITLES = {
+    "风险检查账本", "风险检查复核",
     "交付状态",
     "用例总览",
     "模块流程说明",

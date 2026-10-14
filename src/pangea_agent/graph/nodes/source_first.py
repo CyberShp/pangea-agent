@@ -389,10 +389,10 @@ def prepare_source_first_inputs(state: PangeaState) -> PangeaState:
         "effective_context_budget": contract.get("effective_context_budget"),
         "result_format": "pangea-plan-v1",
         "result_path": str(result_path),
-        "rubric_paths": [planning_rubric, *(scene_rubric_paths(run_dir, scene, "planning", []) if scene else [])],
+        "rubric_paths": [planning_rubric, *(scene_rubric_paths(run_dir, scene, "planning", [], analysis_language) if scene else [])],
         "inputs": [
             *scene_task_inputs(run_dir, scene),
-            *([_input("scene_planning_rubric", path, "场景规划职责") for path in scene_rubric_paths(run_dir, scene, "planning", [])] if scene else []),
+            *([_input("scene_planning_rubric", path, "场景规划职责") for path in scene_rubric_paths(run_dir, scene, "planning", [], analysis_language)] if scene else []),
             *_example_inputs(state),
             _input("planning_metadata", compact_path, "源码结构摘要"),
             _input("asset_candidates", inputs / "asset-candidates.json", "候选结构化资料"),
@@ -405,6 +405,14 @@ def prepare_source_first_inputs(state: PangeaState) -> PangeaState:
     if scene:
         task["scenario"] = scene["id"]
         task["record_contracts"] = dict(scene.get("record_contracts", {}))
+    if scene and scene.get("risk_signals"):
+        from pangea_agent.inventory.risk_signals import generate_summary
+        summary = generate_summary(run_dir, task, analysis_language)
+        compact_metadata["risk_signal_overview"] = [
+            {key: f[key] for key in ("repo_id", "path", "counts")}
+            for f in sorted(summary["files"], key=lambda f: (-sum(f["counts"].values()), f["repo_id"], f["path"]))[:100]]
+        write_json(compact_path, compact_metadata)
+        task["inputs"].append(_input("risk_signal_summary", inputs / "risk-signal-summary.json", "风险检索线索"))
     attach_incremental_inputs(run_dir, task)
     write_json(task_path, task)
     initialize_result(
@@ -486,6 +494,7 @@ def _planning_units(state: PangeaState, action: ActionState, task: dict, result)
         units_by_id[unit_id] = {
             "unit_id": unit_id,
             "title": str(body.get("title") or unit_id),
+            **({"risk_lenses": body["risk_lenses"]} if "risk_lenses" in body else {}),
             "owned_regions": owned,
             "context_regions": context if isinstance(context, list) else [],
             "purpose": str(body.get("purpose") or ""),
@@ -711,10 +720,15 @@ def _make_analysis_actions(state: PangeaState, progress: WorkflowProgress, units
         if scene:
             task["scenario"] = scene["id"]
             task["record_contracts"] = dict(scene.get("record_contracts", {}))
-            task["rubric_paths"] = scene_rubric_paths(run_directory(state), scene, "analysis", unit.get("methodology_ids", []))
+            task["rubric_paths"] = scene_rubric_paths(run_directory(state), scene, "analysis", unit.get("methodology_ids", []), task["analysis_language"])
             task["inputs"] = [item for item in task["inputs"] if not item["input_id"].startswith("rubric_")]
             task["inputs"].extend(scene_task_inputs(run_directory(state), scene))
             task["inputs"].extend(_input(f"rubric_{'user_' if Path(path).parent.name == 'user' else ''}{Path(path).stem}", path, f"方法论 {Path(path).stem}") for path in task["rubric_paths"])
+        if scene and scene.get("risk_signals"):
+            from pangea_agent.inventory.risk_signals import generate_unit
+            task["risk_lenses"] = unit.get("risk_lenses", [])
+            signal_path = generate_unit(run_directory(state), task, key)
+            task["inputs"].append(_input("unit_risk_signals", signal_path, "本单元风险检索线索"))
         attach_incremental_inputs(run_directory(state), task)
         write_json(task_path, task)
         initialize_result(
@@ -763,7 +777,7 @@ def _prepare_review(state: PangeaState, progress: WorkflowProgress) -> None:
     plan = read_json(run_directory(state) / "inputs" / "source-first-plan.json")
     if scene:
         review_rubrics = scene_rubric_paths(run_directory(state), scene, "review", [
-            name for unit in plan.get("units", []) for name in unit.get("methodology_ids", [])])
+            name for unit in plan.get("units", []) for name in unit.get("methodology_ids", [])], manifest.get("analysis_language", "c_cpp"))
     review_owned = _scope_paths(manifest.get("scope_expansion", {}), "code_paths")
     review_regions = []
     if plan.get("scope_policy") == "target-first-v1":
@@ -812,6 +826,9 @@ def _prepare_review(state: PangeaState, progress: WorkflowProgress) -> None:
         task["scenario"] = scene["id"]
         task["record_contracts"] = dict(scene.get("record_contracts", {}))
         task["inputs"].extend(scene_task_inputs(run_directory(state), scene))
+        if scene.get("risk_signals"):
+            task["inputs"].append(_input("risk_signal_summary", run_directory(state) / "inputs/risk-signal-summary.json", "风险检索线索"))
+            task["inputs"].extend(_input(f"risk_signals_{_safe_key(u['unit_id'])}", run_directory(state) / "inputs/risk-signals" / f"{_safe_key(u['unit_id'])}.json", "单元风险检索线索") for u in plan.get("units", []))
     attach_incremental_inputs(run_directory(state), task)
     write_json(task_path, task)
     initialize_result(

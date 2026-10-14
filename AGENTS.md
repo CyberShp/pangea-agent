@@ -91,7 +91,7 @@ Desktop 外部 source-first worker 读取 `docs/source-first-cli-worker.md`；�
 
 - 各客户端只读取自己的入口和 Agent 规则。客户端目录中的内容不得引用或调用另一个客户端的规则文件。
 - 共享范围只包括 graph、schema、rubric 和 CLI 契约；客户端专有的命令、会话轨迹和 Agent 调用方式不得写入共享方法论。
-- Python 不调用模型 API，也不做语义拆分。一个 Planning Agent 按功能模块或文件族规划单元。
+- Python 不调用模型 API，也不做语义拆分。一个 Planning Agent 按功能模块或文件族规划单元；risk-method-v1 按资源申请/释放、数据生产/消费的契约闭包规划，无法同单元时显式放入 context。
 - 首轮 analysis 最多同时派发 3 个互不重叠单元，总单元数不受 3 限制；worker 不得再派发子 Agent。
 - 标准型 analysis 结果齐备后先启动 1 个盲审 Reviewer。`independent_review` task 不包含 analysis result；Graph 接受盲审后，以 `continue_agent` 续接同一 Reviewer 的真实 `task_id` 执行 `comparison_review`，再向该会话开放盲审与首轮结果做对照裁决。Comparison 不是第二次完整分析，也不再启动新的 Reviewer 或第三个复核 Agent。
 - comparison review 保留的 finding 只为受影响单元生成一次 `targeted_closure`；该 action 必须续接对应单元首轮 analysis worker 的真实 `task_id`，在 Workflow 预先复制的 closure 结果中定向补齐，不能创建替代 worker，也不能修改原始 analysis 结果。
@@ -106,3 +106,7 @@ Desktop 外部 source-first worker 读取 `docs/source-first-cli-worker.md`；�
 - 同一单元集中处理关联 finding，只进行一次语义修正，不因措辞变化发起新一轮完整复核。宿主在定向修正原回合后最多自动续接一次机械修复；仍未完成则暂停，覆盖上述通用修复提示次数。速度型每次继续的修正执行窗口 15 分钟，标准型 30 分钟；不是整个 Run 的耗时承诺。
 - 暂停不判语义失败，不替换 worker，不丢弃其他单元成功结果。用户继续时续接原 task；结束修正时先冻结写入和停止执行，再保留已有产物生成 UNRESOLVED 部分报告。
 - 用例统一沿用 execution_readiness=ready/needs_instrumentation/unknown 与 readiness_reason。内部函数和变量只能作为证据，除非有明确的测试桩/注入设施；不由 Python 关键词过滤代替语义审核。新规则只冻结到新 Run。
+
+## risk-method-v1 的确定性提示
+
+behavior-risk-v2、behavior-check-v1、behavior-review-check-v1 只检查结构、引文是否逐字出自冻结位置、引用 ID 是否存在。用户 2026-10-15 明确选择 G1–G4 全部提示模式；不得拒写或因缺复核记录阻断，不获得风险真实性、相关性或充分性的判断权。旧任务继续依冻结合同执行。

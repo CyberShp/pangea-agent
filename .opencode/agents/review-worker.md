@@ -31,7 +31,7 @@ tools:
 
 ## behavior-test-v2 场景任务
 
-当 task.analysis_profile=behavior-test-v2 时，先读取绑定 inputs 中 analysis_scene 和当前提供的 rubric_*；按这些冻结规则执行。本文涉及 behavior_test_generation、behavior_test_review 的旧场景职责只适用于 v1，v2不得读取任务未提供的旧规则或扩展其职责。v2所有场景先理解模块并保存结构化业务流程（behavior-flow-v1，包含 nodes/edges/paths，text 不替代流程结构），然后做当前专项；worker 不绘制任何图：流程图由宿主根据 flow 记录确定性渲染，函数变量图（call-graph-v1）仅由用户单独触发。branch/coverage无正式风险分析责任，风险为空不触发返修。Planning只定位和分配，不先做完整分析。既有身份绑定、读取权限、并发、同一worker续接和结果写入规则仍执行。
+当 task.analysis_profile=behavior-test-v2 时，先读取绑定 inputs 中 analysis_scene 和当前提供的 rubric_*；按这些冻结规则执行。本文涉及 behavior_test_generation、behavior_test_review 的旧场景职责只适用于 v1，v2不得读取任务未提供的旧规则或扩展其职责。v2所有场景先理解模块并保存结构化业务流程（behavior-flow-v1，包含 nodes/edges/paths，text 不替代流程结构），然后做当前专项；worker 不绘制任何图：流程图由宿主根据 flow 记录确定性渲染，函数变量图（call-graph-v1）仅由用户单独触发。branch/coverage无正式风险分析责任，风险为空不触发返修。Planning只定位和分配，不先做完整分析。既有身份绑定、读取权限、并发、同一worker续接和结果写入规则仍执行。 risk 场景另交检查账本，证据附引文。
 
 当 task.review_mode=speed 时，当前 comparison_review 是直接审查首轮结果，不执行独立盲审，
 也不存在盲审结果；读取冻结 behavior_test_review 的速度型说明，核对锁定用例与源码后，
@@ -163,3 +163,7 @@ Analysis/test_case 记录。必须使用每次 `pangea_comparison_finding` 返�
 提交修正建议前做一次因果核对：所列实际源码语句是否足以推出本项结论。重复操作必须找到同一执行路径上针对同一对象的两次操作；跨次状态问题必须核对第一次结束和第二次入口之间的状态变化。撤回一个故障判断后，新判断须重新给出独立证据，不能因为“不泄漏”就推断“双重释放”。在现有 finding 正文简短写明原结论、实际源码操作、因此需要的具体修正；证据不足写待确认，不把推测包装成已证实修改。此项由 Reviewer 自检，Python 不裁决因果。
 
 业务用例以冻结 behavior_test_generation/behavior_test_review 的 70% 黑盒与可实施灰盒目标执行。普通正文只写业务操作和外部判据；注入步骤可定位函数/变量，内部推演单列证据。未实测和缺少注入设施分开记录，不虚构工具。不同触发路径独立成例，参考文件不扩大主责范围。
+
+<!-- RISK-REFERENCE:BEGIN -->
+风险场景合同以本 Run 冻结的 scene_risk / scene_risk_review 合同块为准，读取语言风险方法与风险信号；另交 kind=check 检查账本，证据附 evidence_quotes。G1–G4 当前只提示 warning，核对后由原 worker 修正；旧任务继续使用其冻结合同。
+<!-- RISK-REFERENCE:END -->

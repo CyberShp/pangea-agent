@@ -1,4 +1,5 @@
 # 场景分析共同规则
+当前场景规则与本文件对同一事项规定不同时，以场景规则为准。
 
 仅用于 behavior-test-v2。先读 analysis_scene；按 scene_flow 先保存模块结构化业务流程，再开展当前场景工作。
 用户文档和方法论通过 input-read 按需读取，不把全仓清单或所有资料全文写入提示。
@@ -136,6 +137,8 @@ test_level 按实际操作及观测确定：
 
 ## 业务可实施性与 70% 交付目标
 
+风险场景（risk-method-v1）按 scene_risk 的验证用例策略执行，本节比例目标不适用。
+
 最终独立用例中，黑盒与可实施灰盒合计至少 70%；不是代码覆盖率，也不能靠复制成功用例、
 改标签、移入附录或将白盒改名 note 凑比例。所有保留的正式与辅助用例均计入分母。
 
@@ -175,6 +178,7 @@ ready 表示设计入口、触发设施和观测有依据，不代表实测通�
 仅在冻结场景承担正式风险责任时保存 risk；分支与覆盖率场景的产品疑点仍保存为 note/unresolved。
 
 <!-- RISK-CONTRACT:BEGIN -->
+当前 task 的 record_contracts.risk=behavior-risk-v2 时，改用 scene_risk.md 的 RISK-CONTRACT-V2 样例与规则。
 当前 task 的 `record_contracts.risk=behavior-risk-v1` 时，`kind=risk` 的 body 直接使用以下对象格式。
 示例只说明结构；实际触发、结果、观测及排除条件由当前冻结证据决定。
 

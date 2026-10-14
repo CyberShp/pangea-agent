@@ -14,6 +14,7 @@ from typing import Any
 from uuid import uuid4
 
 from pangea_agent.agent_io import read_json
+from pangea_agent.contract_context import ContractContext
 from pangea_agent.graph.result_store import (
     ResultStoreError,
     active_records,
@@ -129,7 +130,7 @@ def _plan_diagnostics(run_dir: Path, task: dict[str, Any], result) -> dict[str, 
         for region_id, unit_ids in sorted(owners.items())
         if len(unit_ids) > 1
     ]
-    return {
+    diagnostics = {
         "unit_count": len(units),
         "required_owned_region_count": len(required),
         "unknown_references": unknown,
@@ -140,6 +141,11 @@ def _plan_diagnostics(run_dir: Path, task: dict[str, Any], result) -> dict[str, 
         "ready": bool(units) and not selection_issues and not unknown and not duplicate
         and (task.get("scope_policy") == "target-first-v1" or required <= set(owners)),
     }
+    if (task.get('record_contracts') or {}).get('check') == 'behavior-check-v1':
+        from pangea_agent.risk_method_diagnostics import planning_diagnostics
+        summary_path = run_dir / 'inputs/risk-signal-summary.json'
+        diagnostics.update(planning_diagnostics(units, all_regions, read_json(summary_path) if summary_path.is_file() else {}))
+    return diagnostics
 
 
 def _comparison_diagnostics(run_dir: Path, task: dict[str, Any], result) -> list[str]:
@@ -189,6 +195,11 @@ def validate_source_first_result(
     view = read_records(path, binding, cursor=0, limit=1)
     records = active_records(result)
     warnings = list(view.get("warnings", []))
+    if (task.get('record_contracts') or {}).get('check') == 'behavior-check-v1' and task.get('task_type') in {'source_first_analysis', 'source_first_closure'}:
+        from pangea_agent.risk_method_diagnostics import analysis_unit_diagnostics
+        signal_input = next((i for i in task.get('inputs', []) if i.get('input_id') == 'unit_risk_signals'), None)
+        signals = read_json(Path(signal_input['path'])) if signal_input else {}
+        warnings.append({'kind': 'risk_method_hint', **analysis_unit_diagnostics(task, records, signals)})
     if not records:
         return {
             "status": "incomplete",
@@ -231,6 +242,24 @@ def validate_source_first_result(
                 "diagnostics": diagnostics,
             }
     if task.get("review_stage") == "comparison_review":
+        if (task.get('record_contracts') or {}).get('review_check') == 'behavior-review-check-v1':
+            context = ContractContext(data_root, run_id, task, current_records=result.records)
+            units, probes = context.review_sources()
+            review_checks = [r.body for r in records if r.kind == 'note' and isinstance(r.body, dict) and r.body.get('format_version') == 'behavior-review-check-v1']
+            def references(body, field, key):
+                items = body.get(field, [])
+                return [item[key] for item in items if isinstance(item, dict) and isinstance(item.get(key), str)] if isinstance(items, list) else []
+            for unit_id, locked in units.items():
+                reviews = [b for b in review_checks if b.get('unit_id') == unit_id]
+                if not reviews:
+                    warnings.append({'kind': 'review_check_missing', 'unit_id': unit_id, 'message': f'{unit_id} 缺少 behavior-review-check-v1 复核记录'})
+                verdicts = {ref for b in reviews for ref in references(b, 'risk_verdicts', 'record_id')}
+                for record in locked.values():
+                    if record.kind == 'risk' and record.record_id not in verdicts:
+                        warnings.append({'kind': 'review_verdict_missing', 'unit_id': unit_id, 'record_id': record.record_id})
+            recalled = {(b['unit_id'], ref) for b in review_checks if isinstance(b.get('unit_id'), str) for ref in references(b, 'recall_items', 'probe_check_id')}
+            for unit_id, check_id in sorted(context.required_probes - recalled):
+                warnings.append({'kind': 'review_recall_missing', 'unit_id': unit_id, 'check_id': check_id})
         errors = _comparison_diagnostics(path.parents[2], task, result)
         if errors:
             return {
@@ -290,6 +319,9 @@ def task_open(data_root: str, run_id: str, action_id: str, task_id: str, *, prep
             "finish": ["work-finish", "<binding_args>", "--revision", "<最后一次写入返回的revision>"],
             "note": "每次--unit-file只提交一个单元对象，根字段为title、purpose及归属，不包units数组或整份plan。owned_files为{repo_id,path}对象数组；context_files为字符串数组，使用仓库ID:冻结相对路径，无依赖用[]。新单元不填unit_id；更新使用返回的unit_id；逐次使用刚返回的revision。宿主负责settle，不必再次搜索schema。",
         }
+        if (task.get('record_contracts') or {}).get('check') == 'behavior-check-v1':
+            opened['write_contract']['unit_example']['risk_lenses'] = ['resource_lifecycle', 'boundary']
+            opened['write_contract']['note'] += '申请与释放、生产与消费分在不同单元时，另一侧写入 context_files。'
     if not prepare_source:
         return opened
     if task.get("task_type") == "source_first_closure":
@@ -491,6 +523,7 @@ def result_write(
         records,
         request_id=request_id,
         record_contracts=task.get("record_contracts"),
+        context=ContractContext(data_root, run_id, task),
     )
 
 
@@ -586,6 +619,7 @@ def comparison_finding_write(
         [record],
         request_id=request_id,
         record_contracts=task.get("record_contracts"),
+        context=ContractContext(data_root, run_id, task),
     )
 
 
@@ -682,6 +716,7 @@ def result_supersede(
         [record],
         request_id=request_id,
         record_contracts=task.get("record_contracts"),
+        context=ContractContext(data_root, run_id, task),
     )
 
 
@@ -742,6 +777,7 @@ def result_repair(
         records,
         expected_sha256=expected_sha256,
         record_contracts=task.get("record_contracts"),
+        context=ContractContext(data_root, run_id, task),
     )
 
 
@@ -990,7 +1026,7 @@ def work_finish(
                 "request_id": request_id, "execution_id": None}
     with runtime_timing(data_root, run_id, identity, "work_finish", "total"):
         with runtime_timing(data_root, run_id, identity, "work_finish", "binding_and_result"):
-            binding, path, _ = _binding_and_result(data_root, run_id, action_id, task_id, writable=True)
+            binding, path, task = _binding_and_result(data_root, run_id, action_id, task_id, writable=True)
         state = {"data_root": data_root, "run_id": run_id}
         with runtime_timing(data_root, run_id, identity, "work_finish", "progress_load"):
             progress = load_progress(state)
@@ -1009,6 +1045,9 @@ def work_finish(
             with runtime_timing(data_root, run_id, identity, "work_finish", "progress_save"):
                 progress.first_finish_revisions.setdefault(action_id, int(response["revision"]))
                 save_progress(state, progress)
+        if (task.get('record_contracts') or {}).get('check') == 'behavior-check-v1':
+            validation = validate_source_first_result(data_root, run_id, action_id, task_id)
+            response.update(status=validation['status'], warnings=validation.get('warnings', []), validation=validation)
         return response
 
 
@@ -1074,6 +1113,7 @@ def plan_write(
         [{"kind": "unit_plan", "body": saved_unit, "relates_to": [unit_id]}],
         request_id=request_id,
         record_contracts=task.get("record_contracts"),
+        context=ContractContext(data_root, run_id, task),
     )
     response["unit_id"] = unit_id
     response["operation"] = operation
@@ -1137,6 +1177,7 @@ def review_decide(
         [{"kind": "review_decision", "body": decision, "supersedes": targets}],
         request_id=request_id,
         record_contracts=task.get("record_contracts"),
+        context=ContractContext(data_root, run_id, task),
     )
 
 

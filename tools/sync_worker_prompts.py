@@ -28,6 +28,21 @@ ANCHOR = "## behavior-test-v2 场景任务"
 REFERENCE = f"""{BEGIN}
 flow 字段与样例读取当前 task.inputs 中 rubric_scene_flow 对应的冻结 scene_flow.md 的 FLOW-CONTRACT 段，并读完分页；不读取工作树最新版代替。behavior-test-v1 或更早任务未提供 scene_flow 时，按该任务已冻结的生成 rubric 与结果合同执行，不追加新场景规则。
 {END}"""
+RISK_TARGETS = tuple(ROOT / directory / f'{role}-worker.md'
+                     for directory in ('.claude/agents', '.opencode/agents', '.agents/pangea')
+                     for role in ('analysis', 'review'))
+RISK_BEGIN, RISK_END = '<!-- RISK-REFERENCE:BEGIN -->', '<!-- RISK-REFERENCE:END -->'
+RISK_REFERENCE = f'''{RISK_BEGIN}
+风险场景合同以本 Run 冻结的 scene_risk / scene_risk_review 合同块为准，读取语言风险方法与风险信号；另交 kind=check 检查账本，证据附 evidence_quotes。G1–G4 当前只提示 warning，核对后由原 worker 修正；旧任务继续使用其冻结合同。
+{RISK_END}'''
+
+
+def apply_risk_reference(text: str) -> str:
+    if RISK_BEGIN in text:
+        start = text.index(RISK_BEGIN)
+        stop = text.index(RISK_END, start) + len(RISK_END)
+        return text[:start] + RISK_REFERENCE + text[stop:]
+    return text.rstrip() + '\n\n' + RISK_REFERENCE + '\n'
 
 
 def _read(path: Path) -> tuple[str, str]:
@@ -75,6 +90,14 @@ def sync(check: bool) -> list[Path]:
         drifted.append(target)
         if not check:
             target.write_bytes(updated.replace("\n", newline).encode("utf-8"))
+    for target in RISK_TARGETS:
+        text, newline = _read(target)
+        updated = apply_risk_reference(text)
+        if updated != text:
+            if target not in drifted:
+                drifted.append(target)
+            if not check:
+                target.write_bytes(updated.replace('\n', newline).encode('utf-8'))
     return drifted
 
 

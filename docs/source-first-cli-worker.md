@@ -6,7 +6,7 @@
 
 先用 task-open 核对绑定、task_type、analysis_profile、role/stage、目标、主责范围和唯一 result_path；延后字段从 task.deferred_fields 指定的 input_id 读取。不从目录、历史 Run、文件时间或上一轮回复猜身份和阶段。完整读取本 task 列出的全部冻结 rubric，所选内置与用户方法论同样适用；选择的方法论不能扩大场景职责。
 
-- behavior-test-v2：先读 analysis_scene、共同规则、scene_flow 和当前场景规则，再读所选方法论。module 保持综合行为和轻量风险；risk 聚焦有依据失效；branch/coverage 不承担正式风险账本责任。流程字段与样例读取冻结 rubric_scene_flow 的 FLOW-CONTRACT 段，风险格式按任务提供的冻结契约执行。
+- behavior-test-v2：先读 analysis_scene、共同规则、scene_flow 和当前场景规则，再读语言风险方法、unit_risk_signals 和所选方法论。module 保持综合行为和轻量风险；risk 聚焦有依据失效；branch/coverage 不承担正式风险账本责任。流程字段与样例读取冻结 rubric_scene_flow 的 FLOW-CONTRACT 段，风险格式按 task.record_contracts 和冻结 scene_risk 的合同块执行。
 - behavior-test-v1：按本 task 已冻结的 behavior_test_generation/behavior_test_review 执行，不额外读取新 scene_* 规则。未提供 scene_flow 时，流程仍按该任务冻结规则与结果合同解释。
 - 更早的 source-first profile：读取本 task 实际提供的方法论和写入合同，不套用新 profile。task_type=analysis/closure 的旧 Graph 富结构合同由其原客户端执行，不使用本 source-first CLI 合同替换。
 
@@ -50,7 +50,7 @@ $unitFile = Join-Path $env:PANGEA_WORKER_SCRATCH 'unit.json'
 - `task-open`：读取当前任务的精简视图。核对 role/stage、target、inputs、owned_regions 与 result_path。大字段和全范围清单不内联；`task.deferred_fields` 给出其 input_id。先按需读取当前单元归属、目标与冻结 rubric，不为获取依赖权限而遍历全范围。
 - `input-read --input-id ID`：读冻结 rubric、用户附件、coverage、修正记录，也可用 `task:字段名` 分页读取当前绑定任务的原始字段。按 next_cursor 续读，默认每页 12000 字符；JSON 字段须拼接所需完整分页后解析，不把分页片段当完整 JSON。源码通过 source-index/search/read 按疑点读取，不一次性回灌整个清单或全文。宿主未预读源码不表示源码缺失。
 - `source-index --view compact`：文件导航；文件内拆分才读取 region。`source-read --repo-id ID --path PATH --view text` 可加行号；`source-search --query TEXT --view compact` 搜索冻结范围。续读保留原筛选参数，只替换 page-token/cursor。
-- `result-read --view compact`：获取 revision 和当前记录。`result-write --expected-revision N --records JSON数组` 增量保存，每条普通记录使用 kind、body；kind 使用 task/rubric 支持的 note、summary、flow、test_case、risk、unresolved 等，不另造格式。
+- `result-read --view compact`：获取 revision 和当前记录。`result-write --expected-revision N --records JSON数组` 增量保存，每条普通记录使用 kind、body；kind 使用 task/rubric 支持的 note、summary、flow、test_case、risk、check、unresolved 等，不另造格式。
 - `plan-write --expected-revision N --unit-file JSON文件`（或 `--unit JSON对象`）：每次提交一个单元对象，根字段为 title、purpose 及归属，不包 units 数组或整份 plan。整文件归属 owned_files 使用 `{repo_id,path}` 对象数组；可选 context_files 使用字符串数组，格式为 `仓库ID:冻结相对路径`，无依赖用 `[]`。文件内范围用 source-index 实际返回的 owned_regions；新建不自造 unit_id，更新带回真实 unit_id；逐次使用刚返回的 revision。
 - `result-supersede --expected-revision N --target-record-ids JSON数组 --replacement JSON对象`：原 worker 定向更正原记录，保留无关正文。先回读真实 record_id，不从用例编号推测。仅修改文本时优先用 `--edits [{"path":[],"old":"唯一原文","new":"更正文字"}]`，不同时传 replacement。完整 replacement 省略 kind 时继承同类型目标；混合类型目标必须显式指定 kind，失败不会退休原记录。
 - `comparison-read --version-set-id ID --view compact`：只在 comparison 阶段读取 task 指定的锁定版本。
@@ -101,3 +101,9 @@ def capture(argv, cwd, evidence_file):
 ```
 
 先记录编译命令，退出码为 0 才执行生成的程序；可执行文件使用绝对路径。每个正常/异常样例单独执行，除零退出不覆盖其他样例日志。驱动里的预期若失败，应把实际输出用于复核并保留失败证据；只编译成功、命令找不到或日志为空不能写“实测通过”。报告中的 C 调用若要作为可执行步骤，直接复用已编译驱动中的变量声明、赋值和调用语句；宏的可写参数不能写成 `work=1` 作为实参，须先 `int work=1;` 再传 `work`。当前 Run 新写的驱动只证明局部代码行为，不把直接内部函数调用归类为产品业务黑盒。
+
+## risk-method-v1 补充
+
+仅 task 声明新合同的风险场景适用：Planning 按契约闭包划分并选择 risk_lenses；analysis 逐对象、逐镜头反证后交检查账本及 evidence_quotes。G1–G4 当前只提示 warning，保留原始结论，不阻断写入或完成。引文是否支持结论由 Agent 判断。
+
+独立盲审读取信号、按优先级每单元选至少 3 个对象（不足时全部），交带真实 unit_id 的 kind=check 探针。对照复核逐风险证伪、探针对账、每单元抽查至少 2 条 excluded；speed 使用自己在 comparison 写的探针。交付顺序：comparison-finding-write → 每单元 behavior-review-check-v1 复核记录 → review-decide → work-finish。引用真实记录；缺项 warning 需要核对，不代表复核质量合格。

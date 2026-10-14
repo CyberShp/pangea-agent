@@ -1,9 +1,10 @@
 # 模块结构化流程先行
+risk 场景（method_version=risk-method-v1）按 scene_risk 的工作顺序，可以在完成镜头检查后再保存流程，流程仍是必交付内容。
 
 适用于 behavior-test-v2 全部四场景。先理解所选对象入口、主干步骤、关键判断、状态变化、异常退出与恢复及必要上下游关系，再开展当前专项。
 只深入对象及必要依赖；不为先出流程而完整扫描所有风险、分支或无关模块，不增加全局串行阶段或子Agent。
 
-在当前 analysis action 中先保存 kind=flow 的结构化业务流程；专项分析得到新证据后更新同一逻辑 flow_id 并补充用例关联。跨单元的主干由purpose指定的现有worker负责，连接必须有源码依据，不猜补其他单元结论。
+在当前 analysis action 中先保存 kind=flow 的结构化业务流程（risk 场景按 scene_risk 的工作顺序）；专项分析得到新证据后更新同一逻辑 flow_id 并补充用例关联。跨单元的主干由purpose指定的现有worker负责，连接必须有源码依据，不猜补其他单元结论。
 
 恢复 behavior-flow-v1 正文合同：format_version、flow_id、title、description、role、attach_to、nodes、edges、paths、source_evidence。
 - nodes：每个节点使用 id、kind、label、description；入口为 kind=entry，其他节点按真实业务动作、判断和结果表达。

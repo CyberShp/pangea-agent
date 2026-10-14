@@ -19,7 +19,11 @@ from typing import Any, Callable, Iterator
 
 from pangea_agent.agent_io import read_json, write_json
 from pangea_agent.flow_schema import check_flow_structure, format_flow_errors
-from pangea_agent.risk_schema import RISK_FORMAT, check_risk_structure, format_risk_errors
+from pangea_agent.risk_schema import RISK_FORMAT, RISK_FORMAT_V2, check_risk_structure, format_risk_errors
+from pangea_agent.contract_context import ContractContext
+from pangea_agent.check_schema import CHECK_FORMAT, check_check_structure
+from pangea_agent.review_check_schema import REVIEW_CHECK_FORMAT, check_review_check_structure, check_review_references
+from pangea_agent.evidence_quotes import check_quotes
 from pangea_agent.models.source_first import (
     CompletionDeclaration,
     NoteRecord,
@@ -34,7 +38,8 @@ class ResultStoreError(ValueError):
 
 def _check_record_contract(
     offset: int, kind: Any, body: Any, record_contracts: dict[str, str] | None,
-) -> None:
+    context: ContractContext | None = None,
+) -> list[dict]:
     """按任务冻结格式检查本次写入；旧任务未声明 risk 契约时沿用原格式。"""
     if kind == "flow":
         errors = check_flow_structure(body)
@@ -44,6 +49,68 @@ def _check_record_contract(
         errors = check_risk_structure(body)
         if errors:
             raise ResultStoreError(format_risk_errors(offset, errors))
+    contracts = record_contracts or {}
+    new_contract = (kind == 'risk' and contracts.get('risk') == RISK_FORMAT_V2
+                    or kind == 'check' and contracts.get('check') == CHECK_FORMAT
+                    or kind == 'note' and contracts.get('review_check') == REVIEW_CHECK_FORMAT
+                    and isinstance(body, dict) and body.get('format_version') == REVIEW_CHECK_FORMAT
+                    or kind == 'finding' and contracts.get('review_check') == REVIEW_CHECK_FORMAT)
+    new_contract = new_contract or kind == 'unit_plan' and contracts.get('check') == CHECK_FORMAT
+    if not new_contract:
+        return []
+    if context is None:
+        raise ResultStoreError('内部错误：缺少冻结源码上下文')
+    warnings = []
+    def warn(code, errors):
+        warnings.extend({'kind': code, 'record_index': offset, 'message': error} for error in errors)
+    if kind == 'risk':
+        warn('risk_contract_hint', check_risk_structure(body, RISK_FORMAT_V2))
+    elif kind == 'unit_plan' and isinstance(body, dict):
+        for field in ('methodology_ids', 'risk_lenses'):
+            value = body.get(field, [])
+            if not isinstance(value, list) or any(not isinstance(s, str) or not s for s in value):
+                warn('planning_contract_hint', [f'{field} 必须是字符串数组'])
+    elif kind == 'check':
+        warn('check_contract_hint', check_check_structure(body))
+        if isinstance(body, dict):
+            ids = body.get('signal_ids', [])
+            if isinstance(ids, list):
+                warn('check_contract_hint', [f'未知 signal_id：{s}' for s in ids if not isinstance(s, str) or s not in context.signal_ids])
+            if context.task.get('task_type') == 'source_first_review':
+                unit_id = body.get('unit_id')
+                if not isinstance(unit_id, str) or unit_id not in context.unit_ids:
+                    warn('check_contract_hint', ['review check.unit_id 必须是计划中的真实单元'])
+    elif kind == 'note':
+        errors = check_review_check_structure(body)
+        warn('review_check_contract_hint', errors)
+        if not errors:
+            warn('review_check_reference_hint', check_review_references(body, context))
+        for field in ('risk_verdicts', 'recall_items', 'ledger_spot_checks'):
+            items = body.get(field, [])
+            for item in items if isinstance(items, list) else []:
+                if isinstance(item, dict) and 'evidence_quotes' in item:
+                    warn('evidence_quote_mismatch', check_quotes(item['evidence_quotes'], context.resolver))
+    elif kind == 'finding' and isinstance(body, dict) and 'affected_records' in body:
+        units = {}
+        if context.task.get('review_stage') == 'comparison_review':
+            units, _ = context.review_sources()
+        else:
+            warn('review_check_reference_hint', ['affected_records 只在 comparison_review 中核对'])
+        refs = body['affected_records']
+        if not isinstance(refs, list):
+            warn('review_check_reference_hint', ['affected_records 必须是对象数组'])
+        else:
+            for ref in refs:
+                if (not isinstance(ref, dict) or not isinstance(ref.get('unit_id'), str)
+                        or not isinstance(ref.get('record_id'), str)
+                        or ref['record_id'] not in units.get(ref['unit_id'], {})
+                        or not isinstance(context.incoming_relates_to, list)
+                        or ref['unit_id'] not in context.incoming_relates_to):
+                    warn('review_check_reference_hint', [f'affected_records 引用不存在：{ref}'])
+    if isinstance(body, dict) and (kind == 'risk' or 'evidence_quotes' in body):
+        warn('evidence_quote_mismatch', check_quotes(body.get('evidence_quotes'), context.resolver,
+             required_refs=body.get('source_evidence', []) if kind == 'risk' else None))
+    return warnings
 
 
 class RevisionConflict(ResultStoreError):
@@ -61,6 +128,7 @@ class ResultAlreadyBound(ResultStoreError):
 
 
 _KNOWN_KINDS = {
+    "check",
     "summary",
     "flow",
     "risk",
@@ -177,6 +245,7 @@ def repair_result_shell(
     *,
     expected_sha256: str,
     record_contracts: dict[str, str] | None = None,
+    context: ContractContext | None = None,
 ) -> dict[str, Any]:
     """Replace only an unreadable result shell using content resent by its bound Agent."""
 
@@ -213,10 +282,14 @@ def repair_result_shell(
 
         revision = 1 if records else 0
         generated: list[NoteRecord] = []
+        warnings = []
         for offset, item in enumerate(records):
             if not isinstance(item, dict) or "body" not in item:
                 raise ResultStoreError(f"record[{offset}] 必须包含 body")
-            _check_record_contract(offset, item.get("kind") or "note", item["body"], record_contracts)
+            if context is not None:
+                context.current_records = generated
+                context.incoming_relates_to = item.get('relates_to', [])
+            warnings.extend({**w, 'record_id': f'rec-{offset + 1:06d}'} for w in _check_record_contract(offset, item.get("kind") or "note", item["body"], record_contracts, context))
             generated.append(NoteRecord(
                 record_id=f"rec-{offset + 1:06d}",
                 kind=str(item.get("kind") or "note"),
@@ -229,7 +302,7 @@ def repair_result_shell(
         backup_path = path.with_name(f"{path.name}.corrupt-{actual_sha256[:12]}")
         if not backup_path.exists():
             backup_path.write_bytes(raw_bytes)
-        restored = NotesResult(binding=binding, revision=revision, records=generated)
+        restored = NotesResult(binding=binding, revision=revision, records=generated, warnings=warnings)
         write_json(path, restored.model_dump(mode="json"))
         return {
             "format_version": "pangea-notes-repair-v1",
@@ -237,6 +310,7 @@ def repair_result_shell(
             "record_ids": [item.record_id for item in generated],
             "corrupt_sha256": actual_sha256,
             "backup_path": str(backup_path),
+            "warnings": warnings,
         }
 
 
@@ -297,6 +371,7 @@ def append_records(
     *,
     request_id: str | None = None,
     record_contracts: dict[str, str] | None = None,
+    context: ContractContext | None = None,
 ) -> dict[str, Any]:
     """Append a small batch and return generated record IDs and warnings."""
 
@@ -320,7 +395,10 @@ def append_records(
             kind = item.get("kind", "note")
             if not isinstance(kind, str) or not kind:
                 raise ResultStoreError(f"record[{offset}].kind 必须是非空字符串")
-            _check_record_contract(offset, kind, item["body"], record_contracts)
+            if context is not None:
+                context.current_records = [*current.records, *generated]
+                context.incoming_relates_to = item.get('relates_to', [])
+            warnings.extend({**w, 'record_id': f'rec-{next_number:06d}'} for w in _check_record_contract(offset, kind, item["body"], record_contracts, context))
             if kind not in _KNOWN_KINDS:
                 warnings.append({
                     "kind": "unknown_record_kind",

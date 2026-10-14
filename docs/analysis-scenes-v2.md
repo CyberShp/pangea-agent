@@ -40,3 +40,9 @@ worker 不绘制任何图：报告的“模块流程说明”按 role/attach_to 
 
 这些测试使用合成源码和工具提交的合成 Agent 记录，验证协议和生命周期，不冒充真实模型的
 源码理解质量验收。Windows 成品安装升级、真实 NGA/ACP 语义表现仍须在发布验收中验证。
+
+## risk-method-v1
+
+新 risk-analysis Run 冻结语言风险方法、风险信号与 risk/check/review_check 合同；旧 Run 继续使用冻结内容。按契约闭包规划、六镜头逐对象反证、检查账本、盲审探针与对照复核工作；不增加 Agent 或复核轮次，analysis 最多三个并发。风险用例不设黑盒比例目标，库/API 按接口层级如实交付。G1–G4 根据用户 2026-10-15 决定只提示 warning，Python 不判断风险真假。
+
+后续 WP12：编译器/sanitizer 能力冻结与最小驱动复现，本期仅记录设计，另行确认实施。

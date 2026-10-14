@@ -20,3 +20,9 @@ behavior-test-v2 的 Analysis 读取场景共同规则、scene_flow、当前专�
 flow 的源码契约仅维护 `src/pangea_agent/rubrics/builtin/scene_flow.md` 中的 FLOW-CONTRACT 段。三份 analysis 角色只保存指向 task 冻结输入的指针；`tools/sync_worker_prompts.py` 更新或检查这些指针，不再内联契约。behavior-test-v1 或更早 task 未提供 scene_flow 时，继续使用原冻结生成 rubric 和结果合同。
 
 修改运行规则后先验证同步检查、方法论派发及客户端权限/协议回归；实际模型是否遵从规则仍需真实 provider Run 验收。纯合成记录测试只证明派发和消费合同可用，不代表模型分析质量已通过。
+
+## risk-method-v1
+
+新 risk-analysis Run 冻结语言风险方法、风险信号与 risk/check/review_check 合同；旧 Run 继续使用冻结内容。按契约闭包规划、六镜头逐对象反证、检查账本、盲审探针与对照复核工作；不增加 Agent 或复核轮次，analysis 最多三个并发。风险用例不设黑盒比例目标，库/API 按接口层级如实交付。G1–G4 根据用户 2026-10-15 决定只提示 warning，Python 不判断风险真假。
+
+后续 WP12：编译器/sanitizer 能力冻结与最小驱动复现，本期仅记录设计，另行确认实施。

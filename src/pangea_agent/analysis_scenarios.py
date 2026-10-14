@@ -5,9 +5,10 @@ from copy import deepcopy
 from pathlib import Path
 
 from pangea_agent.agent_io import read_json, write_json
-from pangea_agent.risk_schema import RISK_FORMAT
+from pangea_agent.risk_schema import RISK_FORMAT, RISK_FORMAT_V2
 
 PROFILE = "behavior-test-v2"
+RISK_METHOD = "risk-method-v1"
 SCENES = {
     "module-analysis": ("模块分析", "lightweight", "optional", "模块综合分析：业务分支、轻量风险及可选覆盖补测。"),
     "risk-analysis": ("风险分析", "primary", "optional", "聚焦有依据的失效风险及验证用例。"),
@@ -19,7 +20,7 @@ SCENES = {
 def scene_spec(scenario: str) -> dict:
     label, risk, coverage, description = SCENES[scenario]
     name = scenario.split("-")[0]
-    return {
+    spec = {
         "format_version": "analysis-scene-v1", "id": scenario, "label": label,
         "profile": PROFILE, "description": description, "risk_responsibility": risk,
         "coverage_requirement": coverage, "coverage_sources": ["query", "file", "asset"],
@@ -30,6 +31,13 @@ def scene_spec(scenario: str) -> dict:
         "record_contracts": {"risk": RISK_FORMAT},
         "presentation": {"risks": risk != "none", "coverage": coverage, "textual_flow": True},
     }
+    if scenario == 'risk-analysis':
+        spec.update(method_version=RISK_METHOD, risk_signals=True,
+                    record_contracts={'risk': RISK_FORMAT_V2, 'check': 'behavior-check-v1', 'review_check': 'behavior-review-check-v1'},
+                    language_rubrics={role: {'c_cpp': ['c_cpp_risk_methods'], 'lua': ['lua_risk_methods']} for role in ('analysis', 'review')})
+        spec['review_rubrics'].append('scene_risk_review')
+        spec['presentation'].update(check_ledger=True, blackbox_target=False)
+    return spec
 
 
 def scene_options() -> dict:
@@ -69,7 +77,7 @@ def scene_task_inputs(run_dir: Path, spec: dict | None) -> list[dict]:
             ]]
 
 
-def scene_rubric_paths(run_dir: Path, spec: dict, role: str, selected: list[str]) -> list[str]:
+def scene_rubric_paths(run_dir: Path, spec: dict, role: str, selected: list[str], language: str | None = None) -> list[str]:
     root = run_dir / "inputs" / "methodologies"
     available = {p.stem: p for p in (root / "builtin").glob("*.md")}
     manifest = read_json(root / "manifest.json")
@@ -78,7 +86,7 @@ def scene_rubric_paths(run_dir: Path, spec: dict, role: str, selected: list[str]
         path = Path(item["path"])
         path.resolve().relative_to(root.resolve())
         user[item["methodology_id"]] = path
-    required = spec[f"{role}_rubrics"]
+    required = [*spec[f"{role}_rubrics"], *spec.get("language_rubrics", {}).get(role, {}).get(language, [])]
     missing = [name for name in required if name not in available or not available[name].is_file()]
     if missing:
         raise ValueError(f"冻结场景规则不可读取：{', '.join(missing)}")

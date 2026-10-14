@@ -6,6 +6,7 @@ import re
 from typing import Any
 
 RISK_FORMAT = "behavior-risk-v1"
+RISK_FORMAT_V2 = "behavior-risk-v2"
 REQUIRED_FIELDS = (
     "risk_id", "title", "trigger", "system_result",
     "external_observation", "exclusion_condition", "source_evidence",
@@ -23,13 +24,21 @@ _FORBIDDEN = {
 _SOURCE_CHANGE_FIELDS = ("remediation_hint", "fix", "patch", "suggested_patch")
 
 
-def check_risk_structure(body: Any) -> list[str]:
+def check_risk_structure(body: Any, version: str = RISK_FORMAT) -> list[str]:
     """只检查字段、类型及引用形态，空列表表示结构合格。"""
     if not isinstance(body, dict):
         return ["body 必须是 JSON 对象，不能是字符串、数组或代码块"]
     errors: list[str] = []
-    if body.get("format_version") != RISK_FORMAT:
-        errors.append(f"format_version 缺失或不是 {RISK_FORMAT}")
+    if body.get("format_version") != version:
+        errors.append(f"format_version 缺失或不是 {version}")
+    if version == RISK_FORMAT_V2:
+        quotes = body.get("evidence_quotes")
+        if not isinstance(quotes, list) or not quotes:
+            errors.append("evidence_quotes 必须是非空数组")
+        else:
+            for i, quote in enumerate(quotes):
+                if not isinstance(quote, dict) or any(not isinstance(quote.get(k), str) or not quote[k].strip() for k in ("ref", "snippet")):
+                    errors.append(f"evidence_quotes[{i}] 必须含非空字符串 ref、snippet")
     for field in REQUIRED_FIELDS:
         if field not in body:
             errors.append(f"缺少必填字段 {field}")
@@ -63,8 +72,8 @@ def check_risk_structure(body: Any) -> list[str]:
     return errors
 
 
-def format_risk_errors(offset: int, errors: list[str]) -> str:
+def format_risk_errors(offset: int, errors: list[str], version: str = RISK_FORMAT) -> str:
     lines = [f"record[{offset}] risk 结构不合格，共 {len(errors)} 处，请修正后在本轮重写："]
     lines.extend(f"- {error}" for error in errors)
-    lines.append("请参照当前 task 冻结的 scene_common_generation.md 中 RISK-CONTRACT 标准样例。")
+    lines.append("请参照当前 task 冻结的 scene_risk.md 中 RISK-CONTRACT-V2 标准样例。" if version == RISK_FORMAT_V2 else "请参照当前 task 冻结的 scene_common_generation.md 中 RISK-CONTRACT 标准样例。")
     return "\n".join(lines)
