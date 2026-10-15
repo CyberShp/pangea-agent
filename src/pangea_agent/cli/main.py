@@ -38,6 +38,7 @@ from .public_api import (
     show_methodology,
     system_capabilities,
     stop_run,
+    stop_asset,
     deliver_current,
     execution_event,
     resume_run,
@@ -143,6 +144,10 @@ def main() -> None:
     asset_archive = asset_commands.add_parser("archive")
     asset_archive.add_argument("--data-root", default="pangea-data")
     asset_archive.add_argument("--asset-id", required=True)
+    asset_stop = asset_commands.add_parser("stop")
+    asset_stop.add_argument("--data-root", default="pangea-data")
+    asset_stop.add_argument("--asset-id", required=True)
+    asset_stop.add_argument("--action-id")
 
     methodologies = sub.add_parser("methodologies")
     methodology_commands = methodologies.add_subparsers(
@@ -498,6 +503,9 @@ def main() -> None:
                 print_success(result.model_dump(mode="json"))
             elif args.asset_command == "archive":
                 result = archive_asset(args.data_root, args.asset_id)
+                print_success(result.model_dump(mode="json"))
+            elif args.asset_command == "stop":
+                result = stop_asset(args.data_root, args.asset_id, action_id=args.action_id)
                 print_success(result.model_dump(mode="json"))
         except Exception as exc:
             print_error(exc)

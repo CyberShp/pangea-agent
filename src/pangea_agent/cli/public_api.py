@@ -13,6 +13,7 @@ from pangea_agent.assets import (
     list_assets,
     prepare_asset_extraction,
     review_asset,
+    stop_asset,
     update_asset_result,
 )
 from pangea_agent.repositories.registry import list_registered_repositories
@@ -297,6 +298,7 @@ __all__ = [
     "prepare_asset_extraction",
     "prepare_methodology_derivation",
     "review_asset",
+    "stop_asset",
     "run_detail",
     "run_report",
     "set_methodology_status",

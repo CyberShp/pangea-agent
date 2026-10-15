@@ -12,6 +12,7 @@ from pangea_agent.assets import (
     load_asset,
     load_asset_action,
     save_asset_action,
+    serialized_asset_mutation,
 )
 from pangea_agent.cli.run_module_analysis import resume_module_analysis
 from pangea_agent.cli.source_first_api import validate_source_first_result
@@ -508,6 +509,7 @@ def _record_degradations(progress, action_id: str, warnings: list[str]) -> None:
     )
 
 
+@serialized_asset_mutation
 def bind_asset_action(
     data_root: str,
     asset_id: str,
@@ -529,6 +531,7 @@ def bind_asset_action(
     return action.model_dump(mode="json")
 
 
+@serialized_asset_mutation
 def validate_asset_action(data_root: str, asset_id: str, action_id: str) -> dict:
     action = load_asset_action(data_root, asset_id)
     if action.action_id != action_id:
@@ -546,6 +549,7 @@ def validate_asset_action(data_root: str, asset_id: str, action_id: str) -> dict
     return {"action_id": action_id, "status": "valid"}
 
 
+@serialized_asset_mutation
 def settle_asset_action(data_root: str, asset_id: str, action_id: str) -> dict:
     action = load_asset_action(data_root, asset_id)
     if action.action_id != action_id:

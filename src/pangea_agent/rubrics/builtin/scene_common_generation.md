@@ -87,8 +87,24 @@ API、日志文本或测试桩。只有内部推演、尚无测试场景的内�
 
 使用当前工具直接提交 object 作为 body，每条用例保存一份。正文只展开前置、操作、预期、
 清理；命令全文放在共用操作 note，source_evidence 保存已读的 repo_id:path:line 和符号名。
-已经在步骤说明的观测
-无需再次填写。保持下列展示字段，按实际依据填写关联与变体：
+
+<!-- TEST-CASE-CONTRACT:BEGIN -->
+### 用例强制结构：behavior-test-case-v1
+
+以下字段结构是强制 schema，不是可以自行改写的样例格式；示例中的业务输入和预期仅演示写法，
+必须替换为当前任务证据支持的内容。`kind=test_case` 的 body 遵循以下规则：
+
+- body 直接为 JSON 对象，`format_version` 必须为 `behavior-test-case-v1`；不提交字符串、代码块或另包一层 test_case/body。
+- `steps` 必须为非空数组，每项均为含 `action`、`expected` 的对象；两字段必须为非空且非纯空白的字符串。
+  每个动作都有对应的预期结果，不使用字符串动作列表，也不把所有步骤的预期合并到顶层 expected/expected_results。
+- `external_observations` 必须为数组。它只保存步骤之外的补充观测，不能代替任何一步的 `expected`；
+  已在步骤说明的观测无需重复，无补充时填写 `[]`，不能填写字符串或 null。
+- `variants` 可以省略；填写时必须为数组，无变体时使用 `[]`。每个变体均为含 `input`、`expected` 的对象，
+  两字段必须为非空且非纯空白的字符串，不使用字符串变体列表。
+
+每次提交前逐条检查本批次所有 test_case 的上述字段、类型和必填值，包括正式与辅助用例及定向替换记录；
+只检查数量、比例或 coverage_refs 不等于格式自查。再按当前证据核对每步、每个变体的具体预期，
+不能为通过格式校验填入“符合预期”等占位文字；尚不能确定的结论保留 note/unresolved 及证据缺口。
 
 ```json
 {
@@ -115,6 +131,13 @@ API、日志文本或测试桩。只有内部推演、尚无测试场景的内�
   "source_evidence": ["当前任务已核实的 repo_id:path:line"]
 }
 ```
+
+当前 task 声明 `record_contracts.test_case=behavior-test-case-v1` 时，写入工具强校验上述结构。
+错误会逐项给出记录及字段路径，本次提交不落盘、不增加 revision，也不丢弃已有有效记录。
+由同一 worker 按精确错误修正同一 result_path 的待提交内容，保留已经核实的动作、预期与证据后重写；
+写入失败不能继续声明完成。Python 不自动搬移 external_observations、不补造 expected，也不判断预期是否正确、
+用例是否充分或可执行，更不据此判 action/Run 失败。未声明该合同的旧任务继续依其冻结规则执行。
+<!-- TEST-CASE-CONTRACT:END -->
 
 purpose：普通主干、业务分支、异常和恢复为 `branch`；真实 Coverage 驱动为 `coverage`；
 已确认问题的验证为 `risk`。用例无需先建立 Risk。正式风险关联用例；源码证实无法通过

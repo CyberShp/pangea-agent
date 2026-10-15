@@ -6,6 +6,7 @@ from pathlib import Path
 
 from pangea_agent.agent_io import read_json, write_json
 from pangea_agent.risk_schema import RISK_FORMAT, RISK_FORMAT_V2
+from pangea_agent.test_case_schema import TEST_CASE_FORMAT
 
 PROFILE = "behavior-test-v2"
 RISK_METHOD = "risk-method-v1"
@@ -28,12 +29,12 @@ def scene_spec(scenario: str) -> dict:
         "analysis_rubrics": ["scene_common_generation", "scene_flow", f"scene_{name}"],
         "review_rubrics": ["scene_common_review", "scene_flow", f"scene_{name}"],
         "planning_rubrics": ["scene_planning"],
-        "record_contracts": {"risk": RISK_FORMAT},
+        "record_contracts": {"risk": RISK_FORMAT, "test_case": TEST_CASE_FORMAT},
         "presentation": {"risks": risk != "none", "coverage": coverage, "textual_flow": True},
     }
     if scenario == 'risk-analysis':
         spec.update(method_version=RISK_METHOD, risk_signals=True,
-                    record_contracts={'risk': RISK_FORMAT_V2, 'check': 'behavior-check-v1', 'review_check': 'behavior-review-check-v1'},
+                    record_contracts={'risk': RISK_FORMAT_V2, 'check': 'behavior-check-v1', 'review_check': 'behavior-review-check-v1', 'test_case': TEST_CASE_FORMAT},
                     language_rubrics={role: {'c_cpp': ['c_cpp_risk_methods'], 'lua': ['lua_risk_methods']} for role in ('analysis', 'review')})
         spec['review_rubrics'].append('scene_risk_review')
         spec['presentation'].update(check_ledger=True, blackbox_target=False)

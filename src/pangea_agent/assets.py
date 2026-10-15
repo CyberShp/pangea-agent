@@ -3,6 +3,10 @@ from __future__ import annotations
 import shutil
 import hashlib
 import json
+import os
+import threading
+from contextlib import contextmanager
+from functools import wraps
 from uuid import uuid4
 from datetime import datetime
 from pathlib import Path
@@ -21,6 +25,67 @@ from pangea_agent.models.analysis import ActionState
 
 
 DOCUMENT_SUFFIXES = {".md", ".txt", ".pdf", ".docx", ".xlsx"}
+_MUTATION_LOCKS: dict[str, threading.RLock] = {}
+_MUTATION_LOCKS_GUARD = threading.Lock()
+_HELD_MUTATION_LOCKS = threading.local()
+
+
+@contextmanager
+def _mutation_lock(lock_path: Path):
+    """Serialize asset transactions across CLI processes and host threads."""
+    key = str(lock_path.resolve())
+    with _MUTATION_LOCKS_GUARD:
+        process_lock = _MUTATION_LOCKS.setdefault(key, threading.RLock())
+    with process_lock:
+        held = getattr(_HELD_MUTATION_LOCKS, "paths", set())
+        if key in held:
+            yield
+            return
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with lock_path.open("a+b") as handle:
+            locked = False
+            try:
+                if os.name == "nt":
+                    import msvcrt
+
+                    handle.seek(0)
+                    handle.write(b"0")
+                    handle.flush()
+                    handle.seek(0)
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+                locked = True
+                _HELD_MUTATION_LOCKS.paths = held | {key}
+                yield
+            finally:
+                _HELD_MUTATION_LOCKS.paths = held
+                if locked:
+                    if os.name == "nt":
+                        handle.seek(0)
+                        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                    else:
+                        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def serialized_asset_mutation(function):
+    @wraps(function)
+    def wrapped(data_root: str, asset_id: str, *args, **kwargs):
+        with _mutation_lock(_asset_dir(data_root, asset_id) / ".mutation.lock"):
+            return function(data_root, asset_id, *args, **kwargs)
+    return wrapped
+
+
+def _serialized_asset_import(function):
+    @wraps(function)
+    def wrapped(data_root: str, *args, **kwargs):
+        # Allocation and source/record writes are one transaction: two windows
+        # must never choose the same sequential asset ID.
+        with _mutation_lock(_assets_root(data_root) / ".import.lock"):
+            return function(data_root, *args, **kwargs)
+    return wrapped
 
 
 def _now() -> str:
@@ -74,6 +139,7 @@ def load_asset(data_root: str, asset_id: str) -> AssetRecord:
     return AssetRecord.model_validate(read_json(path))
 
 
+@_serialized_asset_import
 def import_asset(
     data_root: str,
     source: str,
@@ -271,13 +337,17 @@ def analysis_asset_inputs(data_root: str, asset_ids: list[str] | None = None, *,
     }
 
 
+@serialized_asset_mutation
 def prepare_asset_extraction(data_root: str, asset_id: str, *, restart: bool = False) -> dict:
     record = load_asset(data_root, asset_id)
     if record.status == "archived":
         raise ValueError("已归档资产不能开始提取")
     if record.status == "extracting" and not restart:
         action = load_asset_action(data_root, asset_id)
-        return {"asset": record.model_dump(mode="json"), "action": action.model_dump(mode="json")}
+        # A stop writes the action fence before the catalog state. If the
+        # process ended between those atomic files, never reuse the paused task.
+        if action.status != "paused":
+            return {"asset": record.model_dump(mode="json"), "action": action.model_dump(mode="json")}
     source = Path(record.source_path)
     asset_dir = _asset_dir(data_root, asset_id)
 
@@ -369,6 +439,7 @@ def prepare_asset_extraction(data_root: str, asset_id: str, *, restart: bool = F
     }
 
 
+@serialized_asset_mutation
 def complete_asset_extraction(data_root: str, asset_id: str) -> AssetRecord:
     record = load_asset(data_root, asset_id)
     if record.asset_type == "coverage":
@@ -414,6 +485,7 @@ def _accept_extraction_result(
     return record
 
 
+@serialized_asset_mutation
 def update_asset_result(data_root: str, asset_id: str, source: str) -> AssetRecord:
     record = load_asset(data_root, asset_id)
     if record.asset_type == "coverage":
@@ -427,9 +499,10 @@ def update_asset_result(data_root: str, asset_id: str, source: str) -> AssetReco
     return _accept_extraction_result(data_root, record, result)
 
 
+@serialized_asset_mutation
 def review_asset(data_root: str, asset_id: str, decision: str) -> AssetRecord:
     record = load_asset(data_root, asset_id)
-    if record.asset_type != "historical_defect" or record.review_status != "pending":
+    if record.status != "awaiting_review" or record.asset_type != "historical_defect" or record.review_status != "pending":
         raise ValueError("当前资产没有等待审核的历史缺陷结果")
     if decision == "approve":
         record.review_status = "approved"
@@ -443,8 +516,35 @@ def review_asset(data_root: str, asset_id: str, decision: str) -> AssetRecord:
     return record
 
 
+def _pause_asset_action(data_root: str, asset_id: str, reason: str, *, action_id: str | None = None) -> None:
+    if not asset_action_path(data_root, asset_id).is_file():
+        if action_id:
+            raise ValueError(f"资产提取 Action 不存在：{asset_id}")
+        return
+    action = load_asset_action(data_root, asset_id)
+    if action_id and action.action_id != action_id:
+        raise ValueError(f"Action 不属于资产当前提取任务：{action_id}")
+    if action.status in {"pending", "dispatched", "paused"}:
+        action.status = "paused"
+        action.error = reason
+        save_asset_action(data_root, asset_id, action)
+
+
+@serialized_asset_mutation
+def stop_asset(data_root: str, asset_id: str, *, action_id: str | None = None) -> AssetRecord:
+    """Fence late submissions; the host remains responsible for stopping its worker."""
+    record = load_asset(data_root, asset_id)
+    _pause_asset_action(data_root, asset_id, "用户停止资产提取", action_id=action_id)
+    if record.status == "extracting":
+        record.status = "imported"
+        _save_record(data_root, record)
+    return record
+
+
+@serialized_asset_mutation
 def archive_asset(data_root: str, asset_id: str) -> AssetRecord:
     record = load_asset(data_root, asset_id)
+    _pause_asset_action(data_root, asset_id, "用户删除资产，已保留原文和提取记录")
     record.status = "archived"
     _save_record(data_root, record)
     return record

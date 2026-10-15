@@ -20,6 +20,7 @@ from typing import Any, Callable, Iterator
 from pangea_agent.agent_io import read_json, write_json
 from pangea_agent.flow_schema import check_flow_structure, format_flow_errors
 from pangea_agent.risk_schema import RISK_FORMAT, RISK_FORMAT_V2, check_risk_structure, format_risk_errors
+from pangea_agent.test_case_schema import TEST_CASE_FORMAT, check_test_case_structure, format_test_case_errors
 from pangea_agent.contract_context import ContractContext
 from pangea_agent.check_schema import CHECK_FORMAT, check_check_structure
 from pangea_agent.review_check_schema import REVIEW_CHECK_FORMAT, check_review_check_structure, check_review_references
@@ -36,11 +37,25 @@ class ResultStoreError(ValueError):
     """A deterministic result-store contract error."""
 
 
+def _check_test_case_records(records: list, record_contracts: dict[str, str] | None) -> None:
+    """Collect the batch's case-format errors without mutating prior results."""
+    if (record_contracts or {}).get("test_case") != TEST_CASE_FORMAT:
+        return
+    errors = [
+        (offset, error)
+        for offset, item in enumerate(records)
+        if isinstance(item, dict) and item.get("kind") == "test_case"
+        for error in check_test_case_structure(item.get("body"))
+    ]
+    if errors:
+        raise ResultStoreError(format_test_case_errors(errors))
+
+
 def _check_record_contract(
     offset: int, kind: Any, body: Any, record_contracts: dict[str, str] | None,
     context: ContractContext | None = None,
 ) -> list[dict]:
-    """按任务冻结格式检查本次写入；旧任务未声明 risk 契约时沿用原格式。"""
+    """按任务冻结格式检查本次写入；未声明的旧任务沿用其原格式。"""
     if kind == "flow":
         errors = check_flow_structure(body)
         if errors:
@@ -280,6 +295,7 @@ def repair_result_shell(
                 if value not in {None, "pending", getattr(binding, key)}:
                     raise ResultStoreError(f"result binding {key} 损坏或不一致，不能自动恢复")
 
+        _check_test_case_records(records, record_contracts)
         revision = 1 if records else 0
         generated: list[NoteRecord] = []
         warnings = []
@@ -384,6 +400,7 @@ def append_records(
         if request_id and request_id in current.receipts:
             return current, dict(current.receipts[request_id])
         _check_revision(current, expected_revision)
+        _check_test_case_records(records, record_contracts)
         revision = current.revision + 1
         warnings: list[dict[str, Any]] = []
         generated: list[NoteRecord] = []
