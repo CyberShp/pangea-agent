@@ -22,6 +22,7 @@ from pangea_agent.documents.coverage import match_coverage_records, relevant_zer
 from pangea_agent.documents.incremental import (
     prepare_incremental, incremental_assets, finish_incremental, attach_incremental_inputs,
 )
+from pangea_agent.flow_stability import freeze_flow_inputs, attach_flow_comparison, attach_flow_stability_input
 from pangea_agent.graph.result_store import active_records, initialize_result, read_result
 from pangea_agent.graph.state import PangeaState
 from pangea_agent.graph.workflow_store import (
@@ -352,6 +353,7 @@ def prepare_source_first_inputs(state: PangeaState) -> PangeaState:
         }
     write_json(source_manifest_path, source_manifest)
     finish_incremental(incremental, run_dir.resolve(), source_manifest)
+    freeze_flow_inputs(state, source_manifest, scene)
     write_json(inputs / "source-first-plan.json", {
         "format_version": "pangea-plan-v1",
         "units": [],
@@ -414,6 +416,7 @@ def prepare_source_first_inputs(state: PangeaState) -> PangeaState:
         write_json(compact_path, compact_metadata)
         task["inputs"].append(_input("risk_signal_summary", inputs / "risk-signal-summary.json", "风险检索线索"))
     attach_incremental_inputs(run_dir, task)
+    attach_flow_stability_input(state, task)
     write_json(task_path, task)
     initialize_result(
         result_path,
@@ -730,6 +733,7 @@ def _make_analysis_actions(state: PangeaState, progress: WorkflowProgress, units
             signal_path = generate_unit(run_directory(state), task, key)
             task["inputs"].append(_input("unit_risk_signals", signal_path, "本单元风险检索线索"))
         attach_incremental_inputs(run_directory(state), task)
+        attach_flow_stability_input(state, task)
         write_json(task_path, task)
         initialize_result(
             result_path,
@@ -830,6 +834,8 @@ def _prepare_review(state: PangeaState, progress: WorkflowProgress) -> None:
             task["inputs"].append(_input("risk_signal_summary", run_directory(state) / "inputs/risk-signal-summary.json", "风险检索线索"))
             task["inputs"].extend(_input(f"risk_signals_{_safe_key(u['unit_id'])}", run_directory(state) / "inputs/risk-signals" / f"{_safe_key(u['unit_id'])}.json", "单元风险检索线索") for u in plan.get("units", []))
     attach_incremental_inputs(run_directory(state), task)
+    attach_flow_stability_input(state, task)
+    attach_flow_comparison(state, task)
     write_json(task_path, task)
     initialize_result(
         result_path,
@@ -865,6 +871,13 @@ def _write_comparison_version_set(
         if not isinstance(result_path, str) or not action.task_id:
             raise ValueError(f"accepted analysis action 缺少绑定结果：{action.action_id}")
         result = read_result(Path(result_path))
+        if (run_directory(state) / "inputs/flow-stability.json").is_file() and (
+            progress.accepted_revisions.get(action.action_id) != result.revision
+            or result.binding.run_id != state["run_id"] or result.binding.action_id != action.action_id
+            or result.binding.task_id != action.task_id
+            or Path(result.binding.data_root).resolve() != Path(state["data_root"]).resolve()
+        ):
+            raise ValueError(f"流程对照输入与已接受修订或身份绑定不一致：{action.action_id}")
         entries.append({
             "role": "analysis",
             "unit_id": task.get("unit_id"),
@@ -1082,6 +1095,11 @@ def _source_first_advance(state: PangeaState, progress: WorkflowProgress) -> Pan
                 "version_set_path": str(version_set_path),
                 "result_path": str(comparison_result_path),
             }
+            # Historical results and the flow baseline become available only
+            # after this same Reviewer's independent assessment was accepted.
+            if (run_directory(state) / "inputs/flow-stability.json").is_file():
+                attach_incremental_inputs(run_directory(state), comparison_task)
+            attach_flow_comparison(state, comparison_task)
             write_json(comparison_task_path, comparison_task)
             initialize_result(
                 comparison_result_path,

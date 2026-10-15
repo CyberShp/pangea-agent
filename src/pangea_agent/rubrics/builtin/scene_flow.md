@@ -19,37 +19,62 @@ risk 场景（method_version=risk-method-v1）按 scene_risk 的工作顺序，�
 已有 module-flow-text-v1 记录保留可读；需要补齐时由原 worker 结合冻结源码修正原流程，不能由客户端猜测。流程使用稳定flow_id；修正以准确record_id supersedes，保留旧记录及正确的用例关联，不重做其他单元。
 worker 不绘制任何图，不生成图任务、不调用绘图脚本：流程图由宿主根据 flow 记录确定性渲染；函数变量图（call-graph-v1）仅由用户单独触发。
 
+## 业务粒度与跨次可比较性
+
+适用于冻结了本版规则的新 Run。相同模块名不代表输入相同；先遵守当前冻结目标、源码、资料、场景及方法论范围。若 task 提供 flow_stability 输入，按其中的输入指纹理解可比较范围，不能自行扫描历史 Run 寻找旧图。输入相同也不能保证 LLM 自然生成完全相同的结论。
+
+- 节点以一项业务动作、改变后续行为的决策、状态转换、外部终态或恢复动作为单位。普通赋值、helper 调用和局部变量不因实现拆分独立成节点；只有解释业务选择或结果所必需时才展开。可独立说明且有明确业务边界的子过程单列 sub，挂接点使用准确 flow_id/node_id；不能本次按函数、下次任意按业务章节改变粒度。
+- 入口、正常完成、正常拒绝、超时/取消及恢复的区别以证据决定。主干可以有多个，不把第一个数组元素或最长路径默认当主干；确无适用主干时明确说明，不猜造。合法参数变化若操作、判据与恢复一致，可共用流程并在用例保留全部变体，不为每个数据值复制同一张图。
+- flow_id、节点 id、path_id 采用与业务入口/角色绑定的稳定名称，不使用随机数、时间、Run 编号、当前遍历序号或标题翻译作为身份。flow_id 可按 `repo_id:relative_path:entry_symbol:operation` 命名；同一证据锚点下的多个操作须有明确区分。已有身份只在同一业务对象与依据仍成立时复用，不能强迫新流程与旧错图一致。
+
+新记录提供以下可选稳定元数据（原 behavior-flow-v1 字段保持不变）：
+
+- `layout_version: "stable-v1"`：声明采用稳定身份与显式路径；缺字段或身份尚未核实时仍保留原流程和缺口，不伪称稳定，不授权宿主补造身份。
+- `main_path_ids: []`：Agent 明确选择主干 path_id，可有多条；无适用主干填空数组并在 description 解释。每条正常分支是否属于主干由 Agent 依据业务职责决定。
+- `nodes[].semantic_key`：由 Agent 根据已读源码填写“repo/path/入口或符号/可定位的源码锚点 + 业务角色”的身份，例如 `web:src/login.c:login_handler:submit|entry`。source_evidence 保留精确行段；标题、行号单独、相似函数名或数组位置不证明语义身份。锚点改变时核实是真实行为变化还是位置移动并说明，宿主不模糊匹配、不自动归并。
+- `edges[].edge_id`：为真实连线显式给出稳定 ID；同起点终点的不同条件必须有不同 edge_id，不能按节点对合并。条件含义由 Agent 核实，ID 不以展示顺序命名。
+- `paths[].edge_ids`：按实际执行顺序列出准确 edge_id，与 node_ids 的相邻步对应；循环可重复引用节点和边，保留次数/退出条件说明。平行条件边必须明确选中哪一条，不能由客户端猜测。未知时保留缺口，不从最短路、上下游可达集合生成业务路径。
+
+这些字段帮助机械对应与确定性排序/渲染，不证明业务正确或覆盖充分。缺元数据的旧流程继续可读，不追加语义门禁，也不靠宿主重写成稳定版本。
+
+只有当前 task 的 comparison 阶段明确提供 `flow_baseline` 和 `flow_comparison` 时才对照这份流程稳定性基线。普通新建 Analysis 不接收这两个输入；显式增量 Analysis 仍按其冻结职责读取 `incremental_parent_records` 等父记录，并重新核验，不能将此规则误解为禁止增量参考旧流程。采用本版稳定规则的新 Run，其 independent_review 不读取首轮结果、流程基线或增量父记录；旧 Run 保留原冻结输入合同。所有角色均不得自行检索其他 Run。机械 diff 只表示显式身份、字段或拓扑变化；Reviewer 核实新增、删除、拆分、合并、条件与连线变化的依据，并在现有 note/finding 中区分输入变化、纠正旧遗漏、展示变化或待确认。源码未变仍允许有证据的纠错；不为稳定外观隐藏实质变化，不以相似标题宣称等价，不自动把本轮候选替换为已验收基线。
+
 <!-- FLOW-CONTRACT:BEGIN -->
 ### flow 记录标准样例（behavior-flow-v1，照此结构填写）
+
+以下为虚构的简单登录行为，只演示结构；实际节点、身份、条件及证据须来自当前任务。
 
 ```json
 {
   "format_version": "behavior-flow-v1",
-  "flow_id": "F-001",
+  "flow_id": "web:src/login.c:login_handler:login",
+  "layout_version": "stable-v1",
+  "main_path_ids": ["login-success"],
   "title": "用户登录",
   "description": "用户提交凭据，经鉴权后建立会话；失败时按原因返回。",
   "role": "main",
   "attach_to": null,
   "nodes": [
-    {"id": "submit", "kind": "entry", "label": "提交用户名和密码", "description": "login_handler 接收请求", "source_evidence": ["web:src/login.c:20"]},
-    {"id": "verify", "kind": "main", "label": "校验密码", "description": "check_password 比对哈希"},
-    {"id": "locked", "kind": "error", "label": "账户锁定", "description": "连续失败 5 次后拒绝"},
-    {"id": "session", "kind": "exit", "label": "建立会话", "description": "写入 session 表并返回 token"}
+    {"id": "submit", "semantic_key": "web:src/login.c:login_handler:submit|entry", "kind": "entry", "label": "提交用户名和密码", "description": "login_handler 接收请求", "source_evidence": ["web:src/login.c:20"]},
+    {"id": "verify", "semantic_key": "web:src/login.c:check_password:compare|decision", "kind": "branch", "label": "校验密码", "description": "check_password 比对哈希"},
+    {"id": "rejected", "semantic_key": "web:src/login.c:login_handler:reject_credentials|rejection", "kind": "error", "label": "登录被拒绝", "description": "凭据不匹配，不建立本次会话"},
+    {"id": "session", "semantic_key": "web:src/login.c:login_handler:create_session|success", "kind": "exit", "label": "建立会话", "description": "写入 session 表并返回 token"}
   ],
   "edges": [
-    {"source_step_key": "submit", "target_step_key": "verify", "condition": ""},
-    {"source_step_key": "verify", "target_step_key": "session", "condition": "密码匹配"},
-    {"source_step_key": "verify", "target_step_key": "locked", "condition": "失败次数 ≥ 5"}
+    {"edge_id": "submit-verify", "source_step_key": "submit", "target_step_key": "verify", "condition": ""},
+    {"edge_id": "verify-success", "source_step_key": "verify", "target_step_key": "session", "condition": "密码匹配"},
+    {"edge_id": "verify-rejected", "source_step_key": "verify", "target_step_key": "rejected", "condition": "密码不匹配"}
   ],
   "paths": [
-    {"path_id": "P-01", "title": "正常登录", "condition": "密码正确", "node_ids": ["submit", "verify", "session"], "explanation": "…", "case_ids": []}
+    {"path_id": "login-success", "title": "正常登录", "condition": "密码正确", "node_ids": ["submit", "verify", "session"], "edge_ids": ["submit-verify", "verify-success"], "explanation": "凭据匹配后建立本次会话", "case_ids": []},
+    {"path_id": "login-rejected", "title": "拒绝错误凭据", "condition": "密码不匹配", "node_ids": ["submit", "verify", "rejected"], "edge_ids": ["submit-verify", "verify-rejected"], "explanation": "拒绝本次登录，不创建会话", "case_ids": []}
   ],
   "source_evidence": ["web:src/login.c:20-88"]
 }
 ```
 
 硬性规则：
-- 字段名必须与样例完全一致（英文），字段值使用中文。
+- 标准字段名与样例一致（英文），用户可见说明使用中文；稳定 ID、semantic_key 与源码锚点保留实际标识。示例 ID 只说明结构，实际生成按上述业务身份命名。
 - 一条 flow 记录只放一个流程；有多个流程就写多条 flow 记录。
 - edges 的 source_step_key、target_step_key 必须写节点 id，不能写 label；paths.node_ids 同样只引用节点 id。
 - body 直接是 JSON 对象：不要写成字符串，不要包 ```json 代码块，不要外套 flow 或 flows；不要用 steps、from/to、node_id、name、节点、连线、路径 等替代字段。

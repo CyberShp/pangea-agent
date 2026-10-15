@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from pangea_agent.flow_schema import TEXT_FLOW_FORMAT, check_flow_structure, normalize_flow
+from pangea_agent.flow_stability import canonical_flow
 from pangea_agent.report.flow_diagram import render_flow_svg
 
 FLOW_SECTION_KINDS = {"flow", "branch", "scenario"}
@@ -166,7 +167,7 @@ def _collect(
             for index, flow in enumerate(normalized):
                 suffix = "" if index == 0 else f"-{index + 1}"
                 flows.append(_FlowEntry(
-                    unit_id, record, flow, _anchor(unit_id, record.record_id, suffix), list(notes),
+                    unit_id, record, canonical_flow(flow), _anchor(unit_id, record.record_id, suffix), list(notes),
                     asset_slug=_slug(unit_id, record.record_id, suffix),
                 ))
     return flows, broken, others
@@ -176,6 +177,9 @@ def _main_path(flow: dict[str, Any]) -> list[str]:
     nodes = flow.get("nodes", [])
     known = [node["id"] for node in nodes]
     paths = flow.get("paths", [])
+    if flow.get("layout_version") == "stable-v1":
+        groups = _declared_main_paths(flow)
+        return list(groups[0].get("node_ids", [])) if groups else []
     refs = paths[0].get("node_ids", []) if paths else []
     if refs and all(ref in known for ref in refs):
         return refs
@@ -199,6 +203,13 @@ def _main_path(flow: dict[str, Any]) -> list[str]:
                 ready.append(target)
     order.extend(node_id for node_id in selected if node_id not in order)
     return order
+
+
+def _declared_main_paths(flow: dict[str, Any]) -> list[dict[str, Any]]:
+    """Main paths are explicit author claims, never a concatenated sequence."""
+    declared = flow.get("main_path_ids", [])
+    wanted = {str(value) for value in declared} if isinstance(declared, list) else set()
+    return [path for path in flow.get("paths", []) if isinstance(path, dict) and str(path.get("path_id")) in wanted]
 
 
 def _find_parent(entries: list[_FlowEntry], entry: _FlowEntry) -> _FlowEntry | None:
@@ -288,11 +299,16 @@ def _overview(ordered: list[_FlowEntry], broken: list[_Unstructured], entries: l
 
 def _branch_rows(flow: dict[str, Any], main: list[str], linked: list[tuple[str, Any]]) -> list[str]:
     main_pairs = set(zip(main, main[1:]))
+    stable = flow.get("layout_version") == "stable-v1"
+    main_edge_ids = {
+        str(edge_id) for path in _declared_main_paths(flow)
+        for edge_id in _list(path.get("edge_ids"))
+    }
     nodes = {node["id"]: node for node in flow.get("nodes", [])}
     rows: list[str] = []
     for edge in flow.get("edges", []):
         source, target = edge.get("source_step_key"), edge.get("target_step_key")
-        if (source, target) in main_pairs:
+        if (str(edge.get("edge_id") or "") in main_edge_ids if stable else (source, target) in main_pairs):
             continue
         target_node = nodes.get(target, {})
         kind = _KIND_LABELS.get(str(target_node.get("kind") or ""), "")
@@ -358,10 +374,17 @@ def _flow_body(
     main = _main_path(flow)
     nodes = {node["id"]: node for node in flow.get("nodes", [])}
     lines.extend(["**主线步骤**", ""])
-    for index, node_id in enumerate(main, start=1):
-        node = nodes.get(node_id, {})
-        detail = _one_line(node.get("description"))
-        lines.append(f"{index}. {_one_line(node.get('label') or node_id)}" + (f" —— {detail}" if detail else ""))
+    groups = _declared_main_paths(flow) if flow.get("layout_version") == "stable-v1" else [{"node_ids": main}]
+    if not groups:
+        lines.extend(["未声明可读取的主路径；以下保留各路径，不根据数组顺序推定主线。", ""])
+    for group in groups:
+        if group.get("path_id"):
+            lines.extend([f"**{_one_line(group.get('title') or group['path_id'])}**（{_one_line(group['path_id'])}）", ""])
+        for index, node_id in enumerate(group.get("node_ids", []), start=1):
+            node = nodes.get(node_id, {})
+            detail = _one_line(node.get("description"))
+            lines.append(f"{index}. {_one_line(node.get('label') or node_id)}" + (f" —— {detail}" if detail else ""))
+        lines.append("")
     lines.append("")
     rows = _branch_rows(flow, main, entry.linked)
     lines.extend(["**分支与异常**", ""])

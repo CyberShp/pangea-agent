@@ -7,10 +7,12 @@ does not turn prose into risks, tests, or a quality verdict.
 from __future__ import annotations
 
 import html
+import hashlib
 import json
 import os
 import re
 import tempfile
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +20,7 @@ from pangea_agent.agent_io import read_json
 from pangea_agent.graph.result_store import read_result, supersession_map
 from pangea_agent.graph.workflow_store import run_directory
 from pangea_agent.report.flow_section import flow_section_markdown
+from pangea_agent.report.branch_coverage import coverage_body, coverage_markdown
 
 
 def _atomic_text(path: Path, value: str) -> None:
@@ -174,7 +177,7 @@ def _markdown_list(value: Any, empty: str = "无") -> list[str]:
 
 
 def _markdown_cell(value: Any) -> str:
-    return str(value if value not in (None, "") else "未提供").replace("|", "\\|")
+    return str(value if value not in (None, "") else "未提供").replace("\r", " ").replace("\n", " ").replace("|", "\\|")
 
 
 def _nested_record_text(body: Any) -> str:
@@ -204,6 +207,8 @@ def _body_mapping(body: Any) -> dict[str, Any] | None:
 def _record_title(record: Any) -> str:
     body = _body_mapping(record.body)
     if body is not None:
+        if coverage_body(record) is not None:
+            return "业务覆盖清单"
         identifier = next((
             str(body.get(key))
             for key in ("case_id", "flow_id", "risk_id", "unresolved_id", "note_id")
@@ -231,6 +236,11 @@ def _record_title(record: Any) -> str:
 def _record_anchor(unit_id: str, record_id: str) -> str:
     value = re.sub(r"[^A-Za-z0-9_.-]+", "-", f"record-{unit_id}-{record_id}")
     return value.strip("-") or "record"
+
+
+def _variant_anchor(unit_id: str, record_id: str, variant_id: str) -> str:
+    suffix = hashlib.sha256(variant_id.encode("utf-8")).hexdigest()[:16]
+    return _record_anchor(unit_id, record_id) + "-variant-" + suffix
 
 
 def _record_identifiers(record: Any) -> dict[str, str]:
@@ -262,6 +272,15 @@ def _reference_markdown(
         target_unit = current_unit
         suffix = ""
     anchor = anchors.get((target_unit, identifier_key, identifier))
+    ambiguous = (target_unit, identifier_key, identifier) in anchors and not anchor
+    if ambiguous:
+        suffix += "（编号不唯一）"
+    if identifier_key == "case_id" and isinstance(value, dict) and value.get("variant_id"):
+        variant_id = str(value["variant_id"])
+        variant_key = (target_unit, "variant_id", f"{identifier}/{variant_id}")
+        variant_anchor = anchors.get(variant_key)
+        suffix += f" / {variant_id}" + ("" if variant_anchor else "（编号不唯一）" if variant_key in anchors else "（未找到有效变体）")
+        anchor = variant_anchor or anchor
     label = f"{identifier}{suffix}" if identifier else _body_text(value).replace(chr(10), " ")
     return f"[{label}](#{anchor})" if anchor else label
 
@@ -301,6 +320,11 @@ def _record_markdown(
     if record.kind in {"test_case", "test_case_group"}:
         return _case_markdown(record, unit_id=unit_id, anchors=anchors or {})
     mapping = _body_mapping(record.body)
+    ledger = coverage_body(record)
+    if ledger is not None:
+        return coverage_markdown(ledger, lambda value, key: _reference_markdown(
+            value, current_unit=unit_id, identifier_key=key, anchors=anchors or {},
+        ))
     if record.kind == "flow" and mapping and mapping.get("format_version") == "module-flow-text-v1":
         return str(mapping.get("text") or _body_text(mapping)) + "\n\n源码依据：\n" + _body_text(mapping.get("source_evidence", []))
     return _mapping_markdown(mapping) if mapping is not None else _nested_record_text(record.body)
@@ -349,20 +373,31 @@ def _case_markdown(
         lines.append("- 未提供可执行步骤。")
     if body.get("expected_results"):
         lines.extend(["", "##### 整体预期（原文单独提供）", "", *_markdown_list(body["expected_results"], "未提供")])
-    variants = [item for item in _items(body.get("variants")) if isinstance(item, dict)]
+    variants = _items(body.get("variants"))
     if variants:
         lines.extend([
             "",
             "##### 输入变体",
             "",
-            "| 输入或条件 | 预期 |",
-            "|---|---|",
-            *[
-                f"| {_markdown_cell(item.get('input'))} | "
-                f"{_markdown_cell(item.get('expected'))} |"
-                for item in variants
-            ],
+            "| 变体编号 | 输入或条件 | 预期 |",
+            "|---|---|---|",
         ])
+        variant_counts = Counter(str(item.get("variant_id")) for item in variants if isinstance(item, dict) and item.get("variant_id"))
+        case_key = (unit_id, "case_id", str(body.get("case_id") or ""))
+        ambiguous_case = case_key in anchors and not anchors[case_key]
+        for index, item in enumerate(variants, 1):
+            if not isinstance(item, dict):
+                lines.append(f"| 第 {index} 项（原文） | {_markdown_cell(_body_text(item))} | 未提供 |")
+                continue
+            variant_id = str(item.get("variant_id") or "")
+            anchor = _variant_anchor(unit_id, record.record_id, variant_id) if variant_id and variant_counts[variant_id] == 1 and not ambiguous_case else ""
+            marker = f"<!--pangea-anchor:{anchor}-->" if anchor else ""
+            label = variant_id + ("（编号不唯一）" if variant_counts[variant_id] > 1 or ambiguous_case else "") if variant_id else f"第 {index} 项（未声明编号）"
+            lines.append(f"| {marker}{_markdown_cell(label)} | "
+                         f"{_markdown_cell(item.get('input'))} | {_markdown_cell(item.get('expected'))} |")
+        raw_variants = json.dumps(body.get("variants"), ensure_ascii=False, indent=2)
+        fence = "`" * max(3, max((len(part) for part in re.findall(r"`+", raw_variants)), default=0) + 1)
+        lines.extend(["", "<details><summary>参数变体原始声明（含扩展字段）</summary>", "", fence + "json", raw_variants, fence, "", "</details>"])
     lines.extend([
         "",
         "##### 外部观测",
@@ -553,6 +588,7 @@ def _behavior_markdown(
         f"> {delivery_message}",
         "",
     ]
+    lines.extend(_flow_comparison_markdown(state))
     accepted_closure_units = {
         str(action.get("task", {}).get("unit_id"))
         for action, _result in records
@@ -576,7 +612,20 @@ def _behavior_markdown(
                 continue
             anchor = _record_anchor(unit_id, record.record_id)
             for identifier_key, identifier in _record_identifiers(record).items():
-                anchors[(unit_id, identifier_key, identifier)] = anchor
+                key = (unit_id, identifier_key, identifier)
+                anchors[key] = "" if key in anchors else anchor
+            body = _body_mapping(record.body) or {}
+            if record.kind in {"test_case", "test_case_group"} and body.get("case_id"):
+                for variant in _items(body.get("variants")):
+                    if isinstance(variant, dict) and variant.get("variant_id"):
+                        variant_id = str(variant["variant_id"])
+                        key = (unit_id, "variant_id", f"{body['case_id']}/{variant_id}")
+                        anchors[key] = "" if key in anchors else _variant_anchor(unit_id, record.record_id, variant_id)
+    for (unit_id, key, identifier), anchor in list(anchors.items()):
+        if key == "case_id" and not anchor:
+            for variant_key in list(anchors):
+                if variant_key[0] == unit_id and variant_key[1] == "variant_id" and variant_key[2].startswith(identifier + "/"):
+                    anchors[variant_key] = ""
 
     def active_and_retired(result: Any) -> tuple[list[Any], list[Any], dict[str, list[str]]]:
         retired_by = supersession_map(result)
@@ -602,6 +651,8 @@ def _behavior_markdown(
             chosen = [
                 record for record in active
                 if (kinds is None or record.kind in kinds)
+                and (coverage_body(record) is not None if title == "业务覆盖清单" else
+                     coverage_body(record) is None if title == "其他交付说明" else True)
                 and (levels is None or _case_level(record) in levels)
                 and (purposes is None or _case_purpose(record) in purposes)
                 and (record.kind not in {"test_case", "test_case_group"}
@@ -678,6 +729,7 @@ def _behavior_markdown(
         f"- 未能由冻结缺口核实的引用：{coverage_summary['unverified_refs']}",
         "- 关联仅表示作者声明，不代表执行通过或覆盖率提升。未解决原因见本报告的分析记录及待确认项。",
         f"- 分支用例：`{purpose_counts['branch']}`",
+        f"- 参数变体声明：`{sum(len(_items((_body_mapping(record.body) or {}).get('variants'))) for record in case_records)}`（单独计数，不视为已执行次数）",
         f"- 未覆盖用例：`{purpose_counts['coverage']}`",
         *([f"- 风险用例：`{purpose_counts['risk']}`"] if scene is None or scene["presentation"]["risks"] else ["- 本次未开展风险分析。"]),
         f"- 测试目的未声明：`{purpose_counts['unclassified']}`",
@@ -694,6 +746,8 @@ def _behavior_markdown(
         totals = {c: sum(r.body.get('conclusion') == c for r in checks) for c in ('confirmed', 'excluded', 'unresolved', 'not_applicable')}
         risk_count = sum(r.kind == 'risk' for _, result in delivery for r in active_and_retired(result)[0])
         lines.extend([f'- 风险记录：{risk_count}', f'- 检查账本：{len(checks)} 条（已证实 {totals["confirmed"]}／已排除 {totals["excluded"]}／待确认 {totals["unresolved"]}／不适用 {totals["not_applicable"]}）', '', *ledger, *review_markdown(records)])
+    add_records("业务覆盖清单", delivery, {"note"})
+
     def other_flow_record(unit_id: str, record: Any) -> list[str]:
         anchor = _record_anchor(unit_id, record.record_id)
         lines_out = [
@@ -762,7 +816,61 @@ def _behavior_markdown(
     return "\n".join(lines).rstrip() + "\n"
 
 
+def _flow_comparison_markdown(state: dict) -> list[str]:
+    """Report frozen exact-identity differences, not semantic stability scores."""
+    run = run_directory(state)
+    initial_path = run / "inputs" / "flow-comparison.json"
+    delivery_path = run / "outputs" / "flow-delivery-comparison.json"
+    path = delivery_path if delivery_path.is_file() else initial_path
+    if not path.is_file():
+        return []
+    lines = ["## 流程版本对照", "",
+             "> 以下为冻结输入和显式流程身份的机械对照；有差异不等于错误，无差异不证明业务覆盖完整。是否接受变更以 Reviewer 结论为准。", ""]
+    if path == delivery_path:
+        lines.extend(["> 当前显示最终交付修订的机械对照，不代表定向修正获得了额外语义审核。首轮审核输入仍保留在冻结记录中。", ""])
+    try:
+        data = read_json(path)
+    except (OSError, ValueError, TypeError) as exc:
+        return [*lines, f"流程对照记录暂不可读取：{_markdown_cell(str(exc))}。", ""]
+    if isinstance(data, dict):
+        baseline = data.get("baseline") if isinstance(data.get("baseline"), dict) else {}
+        comparison = data.get("comparability") if isinstance(data.get("comparability"), dict) else {}
+        statuses = {"comparable": "已记录输入可比", "different_inputs": "存在输入差异", "unknown": "可比性待确认"}
+        lines.extend([
+            f"- 基线 Run：{_markdown_cell(baseline.get('run_id'))}；版本：{_markdown_cell(baseline.get('version_id'))}",
+            f"- 输入可比性：{statuses.get(str(comparison.get('status')), _markdown_cell(comparison.get('status')))}",
+            "", "| 对照维度 | 记录结果 |", "|---|---|",
+        ])
+        dimensions = comparison.get("dimensions")
+        names = {"source": "源码", "scope": "范围与依赖", "assets": "输入资料", "methodology": "方法版本", "model": "已声明模型与配置", "objective": "任务目标与设置"}
+        for key, value in dimensions.items() if isinstance(dimensions, dict) else []:
+            lines.append(f"| {_markdown_cell(names.get(key, key))} | {_markdown_cell({'same': '相同', 'changed': '不同', 'unknown': '待确认'}.get(str(value), value))} |")
+        lines.extend(["", "| 流程 | 结构对照 | 节点增／删／改 | 连线增／删／改 | 路径增／删／改 | 其他变化 |", "|---|---|---|---|---|---|"])
+
+        def changes(value: Any) -> str:
+            if not isinstance(value, dict):
+                return "未记录"
+            return "／".join(str(len(value[key])) if isinstance(value.get(key), list) else "?" for key in ("added", "removed", "changed"))
+
+        names = {"unchanged": "结构未变", "changed": "结构有变化", "added": "新增", "removed": "移除", "unresolved": "待确认"}
+        for flow in _items(data.get("flows")):
+            if not isinstance(flow, dict):
+                lines.append(f"| 无法结构化 | {_markdown_cell(_body_text(flow))} | — | — | — | 原文保留 |")
+                continue
+            flags = [label for key, label in (("main_paths_changed", "主路径声明"), ("attachment_changed", "流程挂接"), ("content_changed", "文字或源码依据（待语义核对）"), ("presentation_changed", "原始声明")) if flow.get(key)]
+            lines.append(f"| {_markdown_cell(flow.get('flow_id'))} | {_markdown_cell(names.get(str(flow.get('status')), flow.get('status')))} | "
+                         f"{changes(flow.get('nodes'))} | {changes(flow.get('edges'))} | {changes(flow.get('paths'))} | {'、'.join(flags) or '未记录'} |")
+        notes = [*_items(comparison.get("notes")), *_items(data.get("warnings"))]
+        if notes:
+            lines.extend(["", *[f"- {_markdown_cell(_body_text(note))}" for note in notes]])
+    raw = _body_text(data)
+    fence = "`" * max(3, max((len(part) for part in re.findall(r"`+", raw)), default=0) + 1)
+    lines.extend(["", "<details><summary>流程对照明细（含变更前后值）</summary>", "", fence + "json", raw, fence, "", "</details>", ""])
+    return lines
+
+
 _NAV_TITLES = {
+    "业务覆盖清单", "流程版本对照",
     "风险检查账本", "风险检查复核",
     "交付状态",
     "用例总览",
@@ -785,6 +893,10 @@ _NAV_TITLES = {
 
 
 def _inline_html(value: str) -> str:
+    marker = re.match(r"^<!--pangea-anchor:([A-Za-z0-9_.-]+)-->", value)
+    prefix = f'<span id="{marker.group(1)}"></span>' if marker else ""
+    if marker:
+        value = value[marker.end():]
     escaped = html.escape(value)
     escaped = re.sub(
         r"\[([^\]]+)\]\((#[A-Za-z0-9_.-]+)\)",
@@ -792,7 +904,7 @@ def _inline_html(value: str) -> str:
         escaped,
     )
     escaped = re.sub(r"`([^`]+)`", r"<code>\1</code>", escaped)
-    return re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", escaped)
+    return prefix + re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", escaped)
 
 
 def _markdown_table_cells(line: str) -> list[str]:
@@ -880,10 +992,11 @@ def _html(markdown: str, embedded_assets: dict[str, str] | None = None) -> str:
             continue
         if line.startswith("```"):
             close_list()
-            language = line[3:].strip()
+            fence = re.match(r"^`+", line).group(0)
+            language = line[len(fence):].strip()
             code_lines: list[str] = []
             index += 1
-            while index < len(lines) and not lines[index].startswith("```"):
+            while index < len(lines) and not re.fullmatch(r"`{" + str(len(fence)) + r",}\s*", lines[index]):
                 code_lines.append(lines[index])
                 index += 1
             language_attr = f' data-language="{html.escape(language)}"' if language else ""
@@ -998,7 +1111,7 @@ def _html(markdown: str, embedded_assets: dict[str, str] | None = None) -> str:
         'border-radius:10px}.record-body{padding:4px 16px 16px}'
         'details.fold{margin:10px 0;color:var(--muted)}details.fold>summary{cursor:pointer}ol{margin:8px 0 14px;padding-left:23px}'
         '.flow-svg{overflow-x:auto;margin:14px 0 20px;padding:14px;border:1px solid var(--line);'
-        'border-radius:10px;background:#fbfcfe}.flow-svg svg{display:block;width:100%;min-width:680px}'
+        'border-radius:10px;background:#fbfcfe}.flow-svg svg{display:block;width:auto;max-width:none;min-width:680px}'
         '.flow-node rect{fill:#fff;stroke-width:2}.flow-kind{fill:#667085;font-size:11px}'
         '.flow-label{fill:#172033;font-size:14px}.flow-edge{fill:none;stroke:#667085;stroke-width:1.7}'
         '.flow-edge-label{fill:#8a5a00;font-size:12px;paint-order:stroke;stroke:#fff;stroke-width:4px;stroke-linejoin:round}'
@@ -1010,8 +1123,9 @@ def _html(markdown: str, embedded_assets: dict[str, str] | None = None) -> str:
         '</style></head><body><div class="layout"><nav><strong>报告导航</strong>'
         f'{navigation or "<span>当前报告没有章节导航</span>"}</nav><main>{"".join(chunks)}'
         '</main></div><script>function openTarget(){const id=location.hash.slice(1);'
-        'if(!id)return;const target=document.getElementById(id);if(target&&target.tagName==="DETAILS")'
-        '{target.open=true;}}addEventListener("hashchange",openTarget);openTarget();</script></body></html>'
+        'if(!id)return;const target=document.getElementById(id);if(target){let parent=target;'
+        'while(parent){if(parent.tagName==="DETAILS")parent.open=true;parent=parent.parentElement;}'
+        'target.scrollIntoView({block:"nearest"});}}addEventListener("hashchange",openTarget);openTarget();</script></body></html>'
     )
 
 
@@ -1034,12 +1148,22 @@ def write_source_first_reports(state: dict, *, progress: dict | None = None) -> 
                 profile = frozen_contract.get("analysis_profile")
     from pangea_agent.analysis_scenarios import frozen_scene
     scene = frozen_scene(run_directory(state), contract)
+    from pangea_agent.flow_stability import publish_flow_baseline
+    baseline = None
+    baseline_warning = None
+    try:
+        baseline = publish_flow_baseline(state, progress, records)
+    except (OSError, ValueError, TypeError, KeyError) as exc:
+        # Optional comparison metadata must not discard valid Agent delivery.
+        baseline_warning = str(exc)
     diagram_assets: dict[str, str] = {}
     markdown = (
         _behavior_markdown(state, progress, records, diagram_assets, scene=scene)
         if profile in {"behavior-test-v1", "behavior-test-v2"}
         else _markdown(state, progress, records)
     )
+    if baseline_warning:
+        markdown += "\n> 流程基线暂未发布（已有分析结果保留）：" + _markdown_cell(baseline_warning) + "\n"
     review_mode = (contract.get("analysis_settings") or {}).get("mode", "depth")
     incremental = contract.get("incremental_request")
     if incremental:
@@ -1067,6 +1191,8 @@ def write_source_first_reports(state: dict, *, progress: dict | None = None) -> 
                 "analysis_profile": profile,
                 "review_mode": review_mode,
                 "partial_delivery": progress.get("partial_delivery", False),
+                "flow_baseline": {key: baseline.get(key) for key in ("run_id", "version_id", "flow_count", "eligible")} if baseline else None,
+                "flow_baseline_warning": baseline_warning,
                 "first_finish_revisions": progress.get("first_finish_revisions", {}),
                 "accepted_revisions": progress.get("accepted_revisions", {}),
                 "files": ["report.md", "report.html", *sorted(diagram_assets)],

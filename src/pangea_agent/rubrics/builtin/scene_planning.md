@@ -8,6 +8,14 @@ module保持综合范围；risk按下方“风险场景规划”；branch围绕�
 methodology_ids是本单元选择的补充方法论；Analysis读取该单元所选的内置/用户方法论，Reviewer读取各单元选择的合集。选择应服务当前场景，不因选择通用方法论扩大branch/coverage的正式风险责任；空选择应说明无相关方法论的依据，不自动补入全套DFX。
 覆盖数据没有新缺口时仍安排对象流程理解与数据范围说明，不制造覆盖用例；无数据、版本未知和不匹配不得解释为100%覆盖。
 
+## 分支场景规划（behavior-branch-v1）
+
+仅当 analysis_scene.method_version=behavior-branch-v1 时适用。分支职责是业务条件、配置、状态、顺序、结果和恢复的测试设计，不承担产品风险判断。
+- 用现有 purpose 明确单元负责的业务操作、入口、生命周期和输出；以业务关系划责，不仅按文件或函数列表切块。
+- 参数/配置的生产与消费、前驱状态与后续操作、请求受理与完成、资源创建与清理若跨单元，尽量由同一 owner 分析完整业务关系；需要分开时在 purpose 写明关系 owner，把必要另一侧放 context_files/context_regions。不能两个单元都假设关系由对方覆盖。
+- 规划只确定职责和必要依赖，不在这里枚举全部取值、组合、状态机或用例。Analysis 在当前单元内依 scene_branch 从证据提炼业务覆盖项并维护普通 note，Reviewer 依冻结 scene_branch_review 双向核对；两份场景规则不依赖可选 methodology_ids。
+- 不新增全局覆盖 Agent、等待屏障、风险扫描或完整复核轮次。边界无法确定时明确依赖缺口，不扩展为全仓分析。
+
 ## 风险场景规划（risk-method-v1）
 
 仅当 analysis_scene.method_version=risk-method-v1 时适用。

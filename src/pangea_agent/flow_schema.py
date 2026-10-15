@@ -207,6 +207,52 @@ def format_flow_errors(offset: int, errors: list[str]) -> str:
     return "\n".join(lines)
 
 
+def flow_stability_warnings(body: Any) -> list[str]:
+    """Advisory checks for new optional metadata; never part of the write gate."""
+    if not isinstance(body, dict) or body.get("layout_version") != "stable-v1":
+        return []
+    warnings: list[str] = []
+    nodes = body.get("nodes") if isinstance(body.get("nodes"), list) else []
+    edges = body.get("edges") if isinstance(body.get("edges"), list) else []
+    paths = body.get("paths") if isinstance(body.get("paths"), list) else []
+    for name, values, field in (("nodes", nodes, "semantic_key"), ("edges", edges, "edge_id"), ("paths", paths, "path_id")):
+        seen = set()
+        for index, item in enumerate(values):
+            value = item.get(field) if isinstance(item, dict) else None
+            if not _non_empty_str(value):
+                warnings.append(f"{name}[{index}] 缺少 {field}，稳定身份待确认")
+            elif value in seen:
+                warnings.append(f"{name}[{index}].{field}={value!r} 重复，不能唯一对应")
+            else:
+                seen.add(value)
+    by_edge = {e.get("edge_id"): e for e in edges if isinstance(e, dict) and _non_empty_str(e.get("edge_id"))}
+    path_ids = {p.get("path_id") for p in paths if isinstance(p, dict) and _non_empty_str(p.get("path_id"))}
+    main = body.get("main_path_ids")
+    if not isinstance(main, list) or not all(isinstance(v, str) for v in main):
+        warnings.append("main_path_ids 尚未明确声明；不以 paths[0] 推测主路径")
+    elif any(v not in path_ids for v in main):
+        warnings.append("main_path_ids 含未声明路径，主路径引用待确认")
+    for index, path in enumerate(paths):
+        if not isinstance(path, dict):
+            continue
+        refs = path.get("edge_ids")
+        node_ids = path.get("node_ids")
+        if not isinstance(refs, list) or not all(isinstance(r, str) for r in refs):
+            warnings.append(f"paths[{index}].edge_ids 未明确声明，平行条件边归属待确认")
+            continue
+        if any(ref not in by_edge for ref in refs):
+            warnings.append(f"paths[{index}].edge_ids 含未知连线")
+        if isinstance(node_ids, list):
+            if len(refs) != max(len(node_ids) - 1, 0):
+                warnings.append(f"paths[{index}] 节点序列与连线序列长度不一致")
+            else:
+                for offset, ref in enumerate(refs):
+                    edge = by_edge.get(ref)
+                    if edge and (edge.get("source_step_key"), edge.get("target_step_key")) != (node_ids[offset], node_ids[offset + 1]):
+                        warnings.append(f"paths[{index}].edge_ids[{offset}] 与节点序列不一致")
+    return warnings
+
+
 # ---------------------------------------------------------------------------
 # 宽容解析（展示侧）
 
@@ -260,7 +306,7 @@ def _apply_aliases(source: dict[str, Any], aliases: dict[str, tuple[str, ...]], 
 
 
 def _normalize_one(raw: dict[str, Any]) -> tuple[dict[str, Any] | None, list[str]]:
-    notes: list[str] = []
+    notes: list[str] = flow_stability_warnings(raw)
     if raw.get("format_version") == TEXT_FLOW_FORMAT:
         return (dict(raw) if _non_empty_str(raw.get("text")) else None), notes
     flow = _apply_aliases(raw, _TOP_ALIASES, "", notes)

@@ -32,6 +32,25 @@ class IncrementalRequest(BaseModel):
         return self
 
 
+class FlowBaselineRef(BaseModel):
+    """An explicitly selected, immutable, previously reviewed flow version."""
+    model_config = ConfigDict(extra="forbid")
+    run_id: str = Field(min_length=1)
+    version_id: str = Field(min_length=1)
+
+
+class ModelSettings(BaseModel):
+    """Only non-secret, declared generation metadata; never provider credentials."""
+    model_config = ConfigDict(extra="ignore")
+    provider: str | None = None
+    model_revision: str | None = None
+    system_fingerprint: str | None = None
+    temperature: float | None = None
+    top_p: float | None = None
+    seed: int | None = None
+    reasoning_effort: str | None = None
+
+
 class TaskContract(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -44,6 +63,8 @@ class TaskContract(BaseModel):
     runtime_commit: str | None = None
     runtime_provenance: dict | None = None
     incremental_request: IncrementalRequest | None = None
+    flow_baseline: FlowBaselineRef | None = None
+    model_settings: ModelSettings | None = None
     analysis_settings: dict[str, str] | None = None
     model_id: str | None = None
     effective_context_budget: int | None = Field(default=None, gt=0)
@@ -77,6 +98,8 @@ class TaskContract(BaseModel):
 
     @model_validator(mode="after")
     def validate_mode(self) -> "TaskContract":
+        if self.flow_baseline and (self.workflow_version != "source-first-v1" or self.analysis_profile != "behavior-test-v2"):
+            raise ValueError("流程基线仅支持 source-first-v1 / behavior-test-v2 新场景 Run")
         if self.incremental_request and self.workflow_version != "source-first-v1":
             raise ValueError("增量分析仅支持 source-first-v1 独立新 Run")
         if self.analysis_profile == "behavior-test-v2":

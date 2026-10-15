@@ -10,10 +10,11 @@ from pangea_agent.test_case_schema import TEST_CASE_FORMAT
 
 PROFILE = "behavior-test-v2"
 RISK_METHOD = "risk-method-v1"
+BRANCH_METHOD = "behavior-branch-v1"
 SCENES = {
     "module-analysis": ("模块分析", "lightweight", "optional", "模块综合分析：业务分支、轻量风险及可选覆盖补测。"),
     "risk-analysis": ("风险分析", "primary", "optional", "聚焦有依据的失效风险及验证用例。"),
-    "branch-analysis": ("分支分析", "none", "optional", "聚焦正常、边界、异常与恢复路径的测试设计。"),
+    "branch-analysis": ("分支分析", "none", "optional", "依据业务条件、配置、状态、顺序与结果设计分支用例，并逐项说明覆盖与缺口。"),
     "coverage-analysis": ("覆盖率分析", "none", "required", "依据真实覆盖数据定位缺口并设计补测。"),
 }
 
@@ -26,6 +27,7 @@ def scene_spec(scenario: str) -> dict:
         "profile": PROFILE, "description": description, "risk_responsibility": risk,
         "coverage_requirement": coverage, "coverage_sources": ["query", "file", "asset"],
         "flow_delivery": "textual-first", "manual_diagrams": True,
+        "flow_layout_version": "stable-v1",
         "analysis_rubrics": ["scene_common_generation", "scene_flow", f"scene_{name}"],
         "review_rubrics": ["scene_common_review", "scene_flow", f"scene_{name}"],
         "planning_rubrics": ["scene_planning"],
@@ -38,6 +40,12 @@ def scene_spec(scenario: str) -> dict:
                     language_rubrics={role: {'c_cpp': ['c_cpp_risk_methods'], 'lua': ['lua_risk_methods']} for role in ('analysis', 'review')})
         spec['review_rubrics'].append('scene_risk_review')
         spec['presentation'].update(check_ledger=True, blackbox_target=False)
+    elif scenario == 'branch-analysis':
+        # An ordinary note, not a semantic write/completion gate. Existing Runs
+        # read their frozen spec and never acquire the new mandatory rubric.
+        spec.update(method_version=BRANCH_METHOD)
+        spec['review_rubrics'].append('scene_branch_review')
+        spec['presentation'].update(behavior_coverage=True)
     return spec
 
 

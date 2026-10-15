@@ -14,7 +14,7 @@ from pangea_agent.cli.run_module_analysis import derive_run, resume_module_analy
 from pangea_agent.cli.public_api import stop_run, run_detail
 from pangea_agent.cli.adapter_api import bind_action
 from pangea_agent.cli.source_first_api import input_read
-from pangea_agent.documents.incremental import derivation_options
+from pangea_agent.documents.incremental import derivation_options, attach_incremental_inputs
 from pangea_agent.graph.nodes.source_first import _make_analysis_actions, _prepare_review
 from pangea_agent.graph.result_store import read_result
 from pangea_agent.graph.workflow_store import load_progress
@@ -157,6 +157,23 @@ class IncrementalSmoke(unittest.TestCase):
             review = read_json(Path(progress.actions[f"{child['run_id']}:review"].task_path))
             self.assertEqual(review["review_stage"], expected)
             self.assertIn("incremental_request", review)
+            identifiers = {item["input_id"] for item in review["inputs"]}
+            if mode == "depth":
+                self.assertNotIn("incremental_parent_records", identifiers)
+                self.assertNotIn("incremental_parent_plan", identifiers)
+                self.assertNotIn("incremental_baseline", identifiers)
+                self.assertIn("incremental_request", identifiers)
+            else:
+                self.assertIn("incremental_parent_records", identifiers)
+        # Old frozen Runs without the new input contract retain their original
+        # task input policy; reading/resuming them does not silently upgrade it.
+        marker = run / "inputs/flow-stability.json"
+        frozen = marker.read_bytes()
+        marker.unlink()
+        legacy_task = {"review_stage": "independent_review"}
+        attach_incremental_inputs(run, legacy_task)
+        self.assertIn("incremental_parent_records", {i["input_id"] for i in legacy_task["inputs"]})
+        marker.write_bytes(frozen)
 
     def test_inherited_asset_body_does_not_require_live_asset_or_parent(self):
         write_json(self.parent / "inputs/asset-items.json", {"asset:fact": {"title": "Saved fact", "key_facts": ["saved content"],

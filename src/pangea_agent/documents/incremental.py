@@ -259,6 +259,14 @@ def attach_incremental_inputs(run_dir: Path, task: dict) -> None:
         return
     request = read_json(root / "request.json")
     task["incremental_request"] = request
+    # New stable-flow Runs preserve blind review isolation from prior semantic
+    # results too. Old frozen tasks retain their original input contract.
+    if task.get("review_stage") == "independent_review" and (run_dir / "inputs/flow-stability.json").is_file():
+        # The user's current objective remains visible, but historical plans,
+        # records and flow conclusions are withheld until comparison.
+        task.setdefault("inputs", []).append({"input_id": "incremental_request", "path": str(root / "request.json"),
+                                               "label": "用户本次补充目标；不包含父 Run 结论"})
+        return
     inputs = [("incremental_request", root / "request.json", "本次定向补充/文件变更目标"),
               ("incremental_baseline", root / "baseline.json", "父 Run 记录索引；仅供引用，需重新核验"),
               ("incremental_parent_plan", root / "parent-plan.json", "父 Run 单元范围及必要依赖"),
@@ -275,5 +283,6 @@ def attach_incremental_inputs(run_dir: Path, task: dict) -> None:
         diff_path = root / f"diff-{index:04d}.txt"
         if diff_path.is_file():
             inputs.append((f"source_diff_{index:04d}", diff_path, "指定文件字节差异；影响由 Agent 判定"))
+    declared = {item.get("input_id") for item in task.get("inputs", [])}
     task.setdefault("inputs", []).extend({"input_id": key, "path": str(path), "label": label}
-                                          for key, path, label in inputs)
+                                          for key, path, label in inputs if key not in declared)
