@@ -1,6 +1,11 @@
 # 场景共同复核
 
 仅用于behavior-test-v2。必须读取analysis_scene、scene_flow、当前场景规则及已选方法论，以同一冻结职责评审。
+
+## 面向用户的中文复核结论
+
+在本 Run 冻结规则下，summary/note/finding 和 review_decision 的自然语言说明使用中文，包括 summary、reason、reasoning/basis、conclusion、未解决事项与修正建议。机器字段名、disposition=pass/unresolved/finding、version_set_id、record_id、源码符号、命令及逐字证据保持原文，不能把协议枚举翻成中文。不得把整份 JSON 压成一个英文段落或将所有结论塞进单个长字符串；按“结论摘要、依据、待确认事项、需要修正的记录”分段或用结构化字段表达，没有相关内容时如实说明，不编造通过结论。review_decide 仍使用现有合同，解释字段是表达约定，不新增 schema 或语义门禁；旧 Run 沿用原冻结要求，旧英文正文由展示端原样保留，不冒充已经翻译。
+
 标准型 independent_review 只读冻结源码、输入和中性单元计划，不读取首轮结果；独立识别主干、必要路径和当前场景核查项，保存简洁依据。Comparison续接同一Reviewer，读取锁定首轮版本逐项对照，不重新生成整套用例。速度型直接comparison。
 
 检查：范围是否为target及必要依赖；模块结构化业务流程是否说明入口、主要步骤、关键判断、状态、异常恢复；与源码和用例是否一致；用户操作、可制造条件、外部判据、清理及再次操作是否有依据。

@@ -4,6 +4,8 @@
 
 无论单元序号、调用方式或是否为定向修正，面向用户的标题、说明、操作、预期、流程节点和总结均使用中文。函数名、源码符号、命令、API、协议字段保留原文。机器字段名及枚举保持合同原样，不能把 title/description 等键翻译为中文。仅使用本任务提供的冻结规则，不假设其他单元或此前会话已代为满足要求。
 
+review_decision 的 summary、reason、reasoning/basis、conclusion、待确认说明及修正建议同样使用中文自然语言。按“结论摘要、依据、待确认事项、需要修正的记录”分段或用结构化字段表达，不把整份 JSON 压成单个英文段落。disposition=pass/unresolved/finding、version_set_id、record_id 和逐字证据保持原文。沿用现有 decision 合同，不新增字段门禁；旧 Run 继续依其冻结规则，不要求宿主改写历史英文正文。
+
 适用于 analysis_profile=behavior-test-v1 的 Reviewer。读取 task.review_stage 区分以下工作。
 
 ## independent_review

@@ -110,6 +110,120 @@ _FIELD_LABELS = {
     "text": "文字说明",
 }
 
+# Display vocabulary only. Never rewrite Agent prose or the stored decision.
+# Keep these deterministic labels aligned with companion/review-presentation.js.
+_REVIEW_FIELD_LABELS = {
+    "disposition": "复核裁决", "verdict": "复核结果", "status": "状态", "quality_status": "质量状态",
+    "summary": "复核摘要", "conclusion": "结论", "decision": "裁决说明", "decisions": "对照裁决", "reason": "原因",
+    "rationale": "裁决依据", "reasoning": "推导依据", "basis": "依据", "evidence": "证据",
+    "source_evidence": "源码依据", "evidence_quotes": "源码引文", "ref": "位置", "snippet": "原样引文",
+    "what_is_known": "已确认事实", "missing_to_resolve": "仍缺少的信息",
+    "open_issues": "未解决事项", "unresolved": "待确认事项", "unresolved_items": "待确认事项",
+    "unresolved_reasons": "待确认原因", "limitations": "限制与缺口", "remaining_gaps": "剩余缺口",
+    "findings": "复核发现", "issues": "复核问题", "required_change": "要求修改",
+    "required_changes": "要求修改", "recommendation": "建议", "recommended_action": "建议操作",
+    "corrections": "定向修正", "correction_record_ids": "需修正的记录",
+    "finding_dispositions": "问题处置", "finding_record_id": "复核发现编号",
+    "finding_key": "发现标识", "finding_id": "发现编号", "issue_id": "问题编号",
+    "updated_record_ids": "已更新记录", "affected_records": "受影响记录",
+    "affected_record_ids": "受影响记录编号", "target_record_ids": "目标记录编号",
+    "record_id": "记录编号", "record_ids": "记录编号", "case_id": "用例编号", "case_ids": "用例编号",
+    "variant_id": "变体编号", "unit_id": "分析单元", "unit": "分析单元",
+    "action_id": "阶段动作编号", "task_id": "任务编号", "version_set_id": "本次对照版本", "format_version": "格式版本",
+    "review_stage": "复核阶段", "review_mode": "复核模式", "review_status": "复核状态",
+    "scope": "审查范围", "scope_notes": "范围说明", "checked_items": "已核对事项",
+    "checks": "检查记录", "coverage": "覆盖说明", "coverage_summary": "覆盖说明",
+    "title": "标题", "description": "说明", "content": "正文", "notes": "补充说明", "note": "补充说明",
+    "text": "正文", "result": "结果", "expected": "预期", "actual": "实际结果",
+    "original": "原结论", "original_conclusion": "原结论", "source_counterexample": "源码反证",
+    "category": "问题类别", "severity": "严重程度", "related_record_ids": "关联记录",
+    "counts": "数量汇总", "independent": "独立复核", "comparison": "对照复核",
+    "confirmed": "已确认", "dismissed": "已驳回", "effective": "有效问题",
+}
+_REVIEW_STATUS_LABELS = {
+    "pass": "通过", "passed": "通过", "fail": "未通过", "failed": "失败",
+    "unresolved": "待确认", "finding": "需定向修正", "pending": "待处理",
+    "accepted": "已接受", "rejected": "未采纳", "dismissed": "已驳回",
+    "confirmed": "已确认", "corrected": "已修正", "resolved": "已解决",
+    "completed": "已完成", "complete": "已完成", "running": "进行中",
+    "not_applicable": "不适用", "excluded": "已排除", "unknown": "未知",
+    "refuted": "已反证", "uncertain": "待确认", "covered": "已有对应", "missed": "遗漏",
+    "agree": "同意", "disagree": "不同意",
+    "independent_review": "独立复核", "comparison_review": "对照复核",
+    "speed": "速度型", "depth": "标准型", "standard": "标准型",
+}
+_REVIEW_ENUM_FIELDS = {"disposition", "verdict", "status", "quality_status", "review_status", "review_stage", "review_mode"}
+_REVIEW_LITERAL_FIELDS = {
+    "version_set_id", "format_version", "unit_id", "unit", "action_id", "task_id", "record_id", "record_ids",
+    "case_id", "case_ids", "variant_id", "finding_record_id", "finding_key", "finding_id", "issue_id",
+    "updated_record_ids", "affected_record_ids", "target_record_ids", "correction_record_ids", "related_record_ids",
+    "ref", "snippet", "source_evidence",
+}
+_REVIEW_FIELD_ORDER = (
+    "disposition", "verdict", "status", "quality_status", "review_status", "summary", "conclusion", "decision",
+    "basis", "rationale", "reasoning", "reason", "what_is_known", "open_issues", "unresolved", "unresolved_items",
+    "unresolved_reasons", "missing_to_resolve", "remaining_gaps", "limitations", "findings", "issues", "corrections",
+    "required_change", "required_changes", "correction_record_ids", "finding_dispositions",
+)
+
+
+def _review_markdown(body: Any) -> str:
+    """Render exact review fields recursively; keep arbitrary English text raw."""
+    value = body
+    if isinstance(value, str):
+        candidate = value.strip()
+        fenced = re.fullmatch(r"```(?:json)?\s*\n(.*?)\n```", candidate, re.DOTALL | re.IGNORECASE)
+        candidate = fenced.group(1).strip() if fenced else candidate
+        if candidate.startswith(("{", "[")):
+            try:
+                parsed = json.loads(candidate)
+                if isinstance(parsed, (dict, list)):
+                    value = parsed
+            except (TypeError, ValueError):
+                pass
+    lines: list[str] = []
+
+    def fence_text(text: str, language: str = "text") -> list[str]:
+        fence = "`" * max(3, max((len(part) for part in re.findall(r"`+", text)), default=0) + 1)
+        return [fence + language, text, fence, ""]
+
+    def heading(label: str, depth: int) -> None:
+        # Each property stays a separate block, including dictionaries in lists.
+        # Do not use a JSON paragraph or nested Markdown lists the HTML renderer
+        # cannot distinguish. Retain unknown field names exactly as declared.
+        lines.extend([f"{'#' * min(5 + depth, 6)} {label.replace(chr(10), ' ')}", ""])
+
+    def walk(item: Any, key: str = "", depth: int = 0) -> None:
+        if key in _REVIEW_LITERAL_FIELDS:
+            # Evidence and identifiers are opaque subtrees, not review fields.
+            # An embedded {"status": "pass"} must remain the original evidence.
+            lines.extend(fence_text(_body_text(item)))
+            return
+        if isinstance(item, dict):
+            if not item:
+                lines.extend(["空对象（原记录）", ""])
+            ordered = sorted(item, key=lambda name: _REVIEW_FIELD_ORDER.index(name) if name in _REVIEW_FIELD_ORDER else len(_REVIEW_FIELD_ORDER))
+            for name in ordered:
+                heading(_REVIEW_FIELD_LABELS.get(name, name), depth)
+                walk(item[name], name, depth + 1)
+        elif isinstance(item, list):
+            if not item:
+                lines.extend(["空列表（原记录）", ""])
+            for index, member in enumerate(item, 1):
+                heading(f"第 {index} 项", depth)
+                walk(member, key, depth + 1)
+        else:
+            text = _body_text(item)
+            if isinstance(item, str) and key in _REVIEW_ENUM_FIELDS:
+                text = _REVIEW_STATUS_LABELS.get(item.strip().lower(), item)
+            lines.extend([_nested_record_text(text), ""])
+
+    walk(value)
+    lines.extend(["<details><summary>查看原始复核记录</summary>", ""])
+    lines.extend(fence_text(_body_text(body), "text" if isinstance(body, str) else "json"))
+    lines.extend(["</details>", ""])
+    return "\n".join(lines).rstrip()
+
 
 def _items(value: Any) -> list[Any]:
     if value is None:
@@ -204,7 +318,7 @@ def _body_mapping(body: Any) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else None
 
 
-def _record_title(record: Any) -> str:
+def _record_title(record: Any, *, review_context: bool = False) -> str:
     body = _body_mapping(record.body)
     if body is not None:
         if coverage_body(record) is not None:
@@ -223,8 +337,14 @@ def _record_title(record: Any) -> str:
             return f"`{identifier}`"
         if body.get("format_version") == "review-note-v1":
             return "复核说明"
+        if review_context:
+            return {"summary": "复核摘要", "note": "复核说明", "review_decision": "复核结论",
+                    "review_finding": "复核发现", "finding": "复核发现", "unresolved": "待确认事项"}.get(record.kind, "复核记录")
         return {"summary": "分析说明", "note": "分析记录", "review_decision": "复核结论",
                 "review_finding": "复核发现", "unresolved": "待确认事项"}.get(record.kind, "结构化记录")
+    if review_context or record.kind in {"review_decision", "review_finding", "finding"}:
+        return {"summary": "复核摘要", "note": "复核说明", "review_decision": "复核结论",
+                "review_finding": "复核发现", "finding": "复核发现", "unresolved": "待确认事项"}.get(record.kind, "复核记录")
     if record.kind == "summary":
         return "分析说明"
     text = _body_text(record.body).strip().splitlines()[0] if record.body is not None else ""
@@ -316,10 +436,14 @@ def _record_markdown(
     *,
     unit_id: str = "unit",
     anchors: dict[tuple[str, str, str], str] | None = None,
+    review_context: bool = False,
 ) -> str:
     if record.kind in {"test_case", "test_case_group"}:
         return _case_markdown(record, unit_id=unit_id, anchors=anchors or {})
     mapping = _body_mapping(record.body)
+    if (review_context or record.kind in {"review_decision", "review_finding", "finding"}
+            or (mapping or {}).get("format_version") in {"review-note-v1", "behavior-review-check-v1"}):
+        return _review_markdown(record.body)
     ledger = coverage_body(record)
     if ledger is not None:
         return coverage_markdown(ledger, lambda value, key: _reference_markdown(
@@ -517,7 +641,9 @@ def _markdown(state: dict, progress: dict, records: list[tuple[dict, Any]]) -> s
             lines.extend([
                 f"##### `{record.record_id}` · `{record.kind}`",
                 "",
-                _body_text(record.body),
+                (_review_markdown(record.body)
+                 if action.get("stage") in {"independent_review", "comparison_review"} or record.kind in {"review_decision", "review_finding", "finding"}
+                 else _body_text(record.body)),
                 "",
             ])
             if record.evidence:
@@ -534,7 +660,9 @@ def _markdown(state: dict, progress: dict, records: list[tuple[dict, Any]]) -> s
                 "",
                 f"Superseded by: `{', '.join(superseded_by[record.record_id])}`",
                 "",
-                _body_text(record.body),
+                (_review_markdown(record.body)
+                 if action.get("stage") in {"independent_review", "comparison_review"} or record.kind in {"review_decision", "review_finding", "finding"}
+                 else _body_text(record.body)),
                 "",
             ])
             if record.evidence:
@@ -661,10 +789,13 @@ def _behavior_markdown(
             for record in chosen:
                 found = True
                 unit_id = str(action.get("task", {}).get("unit_id") or "unit")
-                body = _record_markdown(record, unit_id=unit_id, anchors=anchors)
+                body = _record_markdown(
+                    record, unit_id=unit_id, anchors=anchors,
+                    review_context=action.get("stage") in {"independent_review", "comparison_review"},
+                )
                 anchor = _record_anchor(unit_id, record.record_id)
                 lines.extend([
-                    f"### `{unit_id}` · {_record_title(record)} <!--pangea-record:{anchor}-->",
+                    f"### `{unit_id}` · {_record_title(record, review_context=action.get('stage') in {'independent_review', 'comparison_review'})} <!--pangea-record:{anchor}-->",
                     "",
                     body,
                     "",
