@@ -25,6 +25,10 @@ function ordinaryRecordKind(kind: string | undefined): string {
 }
 
 const PangeaPlugin: Plugin = async ({ client, worktree }) => {
+  // Desktop binds its generic ACP worker through the CLI, not this plugin's
+  // native session dispatcher. Do not expose a second tool/dispatch channel.
+  if (process.env.PANGEA_WORKER_TRANSPORT === "desktop-cli") return {}
+
   const bindings = new Map<string, Binding>()
   const sessionModels = new Map<string, { providerID: string; modelID: string }>()
   const resultWrites = new Map<string, Promise<void>>()
@@ -100,7 +104,7 @@ const PangeaPlugin: Plugin = async ({ client, worktree }) => {
 
   function current(context: { sessionID: string }): Binding {
     const binding = bindings.get(context.sessionID)
-    if (!binding) throw new Error("当前 OpenCode session 未绑定 PANGEA action")
+    if (!binding) throw new Error("当前 OpenCode session 未绑定 PANGEA action。pangea_* 工具仅用于原生 OpenCode 调度器创建并绑定的会话；不要重复重试或猜测绑定。Desktop 外部 worker 请使用宿主已提供的 Python CLI 和 exact data_root/run_id/action_id/task_id；原生 OpenCode 请由宿主检查派发与绑定。")
     return binding
   }
 

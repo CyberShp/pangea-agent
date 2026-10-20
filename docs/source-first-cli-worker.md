@@ -1,6 +1,8 @@
 # Desktop 外部执行器的 source-first CLI 合同
 
-适用 CodeAgent、NGA、Claude Code 等能执行命令的 worker。宿主派发和绑定 action，并在回合结束后 settle；worker 不调用 adapter、不创建 Run、不创建其他 Agent，也不加载其他客户端的入口或插件。只使用宿主提供的 exact data_root/run_id/action_id/task_id。
+适用 CodeAgent、NGA、OpenCode、Claude Code 等能执行命令的 worker。宿主派发和绑定 action，并在回合结束后 settle；worker 不调用 adapter、不创建 Run、不创建其他 Agent，也不加载其他客户端的入口或插件。只使用宿主提供的 exact data_root/run_id/action_id/task_id。
+
+本入口唯一的 PANGEA 调用通道是宿主提供的 Python CLI，经执行器原生命令执行工具直接调用。`pangea_*` 工具属于独立 OpenCode 等客户端的原生调度，不是此 worker 的工具；Desktop source-first worker 的 `PANGEA_WORKER_TRANSPORT=desktop-cli` 会使 OpenCode PANGEA 插件不注册工具或 hooks。若已有会话仍看到“当前 OpenCode session 未绑定 PANGEA action”，这是调用了错误通道，不表示冻结源码缺失：停止重试该工具，改用下方 CLI，不猜测绑定或自行调用 adapter。CLI 若报告真实绑定错误，保留诊断交宿主处理。
 
 ## 当前任务与冻结职责
 
@@ -25,6 +27,23 @@ $pangeaPython = '<宿主提供的Python绝对路径>'
 $binding = @('--data-root', '<data_root>', '--run-id', '<run_id>', '--action-id', '<action_id>', '--task-id', '<task_id>')
 & $pangeaPython -m pangea_agent.cli.main --output readable task-open @binding
 & $pangeaPython -m pangea_agent.cli.main --output readable input-read @binding --input-id '<input_id>'
+```
+
+源码导航、读取和搜索也直接调用同一 CLI：
+
+```powershell
+& $pangeaPython -m pangea_agent.cli.main --output readable source-index @binding --view compact
+& $pangeaPython -m pangea_agent.cli.main --output readable source-read @binding --repo-id '<repo_id>' --path '<冻结相对路径>' --view text
+& $pangeaPython -m pangea_agent.cli.main --output readable source-search @binding --query '<查询文本>' --view compact
+```
+
+`source-read` 可加 `--line-start`、`--line-end` 限定疑点范围；`source-index` 和 `source-search` 可加 `--repo-id`、`--path`。以上 compact/text 输出通过 `next_page_token` 续读，`next_read.page_token` 也是对应的续读 token；保留原命令、绑定和筛选参数，只替换 `--page-token`，不能把下一页 token 用到另一次查询。`input-read` 使用返回的 `next_cursor` 对应 `--cursor`：
+
+```powershell
+& $pangeaPython -m pangea_agent.cli.main --output readable source-index @binding --view compact --page-token '<next_page_token>'
+& $pangeaPython -m pangea_agent.cli.main --output readable source-read @binding --repo-id '<repo_id>' --path '<冻结相对路径>' --view text --page-token '<next_page_token>'
+& $pangeaPython -m pangea_agent.cli.main --output readable source-search @binding --query '<原查询文本>' --view compact --page-token '<next_page_token>'
+& $pangeaPython -m pangea_agent.cli.main --output readable input-read @binding --input-id '<原input_id>' --cursor '<next_cursor>'
 ```
 
 优先使用 task-open 随附的 write_contract 和下列调用方式；仅在调用报参数错误时查询对应 command 的 `--help`。禁止 `stdout[:N]`、截取正文前几行或按字符裁剪输出。按返回的 cursor/page-token 分页，每次展示完整一页。

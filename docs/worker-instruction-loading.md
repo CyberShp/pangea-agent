@@ -4,12 +4,16 @@
 
 | 执行入口 | 加载链 | 结果写入 |
 | --- | --- | --- |
-| Desktop 外部 ACP / Claude Code | Companion `source-first-acp.js` 创建通用会话 → workerPrompt → `docs/source-first-cli-worker.md` → task-open → task 中的冻结 rubric | 宿主提供的 Python CLI |
+| Desktop 外部 ACP（CodeAgent、NGA、OpenCode）/ Claude Code | Companion `source-first-acp.js` 创建通用会话 → workerPrompt → `docs/source-first-cli-worker.md` → task-open → task 中的冻结 rubric | 宿主提供的 Python CLI |
 | 内部 DSH | Companion `report-policy.js` 按 role 读取 `.agents/pangea/*-worker.md` 并作为 persona 注入 → task-open → 冻结 rubric | 当前 DSH 的 pangea_* 工具 |
 | OpenCode 原生插件 | `.opencode/agents/pangea-agent.md` → 对应角色 → task-open → 冻结 rubric | 当前 OpenCode 的 pangea_* 工具 |
 | 独立 Claude 旧 Graph | `CLAUDE.md` → `.claude/protocols/action-lifecycle.md` → `.claude/agents/` 角色；Analysis/Closure 按需读取 `.claude/protocols/analysis-legacy.md` | 原 task 提供的唯一结果路径和冻结富结构合同 |
 
 Desktop `src/main/pangea-product.ts` 将 `.agents`、`.opencode` 和 `docs/source-first-cli-worker.md` 从 runtime 复制到运行工作区。该过程不复制源码仓库的 AGENTS.md、CLAUDE.md 或 `.claude`。执行器是否另外加载用户工作区或用户级规则，应从该 provider 的实际会话记录确认；不能用这些文件的字节数代替实际 prompt 体积。
+
+Desktop 仅在 source-first 外部 worker 请求中注入 `PANGEA_WORKER_TRANSPORT=desktop-cli`。OpenCode PANGEA 插件检测到此值时立即返回空注册对象，不注册任何 `pangea_*` 工具或 hooks；worker 通过执行器原生命令执行工具调用 Python CLI，唯一绑定来自 Companion 提供的 exact data_root/run_id/action_id/task_id。模型探测、资产任务与独立图任务不注入该标记。未标记的独立 OpenCode 继续使用原生插件派发和绑定，工具与 hooks 保持可用。
+
+两条通道的会话绑定不能互换：Companion 的 CLI `adapter bind` 不会填充原生 OpenCode 插件的 session 绑定表。Desktop worker 遇到原生工具的未绑定错误时应直接使用已提供的 CLI，不能反复调用该工具、自动绑定或从历史任务猜测 action；CLI 本身的绑定错误仍交宿主检查，不修改 Graph 身份或语义合同。
 
 `AGENTS.md` 保留开发约束和实现不变量。Desktop 外部 worker 的身份、分页、读写、同一结果修复、路径及源码保护规则集中在现有 CLI 合同中；其他客户端保持自己的命令和权限，不调用其他客户端的角色文件。`.claude` 的 Read/Write 旧角色不提供 Desktop CLI 执行通道，不扩大该角色权限来模拟外部通用会话。
 
