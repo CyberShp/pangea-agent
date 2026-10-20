@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterator
 
 from pangea_agent.agent_io import read_json, write_json
-from pangea_agent.flow_schema import check_flow_structure, format_flow_errors
+from pangea_agent.flow_schema import check_flow_structure, flow_stability_warnings, format_flow_errors
 from pangea_agent.risk_schema import RISK_FORMAT, RISK_FORMAT_V2, check_risk_structure, format_risk_errors
 from pangea_agent.test_case_schema import TEST_CASE_FORMAT, check_test_case_structure, format_test_case_errors
 from pangea_agent.contract_context import ContractContext
@@ -60,6 +60,11 @@ def _check_record_contract(
         errors = check_flow_structure(body)
         if errors:
             raise ResultStoreError(format_flow_errors(offset, errors))
+        # Existing stable-v1 diagnostics must reach the original worker in the
+        # write response, before it finishes. These are advisory only: preserve
+        # the body and allow the worker to supersede its own record in this turn.
+        return [{"kind": "flow_path_hint", "record_index": offset, "message": message}
+                for message in flow_stability_warnings(body)]
     elif kind == "risk" and (record_contracts or {}).get("risk") == RISK_FORMAT:
         errors = check_risk_structure(body)
         if errors:

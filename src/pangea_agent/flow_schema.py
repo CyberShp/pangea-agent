@@ -225,7 +225,10 @@ def flow_stability_warnings(body: Any) -> list[str]:
                 warnings.append(f"{name}[{index}].{field}={value!r} 重复，不能唯一对应")
             else:
                 seen.add(value)
-    by_edge = {e.get("edge_id"): e for e in edges if isinstance(e, dict) and _non_empty_str(e.get("edge_id"))}
+    by_edge: dict[str, list[dict]] = {}
+    for edge in edges:
+        if isinstance(edge, dict) and _non_empty_str(edge.get("edge_id")):
+            by_edge.setdefault(edge["edge_id"], []).append(edge)
     path_ids = {p.get("path_id") for p in paths if isinstance(p, dict) and _non_empty_str(p.get("path_id"))}
     main = body.get("main_path_ids")
     if not isinstance(main, list) or not all(isinstance(v, str) for v in main):
@@ -235,21 +238,30 @@ def flow_stability_warnings(body: Any) -> list[str]:
     for index, path in enumerate(paths):
         if not isinstance(path, dict):
             continue
+        where = f"paths[{index}]（{path.get('path_id') or '未提供 path_id'}）"
         refs = path.get("edge_ids")
         node_ids = path.get("node_ids")
         if not isinstance(refs, list) or not all(isinstance(r, str) for r in refs):
-            warnings.append(f"paths[{index}].edge_ids 未明确声明，平行条件边归属待确认")
+            warnings.append(f"{where}.edge_ids 未明确声明，平行条件边归属待确认")
             continue
-        if any(ref not in by_edge for ref in refs):
-            warnings.append(f"paths[{index}].edge_ids 含未知连线")
         if isinstance(node_ids, list):
-            if len(refs) != max(len(node_ids) - 1, 0):
-                warnings.append(f"paths[{index}] 节点序列与连线序列长度不一致")
-            else:
-                for offset, ref in enumerate(refs):
-                    edge = by_edge.get(ref)
-                    if edge and (edge.get("source_step_key"), edge.get("target_step_key")) != (node_ids[offset], node_ids[offset + 1]):
-                        warnings.append(f"paths[{index}].edge_ids[{offset}] 与节点序列不一致")
+            expected = max(len(node_ids) - 1, 0)
+            if len(refs) != expected:
+                warnings.append(f"{where}.edge_ids 有 {len(refs)} 条，node_ids 有 {len(node_ids)} 步，应有 {expected} 条；保留原记录")
+            # A length mismatch must not suppress the useful field-level hints.
+            # Repeated node/edge occurrences represent loops and are not deduped.
+            for offset in range(expected):
+                ref = refs[offset] if offset < len(refs) else ""
+                matches = by_edge.get(ref, [])
+                ends = f"{node_ids[offset]} → {node_ids[offset + 1]}"
+                if len(matches) != 1:
+                    actual = f"{ref}（不存在或 ID 不唯一）" if ref else "未提供"
+                    warnings.append(f"{where}.edge_ids[{offset}] 应连接 {ends}，实际为 {actual}")
+                elif (matches[0].get("source_step_key"), matches[0].get("target_step_key")) != (node_ids[offset], node_ids[offset + 1]):
+                    edge = matches[0]
+                    warnings.append(f"{where}.edge_ids[{offset}] 应连接 {ends}，实际为 {ref}（{edge.get('source_step_key')} → {edge.get('target_step_key')}）")
+            if len(refs) > expected:
+                warnings.append(f"{where}.edge_ids[{expected}] 起的 {len(refs) - expected} 条连线没有对应节点步")
     return warnings
 
 

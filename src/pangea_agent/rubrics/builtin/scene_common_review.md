@@ -21,6 +21,7 @@ Comparison 先在现有 note 中按 unit_id、record_id 和变体标识保存逐
 - 宏调用：按展开后的读写核对实参，凡参数被赋值，确认步骤使用可修改变量并说明初值和调用后值；常量或临时结果作为被写实参是用例错误。重复求值与副作用按源码检查。
 - 执行准备度：逐条核对 execution_readiness 和 readiness_reason，包括辅助用例。ready 须有入口、现有触发设施和观测的来源依据；尚需编写驱动/桩时是 needs_instrumentation，入口尚未核实时是 unknown。漏填或无依据标 ready，交原 worker 按实际证据补正；合成 Coverage 不决定此状态。
 流程逐边查证调用点或函数内顺序，逐条检查 paths 的相邻节点是否有对应边、真假分支是否有不同处理节点、清理/重置是否在返回之前。只写“公式正确”“流程正确”不能代替这些依据。
+流程深度复核按已读源码中的业务判断、提前退出、事件分发与清理路径对照 nodes/edges/paths，不能只检查现有图中的连线。对条件标签中被省略的实际处理，指明真实 record_id、触发位置、遗漏的动作/状态变化/出口及源码证据；FIN 等正常关闭不因单列分支就成为缺陷。逐路径检查 edge_ids 数量和每个端点对应关系，循环保留重复项、平行边按准确 ID 区分。错误在同一 finding 中交原 worker 修正，不由 Reviewer 补造节点，不因节点数少就判质量不合格；没有处理动作的直接出口是合法结果。独立盲审仍不读取首轮图；以上对照在现有 comparison 中完成。
 有明确源码反证且原 worker 能修改的记录，使用 comparison-finding-write 保存具体 finding，并将返回的 record_id 放入 review-decide 的 correction_record_ids，disposition=finding；这会触发现有定向修正。仅无法确定的事实使用 unresolved。不要因缺少执行设施而放过已确定的预期错误，也不要把合成 Coverage 本身当成用例不可执行的理由。
 同一unit的具体差异集中为finding，带原文/反证及真实目标记录；资料不足记UNRESOLVED。定向修正续接原worker，只修受影响内容，不增加完整复核轮次，不改写原首轮结果。
 
