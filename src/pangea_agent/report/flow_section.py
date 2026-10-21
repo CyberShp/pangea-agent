@@ -12,7 +12,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from pangea_agent.flow_schema import TEXT_FLOW_FORMAT, check_flow_structure, normalize_flow
+from pangea_agent.flow_schema import TEXT_FLOW_FORMAT, check_flow_structure, normalize_flow, uses_declared_main_paths
 from pangea_agent.flow_stability import canonical_flow
 from pangea_agent.report.flow_diagram import render_flow_svg
 from pangea_agent.report.native_diagrams import native_diagram_sections
@@ -178,7 +178,7 @@ def _main_path(flow: dict[str, Any]) -> list[str]:
     nodes = flow.get("nodes", [])
     known = [node["id"] for node in nodes]
     paths = flow.get("paths", [])
-    if flow.get("layout_version") == "stable-v1":
+    if uses_declared_main_paths(flow):
         groups = _declared_main_paths(flow)
         return list(groups[0].get("node_ids", [])) if groups else []
     refs = paths[0].get("node_ids", []) if paths else []
@@ -300,7 +300,7 @@ def _overview(ordered: list[_FlowEntry], broken: list[_Unstructured], entries: l
 
 def _branch_rows(flow: dict[str, Any], main: list[str], linked: list[tuple[str, Any]]) -> list[str]:
     main_pairs = set(zip(main, main[1:]))
-    stable = flow.get("layout_version") == "stable-v1"
+    stable = uses_declared_main_paths(flow)
     main_edge_ids = {
         str(edge_id) for path in _declared_main_paths(flow)
         for edge_id in _list(path.get("edge_ids"))
@@ -375,7 +375,7 @@ def _flow_body(
     main = _main_path(flow)
     nodes = {node["id"]: node for node in flow.get("nodes", [])}
     lines.extend(["**主线步骤**", ""])
-    groups = _declared_main_paths(flow) if flow.get("layout_version") == "stable-v1" else [{"node_ids": main}]
+    groups = _declared_main_paths(flow) if uses_declared_main_paths(flow) else [{"node_ids": main}]
     if not groups:
         lines.extend(["未声明可读取的主路径；以下保留各路径，不根据数组顺序推定主线。", ""])
     for group in groups:

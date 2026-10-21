@@ -27,6 +27,16 @@ flow = {"format_version":"behavior-flow-v1","flow_id":"connect","role":"main","l
                  {"path_id":"main-reconnect","title":"修改后连接","node_ids":["f","b","c","d"],"edge_ids":["edge-8","edge-3","edge-5"]}]}
 svg, warnings = render_flow_svg(flow, "sample")
 assert not warnings, warnings
+# Explicit main_path_ids remains authoritative even without a layout_version.
+declared_only = copy.deepcopy(flow)
+declared_only.pop("layout_version")
+declared_svg, declared_warnings = render_flow_svg(declared_only, "sample")
+assert declared_svg and not declared_warnings
+from pangea_agent.report.flow_section import _main_path
+assert _main_path(declared_only) == _main_path(flow)
+no_main = copy.deepcopy(declared_only)
+no_main["main_path_ids"] = []
+assert _main_path(no_main) == [], "empty declaration must not fall back to paths[0]"
 ET.fromstring(svg)
 assert "&lt;script&gt;" in svg and "<script>" not in svg
 assert "LongIdentifierWithoutSpaces"*5 in ''.join(ET.fromstring(svg).itertext()).replace("\n", "")

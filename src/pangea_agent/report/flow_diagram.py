@@ -14,6 +14,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from pangea_agent.flow_stability import canonical_flow
+from pangea_agent.flow_schema import uses_declared_main_paths
 
 _NODE_COLORS = {
     "entry": "#3157d5", "main": "#5b6b83", "branch": "#b47700",
@@ -99,7 +100,7 @@ def render_flow_svg(flow: Mapping[str, Any], diagram_id: str) -> tuple[str, list
     # the ordinary edge router; no path or business claim is repaired here.
     main_pairs: set[tuple[str, str]] = set()
     edge_pairs = {(str(edge["source_step_key"]), str(edge["target_step_key"])) for edge in edges}
-    if flow.get("layout_version") == "stable-v1":
+    if uses_declared_main_paths(flow):
         for path in _items(flow.get("paths")):
             if not isinstance(path, Mapping) or str(path.get("path_id")) not in declared_main:
                 continue
