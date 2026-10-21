@@ -293,7 +293,8 @@ def retired_result_warnings(result: NotesResult) -> list[dict[str, Any]]:
     retired = supersession_map(result)
     records = {record.record_id: record for record in result.records}
     return [warning for warning in result.warnings
-            if warning.get("kind") in _RECORD_WARNING_KINDS
+            if isinstance(warning.get("kind"), str)
+            and warning["kind"] in _RECORD_WARNING_KINDS
             and isinstance(warning.get("record_id"), str)
             and warning["record_id"] in retired
             and all(key not in warning or warning[key] == getattr(result.binding, key)

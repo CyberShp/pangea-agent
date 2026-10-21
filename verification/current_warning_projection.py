@@ -56,6 +56,16 @@ class CurrentWarningProjection(unittest.TestCase):
         self.assertEqual(pending, original)
         self.assertEqual(current_warning_degradations(pending, {"action-a": b}), pending)
 
+    def test_unknown_warning_shapes_remain_readable_and_pending(self):
+        value = result()
+        unknown = [dict(kind=kind, record_id="one", message="unrecognized warning")
+                   for kind in ([], {}, None)]
+        value.warnings.extend(unknown)
+        original = value.model_dump(mode="json")
+        current = current_result_warnings(value)
+        self.assertTrue(all(warning in current for warning in unknown))
+        self.assertEqual(value.model_dump(mode="json"), original)
+
     def test_report_filters_only_current_diagnostics_and_keeps_record_audit(self):
         from pangea_agent.report.source_first import _markdown
         a = result()
