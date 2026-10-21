@@ -141,7 +141,7 @@ class DiagramContractChecks(unittest.TestCase):
         from pangea_agent.agent_io import write_json
         from pangea_agent.cli.adapter_api import settle_action
         from pangea_agent.cli.source_first_api import (
-            comparison_finding_write, result_write, review_decide,
+            comparison_finding_write, comparison_read, result_write, review_decide,
             validate_source_first_result, work_finish,
         )
         harness = recovery.RecoveryChecks(methodName="test_plan_counts_saved_progress_and_polling_are_facts")
@@ -164,6 +164,13 @@ class DiagramContractChecks(unittest.TestCase):
         harness.write(second, harness.bind(second))
         review = next(action["action_id"] for action in harness.progress()["actions"].values() if action["role"] == "review")
         reviewer = harness.bind(review, "reviewer")
+        comparison = comparison_read(str(harness.root), harness.run_id, review, reviewer,
+                                     version_set_id=harness.task(review)["version_set_id"], view="compact", max_chars=24000)
+        self.assertEqual(len([item for item in comparison["items"] if item["item_type"] == "warning"
+                              and item["value"].get("kind") == "diagram_format_diagnostic"]), 2)
+        legacy_comparison = comparison_read(str(harness.root), harness.run_id, review, reviewer,
+                                            version_set_id=harness.task(review)["version_set_id"])
+        self.assertEqual(len(legacy_comparison["entries"][0]["diagram_diagnostics"]), 2)
         finding = comparison_finding_write(str(harness.root), harness.run_id, review, reviewer, expected_revision=0,
             unit_ids=["unit-0001"], finding={"summary": "请确认格式字段", "body": "原 worker 修正 writes 字段，保留其他证据。"})
         decision = review_decide(str(harness.root), harness.run_id, review, reviewer, expected_revision=finding["revision"],
@@ -184,6 +191,11 @@ class DiagramContractChecks(unittest.TestCase):
         current = validate_source_first_result(str(harness.root), harness.run_id, closure["action_id"], worker)
         self.assertEqual(current["status"], "incomplete")
         self.assertEqual([item["record_id"] for item in current["warnings"] if item.get("kind") == "diagram_format_diagnostic"], ["rec-000002"])
+        from pangea_agent.report.source_first import diagram_diagnostic_markdown
+        report = "\n".join(diagram_diagnostic_markdown([(dict(closure, task=task), read_result(task["result_path"]))]))
+        self.assertIn('"record_id": "rec-000002"', report)
+        self.assertNotIn('"record_id": "rec-000001"', report)
+        self.assertIn("call_graph.variables[0].writes", report)
 
 
 def compare_js(plugin_root):

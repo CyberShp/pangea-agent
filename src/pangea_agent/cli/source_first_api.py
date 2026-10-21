@@ -18,6 +18,7 @@ from pangea_agent.contract_context import ContractContext
 from pangea_agent.graph.result_store import (
     ResultStoreError,
     active_records,
+    active_diagram_diagnostics,
     append_records,
     compact_items_page,
     declare_completion,
@@ -933,6 +934,12 @@ def comparison_read(
                     "action_id": entry_action_id,
                     "value": warning,
                 } for warning in result.warnings)
+            else:
+                items.extend({
+                    "item_type": "warning", "role": entry.get("role"),
+                    "unit_id": entry.get("unit_id"), "action_id": entry_action_id,
+                    "value": warning,
+                } for warning in active_diagram_diagnostics(result))
             total_record_count += len(result.records)
             active_record_count += len(active_records(result))
             warning_count += len(result.warnings)
@@ -1001,7 +1008,10 @@ def comparison_read(
             "revision": view["revision"],
             "records": view["records"],
             "completion": view["completion"],
-            "warnings": view["warnings"],
+            "warnings": ([item for item in view["warnings"]
+                          if not isinstance(item, dict) or item.get("kind") != "diagram_format_diagnostic"]
+                         + view["diagram_diagnostics"]),
+            "diagram_diagnostics": view["diagram_diagnostics"],
             "next_cursor": view["next_cursor"],
         })
     return {

@@ -17,10 +17,32 @@ from pathlib import Path
 from typing import Any
 
 from pangea_agent.agent_io import read_json
-from pangea_agent.graph.result_store import read_result, supersession_map
+from pangea_agent.graph.result_store import active_diagram_diagnostics, read_result, supersession_map
 from pangea_agent.graph.workflow_store import run_directory
 from pangea_agent.report.flow_section import flow_section_markdown
 from pangea_agent.report.branch_coverage import coverage_body, coverage_markdown
+
+
+def diagram_diagnostic_markdown(delivery: list[tuple[dict, Any]]) -> list[str]:
+    """Publish current persisted format facts, with exact authored identities."""
+    lines: list[str] = []
+    for action, result in delivery:
+        warnings = active_diagram_diagnostics(result)
+        if not warnings:
+            continue
+        if not lines:
+            lines.extend(["## 三图格式诊断", "", "以下提示保留已保存内容，不改变审核结论或运行状态。", ""])
+        unit_id = str(action.get("task", {}).get("unit_id") or "unit")
+        records = {record.record_id: record for record in result.records}
+        for warning in warnings:
+            record = records[warning["record_id"]]
+            if record.kind != "flow":
+                continue
+            lines.extend([f"### `{unit_id}` · `{record.record_id}` · 修订 `{record.created_revision}`", "",
+                          _body_text({key: warning.get(key) for key in (
+                              "result_path", "action_id", "task_id", "record_id", "record_revision",
+                              "diagram", "field", "code", "classification", "severity", "message")}), ""])
+    return lines
 
 
 def _atomic_text(path: Path, value: str) -> None:
@@ -895,6 +917,7 @@ def _behavior_markdown(
             lines_out.extend(["", "</details>", ""])
         return lines_out
 
+    lines.extend(diagram_diagnostic_markdown(delivery))
     lines.extend(flow_section_markdown(
         [
             (str(action.get("task", {}).get("unit_id") or "unit"), active_and_retired(result)[0])
