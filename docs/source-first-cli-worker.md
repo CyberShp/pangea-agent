@@ -77,6 +77,20 @@ $unitFile = Join-Path $env:PANGEA_WORKER_SCRATCH 'unit.json'
 - `review-decide --expected-revision N --decision JSON对象`：按当前冻结 review rubric 和 task 的 version_set_id 做决定；修正记录使用刚返回的 Comparison finding record_id。
 - `work-finish --revision N`：完成语义工作后声明当前 revision 完成。diagnostics 未 ready 时在同一结果中修正；不凭回显或退出码宣称分析通过。
 
+### compact 结果的完整读取
+
+`result-read --view compact` 和 `comparison-read --view compact` 的程序化读取使用 `--output json`，解析 JSON envelope 中的结果对象。对照读取可用既有 `--unit-id '<真实unit_id>'` 限定单元，保留 task 提供的 `--version-set-id`：
+
+```powershell
+& $pangeaPython -m pangea_agent.cli.main --output json comparison-read @binding --version-set-id '<task.version_set_id>' --unit-id '<真实unit_id>' --view compact
+```
+
+- 每页先消费全部 `items`，其中每项已是完整对象。`item_fragment` 仅用于超长单项；不能只收集片段而漏掉完整项，也不能因 `items=[]` 就判定读完。
+- 片段 `text` 是整个 item 的 JSON 文本，包含该项的 `item_type` 以及对照项的 action/unit 信息。同一查询中按 `item_index` 分开缓存；从 `char_start=0` 开始，后一片的 `char_start` 必须等于前一片的 `char_end`，按此连续区间拼接，直到该项 `complete=true` 才解析 JSON。不同 `item_index`、单元筛选或查询的片段不能合并，不能只按 `char_start` 排序拼接所有片段。
+- 保留所有 `item_type` 及其原始值。只有 `item_type=record` 是业务记录，正文在 `value` 中；`completion` 与 `warning` 分别作为完成声明和诊断消费，不计作业务记录，也不丢弃。
+- 记录身份使用 `(action_id, value.record_id)`。对照项使用该项的 `action_id`，单结果读取使用结果 `binding.action_id`；不能跨 action 仅按 `record_id` 去重。保留对照项的 `role`、`unit_id`，避免把不同来源混为同一条记录。
+- 每页完整消费后，仅用返回的 `next_page_token` 续读，直到它为 `null`；保留原命令、绑定、version_set_id、单元及历史筛选，只替换 `--page-token`。compact 按 `--max-chars` 字符预算分页，`--limit` 不是其页大小，`--cursor` 也不是其续读位置；不要改动 limit/cursor 从头重读或据此推算下一页。汇总计数是元数据，不能代替实际消费 items 和完整片段。
+
 操作参数以 CLI --help 及当前 task 冻结契约为准。不要直接重写结果外壳；不可读外壳仅用诊断给出的 sha256 经 result-repair 由本 worker 修复。
 
 当前 task 声明 `record_contracts.test_case=behavior-test-case-v1` 时，每次 result-write/result-supersede 前，
