@@ -67,6 +67,62 @@ class CurrentWarningProjection(unittest.TestCase):
         self.assertIn("Superseded records (audit only)", text)
         self.assertEqual(len(a.warnings), 9)
 
+    def test_source_warning_never_falls_back_to_a_flattened_same_text(self):
+        value = result()
+        message = value.warnings[0]["message"]
+        valid = dict(kind="flow_path_hint", record_id="one", message=message)
+        invalid_sources = [None, [], "not an object", 0, False, {},
+                           dict(record_id="one", message=message), dict(kind="flow_path_hint", message=message),
+                           dict(kind="custom_warning", message=message),
+                           dict(kind="risk_method_hint", message=message),
+                           {**valid, "kind": "custom_warning"},
+                           {**valid, "kind": "risk_contract_hint"},
+                           {**valid, "kind": []},
+                           {**valid, "record_id": ""}, {**valid, "record_id": " "},
+                           {**valid, "record_id": "two"}, {**valid, "record_id": "missing"},
+                           {**valid, "message": "a different warning"},
+                           *({**valid, "record_revision": revision} for revision in (None, True, "1", 0, 2)),
+                           *({**valid, key: "foreign"} for key in ("run_id", "action_id", "task_id", "data_root"))]
+        pending = [dict(action_id="action-a", kind="agent_result_warning", message=message, source_warning=source)
+                   for source in invalid_sources]
+        original = deepcopy(pending)
+        self.assertEqual(current_warning_degradations(pending, {"action-a": value}), pending)
+        self.assertEqual(pending, original)
+        for source in (valid, {**valid, "record_revision": 1},
+                       {**valid, **value.binding.model_dump(), "record_revision": 1}):
+            item = dict(action_id="action-a", kind="agent_result_warning", message=message, source_warning=source)
+            self.assertEqual(current_warning_degradations([item], {"action-a": value}), [])
+            # Explicit identity on the outer envelope must agree as well.
+            self.assertEqual(current_warning_degradations([{**item, "task_id": "foreign"}], {"action-a": value}),
+                             [{**item, "task_id": "foreign"}])
+        # Old flattened hints retain their previous revision matching behavior.
+        legacy = dict(action_id="action-a", kind="agent_result_warning", message=message, record_id="one", record_revision=1)
+        self.assertEqual(current_warning_degradations([legacy], {"action-a": value}), [legacy])
+        value.warnings.append({**valid, "record_id": "two"})
+        item = dict(action_id="action-a", kind="agent_result_warning", message=message, source_warning=valid)
+        self.assertEqual(current_warning_degradations([item], {"action-a": value}), [item])
+
+    def test_closure_warning_rebinding_preserves_history_and_exact_source_matching(self):
+        from pangea_agent.graph.result_store import copy_result_for_closure
+        value = result()
+        original = value.model_dump(mode="json")
+        binding = value.binding.model_copy(update={"action_id": "closure-a"})
+        closure = copy_result_for_closure(value, binding, "/data/runs/run/closure.json")
+        current = current_result_warnings(closure)
+        diagram = next(w for w in current if w.get("kind") == "diagram_format_diagnostic")
+        self.assertEqual(diagram["action_id"], "closure-a")
+        self.assertEqual(diagram["source_diagnostic"]["action_id"], "action-a")
+        closure.records = [*closure.records, closure.records[-1].model_copy(update={
+            "record_id": "three", "created_revision": 3, "supersedes": ["two"]})]
+        self.assertNotIn(diagram, current_result_warnings(closure))
+        item = dict(action_id="closure-a", kind="agent_result_warning", message=diagram["message"], source_warning=diagram)
+        self.assertEqual(current_warning_degradations([item], {"closure-a": closure}), [])
+        self.assertEqual(current_warning_degradations([{**item, "source_warning": {**diagram, "action_id": "action-a"}}],
+                                                     {"closure-a": closure}),
+                         [{**item, "source_warning": {**diagram, "action_id": "action-a"}}])
+        self.assertIn(diagram, closure.warnings)
+        self.assertEqual(value.model_dump(mode="json"), original)
+
     def test_real_graph_validation_and_current_history_reads(self):
         import observability_recovery as recovery
         from flow_path_diagnostics import flow

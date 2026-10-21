@@ -330,15 +330,30 @@ def current_warning_degradations(degradations: list, results: dict[str, NotesRes
                 or result.binding.action_id != item.get("action_id")):
             current.append(item)
             continue
-        source = item.get("source_warning") if isinstance(item.get("source_warning"), dict) else item
-        if any(key in source and source[key] != getattr(result.binding, key)
+        has_source = "source_warning" in item
+        source = item["source_warning"] if has_source else item
+        if has_source and (not isinstance(source, dict)
+                           or not isinstance(source.get("record_id"), str)
+                           or not source["record_id"].strip()
+                           or not isinstance(source.get("kind"), str)
+                           or source.get("kind") not in _RECORD_WARNING_KINDS
+                           or ("message" in source and source["message"] != item["message"])
+                           or ("record_revision" in source
+                               and (type(source["record_revision"]) is not int or source["record_revision"] < 1))):
+            current.append(item)
+            continue
+        if any(key in identity and identity[key] != getattr(result.binding, key)
+               for identity in (item, source)
                for key in ("run_id", "action_id", "task_id", "data_root")):
             current.append(item)
             continue
         same_message = lambda warning: warning.get("message") == item["message"]
+        record_revisions = {record.record_id: record.created_revision for record in result.records}
         retired = [warning for warning in retired_result_warnings(result) if same_message(warning)
+                   and (not has_source or source["kind"] == warning.get("kind"))
                    and ("record_id" not in source or source["record_id"] == warning.get("record_id"))
-                   and ("record_revision" not in source or source["record_revision"] == warning.get("record_revision"))]
+                   and ("record_revision" not in source or source["record_revision"] == warning.get(
+                       "record_revision", record_revisions.get(warning.get("record_id")) if has_source else None))]
         if not retired or any(same_message(warning) for warning in current_result_warnings(result)):
             current.append(item)
     return current
