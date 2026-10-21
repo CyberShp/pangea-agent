@@ -135,7 +135,7 @@ Comparison 新建 `coverage_gap` finding 时同样必须链接 affected unit 拥
 
 最终回复只用一行 `完成 action_id=<task.action_id>`；历史 task 没有 action_id 时才只回复“完成”。
 
-业务用例以冻结 behavior_test_generation/behavior_test_review 的 70% 黑盒与可实施灰盒目标执行。普通正文只写业务操作和外部判据；注入步骤可定位函数/变量，内部推演单列证据。未实测和缺少注入设施分开记录，不虚构工具。不同触发路径独立成例，参考文件不扩大主责范围。
+业务用例只按当前 task 冻结的 profile、analysis_scene、objective 和 rubric 执行。behavior-test-v1 沿用其冻结 behavior_test_generation/behavior_test_review 的 70% 黑盒与可实施灰盒目标；behavior-test-v2 读取当前 task 提供的 scene_*，risk 场景及显式 interface-contract 目标豁免该比例，其余按冻结目标审核，不从名称自动改目标或追加旧规则。普通正文只写对应目标的真实操作和判据；注入步骤可定位函数/变量，内部推演单列证据。未实测和缺少注入设施分开记录，不虚构工具。不同触发路径独立成例，参考文件不扩大主责范围。
 
 <!-- RISK-REFERENCE:BEGIN -->
 风险场景合同以本 Run 冻结的 scene_risk / scene_risk_review 合同块为准，读取语言风险方法与风险信号；另交 kind=check 检查账本，证据附 evidence_quotes。G1–G4 当前只提示 warning，核对后由原 worker 修正；旧任务继续使用其冻结合同。

@@ -93,6 +93,7 @@ Desktop 外部 source-first worker 读取 `docs/source-first-cli-worker.md`；�
 - 各客户端只读取自己的入口和 Agent 规则。客户端目录中的内容不得引用或调用另一个客户端的规则文件。
 - 共享范围只包括 graph、schema、rubric 和 CLI 契约；客户端专有的命令、会话轨迹和 Agent 调用方式不得写入共享方法论。
 - Python 不调用模型 API，也不做语义拆分。一个 Planning Agent 按功能模块或文件族规划单元；risk-method-v1 按资源申请/释放、数据生产/消费的契约闭包规划，无法同单元时显式放入 context。
+- 新场景按用户显式选择并冻结的 product-behavior/interface-contract 目标规划；不得由 Python 依据库、驱动或名称自动分类。target/focus 原样透传 Planning、Analysis、Review 与原 worker 定向修正。按入口、主干和跨文件行为关系划责，不将文件机械拆为单元；指定已有单元负责主干和跨单元挂接，Reviewer 直接对源码核查关键路径与边界。入口在冻结边界之外时记录缺口，不猜造入口、不增加 caller context UI、Graph 拓扑门禁或完整复核轮次。70% 沿冻结规则解释，risk 及显式 interface-contract 目标豁免，不由 Python 重算语义层级，旧 Run 保持原冻结口径。
 - 首轮 analysis 最多同时派发 3 个互不重叠单元，总单元数不受 3 限制；worker 不得再派发子 Agent。
 - 标准型 analysis 结果齐备后先启动 1 个盲审 Reviewer。`independent_review` task 不包含 analysis result；Graph 接受盲审后，以 `continue_agent` 续接同一 Reviewer 的真实 `task_id` 执行 `comparison_review`，再向该会话开放盲审与首轮结果做对照裁决。Comparison 不是第二次完整分析，也不再启动新的 Reviewer 或第三个复核 Agent。
 - comparison review 保留的 finding 只为受影响单元生成一次 `targeted_closure`；该 action 必须续接对应单元首轮 analysis worker 的真实 `task_id`，在 Workflow 预先复制的 closure 结果中定向补齐，不能创建替代 worker，也不能修改原始 analysis 结果。

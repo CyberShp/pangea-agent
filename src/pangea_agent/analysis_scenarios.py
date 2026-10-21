@@ -31,12 +31,12 @@ def scene_spec(scenario: str) -> dict:
         "analysis_rubrics": ["scene_common_generation", "scene_flow", f"scene_{name}"],
         "review_rubrics": ["scene_common_review", "scene_flow", f"scene_{name}"],
         "planning_rubrics": ["scene_planning"],
-        "record_contracts": {"risk": RISK_FORMAT, "test_case": TEST_CASE_FORMAT},
+        "record_contracts": {"risk": RISK_FORMAT, "test_case": TEST_CASE_FORMAT, "diagram": "diagram-contract-v1"},
         "presentation": {"risks": risk != "none", "coverage": coverage, "textual_flow": True},
     }
     if scenario == 'risk-analysis':
         spec.update(method_version=RISK_METHOD, risk_signals=True,
-                    record_contracts={'risk': RISK_FORMAT_V2, 'check': 'behavior-check-v1', 'review_check': 'behavior-review-check-v1', 'test_case': TEST_CASE_FORMAT},
+                    record_contracts={'risk': RISK_FORMAT_V2, 'check': 'behavior-check-v1', 'review_check': 'behavior-review-check-v1', 'test_case': TEST_CASE_FORMAT, 'diagram': 'diagram-contract-v1'},
                     language_rubrics={role: {'c_cpp': ['c_cpp_risk_methods'], 'lua': ['lua_risk_methods']} for role in ('analysis', 'review')})
         spec['review_rubrics'].append('scene_risk_review')
         spec['presentation'].update(check_ledger=True, blackbox_target=False)
@@ -51,6 +51,7 @@ def scene_spec(scenario: str) -> dict:
 
 def scene_options() -> dict:
     return {"scenarios": list(SCENES), "modes": ["depth", "speed"],
+            "objectives": ["product-behavior", "interface-contract"],
             "coverage_asset_input": True,
             "scenario_descriptors": [scene_spec(name) for name in SCENES]}
 
@@ -60,7 +61,8 @@ def frozen_scene(run_dir: Path, contract: dict) -> dict | None:
         return None
     spec = read_json(run_dir / "inputs" / "analysis-scene.json")
     if (spec.get("format_version") != "analysis-scene-v1" or spec.get("profile") != PROFILE
-            or spec.get("id") != (contract.get("analysis_settings") or {}).get("scenario")):
+            or spec.get("id") != (contract.get("analysis_settings") or {}).get("scenario")
+            or spec.get("objective") != (contract.get("analysis_settings") or {}).get("objective")):
         raise ValueError("冻结分析场景与当前 Run 合同不一致")
     return spec
 
@@ -72,6 +74,14 @@ def freeze_scene(run_dir: Path, contract: dict) -> dict | None:
     if path.is_file():
         return frozen_scene(run_dir, contract)
     spec = deepcopy(scene_spec(contract["analysis_settings"]["scenario"]))
+    objective = contract["analysis_settings"].get("objective")
+    if objective is not None:
+        # A user declaration, never inferred from source names or worker text.
+        spec["objective"] = objective
+        spec["presentation"].update(
+            blackbox_target=objective == "product-behavior" and spec["id"] != "risk-analysis",
+            blackbox_target_reason="risk-scene" if spec["id"] == "risk-analysis" else objective,
+        )
     write_json(path, spec)
     return spec
 

@@ -106,7 +106,9 @@ class TaskContract(BaseModel):
         if self.analysis_profile == "behavior-test-v2":
             from pangea_agent.analysis_scenarios import SCENES
             settings = self.analysis_settings or {}
-            if (self.workflow_version != "source-first-v1" or set(settings) != {"scenario", "mode"}
+            if (self.workflow_version != "source-first-v1" or not {"scenario", "mode"}.issubset(settings)
+                    or set(settings) - {"scenario", "mode", "objective"}
+                    or ("objective" in settings and settings["objective"] not in {"product-behavior", "interface-contract"})
                     or settings.get("scenario") not in SCENES or settings.get("mode") not in {"depth", "speed"}):
                 raise ValueError("behavior-test-v2 requires a supported scenario and depth/speed mode")
             if self.asset_revisions and not set(self.asset_revisions).issubset(self.asset_ids):
