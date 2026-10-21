@@ -212,6 +212,9 @@ def prepare_source_first_inputs(state: PangeaState) -> PangeaState:
     frozen_rubrics = _freeze_source_first_rubrics(run_dir)
     supplement = incremental and incremental["request"]["mode"] == "supplement"
     repositories = incremental["repositories"] if supplement else resolve_repositories_from_contract(contract, state["data_root"])
+    from pangea_agent.inventory.scope_preview import assert_scope_revision
+    if not supplement:
+        assert_scope_revision(contract, state["data_root"])
     requested_scope = list(contract.get("source_scope") or ["."])
     analysis_language = incremental["parent_manifest"]["analysis_language"] if incremental else detect_analysis_language(repositories, requested_scope)
     from pangea_agent.inventory.on_demand import requested_files, file_inventory, directory_overview
@@ -270,6 +273,8 @@ def prepare_source_first_inputs(state: PangeaState) -> PangeaState:
         )
 
     frozen_repositories = _freeze_sources(state, repositories, expansion)
+    if not supplement:
+        assert_scope_revision(contract, state["data_root"])
     module_scope = list(dict.fromkeys(
         path
         for group in expansion.get("groups", [])

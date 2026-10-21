@@ -73,6 +73,7 @@ class TaskContract(BaseModel):
     repositories: list[str] = Field(default_factory=list)
     target: str
     source_scope: list[str] = Field(default_factory=list)
+    expected_scope_revision: str | None = None
     context_scope: list[str] | None = Field(
         default=None,
         description=(

@@ -109,7 +109,7 @@ def derive_run(data_root: str, parent_run_id: str, request_path: str) -> dict:
         raise ValueError("request 的 parent_run_id 与命令不一致")
     request = IncrementalRequest.model_validate({**raw, "parent_run_id": parent_run_id}).model_dump(mode="json")
     contract = json.loads((parent / "inputs/task-contract.json").read_text(encoding="utf-8"))
-    for field in ("run_id", "runtime_commit", "runtime_provenance"):
+    for field in ("run_id", "runtime_commit", "runtime_provenance", "expected_scope_revision"):
         contract.pop(field, None)
     contract.update(data_root=str(Path(data_root).resolve()), incremental_request=request)
     # The request is transport only. The graph freezes its own independent copy.

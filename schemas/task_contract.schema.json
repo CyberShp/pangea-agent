@@ -154,6 +154,12 @@
       "title": "Source Scope",
       "type": "array"
     },
+    "expected_scope_revision": {
+      "anyOf": [{ "type": "string" }, { "type": "null" }],
+      "default": null,
+      "description": "Optional explicit source selection revision confirmed by the caller before freezing.",
+      "title": "Expected Scope Revision"
+    },
     "context_scope": {
       "anyOf": [
         {

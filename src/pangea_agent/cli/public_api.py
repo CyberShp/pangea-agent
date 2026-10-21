@@ -39,7 +39,7 @@ def system_capabilities(data_root: str) -> dict:
         "workflow_versions": ["legacy-v1", "source-first-v1"],
         "source_first": {
             "version": "source-first-v1",
-            "contract_fields": ["analysis_settings", "runtime_provenance", "analysis_profile", "asset_revisions", "incremental_request", "flow_baseline", "model_settings"],
+            "contract_fields": ["analysis_settings", "runtime_provenance", "analysis_profile", "asset_revisions", "incremental_request", "flow_baseline", "model_settings", "expected_scope_revision"],
             "flow_stability": {"format_version": "flow-stability-v1", "baseline": "explicit-run-and-version", "comparison_stage_only": True},
             "incremental_analysis": {"modes": ["supplement", "changed-files"], "parent_results": "reference-only", "independent_child_run": True},
             "execution_recovery": {"execution_view": "pangea-execution-view-v1", "host_quiescent_resume": True, "execution_ids": True},

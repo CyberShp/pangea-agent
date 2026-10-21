@@ -446,11 +446,23 @@ def main() -> None:
     _add_json_argument(review_decide_cmd, "decision", required=True, help="JSON object")
     _add_json_argument(review_decide_cmd, "replace-decision-record-ids", help="JSON array")
     review_decide_cmd.add_argument("--request-id")
+    scope_preview_cmd = sub.add_parser("source-scope-preview")
+    scope_preview_cmd.add_argument("--data-root", required=True)
+    scope_preview_cmd.add_argument("--repository", required=True)
+    scope_preview_cmd.add_argument("--source-scope", required=True)
     args = parser.parse_args()
     print_success = partial(emit_success, readable=args.output == "readable")
     print_error = partial(emit_error, readable=args.output == "readable")
 
-    if args.command == "init-data":
+    if args.command == "source-scope-preview":
+        try:
+            from pangea_agent.inventory.scope_preview import preview_scope
+            import json as scope_json
+            print_success(preview_scope(args.data_root, args.repository, scope_json.loads(args.source_scope)))
+        except Exception as exc:
+            print_error(exc)
+            raise SystemExit(1) from exc
+    elif args.command == "init-data":
         init_data()
         print_success({"initialized": True, "data_root": "pangea-data"})
     elif args.command == "check-result-json":
