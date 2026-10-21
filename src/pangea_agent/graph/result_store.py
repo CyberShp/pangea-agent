@@ -550,7 +550,7 @@ def append_records(
         ]
         response["created_records"] = [record_identity(item) for item in generated]
         response["diagram_diagnostics"] = active_diagram_diagnostics(updated)
-        if any(item.get("classification") == "invalid" for item in response["diagram_diagnostics"]):
+        if any(item.get("classification") in {"invalid", "missing"} for item in response["diagram_diagnostics"]):
             response["diagram_repair_hint"] = {
                 "result_path": str(path.resolve()), "run_id": binding.run_id,
                 "action_id": binding.action_id, "task_id": binding.task_id,

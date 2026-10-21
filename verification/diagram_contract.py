@@ -136,6 +136,55 @@ class DiagramContractChecks(unittest.TestCase):
                 append_records(path, binding, 1, [{"kind": "note", "body": "not lost"}])
             self.assertEqual(path.read_text(encoding="utf-8"), "broken JSON")
 
+    def test_real_graph_review_and_closure_preserve_ignored_diagnostics(self):
+        import observability_recovery as recovery
+        from pangea_agent.agent_io import write_json
+        from pangea_agent.cli.adapter_api import settle_action
+        from pangea_agent.cli.source_first_api import (
+            comparison_finding_write, result_write, review_decide,
+            validate_source_first_result, work_finish,
+        )
+        harness = recovery.RecoveryChecks(methodName="test_plan_counts_saved_progress_and_polling_are_facts")
+        harness.setUp()
+        self.addCleanup(harness.doCleanups)
+        first = harness.analysis[0]
+        worker = harness.bind(first)
+        task = harness.task(first)
+        task["record_contracts"] = CONTRACTS
+        write_json(Path(harness.progress()["actions"][first]["task_path"]), task)
+        body = deepcopy(FIXTURE["base"])
+        body["call_graph"]["variables"][0]["writes"] = 23
+        response = result_write(str(harness.root), harness.run_id, first, worker, expected_revision=0,
+                                records=[{"kind": "flow", "body": body}, {"kind": "flow", "body": body}])
+        self.assertEqual(validate_source_first_result(str(harness.root), harness.run_id, first, worker)["status"], "incomplete")
+        work_finish(str(harness.root), harness.run_id, first, worker, revision=response["revision"])
+        settle_action(str(harness.root), harness.run_id, first)
+        self.assertIn(harness.progress()["actions"][first]["status"], {"settled", "accepted"})
+        second = harness.analysis[1]
+        harness.write(second, harness.bind(second))
+        review = next(action["action_id"] for action in harness.progress()["actions"].values() if action["role"] == "review")
+        reviewer = harness.bind(review, "reviewer")
+        finding = comparison_finding_write(str(harness.root), harness.run_id, review, reviewer, expected_revision=0,
+            unit_ids=["unit-0001"], finding={"summary": "请确认格式字段", "body": "原 worker 修正 writes 字段，保留其他证据。"})
+        decision = review_decide(str(harness.root), harness.run_id, review, reviewer, expected_revision=finding["revision"],
+            decision={"disposition": "finding", "version_set_id": harness.task(review)["version_set_id"], "correction_record_ids": finding["record_ids"]})
+        work_finish(str(harness.root), harness.run_id, review, reviewer, revision=decision["revision"])
+        settle_action(str(harness.root), harness.run_id, review)
+        closure = next(action for action in harness.progress()["actions"].values() if action["role"] == "closure")
+        self.assertEqual(closure["task_id"], worker)
+        task = harness.task(closure["action_id"])
+        saved = read_result(task["result_path"])
+        self.assertEqual(len(active_diagram_diagnostics(saved)), 2)
+        self.assertIsNone(saved.completion)
+        harness.bind(closure["action_id"], worker)
+        fixed = result_write(str(harness.root), harness.run_id, closure["action_id"], worker,
+            expected_revision=saved.revision, records=[{"kind": "flow", "body": deepcopy(FIXTURE["base"]), "supersedes": ["rec-000001"]}])
+        self.assertEqual([item["record_id"] for item in fixed["diagram_diagnostics"]], ["rec-000002"])
+        self.assertEqual(fixed["diagram_diagnostics"][0]["result_path"], str(Path(task["result_path"]).resolve()))
+        current = validate_source_first_result(str(harness.root), harness.run_id, closure["action_id"], worker)
+        self.assertEqual(current["status"], "incomplete")
+        self.assertEqual([item["record_id"] for item in current["warnings"] if item.get("kind") == "diagram_format_diagnostic"], ["rec-000002"])
+
 
 def compare_js(plugin_root):
     script = """import { readFileSync } from 'node:fs';

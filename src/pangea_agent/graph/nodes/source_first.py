@@ -23,7 +23,7 @@ from pangea_agent.documents.incremental import (
     prepare_incremental, incremental_assets, finish_incremental, attach_incremental_inputs,
 )
 from pangea_agent.flow_stability import freeze_flow_inputs, attach_flow_comparison, attach_flow_stability_input
-from pangea_agent.graph.result_store import active_records, initialize_result, read_result
+from pangea_agent.graph.result_store import active_records, copy_result_for_closure, initialize_result, read_result
 from pangea_agent.graph.state import PangeaState
 from pangea_agent.graph.workflow_store import (
     add_action,
@@ -1246,17 +1246,14 @@ def _source_first_advance(state: PangeaState, progress: WorkflowProgress) -> Pan
                 "result_path": str(closure_result_path),
             }
             write_json(closure_task_path, closure_task)
-            write_json(closure_result_path, original.model_copy(update={
-                "last_record_write_at_ms": None,
-                "binding": SourceBinding(
+            write_json(closure_result_path, copy_result_for_closure(
+                original, SourceBinding(
                     data_root=str(Path(state["data_root"]).resolve()),
                     run_id=state["run_id"],
                     action_id=closure_action_id,
                     task_id=origin.task_id,
-                ),
-                "completion": None,
-                "receipts": {},
-            }).model_dump(mode="json"))
+                ), closure_result_path,
+            ).model_dump(mode="json"))
             add_action(progress, ActionState(
                 action_id=closure_action_id,
                 action="continue_agent",

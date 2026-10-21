@@ -69,7 +69,11 @@ risk 场景（method_version=risk-method-v1）按 scene_risk 的工作顺序，�
 
 - `sequence.format_version="sequence-v1"`，包含 `title/status/participants/messages/fragments/notes`。参与者为 `{id,label,description?}`；消息为 `{id,from,to,label,kind,source_evidence?}`，`kind` 使用 `call/return/async/self`，端点引用 participants.id。消息顺序与 source_evidence 由源码证明；同职责 helper 不必各占一个参与者。内部状态改变或清理可用 from=to 的 self，不能捏造外部参与者。
 - `fragments` 只声明语义：`{id,kind,label?,operands:[{condition,message_ids:[]}]}`，kind 使用 `alt/opt/loop/par`。alt 的不同 operand 是互斥分支；loop 写明继续/退出条件；par 只在已确认并发关系时使用，不能伪称分支间有确定先后。message_ids 引用本 sequence 已声明的稳定消息 ID，按该分支真实顺序列出；一个消息属于一个 operand，片段中的消息在 messages 中连续排列，不重叠、不嵌套。不支持的复杂局部时序通过 sub flow 分开保存并注明边界。无片段填空数组。无需也不得填写像素坐标、画布大小或路由。
+  operands 的声明顺序可以与 messages 中各分支的存放顺序不同；它不表示互斥或并行分支之间的执行先后。同一 operand 内的 message_ids 仍保留该分支已核实的消息顺序；宿主按声明分支分别展示，不能为布局改写原消息事实。
 - `call_graph.format_version="call-graph-v1"`，包含 `title/status/root/functions/calls/variables/notes`。functions 是 `{id,kind,label,signature,file,line}`，kind 为 `function/macro/external`；calls 是 `{from,to,file,line,args:[],returns}`；variables 是 `{function,name,reads:[],compute,writes,line}`。file 为当前冻结仓库中的相对源码位置，line 为真实行号；args 逐条说明实参→形参，returns 写返回值接收变量。每条 call 必须有真实调用点，不把内部判断、赋值、返回或未证实的调度当调用。变量按已核对的执行顺序记录读取、计算、写入及重要类型转换；不推测运行时数值。
+  `reads` 为字符串数组，`compute`、`writes` 为字符串；多个写入事实在 writes 字符串中逐条说明。旧 Run 依自己的冻结版本解释；未明确字符串限制的旧 writes 数组保留每个项目用于兼容展示。
+
+新任务冻结 `record_contracts.diagram="diagram-contract-v1"` 时，写入成功响应的 `diagram_diagnostics` 按 record_id/record_revision/field/code 指出格式问题。invalid 是字段或引用格式错误；missing/unknown 明确保留未提供或待确认状态；valid_but_unsupported 是宿主展示能力边界，不要求 worker 捏造事实来迎合渲染。原 worker 在当前回合根据精确字段局部修正，使用 supersedes 指向旧 record_id，并写回相同 task/result_path；有效内容和原始修订始终保留。仍未确认的诊断进入既有 Reviewer/closure，不因提示新增自动续接、替换 worker 或把 Run 判失败。
 - 两个对象的 `status` 均由 Agent 声明：`ready`（当前范围事实已提供）、`partial`（已知内容和待确认缺口并存）、`not_applicable`（有证据说明此范围不适用）、`unknown`（尚不能确认）。`notes` 解释边界、动态调用、未知外部实现或不适用原因。就绪不表示已实测；已有有效事实保留，未知关系不能猜画。
 - 这些是当前冻结 rubric 的分析交付职责；不新增 Python 写入门禁、不增加 Agent 或完整复核轮次。旧 Run 按旧冻结规则执行，不追补新合同。报告和客户端保留缺字段、未知或无法结构化的原始内容并提示，不能据此判定主分析失败。
 

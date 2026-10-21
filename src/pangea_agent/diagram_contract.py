@@ -93,7 +93,8 @@ def diagram_diagnostics(body: Any, *, strict: bool = False) -> list[dict[str, An
         version = check(diagram, value, "format_version", "string", where, required=True)
         if version is not None and version != FORMATS[diagram]:
             emit(diagram, f"{where}.format_version" if where else "format_version",
-                 "unsupported_version", "格式版本暂不支持，原始资料保留", "valid_but_unsupported")
+                 "unsupported_version", "格式版本暂不支持，原始资料保留",
+                 "valid_but_unsupported" if diagram == "flow" and version == "module-flow-text-v1" else "unknown")
             continue
         if diagram != "flow":
             status = check(diagram, value, "status", "string", where, required=True, choices=STATUSES)
@@ -183,7 +184,7 @@ def diagram_diagnostics(body: Any, *, strict: bool = False) -> list[dict[str, An
                     check(diagram, variable, key, "string", path, required=True)
                 strings(diagram, variable, "reads", path, True)
                 if not strict and isinstance(variable.get("writes"), list) and all(isinstance(item, str) for item in variable["writes"]):
-                    emit(diagram, f"{path}.writes", "legacy_writes_array", "旧冻结合同的 writes 数组按原项目兼容展示", "valid_but_unsupported")
+                    pass  # The legacy representation is supported by display compatibility.
                 else:
                     check(diagram, variable, "writes", "string", path, required=True)
                 check(diagram, variable, "line", "line", path)
