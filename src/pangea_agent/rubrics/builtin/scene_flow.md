@@ -73,6 +73,14 @@ risk 场景（method_version=risk-method-v1）按 scene_risk 的工作顺序，�
 - 两个对象的 `status` 均由 Agent 声明：`ready`（当前范围事实已提供）、`partial`（已知内容和待确认缺口并存）、`not_applicable`（有证据说明此范围不适用）、`unknown`（尚不能确认）。`notes` 解释边界、动态调用、未知外部实现或不适用原因。就绪不表示已实测；已有有效事实保留，未知关系不能猜画。
 - 这些是当前冻结 rubric 的分析交付职责；不新增 Python 写入门禁、不增加 Agent 或完整复核轮次。旧 Run 按旧冻结规则执行，不追补新合同。报告和客户端保留缺字段、未知或无法结构化的原始内容并提示，不能据此判定主分析失败。
 
+#### 字段与引用核对（每条 flow 均执行）
+
+- 两图的 `notes` 均为字符串数组，无备注为 `[]`。参与者、消息、片段的 `id` 非空且各自唯一，名称写 `label`，不能用 `name`；消息 id 不能省略。
+- 片段写 `id/kind/operands`，不用 `type/branches`；alt/par 至少两个 operand，opt/loop 恰一个，message_ids 为非空消息 ID 数组。
+- 函数 `kind` 不省略；`root/calls[].from/calls[].to/variables[].function` 均引用本图 functions.id，不用 caller/callee/scope 等别名。args/reads 为字符串数组，compute/writes/returns 为字符串，line 为正整数或 null。
+
+完成前由原 worker 逐条回看 main/sub flow 的两份数据，主图不能代替子图；对照各 paths 核实正常、拒绝、异常、重试/清理交互，不只写成功请求/响应。单函数内部变化可用一个参与者的 self，无调用则 calls=[]。未完成用 partial/unknown 并在 notes 说明具体缺口，不以 ready 掩盖省略或因格式不熟声称 not_applicable。写入成功不代表可绘制或完整；本轮发现问题就用原结果修订机制更正准确 record_id，保留有效字段，不由 Python 补关系、不另派图表 Agent。
+
 ### flow 记录标准样例（behavior-flow-v1，照此结构填写）
 
 以下为虚构的简单登录行为，只演示字段结构，不能作为真实模块的分析深度模板；实际节点、身份、条件及证据须来自当前任务，并按上文展开分支处理闭环。
@@ -142,7 +150,7 @@ risk 场景（method_version=risk-method-v1）按 scene_risk 的工作顺序，�
 - 标准字段名与样例一致（英文），用户可见说明使用中文；稳定 ID、semantic_key 与源码锚点保留实际标识。示例 ID 只说明结构，实际生成按上述业务身份命名。
 - 一条 flow 记录只放一个流程；有多个流程就写多条 flow 记录。
 - edges 的 source_step_key、target_step_key 必须写节点 id，不能写 label；paths.node_ids 同样只引用节点 id。
-- body 直接是 JSON 对象：不要写成字符串，不要包 ```json 代码块，不要外套 flow 或 flows；不要用 steps、from/to、node_id、name、节点、连线、路径 等替代字段。
+- body 直接是 JSON 对象：不要写成字符串，不要包 ```json 代码块，不要外套 flow 或 flows。业务流程的 nodes/edges/paths 不用 steps、node_id、name、节点、连线、路径 等别名，edges 不用 from/to；注意 sequence.messages 与 call_graph.calls 恰好使用 from/to，不可混用两个层级的端点字段。
 - 节点 kind 只能取 entry | main | branch | error | propagation | recovery | exit。
 - role 取 main 或 sub：只有 purpose 指定的 owner 单元的主流程写 main，其他流程一律写 sub。
 - attach_to 写子流程挂接到主流程的位置，如 {"flow_id": "F-001", "node_id": "verify"}；不确定时写 null。role/attach_to 只用于排版，缺失时按 sub、未挂接处理。

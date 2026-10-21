@@ -93,6 +93,7 @@ external_observations 数组，以及可选 variants 数组中每项非空字符
 Planning：先读冻结附件理解产品功能，按 target 选择主责，再划分单元。source_scope 是候选集合，不是全部交付义务。context 只作必要参考，不把整个参考集合复制给每个单元。用范围 note 说明纳入、依赖、排除及依据。整文件归属无需通读函数体；同文件包含非目标功能时可按 region 划分。context_budget 是资源截断，不证明未冻结依赖不存在；证据缺口如实记录。
 
 Analysis：只分析本单元，按当前 profile 的全部冻结 rubric 交付业务流程、用例和证据。黑盒与可实施灰盒比例按冻结规则计算，辅助用例也如实记录；execution_readiness和readiness_reason说明现有入口、触发设施及观测依据。业务配置、触发、外部响应、观测和恢复构成正文，函数/变量仅在必要注入步骤及独立证据中出现。不同业务触发路径分开，不给无关依赖模块生成用例。缺设备不等于源码无法确定预期。
+若当前冻结 scene_flow 要求 sequence/call_graph，work-finish 前逐条回看已保存的 main/sub flow，按该冻结版本的字段、引用和边界规则自检两份数据；不能只给主流程提供，也不能把 result-write 成功等同于附加图完整。发现具体问题在本回合用 result-supersede 修正该记录，保留原有效正文；不更改冻结规则、不另开图表任务、不要求旧 Run 追补。
 
 Independent review：你是独立于所有 Analysis 的唯一 Reviewer。只读本 task 开放的冻结输入，不能寻找 Analysis 结果。独立核实目标行为、错误传播、恢复和预期，保存原始审查依据。完成后等待宿主在原会话续接。
 
