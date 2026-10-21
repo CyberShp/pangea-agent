@@ -17,7 +17,7 @@ risk 场景（method_version=risk-method-v1）按 scene_risk 的工作顺序，�
 实际证据引用冻结源码，保存在 source_evidence 中供追溯，业务流程页面不展示该字段。文档预期与实现不同时分开说明。
 保存前由当前 worker 核对节点、连线和路径引用；Reviewer 负责核实流程语义。flow 记录的结构校验（字段、id 引用）属于格式契约，不属于语义门禁：不合格时写入被拒绝并逐条返回错误，由同一 worker 在本轮修正；Python 不拆分自由文本、不自动修复、不补造节点、不新增语义门禁。
 已有 module-flow-text-v1 记录保留可读；需要补齐时由原 worker 结合冻结源码修正原流程，不能由客户端猜测。流程使用稳定flow_id；修正以准确record_id supersedes，保留旧记录及正确的用例关联，不重做其他单元。
-worker 不绘制任何图，不生成图任务、不调用绘图脚本：流程图由宿主根据 flow 记录确定性渲染；函数变量图（call-graph-v1）仅由用户单独触发。
+采用本版冻结规则的 worker 在同一 analysis 中为每条 flow 保存 `sequence`（时序交互）与 `call_graph`（函数与变量关系）。先保存已核实的流程，随后随同一次源码阅读补充这些事实；不因等待附加数据而推迟已有流程和用例交付。缺口明确标为 partial/unknown 或有依据的 not_applicable，不为画图扩大目标范围。worker 不编写坐标、SVG、HTML，不生成图任务、不调用绘图脚本；宿主根据同一 flow 记录确定性渲染三种图。
 
 ## 分支深度与处理闭环
 
@@ -63,6 +63,16 @@ worker 不绘制任何图，不生成图任务、不调用绘图脚本：流程�
 只有当前 task 的 comparison 阶段明确提供 `flow_baseline` 和 `flow_comparison` 时才对照这份流程稳定性基线。普通新建 Analysis 不接收这两个输入；显式增量 Analysis 仍按其冻结职责读取 `incremental_parent_records` 等父记录，并重新核验，不能将此规则误解为禁止增量参考旧流程。采用本版稳定规则的新 Run，其 independent_review 不读取首轮结果、流程基线或增量父记录；旧 Run 保留原冻结输入合同。所有角色均不得自行检索其他 Run。机械 diff 只表示显式身份、字段或拓扑变化；Reviewer 核实新增、删除、拆分、合并、条件与连线变化的依据，并在现有 note/finding 中区分输入变化、纠正旧遗漏、展示变化或待确认。源码未变仍允许有证据的纠错；不为稳定外观隐藏实质变化，不以相似标题宣称等价，不自动把本轮候选替换为已验收基线。
 
 <!-- FLOW-CONTRACT:BEGIN -->
+### 同一流程的三种展示
+
+`nodes/edges/paths` 是业务流程；`sequence` 是参与者间已核实的交互；`call_graph` 是真实函数调用点和关键变量读写。三者共享当前流程、冻结源码和记录修订，但不能互相猜造：不把业务节点当函数，不把节点数组顺序当实际消息顺序，不为布局连通添加调用边。
+
+- `sequence.format_version="sequence-v1"`，包含 `title/status/participants/messages/fragments/notes`。参与者为 `{id,label,description?}`；消息为 `{id,from,to,label,kind,source_evidence?}`，`kind` 使用 `call/return/async/self`，端点引用 participants.id。消息顺序与 source_evidence 由源码证明；同职责 helper 不必各占一个参与者。内部状态改变或清理可用 from=to 的 self，不能捏造外部参与者。
+- `fragments` 只声明语义：`{id,kind,label?,operands:[{condition,message_ids:[]}]}`，kind 使用 `alt/opt/loop/par`。alt 的不同 operand 是互斥分支；loop 写明继续/退出条件；par 只在已确认并发关系时使用，不能伪称分支间有确定先后。message_ids 引用本 sequence 已声明的稳定消息 ID，按该分支真实顺序列出；一个消息属于一个 operand，片段中的消息在 messages 中连续排列，不重叠、不嵌套。不支持的复杂局部时序通过 sub flow 分开保存并注明边界。无片段填空数组。无需也不得填写像素坐标、画布大小或路由。
+- `call_graph.format_version="call-graph-v1"`，包含 `title/status/root/functions/calls/variables/notes`。functions 是 `{id,kind,label,signature,file,line}`，kind 为 `function/macro/external`；calls 是 `{from,to,file,line,args:[],returns}`；variables 是 `{function,name,reads:[],compute,writes,line}`。file 为当前冻结仓库中的相对源码位置，line 为真实行号；args 逐条说明实参→形参，returns 写返回值接收变量。每条 call 必须有真实调用点，不把内部判断、赋值、返回或未证实的调度当调用。变量按已核对的执行顺序记录读取、计算、写入及重要类型转换；不推测运行时数值。
+- 两个对象的 `status` 均由 Agent 声明：`ready`（当前范围事实已提供）、`partial`（已知内容和待确认缺口并存）、`not_applicable`（有证据说明此范围不适用）、`unknown`（尚不能确认）。`notes` 解释边界、动态调用、未知外部实现或不适用原因。就绪不表示已实测；已有有效事实保留，未知关系不能猜画。
+- 这些是当前冻结 rubric 的分析交付职责；不新增 Python 写入门禁、不增加 Agent 或完整复核轮次。旧 Run 按旧冻结规则执行，不追补新合同。报告和客户端保留缺字段、未知或无法结构化的原始内容并提示，不能据此判定主分析失败。
+
 ### flow 记录标准样例（behavior-flow-v1，照此结构填写）
 
 以下为虚构的简单登录行为，只演示字段结构，不能作为真实模块的分析深度模板；实际节点、身份、条件及证据须来自当前任务，并按上文展开分支处理闭环。
@@ -92,7 +102,39 @@ worker 不绘制任何图，不生成图任务、不调用绘图脚本：流程�
     {"path_id": "login-success", "title": "正常登录", "condition": "密码正确", "node_ids": ["submit", "verify", "session"], "edge_ids": ["submit-verify", "verify-success"], "explanation": "凭据匹配后建立本次会话", "case_ids": []},
     {"path_id": "login-rejected", "title": "拒绝错误凭据", "condition": "密码不匹配", "node_ids": ["submit", "verify", "rejected"], "edge_ids": ["submit-verify", "verify-rejected"], "explanation": "拒绝本次登录，不创建会话", "case_ids": []}
   ],
-  "source_evidence": ["web:src/login.c:20-88"]
+  "source_evidence": ["web:src/login.c:20-88"],
+  "sequence": {
+    "format_version": "sequence-v1",
+    "title": "登录请求与响应",
+    "status": "ready",
+    "participants": [
+      {"id": "client", "label": "客户端", "description": "提交登录请求"},
+      {"id": "service", "label": "登录服务", "description": "校验凭据并建立会话"}
+    ],
+    "messages": [
+      {"id": "request", "from": "client", "to": "service", "label": "提交凭据", "kind": "call", "source_evidence": ["web:src/login.c:20"]},
+      {"id": "accepted", "from": "service", "to": "client", "label": "返回会话 token", "kind": "return", "source_evidence": ["web:src/login.c:70"]},
+      {"id": "denied", "from": "service", "to": "client", "label": "返回凭据不匹配", "kind": "return", "source_evidence": ["web:src/login.c:35"]}
+    ],
+    "fragments": [{"id": "login-result", "kind": "alt", "label": "凭据校验结果", "operands": [
+      {"condition": "密码匹配", "message_ids": ["accepted"]},
+      {"condition": "密码不匹配", "message_ids": ["denied"]}
+    ]}],
+    "notes": ["静态源码交互说明，不代表已执行登录测试"]
+  },
+  "call_graph": {
+    "format_version": "call-graph-v1",
+    "title": "登录调用与校验结果",
+    "status": "partial",
+    "root": "login_handler",
+    "functions": [
+      {"id": "login_handler", "kind": "function", "label": "login_handler", "signature": "int login_handler(req_t *req)", "file": "src/login.c", "line": 20},
+      {"id": "check_password", "kind": "function", "label": "check_password", "signature": "bool check_password(const char *user, const char *pw)", "file": "src/auth.c", "line": 41}
+    ],
+    "calls": [{"from": "login_handler", "to": "check_password", "file": "src/login.c", "line": 33, "args": ["req->user → user", "req->password → pw"], "returns": "ok"}],
+    "variables": [{"function": "login_handler", "name": "ok", "reads": ["req->user", "req->password"], "compute": "check_password(req->user, req->password)", "writes": "ok", "line": 33}],
+    "notes": ["这里只展示已读取的登录调用点，后续会话存储实现待确认"]
+  }
 }
 ```
 

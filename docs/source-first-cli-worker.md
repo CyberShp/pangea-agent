@@ -8,7 +8,7 @@
 
 先用 task-open 核对绑定、task_type、analysis_profile、role/stage、目标、主责范围和唯一 result_path；延后字段从 task.deferred_fields 指定的 input_id 读取。不从目录、历史 Run、文件时间或上一轮回复猜身份和阶段。完整读取本 task 列出的全部冻结 rubric，所选内置与用户方法论同样适用；选择的方法论不能扩大场景职责。
 
-- behavior-test-v2：先读 analysis_scene、共同规则、scene_flow 和当前场景规则，再读语言风险方法、unit_risk_signals 和所选方法论。module 保持综合行为和轻量风险；risk 聚焦有依据失效；branch/coverage 不承担正式风险账本责任。流程字段与样例读取冻结 rubric_scene_flow 的 FLOW-CONTRACT 段；用例按 task.record_contracts.test_case 与冻结 rubric_scene_common_generation 的 TEST-CASE-CONTRACT 段执行，字段结构是强制 schema；风险格式按 task.record_contracts 和冻结 scene_risk 的合同块执行。
+- behavior-test-v2：先读 analysis_scene、共同规则、scene_flow 和当前场景规则，再读语言风险方法、unit_risk_signals 和所选方法论。module 保持综合行为和轻量风险；risk 聚焦有依据失效；branch/coverage 不承担正式风险账本责任。流程字段与样例读取冻结 rubric_scene_flow 的 FLOW-CONTRACT 段；若该冻结版本要求 sequence/call_graph，在同一 analysis 中保存，宿主本地渲染，不能另开生图任务或编写坐标；用例按 task.record_contracts.test_case 与冻结 rubric_scene_common_generation 的 TEST-CASE-CONTRACT 段执行，字段结构是强制 schema；风险格式按 task.record_contracts 和冻结 scene_risk 的合同块执行。
 - behavior-test-v1：按本 task 已冻结的 behavior_test_generation/behavior_test_review 执行，不额外读取新 scene_* 规则。未提供 scene_flow 时，流程仍按该任务冻结规则与结果合同解释。
 - 更早的 source-first profile：读取本 task 实际提供的方法论和写入合同，不套用新 profile。task_type=analysis/closure 的旧 Graph 富结构合同由其原客户端执行，不使用本 source-first CLI 合同替换。
 

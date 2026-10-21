@@ -1,6 +1,6 @@
 # 流程图与时序图：方法来源和产品适配
 
-本说明记录 2026-10-20 对 GitHub 绘图 Agent skills 的调研及采纳范围。实际执行规则由当前 Run 冻结的 rubric 和图任务合同决定；本文件是来源与适配说明，不是新的执行入口，不修改已有 Run 的规则。
+本说明记录 2026-10-20 对 GitHub 绘图 Agent skills 的调研及采纳范围。实际执行规则由当前 Run 冻结的 rubric 和 flow 记录合同决定；本文件是来源与适配说明，不是新的执行入口，不修改已有 Run 的规则。
 
 ## 固定来源
 
@@ -24,15 +24,15 @@
 1. **流程图表达业务选择与结果。** 动作、判断、状态/资源变化、恢复及出口分开表达；连线只承载条件或事件。`recv_fin`、`recv_rst` 等有独立处理时需展示对应处理节点，不能把完整处理过程压缩为边标签。正常关闭和预期拒绝不等于产品缺陷。
 2. **以源码决定分支深度。** 在当前对象与必要依赖内核实触发条件、处理动作、业务结果和回接/退出位置。没有证据时说明未知，不为满足图形形式虚构清理动作、调用关系或时序。
 3. **复杂图按真实业务边界拆分。** 父图保留判断和分支去向，子图展开处理；不能通过限制节点数量省略分支。节点与连线使用稳定 ID，显示名称不承担身份匹配职责。
-4. **时序图表达参与方之间的交互。** 区分请求、响应、异步事件；明确互斥分支、循环、并发和中止。对应 Mermaid 的 `alt/else`、`loop`、`par`、`break` 等概念，实际输出仍遵守产品图任务合同；不能把流程节点顺序直接当作跨参与方调用顺序。
+4. **时序图表达参与方之间的交互。** 区分请求、响应、异步事件；明确互斥分支、循环、并发和中止。可参考 Mermaid 的 `alt/else`、`loop`、`par`、`break` 等概念，实际只填写冻结 `scene_flow` 支持的 sequence 字段；不支持的复杂局部保留说明，不能把流程节点顺序直接当作跨参与方调用顺序。
 5. **表达与正确性分别验证。** 上游 skill 提供表达方法，源码和 Agent/Reviewer 判断语义；宿主只处理明确结构与展示。路径的 `edge_ids` 数量、顺序及端点对应需确定性核对，但不授权宿主猜测缺边、补造节点或改写业务路径。
 
-流程分析与复核规则分别落在 [scene_flow.md](../src/pangea_agent/rubrics/builtin/scene_flow.md) 和 [scene_common_review.md](../src/pangea_agent/rubrics/builtin/scene_common_review.md)。时序图指导由 companion 的 `src/sequence-guidance.md` 提供。新规则按现有冻结机制进入任务，旧任务继续遵守原合同。
+流程分析与复核规则分别落在 [scene_flow.md](../src/pangea_agent/rubrics/builtin/scene_flow.md) 和 [scene_common_review.md](../src/pangea_agent/rubrics/builtin/scene_common_review.md)。时序交互与函数变量指导随同一冻结 `scene_flow.md` 提供，Agent 仅提供结构化事实，宿主负责确定性布局。新规则按现有冻结机制进入任务，旧任务继续遵守原合同。
 
 ## 未采用的工具与行为
 
 - 不安装或自动更新上述 skills，不调用其联网安装、`npx`、Docker、Mermaid Live 或外部模型；用户内网运行无需连接 GitHub。
-- 不把 Mermaid 源码作为 `behavior-flow-v1` 的替代物。分析 worker 继续提交结构化流程，由宿主确定性渲染；时序图使用其自身显式任务合同。
+- 不把 Mermaid 源码作为 `behavior-flow-v1` 的替代物。分析 worker 继续提交结构化流程，由宿主确定性渲染；时序与函数变量结构保存在同一 flow 正文，不启动独立生图任务。
 - 不引入 Mermaid 或 beautiful-mermaid 运行依赖，不因为公开仓库 stars 较高而替换现有渲染器。`mermaid-js/mermaid` 和 `lukilabs/beautiful-mermaid` 是渲染库，不应把它们的热度归算给同名第三方 skills。
 - 不通过放宽 SVG 安全约束解决交互问题；导出交互、稳定命中区域和悬停重绘属于产品实现职责，skills 本身不能修复这些问题。
 - 不把这些外部指南当作新的语义门禁，不增加完整复核轮次，不自动续接、重做分析或修改历史记录。结构告警和语义审核沿用产品权限边界。

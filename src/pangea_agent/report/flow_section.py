@@ -15,6 +15,7 @@ from typing import Any, Callable
 from pangea_agent.flow_schema import TEXT_FLOW_FORMAT, check_flow_structure, normalize_flow
 from pangea_agent.flow_stability import canonical_flow
 from pangea_agent.report.flow_diagram import render_flow_svg
+from pangea_agent.report.native_diagrams import native_diagram_sections
 
 FLOW_SECTION_KINDS = {"flow", "branch", "scenario"}
 _KIND_LABELS = {
@@ -414,6 +415,7 @@ def _flow_body(
         lines.append(f"> 图形提示：{warning}")
     if warnings:
         lines.append("")
+    lines.extend(native_diagram_sections(flow))
     lines.extend(_evidence_block(entry))
     return lines
 

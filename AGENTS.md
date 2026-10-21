@@ -19,8 +19,9 @@
 新建四场景使用 `analysis_profile=behavior-test-v2`，复用 source-first-v1 Graph；职责读取当前 Run
 冻结的 `inputs/analysis-scene.json` 与 scene_* rubric。模块分析保留综合行为；风险分析保留风险板块；
 分支与覆盖率分析不承担正式风险账本责任、不要求 risk_refs。四场景均先交付结构化模块流程
-（behavior-flow-v1），保留 nodes/edges/paths，text 不能替代流程结构；worker 不绘制任何图，流程图由宿主根据
-flow 记录确定性渲染，函数变量图（call-graph-v1）只由用户单独触发。
+（behavior-flow-v1），保留 nodes/edges/paths，text 不能替代流程结构。采用新冻结规则的 analysis 在同一 flow
+记录提供 sequence（sequence-v1）和 call_graph（call-graph-v1）；worker 只提供结构化事实，不提供坐标、SVG
+或绘图命令，三种图由宿主确定性渲染，不另开生图 Agent。缺少或未知关系保留原始状态和说明，不猜造。
 Coverage 通过资产进入，冻结已选输入内容指纹、来源及匹配诊断；不得在恢复时重新查询或替换版本。
 不将上述规则补写入旧合同或旧 rubric，不增加语义门禁、完整复核轮次或替代 worker。
 
