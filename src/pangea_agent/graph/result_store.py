@@ -19,6 +19,7 @@ from typing import Any, Callable, Iterator
 
 from pangea_agent.agent_io import read_json, write_json
 from pangea_agent.flow_schema import check_flow_structure, flow_stability_warnings, format_flow_errors
+from pangea_agent.diagram_contract import DIAGRAM_CONTRACT, diagram_diagnostics
 from pangea_agent.risk_schema import RISK_FORMAT, RISK_FORMAT_V2, check_risk_structure, format_risk_errors
 from pangea_agent.test_case_schema import TEST_CASE_FORMAT, check_test_case_structure, format_test_case_errors
 from pangea_agent.contract_context import ContractContext
@@ -63,8 +64,14 @@ def _check_record_contract(
         # Existing stable-v1 diagnostics must reach the original worker in the
         # write response, before it finishes. These are advisory only: preserve
         # the body and allow the worker to supersede its own record in this turn.
-        return [{"kind": "flow_path_hint", "record_index": offset, "message": message}
-                for message in flow_stability_warnings(body)]
+        warnings = [{"kind": "flow_path_hint", "record_index": offset, "message": message}
+                    for message in flow_stability_warnings(body)]
+        # Only tasks that froze this contract receive new diagnostics. Historical
+        # records remain readable under their original rubric without new gates.
+        if (record_contracts or {}).get("diagram") == DIAGRAM_CONTRACT:
+            warnings.extend({"record_index": offset, **item}
+                            for item in diagram_diagnostics(body, strict=True))
+        return warnings
     elif kind == "risk" and (record_contracts or {}).get("risk") == RISK_FORMAT:
         errors = check_risk_structure(body)
         if errors:
@@ -258,6 +265,51 @@ def active_records(result: NotesResult) -> list[NoteRecord]:
     return [record for record in result.records if record.record_id not in superseded]
 
 
+def active_diagram_diagnostics(result: NotesResult) -> list[dict[str, Any]]:
+    """Current diagnostics only; historical warnings remain in the saved result."""
+    active = {record.record_id: record for record in active_records(result)}
+    return [item for item in result.warnings
+            if isinstance(item, dict) and item.get("kind") == "diagram_format_diagnostic"
+            and item.get("record_id") in active
+            and item.get("record_revision") == active[item["record_id"]].created_revision
+            and all(item.get(key) == getattr(result.binding, key)
+                    for key in ("run_id", "action_id", "task_id"))]
+
+
+def _bound_warnings(warnings: list[dict], path: Path, binding: SourceBinding,
+                    record_id: str, revision: int) -> list[dict]:
+    return [{**warning, "record_id": record_id,
+             **({"revision": revision, "record_revision": revision,
+                 "result_path": str(path.resolve()), "data_root": binding.data_root, "run_id": binding.run_id,
+                 "action_id": binding.action_id, "task_id": binding.task_id}
+                if warning.get("kind") == "diagram_format_diagnostic" else {})}
+            for warning in warnings]
+
+
+def copy_result_for_closure(original: NotesResult, binding: SourceBinding,
+                            result_path: str | Path) -> NotesResult:
+    """Explicit same-worker copy; preserve unresolved diagnostics in the new action.
+
+    Source identities remain auditable. No task lookup, result search or semantic
+    rewriting is allowed here; the Graph supplies both exact bindings and path.
+    """
+    if any(getattr(original.binding, key) != getattr(binding, key)
+           for key in ("run_id", "task_id")) or _resolved_data_root(original.binding.data_root) != _resolved_data_root(binding.data_root):
+        raise ResultStoreError("closure copy 必须属于同一 Run/data_root/原 worker")
+    active = active_diagram_diagnostics(original)
+    warnings = []
+    for item in original.warnings:
+        if item not in active:
+            warnings.append(item)
+            continue
+        source_identity = {key: item[key] for key in (
+            "result_path", "data_root", "run_id", "action_id", "task_id", "record_id", "record_revision") if key in item}
+        warnings.extend(_bound_warnings([{**item, "source_diagnostic": source_identity}],
+                        Path(result_path), binding, item["record_id"], item["record_revision"]))
+    return original.model_copy(update={"binding": binding, "warnings": warnings,
+                                       "last_record_write_at_ms": None, "completion": None, "receipts": {}})
+
+
 def repair_result_shell(
     path: str | Path,
     binding: SourceBinding,
@@ -310,7 +362,7 @@ def repair_result_shell(
             if context is not None:
                 context.current_records = generated
                 context.incoming_relates_to = item.get('relates_to', [])
-            warnings.extend({**w, 'record_id': f'rec-{offset + 1:06d}'} for w in _check_record_contract(offset, item.get("kind") or "note", item["body"], record_contracts, context))
+            warnings.extend(_bound_warnings(_check_record_contract(offset, item.get("kind") or "note", item["body"], record_contracts, context), path, binding, f'rec-{offset + 1:06d}', revision))
             generated.append(NoteRecord(
                 record_id=f"rec-{offset + 1:06d}",
                 kind=str(item.get("kind") or "note"),
@@ -332,6 +384,7 @@ def repair_result_shell(
             "corrupt_sha256": actual_sha256,
             "backup_path": str(backup_path),
             "warnings": warnings,
+            "diagram_diagnostics": active_diagram_diagnostics(restored),
         }
 
 
@@ -420,7 +473,7 @@ def append_records(
             if context is not None:
                 context.current_records = [*current.records, *generated]
                 context.incoming_relates_to = item.get('relates_to', [])
-            warnings.extend({**w, 'record_id': f'rec-{next_number:06d}'} for w in _check_record_contract(offset, kind, item["body"], record_contracts, context))
+            warnings.extend(_bound_warnings(_check_record_contract(offset, kind, item["body"], record_contracts, context), path, binding, f'rec-{next_number:06d}', revision))
             if kind not in _KNOWN_KINDS:
                 warnings.append({
                     "kind": "unknown_record_kind",
@@ -496,6 +549,13 @@ def append_records(
             record_identity(item) for item in updated.records if item.record_id in retired
         ]
         response["created_records"] = [record_identity(item) for item in generated]
+        response["diagram_diagnostics"] = active_diagram_diagnostics(updated)
+        if any(item.get("classification") == "invalid" for item in response["diagram_diagnostics"]):
+            response["diagram_repair_hint"] = {
+                "result_path": str(path.resolve()), "run_id": binding.run_id,
+                "action_id": binding.action_id, "task_id": binding.task_id,
+                "message": "内容已保存。请在本轮按 field/code 局部修正，使用 supersedes 指向原 record_id 后写回同一 result_path；保留有效内容。提示不触发自动续接；未修正项交既有 Review/closure。",
+            }
         if request_id:
             receipts = {**updated.receipts, request_id: response}
             updated = updated.model_copy(update={"receipts": receipts})
@@ -541,6 +601,7 @@ def declare_completion(
             "format_version": "pangea-notes-v1",
             "revision": updated.revision,
             "complete": bool(complete),
+            "diagram_diagnostics": active_diagram_diagnostics(updated),
         }
         if request_id:
             updated = updated.model_copy(update={
@@ -595,6 +656,7 @@ def read_records(
         "records": record_views,
         "completion": result.completion.model_dump(mode="json") if result.completion else None,
         "warnings": result.warnings,
+        "diagram_diagnostics": active_diagram_diagnostics(result),
         "active_record_count": len(active_records(result)),
         "superseded_record_ids": sorted(superseded_by),
         "next_cursor": next_cursor,
@@ -939,6 +1001,10 @@ def read_records_compact(
         })
     if include_history:
         items.extend({"item_type": "warning", "value": item} for item in result.warnings)
+    else:
+        items.extend({"item_type": "warning", "value": item}
+                     for item in active_diagram_diagnostics(result)
+                     if not record_id or item["record_id"] == record_id)
     metadata = {
         "format_version": "pangea-notes-compact-v1",
         "binding": result.binding.model_dump(mode="json"),

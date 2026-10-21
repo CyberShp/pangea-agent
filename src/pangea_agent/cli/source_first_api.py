@@ -194,7 +194,9 @@ def validate_source_first_result(
     # store internals; it also confirms the shell can be consumed as notes.
     view = read_records(path, binding, cursor=0, limit=1)
     records = active_records(result)
-    warnings = list(view.get("warnings", []))
+    warnings = [item for item in view.get("warnings", [])
+                if not isinstance(item, dict) or item.get("kind") != "diagram_format_diagnostic"]
+    warnings.extend(view.get("diagram_diagnostics", []))
     if (task.get('record_contracts') or {}).get('check') == 'behavior-check-v1' and task.get('task_type') in {'source_first_analysis', 'source_first_closure'}:
         from pangea_agent.risk_method_diagnostics import analysis_unit_diagnostics
         signal_input = next((i for i in task.get('inputs', []) if i.get('input_id') == 'unit_risk_signals'), None)

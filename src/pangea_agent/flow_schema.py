@@ -207,9 +207,15 @@ def format_flow_errors(offset: int, errors: list[str]) -> str:
     return "\n".join(lines)
 
 
+def uses_declared_main_paths(body: Any) -> bool:
+    """Match companion layout stableMode; explicit declarations beat array order."""
+    return isinstance(body, dict) and (body.get("layout_version") == "stable-v1"
+                                       or isinstance(body.get("main_path_ids"), list))
+
+
 def flow_stability_warnings(body: Any) -> list[str]:
     """Advisory checks for new optional metadata; never part of the write gate."""
-    if not isinstance(body, dict) or body.get("layout_version") != "stable-v1":
+    if not uses_declared_main_paths(body):
         return []
     warnings: list[str] = []
     nodes = body.get("nodes") if isinstance(body.get("nodes"), list) else []
