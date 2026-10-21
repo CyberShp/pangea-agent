@@ -493,7 +493,8 @@ def _incomplete_source_first_result(
     }
 
 
-def _record_degradations(progress, action_id: str, warnings: list[str]) -> None:
+def _record_degradations(progress, action_id: str, warnings: list[str],
+                         warning_details: list[dict] | None = None) -> None:
     progress.degradations = [
         item
         for item in progress.degradations
@@ -504,8 +505,10 @@ def _record_degradations(progress, action_id: str, warnings: list[str]) -> None:
             "action_id": action_id,
             "kind": "agent_result_warning",
             "message": warning,
+            **({"source_warning": warning_details[index]}
+               if warning_details is not None and index < len(warning_details) else {}),
         }
-        for warning in warnings
+        for index, warning in enumerate(warnings)
     )
 
 
@@ -773,12 +776,12 @@ def _validate_action(data_root: str, run_id: str, action_id: str) -> dict:
                 action,
                 ValueError(str(source_first.get("reason", "source-first 结果不可消费"))),
             )
+        result_warning_details = [item for item in source_first.get("warnings", []) if isinstance(item, dict)]
         result_warnings = [
             str(item.get("message") or item.get("kind") or item)
-            for item in source_first.get("warnings", [])
-            if isinstance(item, dict)
+            for item in result_warning_details
         ]
-        _record_degradations(progress, action_id, result_warnings)
+        _record_degradations(progress, action_id, result_warnings, result_warning_details)
         progress.first_finish_revisions.setdefault(
             action_id,
             int(source_first.get("revision", 0)),

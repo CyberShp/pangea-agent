@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from pangea_agent.agent_io import read_json
-from pangea_agent.graph.result_store import active_diagram_diagnostics, read_result, supersession_map
+from pangea_agent.graph.result_store import active_diagram_diagnostics, current_warning_degradations, read_result, supersession_map
 from pangea_agent.graph.workflow_store import run_directory
 from pangea_agent.report.flow_section import flow_section_markdown
 from pangea_agent.report.branch_coverage import coverage_body, coverage_markdown
@@ -691,7 +691,13 @@ def _markdown(state: dict, progress: dict, records: list[tuple[dict, Any]]) -> s
                 lines.extend(["Evidence:", "", _body_text(record.evidence), ""])
             if record.relates_to:
                 lines.extend(["Relates to:", "", _body_text(record.relates_to), ""])
-    degradations = progress.get("degradations", [])
+    degradations = current_warning_degradations(
+        progress.get("degradations", []),
+        {action["action_id"]: result for action, result in records
+         if action.get("action_id") == result.binding.action_id
+         and action.get("task_id") == result.binding.task_id
+         and result.binding.run_id == progress.get("run_id", state.get("run_id"))},
+    )
     blocking_reason = progress.get("blocking_reason")
     if blocking_reason:
         lines.extend(["## Attention", "", _body_text(blocking_reason), ""])

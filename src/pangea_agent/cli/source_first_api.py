@@ -18,7 +18,7 @@ from pangea_agent.contract_context import ContractContext
 from pangea_agent.graph.result_store import (
     ResultStoreError,
     active_records,
-    active_diagram_diagnostics,
+    current_result_warnings,
     append_records,
     compact_items_page,
     declare_completion,
@@ -195,9 +195,7 @@ def validate_source_first_result(
     # store internals; it also confirms the shell can be consumed as notes.
     view = read_records(path, binding, cursor=0, limit=1)
     records = active_records(result)
-    warnings = [item for item in view.get("warnings", [])
-                if not isinstance(item, dict) or item.get("kind") != "diagram_format_diagnostic"]
-    warnings.extend(view.get("diagram_diagnostics", []))
+    warnings = list(view["current_warnings"])
     if (task.get('record_contracts') or {}).get('check') == 'behavior-check-v1' and task.get('task_type') in {'source_first_analysis', 'source_first_closure'}:
         from pangea_agent.risk_method_diagnostics import analysis_unit_diagnostics
         signal_input = next((i for i in task.get('inputs', []) if i.get('input_id') == 'unit_risk_signals'), None)
@@ -886,6 +884,7 @@ def comparison_read(
         total_record_count = 0
         active_record_count = 0
         warning_count = 0
+        historical_warning_count = 0
         for entry in selected:
             entry_action_id = entry.get("action_id")
             entry_task_id = entry.get("task_id")
@@ -939,10 +938,11 @@ def comparison_read(
                     "item_type": "warning", "role": entry.get("role"),
                     "unit_id": entry.get("unit_id"), "action_id": entry_action_id,
                     "value": warning,
-                } for warning in active_diagram_diagnostics(result))
+                } for warning in current_result_warnings(result))
             total_record_count += len(result.records)
             active_record_count += len(active_records(result))
-            warning_count += len(result.warnings)
+            warning_count += len(result.warnings if include_history else current_result_warnings(result))
+            historical_warning_count += len(result.warnings)
             frozen_revisions.append({
                 "action_id": entry_action_id,
                 "revision": expected_revision,
@@ -955,6 +955,7 @@ def comparison_read(
                 "total_record_count": total_record_count,
                 "active_record_count": active_record_count,
                 "warning_count": warning_count,
+                "historical_warning_count": historical_warning_count,
                 "include_history": bool(include_history),
             },
             items=items,
@@ -1008,9 +1009,7 @@ def comparison_read(
             "revision": view["revision"],
             "records": view["records"],
             "completion": view["completion"],
-            "warnings": ([item for item in view["warnings"]
-                          if not isinstance(item, dict) or item.get("kind") != "diagram_format_diagnostic"]
-                         + view["diagram_diagnostics"]),
+            "warnings": view["warnings"] if include_history else view["current_warnings"],
             "diagram_diagnostics": view["diagram_diagnostics"],
             "next_cursor": view["next_cursor"],
         })

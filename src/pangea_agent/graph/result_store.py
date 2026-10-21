@@ -276,6 +276,74 @@ def active_diagram_diagnostics(result: NotesResult) -> list[dict[str, Any]]:
                     for key in ("run_id", "action_id", "task_id"))]
 
 
+_RECORD_WARNING_KINDS = {
+    "flow_path_hint", "risk_contract_hint", "planning_contract_hint", "check_contract_hint",
+    "review_check_contract_hint", "review_check_reference_hint", "evidence_quote_mismatch",
+    "diagram_format_diagnostic",
+}
+
+
+def retired_result_warnings(result: NotesResult) -> list[dict[str, Any]]:
+    """Warnings proven to belong to explicitly retired records in this result.
+
+    Legacy contract hints may omit revision; their result-local record_id is
+    sufficient. Unknown warning shapes/kinds or conflicting explicit identities
+    remain unresolved; a similar message is never a retirement proof.
+    """
+    retired = supersession_map(result)
+    records = {record.record_id: record for record in result.records}
+    return [warning for warning in result.warnings
+            if warning.get("kind") in _RECORD_WARNING_KINDS
+            and isinstance(warning.get("record_id"), str)
+            and warning["record_id"] in retired
+            and all(key not in warning or warning[key] == getattr(result.binding, key)
+                    for key in ("run_id", "action_id", "task_id", "data_root"))
+            and ("record_revision" not in warning
+                 or warning["record_revision"] == records[warning["record_id"]].created_revision)
+            and (warning.get("kind") != "diagram_format_diagnostic"
+                 or "record_revision" in warning and all(
+                     warning.get(key) == getattr(result.binding, key)
+                     for key in ("run_id", "action_id", "task_id")))]
+
+
+def current_result_warnings(result: NotesResult) -> list[dict[str, Any]]:
+    """Current pending projection; never mutate the historical warnings list."""
+    retired = retired_result_warnings(result)
+    diagrams = active_diagram_diagnostics(result)
+    return [warning for warning in result.warnings
+            if (warning in diagrams if warning.get("kind") == "diagram_format_diagnostic"
+                else warning not in retired)]
+
+
+def current_warning_degradations(degradations: list, results: dict[str, NotesResult]) -> list:
+    """Compatibility for old flattened validation warnings, scoped to exact action.
+
+    Remove a mirrored message only if a verified result proves an identically
+    worded record warning retired and no current warning has that same message.
+    Unidentified legacy warnings and unrelated degradation kinds stay visible.
+    """
+    current = []
+    for item in degradations:
+        result = results.get(item.get("action_id")) if isinstance(item, dict) else None
+        if (not isinstance(item, dict) or item.get("kind") != "agent_result_warning"
+                or not isinstance(item.get("message"), str) or result is None
+                or result.binding.action_id != item.get("action_id")):
+            current.append(item)
+            continue
+        source = item.get("source_warning") if isinstance(item.get("source_warning"), dict) else item
+        if any(key in source and source[key] != getattr(result.binding, key)
+               for key in ("run_id", "action_id", "task_id", "data_root")):
+            current.append(item)
+            continue
+        same_message = lambda warning: warning.get("message") == item["message"]
+        retired = [warning for warning in retired_result_warnings(result) if same_message(warning)
+                   and ("record_id" not in source or source["record_id"] == warning.get("record_id"))
+                   and ("record_revision" not in source or source["record_revision"] == warning.get("record_revision"))]
+        if not retired or any(same_message(warning) for warning in current_result_warnings(result)):
+            current.append(item)
+    return current
+
+
 def _bound_warnings(warnings: list[dict], path: Path, binding: SourceBinding,
                     record_id: str, revision: int) -> list[dict]:
     return [{**warning, "record_id": record_id,
@@ -656,6 +724,7 @@ def read_records(
         "records": record_views,
         "completion": result.completion.model_dump(mode="json") if result.completion else None,
         "warnings": result.warnings,
+        "current_warnings": current_result_warnings(result),
         "diagram_diagnostics": active_diagram_diagnostics(result),
         "active_record_count": len(active_records(result)),
         "superseded_record_ids": sorted(superseded_by),
@@ -1003,15 +1072,16 @@ def read_records_compact(
         items.extend({"item_type": "warning", "value": item} for item in result.warnings)
     else:
         items.extend({"item_type": "warning", "value": item}
-                     for item in active_diagram_diagnostics(result)
-                     if not record_id or item["record_id"] == record_id)
+                     for item in current_result_warnings(result)
+                     if not record_id or item.get("record_id") == record_id)
     metadata = {
         "format_version": "pangea-notes-compact-v1",
         "binding": result.binding.model_dump(mode="json"),
         "revision": result.revision,
         "total_record_count": len(result.records),
         "active_record_count": len(active_records(result)),
-        "warning_count": len(result.warnings),
+        "warning_count": len(result.warnings if include_history else current_result_warnings(result)),
+        "historical_warning_count": len(result.warnings),
         "completion_complete": result.completion.complete if result.completion else False,
         "completion_declared_revision": (
             result.completion.declared_revision if result.completion else None

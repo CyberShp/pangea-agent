@@ -26,6 +26,19 @@ diagram、field、code、classification、severity、message，以及 exact resu
 run_id/action_id/task_id、record_id、record_revision。`revision` 是诊断产生时的记录修订，
 result.revision 后续增长不会使未修正记录的诊断消失。
 
+`current_result_warnings` / companion `currentResultWarnings` 同时处理旧格式路径提示。
+已知 contract hint 以同一 result 内的显式 record_id 与 supersedes 为依据退休，旧 hint
+没有 revision 时不补猜 revision；无 record_id、未知 kind、显式外部 action/binding 的
+提示保留。diagram 类继续使用原有严格 record_revision/binding 过滤。
+`read_records.warnings` 仍是历史原文，`current_warnings` 是当前投影；默认 compact、完成验证、
+Reviewer 使用当前投影，显式 include_history 保留历史。
+
+旧 validation 曾把 warning 压成 `progress.degradations` 的 action_id + message。
+当前概览与报告只在已验证具体 action/result 中找到精确同文、显式退役的原 warning，
+且没有任何当前同文 warning 时，才从当前待处理项省去该镜像。当前同文、无身份旧提示和
+其他 action 的同文提示均保留；原 progress/result 不修改。新 validation 同时保留
+source_warning 身份，插件的 workflow.diagnostic_history 保留原 degradation 列表。
+
 读写与完成响应提供 `diagram_diagnostics` 当前投影；compact 当前视图把这些诊断作为 warning
 项目分页返回。报告/UI 用 `active_diagram_diagnostics` / `activeDiagramDiagnostics`，只显示
 当前 binding 中尚未 supersede 的同修订记录；历史 warnings 和原始结果始终保留。
