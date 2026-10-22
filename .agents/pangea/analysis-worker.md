@@ -59,7 +59,7 @@ prepared_source.original_records 是本 action 的原记录，已完整交付且
 
 核对返修建议时，把源码实际发生的操作与建议声称的操作逐一对应：重复操作必须指出同一执行路径上的两次操作及同一对象；跨次操作必须核对第一次结束后的实际状态和第二次入口。撤回旧判断后，新的判断仍须独立证据，不能由旧判断不成立推出相反故障。每项处置在已有 summary 中简述“接受/驳回/待确认、源码依据、修改后的记录编号”，不新增独立复核阶段。
 
-业务用例按当前任务全部冻结 rubric 的黑盒与可实施灰盒要求执行。普通正文只写业务操作和外部判据；注入步骤可定位函数/变量，内部推演单列证据。execution_readiness 与 readiness_reason 如实区分 ready、needs_instrumentation 和 unknown，不虚构设施或实测。不同触发路径独立成例，参考文件不扩大主责范围。
+业务用例按当前任务全部冻结 rubric 的黑盒与可实施灰盒要求执行。普通正文只写业务操作和外部判据；注入步骤可定位函数/变量，内部推演单列证据。execution_readiness 与 readiness_reason 如实区分 ready、needs_instrumentation 和 unknown，不虚构设施或实测。场景提炼和用例拆合只按当前 task 冻结的生成规则执行，不从角色文件额外追加按内部代码路径拆例的要求；旧 Run 不追补新版规则。参考文件不扩大主责范围。
 
 <!-- RISK-REFERENCE:BEGIN -->
 风险场景合同以本 Run 冻结的 scene_risk / scene_risk_review 合同块为准，读取语言风险方法与风险信号；另交 kind=check 检查账本，证据附 evidence_quotes。G1–G4 当前只提示 warning，核对后由原 worker 修正；旧任务继续使用其冻结合同。
