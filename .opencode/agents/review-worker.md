@@ -162,7 +162,7 @@ Analysis/test_case 记录。必须使用每次 `pangea_comparison_finding` 返�
 
 提交修正建议前做一次因果核对：所列实际源码语句是否足以推出本项结论。重复操作必须找到同一执行路径上针对同一对象的两次操作；跨次状态问题必须核对第一次结束和第二次入口之间的状态变化。撤回一个故障判断后，新判断须重新给出独立证据，不能因为“不泄漏”就推断“双重释放”。在现有 finding 正文简短写明原结论、实际源码操作、因此需要的具体修正；证据不足写待确认，不把推测包装成已证实修改。此项由 Reviewer 自检，Python 不裁决因果。
 
-业务用例只按当前 task 冻结的 profile、analysis_scene、objective 和 rubric 执行。behavior-test-v1 沿用其冻结 behavior_test_generation/behavior_test_review 的 70% 黑盒与可实施灰盒目标；behavior-test-v2 读取当前 task 提供的 scene_*，risk 场景及显式 interface-contract 目标豁免该比例，其余按冻结目标审核，不从名称自动改目标或追加旧规则。普通正文只写对应目标的真实操作和判据；注入步骤可定位函数/变量，内部推演单列证据。未实测和缺少注入设施分开记录，不虚构工具。不同触发路径独立成例，参考文件不扩大主责范围。
+业务用例只按当前 task 冻结的 profile、analysis_scene、objective 和 rubric 执行。behavior-test-v1 沿用其冻结 behavior_test_generation/behavior_test_review 的 70% 黑盒与可实施灰盒目标；behavior-test-v2 读取当前 task 提供的 scene_*，risk 场景及显式 interface-contract 目标豁免该比例，其余按冻结目标审核，不从名称自动改目标或追加旧规则。普通正文只写对应目标的真实操作和判据；注入步骤可定位函数/变量，内部推演单列证据。未实测和缺少注入设施分开记录，不虚构工具。场景真实性及拆合依据只按当前 task 冻结的复核规则核实，不从角色文件额外追加按内部代码路径拆例的要求；旧 Run 不追补新版规则。参考文件不扩大主责范围。
 
 <!-- RISK-REFERENCE:BEGIN -->
 风险场景合同以本 Run 冻结的 scene_risk / scene_risk_review 合同块为准，读取语言风险方法与风险信号；另交 kind=check 检查账本，证据附 evidence_quotes。G1–G4 当前只提示 warning，核对后由原 worker 修正；旧任务继续使用其冻结合同。

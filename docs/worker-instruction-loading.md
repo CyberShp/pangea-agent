@@ -25,6 +25,14 @@ flow 的源码契约仅维护 `src/pangea_agent/rubrics/builtin/scene_flow.md` �
 
 修改运行规则后先验证同步检查、方法论派发及客户端权限/协议回归；实际模型是否遵从规则仍需真实 provider Run 验收。纯合成记录测试只证明派发和消费合同可用，不代表模型分析质量已通过。
 
+## 业务场景与用例粒度
+
+新建 behavior-test-v2 Run 使用共同生成规则中的场景提炼与拆合方法：结合注释、上下文及状态来源解释业务情形，按业务或公开接口验证目标组织用例。scene_branch 负责有意义的行为发现，scene_common_review 与 scene_branch_review 同时检查过度拆分、错误合并和不可执行表达。流程路径与用例不要求一对一；三种图仍由宿主根据原 Worker 的结构化事实渲染。
+
+角色文件和 Desktop CLI 合同只指向当前 task 的冻结规则，不额外要求内部路径逐条成例。OpenCode 辅助 Skill 按 task 实际提供的 profile/rubric 读取，不要求 v2 加载未提供的 v1 规则；协议字段、FIN/RST、抓包及已有注入设施可用于真实刺激和观察。旧 Run 继续使用其原 rubric 快照，本次不改 schema、调度、并发、复核或同一 Worker 定向修正协议。
+
+`python verification/branch_behavior_contract.py` 覆盖安装规则变化后的真实冻结与派发：旧 Run 字节保持不变，新 Run 读取新快照，必读生成/复核规则不依赖可选方法论。语义验收样例见 [branch-behavior-acceptance.md](branch-behavior-acceptance.md)，其中真实 provider 验收与机械验证分开记录。
+
 ## risk-method-v1
 
 新 risk-analysis Run 冻结语言风险方法、风险信号与 risk/check/review_check 合同；旧 Run 继续使用冻结内容。按契约闭包规划、六镜头逐对象反证、检查账本、盲审探针与对照复核工作；不增加 Agent 或复核轮次，analysis 最多三个并发。风险用例不设黑盒比例目标，库/API 按接口层级如实交付。G1–G4 根据用户 2026-10-15 决定只提示 warning，Python 不判断风险真假。
