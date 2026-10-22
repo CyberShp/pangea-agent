@@ -34,6 +34,10 @@ from pangea_agent.models.source_first import (
 )
 
 
+# Bump when compact warning selection/order changes independently of revision.
+WARNING_PROJECTION_VERSION = "result-warnings-v1"
+
+
 class ResultStoreError(ValueError):
     """A deterministic result-store contract error."""
 
@@ -954,7 +958,7 @@ def compact_items_page(
             not isinstance(token_context_sha256, str)
             or not context_sha256.startswith(token_context_sha256)
         ):
-            raise ResultStoreError("compact page_token 与当前读取条件或 revision 不一致")
+            raise ResultStoreError("compact page_token 与当前读取条件或 revision 不一致；请移除 page_token 从头读取")
         item_index = token.get("item_index")
         char_offset = token.get("char_offset")
         if not isinstance(item_index, int) or not isinstance(char_offset, int):
@@ -1106,6 +1110,7 @@ def read_records_compact(
     }
     context = {
         "kind": "result",
+        "warning_projection_version": WARNING_PROJECTION_VERSION,
         "run_id": binding.run_id,
         "action_id": binding.action_id,
         "task_id": binding.task_id,

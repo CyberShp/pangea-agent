@@ -17,6 +17,7 @@ from pangea_agent.agent_io import read_json
 from pangea_agent.contract_context import ContractContext
 from pangea_agent.graph.result_store import (
     ResultStoreError,
+    WARNING_PROJECTION_VERSION,
     active_records,
     current_result_warnings,
     append_records,
@@ -961,6 +962,7 @@ def comparison_read(
             items=items,
             token_context={
                 "kind": "comparison",
+                "warning_projection_version": WARNING_PROJECTION_VERSION,
                 "run_id": run_id,
                 "action_id": action_id,
                 "task_id": task_id,
