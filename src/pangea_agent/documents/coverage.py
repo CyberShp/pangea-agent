@@ -249,6 +249,11 @@ def parse_coverage_combined(path: Path) -> dict:
             "acquisition": {**{key: data.get(key) for key in
                             ("status", "message", "sources", "missing", "query_input", "query_resolution",
                              "scope", "summary", "snapshot", "source_semantics", "pagination")},
+                            # Report identity is distinct from query_input. Keep
+                            # absence, null and empty values as reported; never
+                            # fill an unknown report version from the request.
+                            **{key: data[key] for key in ("product", "c_version", "b_version")
+                               if key in data},
                             "selected_source": selected if modern else None}}
 
 
