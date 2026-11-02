@@ -60,3 +60,7 @@ Comparison 先在现有 note 中按 unit_id、record_id 和变体标识保存逐
 同一unit的具体差异集中为finding，带原文/反证及真实目标记录；资料不足记UNRESOLVED。定向修正续接原worker，只修受影响内容，不增加完整复核轮次，不改写原首轮结果。
 
 已确认某个 expected、步骤或变体与源码/执行反证矛盾，即使核心覆盖目标仍成立，也必须通过 comparison-finding-write 指向该原记录，再由原 Worker 定向修正；不能仅保留备注或以 unresolved 代替已确定的修正。当前任务有小型执行证据时核对实际输入、输出、退出码及桩限制；若执行与静态推导不同，先核对类型和编译条件，不静默采用理想公式。
+
+当冻结 record_contracts.sequence_review 为 sequence-path-review-v1，comparison 对锁定的每个 main/sub flow 分别写普通 note。body 示例：
+{"format_version":"sequence-path-review-v1","version_set_id":"当前冻结值","unit_id":"当前单元","record_id":"当前有效流程记录","checks":[{"field":"paths[0]","basis":"冻结文件:行段；实际入口、触发条件、调用方向与终态，对照图上具体消息 ID"},{"field":"sequence.fragments[0].operands[0]","basis":"冻结文件:行段；该分支实际执行的消息及后继，loop 对照连续两轮的交界"}]}
+逐条核对每条 path 和每个 operand；两者皆无时写 field=sequence 并说明线性顺序或不适用依据。先按源码独立推演，再核实响应与解析、调用与内部计算、子过程成功与整体成功、拒绝后的后继、循环轮界和重连入口。par 分支不假定总顺序。具体不一致走 finding 定向修正；证据不足走 unresolved；仅完整核对且相符时 pass。closure 修改图后原 worker 依 scene_flow 重新核对修改的最终版本。

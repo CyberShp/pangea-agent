@@ -189,8 +189,17 @@ def _comparison_diagnostics(run_dir: Path, task: dict[str, Any], result) -> list
         if not isinstance(path, str) or not Path(path).is_file():
             errors.append(f"comparison 审阅结果不存在：{entry.get('action_id')}")
             continue
-        if read_result(path).revision != entry.get("revision"):
+        frozen = read_result(path)
+        if frozen.revision != entry.get("revision"):
             errors.append(f"comparison 审阅版本已变化：{entry.get('action_id')}")
+            continue
+        if (decision.get("disposition") == "pass"
+                and (task.get("record_contracts") or {}).get("sequence_review") == "sequence-path-review-v1"
+                and entry.get("role") == "analysis"):
+            from pangea_agent.sequence_review import missing_sequence_checks
+            errors.extend(missing_sequence_checks(
+                active_records(frozen), records, version_set_id, entry.get("unit_id")
+            ))
     return errors
 
 
@@ -301,6 +310,16 @@ def validate_source_first_result(
                 "revision": result.revision,
                 "warnings": warnings,
             }
+        if (task.get("record_contracts") or {}).get("sequence_review") == "sequence-path-review-v1":
+            from pangea_agent.sequence_review import missing_sequence_checks
+            changed_ready = [r for r in records if r.created_revision > base_revision
+                             and r.kind == "flow" and isinstance(r.body, dict)
+                             and isinstance(r.body.get("sequence"), dict)
+                             and r.body["sequence"].get("status") == "ready"]
+            errors = missing_sequence_checks(changed_ready, records, action_id, task.get("unit_id"))
+            if errors:
+                return {"status": "incomplete", "reason": "; ".join(errors),
+                        "revision": result.revision, "warnings": warnings}
     return {
         "status": "valid",
         "revision": result.revision,

@@ -49,6 +49,7 @@ def scene_spec(scenario: str) -> dict:
         spec.update(method_version=BRANCH_METHOD)
         spec['review_rubrics'].append('scene_branch_review')
         spec['presentation'].update(behavior_coverage=True)
+    spec["record_contracts"]["sequence_review"] = "sequence-path-review-v1"
     return spec
 
 

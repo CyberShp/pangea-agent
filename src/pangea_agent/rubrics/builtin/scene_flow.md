@@ -71,6 +71,7 @@ risk 场景（method_version=risk-method-v1）按 scene_risk 的工作顺序，�
 - `sequence.format_version="sequence-v1"`，包含 `title/status/participants/messages/fragments/notes`。参与者为 `{id,label,description?}`；消息为 `{id,from,to,label,kind,source_evidence?}`，`kind` 使用 `call/return/async/self`，端点引用 participants.id。消息顺序与 source_evidence 由源码证明；同职责 helper 不必各占一个参与者。内部状态改变或清理可用 from=to 的 self，不能捏造外部参与者。
 - `fragments` 只声明语义：`{id,kind,label?,operands:[{condition,message_ids:[]}]}`，kind 使用 `alt/opt/loop/par`。alt 的不同 operand 是互斥分支；loop 写明继续/退出条件；par 只在已确认并发关系时使用，不能伪称分支间有确定先后。message_ids 引用本 sequence 已声明的稳定消息 ID，按该分支真实顺序列出；一个消息属于一个 operand，片段中的消息在 messages 中连续排列，不重叠、不嵌套。不支持的复杂局部时序通过 sub flow 分开保存并注明边界。无片段填空数组。无需也不得填写像素坐标、画布大小或路由。
   operands 的声明顺序可以与 messages 中各分支的存放顺序不同；它不表示互斥或并行分支之间的执行先后。同一 operand 内的 message_ids 仍保留该分支已核实的消息顺序；宿主按声明分支分别展示，不能为布局改写原消息事实。
+- 每条关键消息引用调用、收包、状态判断或调度发生处。区分报文、处理入口、内部处理与返回；跨层概括须说明。沿每条 path 分别选取 alt 分支，核对共享后继能否到达。对可重复 loop 连走两轮，核对轮界是否重复发送或先消费后接收。重试和重定向标明重新进入的步骤；片段无法表达时拆子流程或在 notes 标明回到哪个消息及其条件。修订消息或分支后重新核对最终版本的受影响路径。
 - `call_graph.format_version="call-graph-v1"`，包含 `title/status/root/functions/calls/variables/notes`。functions 是 `{id,kind,label,signature,file,line}`，kind 为 `function/macro/external`；calls 是 `{from,to,file,line,args:[],returns}`；variables 是 `{function,name,reads:[],compute,writes,line}`。file 为当前冻结仓库中的相对源码位置，line 为真实行号；args 逐条说明实参→形参，returns 写返回值接收变量。每条 call 必须有真实调用点，不把内部判断、赋值、返回或未证实的调度当调用。变量按已核对的执行顺序记录读取、计算、写入及重要类型转换；不推测运行时数值。
   `reads` 为字符串数组，`compute`、`writes` 为字符串；多个写入事实在 writes 字符串中逐条说明。旧 Run 依自己的冻结版本解释；未明确字符串限制的旧 writes 数组保留每个项目用于兼容展示。
 
@@ -161,3 +162,4 @@ risk 场景（method_version=risk-method-v1）按 scene_risk 的工作顺序，�
 - attach_to 写子流程挂接到主流程的位置，如 {"flow_id": "F-001", "node_id": "verify"}；不确定时写 null。role/attach_to 只用于排版，缺失时按 sub、未挂接处理。
 - 写入时会做结构检查（字段名、id 唯一与引用）；不合格时 pangea_result_write 返回逐条错误，请在本轮按错误修正后重写同一结果。
 <!-- FLOW-CONTRACT:END -->
+若新合同 sequence_review=sequence-path-review-v1，closure 修改 flow 后声明 sequence.status=ready，须用普通 note 留下本次最终版本的路径复核依据。body 含 format_version=sequence-path-review-v1、version_set_id=当前 closure action_id、unit_id、record_id=新写入的有效记录、checks 数组。每项含 field（每条 paths[i] 及每个 sequence.fragments[i].operands[j]，二者皆无用 sequence）和 basis（具体源码锚点、该路径的消息次序与后继；循环展开两轮）。资料不足保留 partial/unknown 并说明缺口。
