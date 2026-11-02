@@ -4,6 +4,17 @@
 仅用于 behavior-test-v2。先读 analysis_scene；按 scene_flow 先保存模块结构化业务流程，再开展当前场景工作。
 用户文档和方法论通过 input-read 按需读取，不把全仓清单或所有资料全文写入提示。
 
+## 按需使用已选测试工具参考
+
+当前 task 的 test_tool_reference_paths 是用户为本 Run 冻结的测试能力参考，不是被测对象；只用现有 source-search/source-read 按需核实，不对工具做分支、风险或覆盖分析，不全量阅读工具仓库，不执行工具，也不要求用户先写完整操作说明。
+当候选用例缺少操作入口、参数、外部观测或清理/恢复方法时，先在这些已选路径中检索入口脚本、参数定义、示例及必要实现；确认真实能力及适用前提后再写操作。没有选择参考或冻结材料仍不足时，保留测试目标和具体缺口，不猜子命令、参数、时限、注入开关或越界找新版本。
+
+复用现有 kind=note 保存共用操作说明：body 使用已有 title、note_id、content、source_evidence 等字段。content 面向执行人员写清执行主机与目录、工具/产品版本及环境前提、带占位符的真实命令模板、参数单位/取值和填法、工具自动完成的行为、外部观测入口、清理/恢复及其依据。未知项明确写未知；命令模板的注释只解释操作，不把内部推演或每例的产品预期塞进共用说明。源码位置使用 repo_id:path:line，记录“已核对冻结资料，未实际执行”。不要求每条用例复制整份共用说明。
+
+用例通过现有记录顶层 relates_to 关联操作 note，例如 [{"unit_id":"U1","record_id":"实际保存的note记录ID"}]；同单元也可用已保存 record_id 字符串。必须使用保存后返回的真实 ID，不把 note_id 当 record_id，不发明 body.note_refs。每条用例仍在 preconditions、steps[*].action/expected、variants 和 cleanup 写明本例具体对象、实际参数值、顺序、外部预期与恢复要求，不能只有“参见工具”。共享模板不能代替具体步骤或预期。
+
+工具若只支持 connect/query，不得为暂停、篡改报文或精确命中认证窗口发明 pause/reset/send-message 能力。主机自动认证写为 connect 后的自动行为及外部观察，不能逐消息伪写成人工操作；内部状态/函数仅作依据，不作为主要判据。缺少控制或观测设施时保留目标，使用 needs_instrumentation；入口或结果依据尚未核实用 unknown，并在 readiness_reason 列明缺口。ready 仅表示设计已有依据，execution_status 仍为 not_run，未接设备不等于缺设施。
+
 ## 核实一次操作的实际结果
 
 - **看用户最终收到什么。** 从最外层产品入口追到响应写入或完成回调。异步内部函数返回 0

@@ -100,7 +100,8 @@ def _explicit_context_files(
     return records
 
 
-def _freeze_sources(state: PangeaState, repositories: list[dict], expansion: dict) -> list[dict]:
+def _freeze_sources(state: PangeaState, repositories: list[dict], expansion: dict,
+                    reference_roots: dict | None = None) -> list[dict]:
     paths_by_repo: dict[str, set[str]] = {}
     for group in expansion.get("groups", []):
         paths = paths_by_repo.setdefault(group["repo_id"], set())
@@ -119,9 +120,10 @@ def _freeze_sources(state: PangeaState, repositories: list[dict], expansion: dic
         source_root = Path(repository["source_root"]).resolve()
         destination_root = staging_root / repo_id
         for relative in sorted(paths_by_repo.get(repo_id, set())):
-            source = (source_root / relative).resolve()
+            read_root = Path((reference_roots or {}).get((repo_id, relative), source_root)).resolve()
+            source = (read_root / relative).resolve()
             try:
-                source.relative_to(source_root)
+                source.relative_to(read_root)
             except ValueError as exc:
                 raise ValueError(f"源码范围越过仓库边界：{repo_id}:{relative}") from exc
             if not source.is_file():

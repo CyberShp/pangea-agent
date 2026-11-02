@@ -438,6 +438,8 @@ def _reference_markdown(
         variant_anchor = anchors.get(variant_key)
         suffix += f" / {variant_id}" + ("" if variant_anchor else "（编号不唯一）" if variant_key in anchors else "（未找到有效变体）")
         anchor = variant_anchor or anchor
+    if identifier_key == "record_id" and isinstance(value, dict) and identifier and not anchor and not ambiguous:
+        suffix += "（未找到关联记录，待核实）"
     label = f"{identifier}{suffix}" if identifier else _body_text(value).replace(chr(10), " ")
     return f"[{label}](#{anchor})" if anchor else label
 
@@ -827,7 +829,8 @@ def _behavior_markdown(
             if record.record_id in retired_by:
                 continue
             anchor = _record_anchor(unit_id, record.record_id)
-            for identifier_key, identifier in _record_identifiers(record).items():
+            identifiers = {"record_id": record.record_id, **_record_identifiers(record)}
+            for identifier_key, identifier in identifiers.items():
                 key = (unit_id, identifier_key, identifier)
                 anchors[key] = "" if key in anchors else anchor
             body = _body_mapping(record.body) or {}
@@ -897,7 +900,11 @@ def _behavior_markdown(
                 if record.evidence:
                     lines.extend(["证据：", "", _body_text(record.evidence), ""])
                 if record.relates_to:
-                    lines.extend(["关联：", "", _body_text(record.relates_to), ""])
+                    lines.extend(["关联：", "", *[
+                        "- " + _reference_markdown(item, current_unit=unit_id, identifier_key="record_id", anchors=anchors)
+                        for item in _items(record.relates_to)
+                    ], "", "<details><summary>关联原始声明</summary>", "",
+                        _body_text(record.relates_to), "", "</details>", ""])
         if not found:
             del lines[section_start:]
 

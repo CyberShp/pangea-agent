@@ -64,3 +64,7 @@ Comparison 先在现有 note 中按 unit_id、record_id 和变体标识保存逐
 当冻结 record_contracts.sequence_review 为 sequence-path-review-v1，comparison 对锁定的每个 main/sub flow 分别写普通 note。body 示例：
 {"format_version":"sequence-path-review-v1","version_set_id":"当前冻结值","unit_id":"当前单元","record_id":"当前有效流程记录","checks":[{"field":"paths[0]","basis":"冻结文件:行段；实际入口、触发条件、调用方向与终态，对照图上具体消息 ID"},{"field":"sequence.fragments[0].operands[0]","basis":"冻结文件:行段；该分支实际执行的消息及后继，loop 对照连续两轮的交界"}]}
 逐条核对每条 path 和每个 operand；两者皆无时写 field=sequence 并说明线性顺序或不适用依据。先按源码独立推演，再核实响应与解析、调用与内部计算、子过程成功与整体成功、拒绝后的后继、循环轮界和重连入口。par 分支不假定总顺序。具体不一致走 finding 定向修正；证据不足走 unresolved；仅完整核对且相符时 pass。closure 修改图后原 worker 依 scene_flow 重新核对修改的最终版本。
+
+## 测试工具参考与操作说明核对
+
+在既有 comparison 中按需读取本 Run 的 test_tool_reference_paths，核对被引用的真实入口、参数/单位、执行位置、版本前提、自动行为、外部观测和恢复依据；工具只是参考，不承担工具自身的覆盖或风险审查。核对 case 顶层 relates_to 指向的真实操作 note 与本例具体值、步骤、预期一致，共用模板不能替代逐例动作与判据。缺少入口/参数/观测/清理时是否已在已选参考中按需检索；没有能力时应保留目标及准备度缺口，不能凭常见习惯造 pause/reset 等命令，不把自动认证写成人工逐消息操作，不以内部分支状态作主要判据。对资料支持与实际执行分别表述；引用存在、格式通过或报告可点击均不证明命令跑通或语义正确。具体问题在当前轮交原 worker 定向修正，不新增 Agent、必填 note 合同、语义门禁或复核轮次；旧 Run 只依原冻结规则。

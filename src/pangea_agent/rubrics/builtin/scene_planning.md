@@ -29,3 +29,7 @@ coverage的主干理解和流程交付不等于普通基础功能用例义务。
 - target 范围内的每个主责文件，都要能在某个单元的 purpose 中找到职责；不分析的文件在范围 note 中说明原因。
 - 有引用计数、对象池、队列额度等信号时，选择 storage_resource_recovery 方法论（名称是存储专项，资源账本程序通用）。
 - 规划阶段仍不展开风险结论。
+
+## 测试能力参考
+
+若 task 提供 test_tool_reference_paths，这些冻结工具文件只供原 Analysis/Reviewer 按用例的入口、参数、观测或恢复缺口按需检索，不属于主责功能源码；不为工具另建分析单元、覆盖义务或工具分析 Agent。Planning 不全量展开工具，必要时在现有 purpose 中提示相关能力参考，具体操作说明由原 worker 核对后保存为普通 note。

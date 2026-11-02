@@ -51,6 +51,13 @@ class ModelSettings(BaseModel):
     reasoning_effort: str | None = None
 
 
+class TestToolSource(BaseModel):
+    """Explicit read-only reference selection, never source ownership."""
+    model_config = ConfigDict(extra="forbid")
+    repo_id: str = Field(min_length=1)
+    paths: list[str] = Field(min_length=1)
+
+
 class TaskContract(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -74,6 +81,8 @@ class TaskContract(BaseModel):
     target: str
     source_scope: list[str] = Field(default_factory=list)
     expected_scope_revision: str | None = None
+    test_tool_sources: list[TestToolSource] = Field(default_factory=list)
+    expected_test_tool_revision: str | None = None
     context_scope: list[str] | None = Field(
         default=None,
         description=(
@@ -99,6 +108,8 @@ class TaskContract(BaseModel):
 
     @model_validator(mode="after")
     def validate_mode(self) -> "TaskContract":
+        if self.test_tool_sources and self.workflow_version != "source-first-v1":
+            raise ValueError("测试工具参考仅支持 source-first-v1 新 Run")
         if self.flow_baseline and (self.workflow_version != "source-first-v1" or self.analysis_profile != "behavior-test-v2"):
             raise ValueError("流程基线仅支持 source-first-v1 / behavior-test-v2 新场景 Run")
         if self.incremental_request and self.workflow_version != "source-first-v1":

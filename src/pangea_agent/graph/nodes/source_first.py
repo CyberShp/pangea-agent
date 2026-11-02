@@ -69,10 +69,11 @@ def _explicit_context_files(repositories: list[dict], context_scope: list[str], 
     return resolve_context(repositories, context_scope, expansion)
 
 
-def _freeze_sources(state: PangeaState, repositories: list[dict], expansion: dict) -> list[dict]:
+def _freeze_sources(state: PangeaState, repositories: list[dict], expansion: dict,
+                    reference_roots: dict | None = None) -> list[dict]:
     from pangea_agent.graph.nodes.prepare_inputs import _freeze_sources as freeze
 
-    return freeze(state, repositories, expansion)
+    return freeze(state, repositories, expansion, reference_roots)
 
 
 def _compact_inventory(inventory: dict, expansion: dict, analysis_language: str) -> dict:
@@ -248,6 +249,16 @@ def prepare_source_first_inputs(state: PangeaState) -> PangeaState:
                         "reason": "source_scope_reference",
                     })
             group["code_paths"] = owned_paths
+    tool_preview = None
+    tool_reference_roots = {}
+    if incremental:
+        from pangea_agent.inventory.test_tool_sources import inherit_test_tool_references
+        tool_preview = incremental["parent_manifest"].get("test_tool_sources")
+        if not supplement:
+            tool_reference_roots = inherit_test_tool_references(incremental["parent_manifest"], repositories, expansion)
+    elif contract.get("test_tool_sources"):
+        from pangea_agent.inventory.test_tool_sources import add_test_tool_references
+        tool_preview = add_test_tool_references(state["data_root"], contract, repositories, expansion)
     context_scope = list(contract.get("context_scope") or [])
     if incremental:
         # The parent's already explicit context remains readable when present;
@@ -257,6 +268,8 @@ def prepare_source_first_inputs(state: PangeaState) -> PangeaState:
             repository = next(r for r in repositories if r["repo_id"] == group["repo_id"])
             owned = next(g["code_paths"] for g in expansion["groups"] if g["repo_id"] == group["repo_id"])
             for relative in group.get("context_paths", []):
+                if (group["repo_id"], relative) in tool_reference_roots:
+                    continue
                 if relative not in owned and (Path(repository["source_root"]) / relative).is_file():
                     context_scope.append(f"{group['repo_id']}:{relative}")
     explicit_context = _explicit_context_files(
@@ -284,9 +297,12 @@ def prepare_source_first_inputs(state: PangeaState) -> PangeaState:
             f"用户指定范围没有可分析的 {'Lua' if analysis_language == 'lua' else 'C/C++'} 源码"
         )
 
-    frozen_repositories = _freeze_sources(state, repositories, expansion)
+    frozen_repositories = _freeze_sources(state, repositories, expansion, tool_reference_roots)
     if not supplement:
         assert_scope_revision(contract, state["data_root"])
+        if tool_preview is not None and not incremental:
+            from pangea_agent.inventory.test_tool_sources import preview_test_tools, assert_test_tool_revision
+            assert_test_tool_revision(tool_preview["scope_revision"], preview_test_tools(state["data_root"], contract["test_tool_sources"]))
     module_scope = list(dict.fromkeys(
         path
         for group in expansion.get("groups", [])
@@ -297,10 +313,12 @@ def prepare_source_first_inputs(state: PangeaState) -> PangeaState:
     # Pathless legacy coverage still needs global disambiguation.
     coverage_inventory = {"files": []}
     if assets["coverage_records"]:
+        tool_keys = {(i["repo_id"], i["path"]) for i in expansion.get("context_files", []) if i.get("reason") == "test_tool_reference"}
         paths = [str(r.get("path", "")).replace("\\", "/") for r in assets["coverage_records"]]
         scan = build_lua_inventory if analysis_language == "lua" else build_lightweight_inventory
         for repo in frozen_repositories:
             selected = [f["path"] for f in inventory["files"] if f["repo_id"] == repo["repo_id"]
+                        and (f["repo_id"], f["path"]) not in tool_keys
                         and ("" in paths or any(p == f["path"] or p.endswith("/" + f["path"]) or f["path"].endswith("/" + p) for p in paths))]
             if selected:
                 coverage_inventory["files"].extend(scan([repo], selected)["files"])
@@ -363,6 +381,8 @@ def prepare_source_first_inputs(state: PangeaState) -> PangeaState:
         "parse_failures_by_role": compact_metadata.get("parse_failures_by_role", {}),
         "source_index_path": str(source_first_index_path(state)),
     }
+    if tool_preview is not None:
+        source_manifest["test_tool_sources"] = tool_preview
     source_manifest_path = inputs / "source-manifest.json"
     if incremental:
         source_manifest["coverage_diagnostics"] = {
@@ -435,6 +455,7 @@ def prepare_source_first_inputs(state: PangeaState) -> PangeaState:
         task["inputs"].append(_input("risk_signal_summary", inputs / "risk-signal-summary.json", "风险检索线索"))
     attach_incremental_inputs(run_dir, task)
     attach_flow_stability_input(state, task)
+    _attach_test_tool_references(task, run_directory(state))
     write_json(task_path, task)
     initialize_result(
         result_path,
@@ -754,6 +775,7 @@ def _make_analysis_actions(state: PangeaState, progress: WorkflowProgress, units
             task["inputs"].append(_input("unit_risk_signals", signal_path, "本单元风险检索线索"))
         attach_incremental_inputs(run_directory(state), task)
         attach_flow_stability_input(state, task)
+        _attach_test_tool_references(task, run_directory(state))
         write_json(task_path, task)
         initialize_result(
             result_path,
@@ -858,6 +880,7 @@ def _prepare_review(state: PangeaState, progress: WorkflowProgress) -> None:
     attach_incremental_inputs(run_directory(state), task)
     attach_flow_stability_input(state, task)
     attach_flow_comparison(state, task)
+    _attach_test_tool_references(task, run_directory(state))
     write_json(task_path, task)
     initialize_result(
         result_path,
@@ -1128,6 +1151,7 @@ def _source_first_advance(state: PangeaState, progress: WorkflowProgress) -> Pan
             if (run_directory(state) / "inputs/flow-stability.json").is_file():
                 attach_incremental_inputs(run_directory(state), comparison_task)
             attach_flow_comparison(state, comparison_task)
+            _attach_test_tool_references(comparison_task, run_directory(state))
             write_json(comparison_task_path, comparison_task)
             initialize_result(
                 comparison_result_path,
@@ -1263,6 +1287,7 @@ def _source_first_advance(state: PangeaState, progress: WorkflowProgress) -> Pan
                 ],
                 "result_path": str(closure_result_path),
             }
+            _attach_test_tool_references(closure_task, run_directory(state))
             write_json(closure_task_path, closure_task)
             write_json(closure_result_path, copy_result_for_closure(
                 original, SourceBinding(
@@ -1308,3 +1333,15 @@ def advance_source_first(state: PangeaState) -> PangeaState:
     if progress.lifecycle_status != "running":
         return {**state, "lifecycle_status": progress.lifecycle_status, "stage": progress.stage}
     return _source_first_advance(state, progress)
+
+
+def _attach_test_tool_references(task: dict, run_dir: Path) -> None:
+    manifest_path = run_dir / "inputs" / "source-manifest.json"
+    manifest = read_json(manifest_path)
+    references = [{"repo_id": item["repo_id"], "path": item["path"]}
+                  for item in manifest.get("scope_expansion", {}).get("context_files", [])
+                  if item.get("reason") == "test_tool_reference"]
+    if references:
+        task["test_tool_reference_paths"] = references
+        known = {(item["repo_id"], item["path"]) for item in task.get("allowed_paths", [])}
+        task.setdefault("allowed_paths", []).extend(item for item in references if (item["repo_id"], item["path"]) not in known)
