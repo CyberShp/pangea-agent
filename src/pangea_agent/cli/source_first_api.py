@@ -150,6 +150,23 @@ def _plan_diagnostics(run_dir: Path, task: dict[str, Any], result) -> dict[str, 
     return diagnostics
 
 
+def _review_routing_warnings(data_root: str, run_id: str, task: dict, result) -> list[dict]:
+    """Current mechanical hints only; never choose findings or block completion."""
+    if task.get("review_stage") != "comparison_review":
+        return []
+    from pangea_agent.graph.nodes.source_first import review_correction_routes
+
+    progress = load_progress({"data_root": data_root, "run_id": run_id})
+    known_units = {
+        action.action_id.rsplit(":", 1)[-1]
+        for action in progress.actions.values()
+        if action.role == "analysis"
+    } if progress else set()
+    _disposition, _routes, messages = review_correction_routes(result, known_units)
+    return [{"kind": "source_first_correction_routing", "message": message}
+            for message in messages]
+
+
 def _comparison_diagnostics(run_dir: Path, task: dict[str, Any], result) -> list[str]:
     records = active_records(result)
     decisions = [
@@ -197,6 +214,7 @@ def validate_source_first_result(
     view = read_records(path, binding, cursor=0, limit=1)
     records = active_records(result)
     warnings = list(view["current_warnings"])
+    warnings.extend(_review_routing_warnings(data_root, run_id, task, result))
     if (task.get('record_contracts') or {}).get('check') == 'behavior-check-v1' and task.get('task_type') in {'source_first_analysis', 'source_first_closure'}:
         from pangea_agent.risk_method_diagnostics import analysis_unit_diagnostics
         signal_input = next((i for i in task.get('inputs', []) if i.get('input_id') == 'unit_risk_signals'), None)
@@ -270,19 +288,6 @@ def validate_source_first_result(
                 "revision": result.revision,
                 "warnings": warnings,
             }
-        from pangea_agent.graph.nodes.source_first import review_correction_routes
-
-        progress = load_progress({"data_root": data_root, "run_id": run_id})
-        known_units = {
-            action.action_id.rsplit(":", 1)[-1]
-            for action in progress.actions.values()
-            if action.role == "analysis"
-        } if progress else set()
-        _disposition, _routes, routing_warnings = review_correction_routes(result, known_units)
-        warnings.extend({
-            "kind": "source_first_correction_routing",
-            "message": message,
-        } for message in routing_warnings)
     if task.get("task_type") == "source_first_closure":
         base_revision = task.get("base_revision")
         changed = any(
@@ -797,9 +802,9 @@ def result_read(
     max_chars: int = 12_000,
     include_history: bool = False,
 ) -> dict[str, Any]:
-    binding, path, _ = _binding_and_result(data_root, run_id, action_id, task_id)
+    binding, path, task = _binding_and_result(data_root, run_id, action_id, task_id)
     if view == "compact":
-        return read_records_compact(
+        response = read_records_compact(
             path,
             binding,
             record_id=record_id,
@@ -807,15 +812,19 @@ def result_read(
             page_token=page_token,
             max_chars=max_chars,
         )
-    if view != "legacy":
+    elif view != "legacy":
         raise ResultStoreError(f"未知 result_read view：{view}")
-    return read_records(
-        path,
-        binding,
-        record_id=record_id,
-        cursor=cursor,
-        limit=limit,
-    )
+    else:
+        response = read_records(
+            path,
+            binding,
+            record_id=record_id,
+            cursor=cursor,
+            limit=limit,
+        )
+    if task.get("review_stage") == "comparison_review":
+        response["routing_warnings"] = _review_routing_warnings(data_root, run_id, task, read_result(path))
+    return response
 
 
 def comparison_read(
@@ -1061,6 +1070,11 @@ def work_finish(
         if (task.get('record_contracts') or {}).get('check') == 'behavior-check-v1':
             validation = validate_source_first_result(data_root, run_id, action_id, task_id)
             response.update(status=validation['status'], warnings=validation.get('warnings', []), validation=validation)
+        if task.get("review_stage") == "comparison_review":
+            warnings = response.setdefault("warnings", [])
+            warnings.extend(item for item in _review_routing_warnings(
+                data_root, run_id, task, read_result(path)
+            ) if item not in warnings)
         return response
 
 
@@ -1183,7 +1197,7 @@ def review_decide(
             raise ResultStoreError(
                 "comparison review_decide 必须回显 Graph 提供的 version_set_id"
             )
-    return append_records(
+    response = append_records(
         path,
         binding,
         expected_revision,
@@ -1192,6 +1206,28 @@ def review_decide(
         record_contracts=task.get("record_contracts"),
         context=ContractContext(data_root, run_id, task),
     )
+    if task.get("review_stage") == "comparison_review":
+        routing_warnings = _review_routing_warnings(data_root, run_id, task, read_result(path))
+        response["warnings"].extend(routing_warnings)
+        if routing_warnings:
+            # Advisory feedback in the current tool call, not a new validator
+            # gate or automatic continuation. Only the Reviewer may re-decide.
+            response["routing_feedback"] = {
+                "status": "warning",
+                "saved": True,
+                "action_id": action_id,
+                "task_id": task_id,
+                "result_path": str(path),
+                "expected_revision": response["revision"],
+                "replace_decision_record_ids": response["record_ids"],
+                "message": (
+                    "裁决及已有正文已保存。请同一 Reviewer 在 work-finish 前核对上述字段，"
+                    "用 review_decide 和返回的 revision/replace_decision_record_ids "
+                    "修正同一结果；选择修正对象或撤回由你决定。"
+                    "此提示不阻断完成、不自动续接；未处理的路由不一致保留为 UNRESOLVED。"
+                ),
+            }
+    return response
 
 
 def initialize_notes_result(

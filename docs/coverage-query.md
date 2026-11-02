@@ -27,8 +27,14 @@ Desktop 通过 `PANGEA_LOCAL_SKILLS_ROOT` 传入 `local-skills` 路径。`system
 
 只有唯一匹配到本次 `source_scope` 的零覆盖记录进入 `coverage-gaps.json`；参考源码、其他模块、同名歧义或未知计数不作为已定位零覆盖提示。业务可达性和是否需要补测仍由 Agent 判断。
 
+新建覆盖率分析时，查询目录只收窄补测主责，不收窄用户已授权的源码阅读范围。原 `source_scope` 中查询目录外的文件保留为只读参考，与显式 `context_scope` 合并，供 Planning 和 Analysis 查找产品入口及调用关系；它们不因此成为补测主责或零覆盖目标。未授权的仓库文件不会自动加入。增量任务仍遵循其已有冻结与变更分析规则。
+
+覆盖记录定位时优先使用规范化后的精确文件路径；没有精确文件才尝试路径后缀。同一精确路径在多个仓库中存在时仍保留歧义，不自动选择仓库。XLSX 同一工作表可以同时提供函数计数和分支计数，两类分别解析；一类记录无效会给出警告，不丢弃另一类有效记录。
+
 查询状态与缺失来源冻结到 `coverage-diagnostics.json`，供规划、分析和复核读取；已有 Run 不会因新查询或重新解析资产而被修改。UI 重新查询前移除上一次自动选中的查询资产，避免失败后沿用旧数据。
 
 ## 验证
 
 使用合成数据完成本地验证：查询 CLI 的真实子进程与字面参数、BOM、success/partial/no_data/error、对象匹配失败、超时、旧 XLSX、同名路径歧义，以及实际 LangGraph 新 Run 的范围过滤和诊断冻结。内网服务与 Windows 成品需在对应环境验收。
+
+确定性回归：`python verification/coverage_input_regressions.py` 验证混合 XLSX 和路径匹配；`python verification/coverage_reference_scope.py` 验证真实 Run 冻结、Planning/Analysis 读取参考源码、主责隔离及恢复/增量兼容。这些测试不代表模型已生成正确黑盒用例或实际覆盖率已经提高。

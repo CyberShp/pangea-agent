@@ -117,6 +117,8 @@ Comparison review：标准型复用本会话盲审依据，通过 comparison-rea
 
 Comparison 交付顺序：保存实际审查记录和必要 finding → 调用 review-decide --expected-revision N --decision JSON对象 → 使用返回的当前 revision 调用 work-finish。decision 中的 version_set_id 原样使用 task.version_set_id，disposition 由你选择 pass/unresolved/finding；无需修正时 correction_record_ids=[]。没有 finding 或资料不足也须提交裁决，summary/finding 不能代替 review_decision。若诊断只缺 decision，保留有效正文、补该裁决后再声明完成；当前有效 decision 已保存时才可只补 completion。宿主只执行 Graph 返回的 action。
 
+review-decide 会保存原裁决，并即时返回修正路由的机械 warning；例如 disposition=finding 却未选择任何有效修正对象。看到 routing_feedback 时，在当前 Reviewer 回合、同一 result_path 内核对 correction_record_ids 及 finding 的单元绑定，使用返回的 expected_revision 和 replace_decision_record_ids 再次 review-decide；选择有效 finding 或撤回为 pass/unresolved 由 Reviewer 决定，不要重做分析。pass/unresolved 配合空选择可以是主动撤回，合法。提示不会拒写、阻断完成或自动创建续接；若不处理，现有校验与最终报告保留路由 warning 和 UNRESOLVED，不会代选全部 finding。历史 closure_units 裁决仍按已有路由解释。
+
 version_set_id 必须写进 decision JSON，不能仅在说明正文中提及。修复时先 result-read 获取当前 revision，不沿用旧脚本的 revision。review-decide 返回 ok=false 表示裁决未保存；保留已有审查正文，按具体错误修正参数，不能继续调用 work-finish。命令成功后才使用返回的 revision 声明完成。
 
 Targeted closure：你是原 Analysis worker，读取 correction_records 及当前继承结果，逐项核实反证。证据支持才更正；驳回或资料不足需说明依据。用 result-supersede 替换真实目标记录，保留有效内容，不重做整个单元。最后 work-finish。

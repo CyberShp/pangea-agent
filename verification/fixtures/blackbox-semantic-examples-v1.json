@@ -1,0 +1,520 @@
+{
+  "format_version": "blackbox-semantic-examples-v1",
+  "scope": "独立合成语料；不是运行时规则、语义门禁或真实产品期望",
+  "verification_boundary": {
+    "automated": "仅验证语料结构、配对标注、现有结构合同和规则加载；硬编码预期不证明模型质量",
+    "model_semantics": "未运行。模型验证需给模型 context 和未标注候选，使用冻结生成/复核规则生成或审核，再由人工逐字段对照；不得把 expected_review 作为输入或把关键词命中当正确。",
+    "acceptance": [
+      "能够从内部条件映射到外部准备、刺激和结果",
+      "不接受内部判据或空泛去符号改写",
+      "保留合法灰盒和公开 API",
+      "证据不足如实标 unknown/needs_instrumentation",
+      "同一 Reviewer 给出字段级反证并交原 worker 修原记录"
+    ]
+  },
+  "pairs": [
+    {
+      "id": "internal-oracle",
+      "context": [
+        "所有 symbol_* 均为合成占位名，不是真实产品事实。",
+        "协议契约规定：初始化后未继续建立会话，应在已配置超时窗口结束连接，不得建立可用会话。",
+        "symbol_peer_tool 已提供发送初始化、抑制后续请求以及按会话标识观察对端连接结束/会话状态的能力。",
+        "计时起点和窗口由本语境契约及现行配置读取；不规定数值，也未规定具体关闭报文。",
+        "源码中 symbol_timeout_callback 检查 symbol_connected，再调用 symbol_close，清理 symbol_queue；仅证明内部处理链。"
+      ],
+      "negative": {
+        "record_id": "internal-oracle-before",
+        "body": {
+          "format_version": "behavior-test-case-v1",
+          "case_id": "bad-internal",
+          "title": "合成语义示例，不代表真实产品",
+          "purpose": "branch",
+          "test_level": "business_blackbox",
+          "entry": "见本组 context 的设施/接口约定",
+          "preconditions": [
+            "按本组 context 准备独立会话并记录标识"
+          ],
+          "steps": [
+            {
+              "action": "用 symbol_peer_tool 发送合法 symbol_init_request，保持连接但抑制 symbol_connect_request；从契约计时起点观察当前配置的超时窗口",
+              "expected": "symbol_timeout_callback 回调，symbol_connected 未置位，symbol_close 被调用，symbol_queue 消失或关闭"
+            }
+          ],
+          "external_observations": [],
+          "variants": [],
+          "cleanup": [
+            "撤销本次控制并清理本次会话/对象"
+          ],
+          "execution_readiness": "ready",
+          "readiness_reason": "仅在本合成语境中，工具、入口和外部观测已给出依据",
+          "execution_status": "not_run",
+          "source_evidence": [
+            "synthetic:scenario.txt:1-8"
+          ]
+        },
+        "expected_review": {
+          "disposition": "finding",
+          "field_paths": [
+            "body.steps[0].expected"
+          ],
+          "counterevidence": "内部事件不能直接证明对端可见的连接终态或会话未建立；内部队列也未证明有公开查询入口。",
+          "correction": "保持外部刺激，把连接/会话观测作为主要判据，内部因果只放源码依据。"
+        }
+      },
+      "positive": {
+        "record_id": "internal-oracle-after",
+        "body": {
+          "format_version": "behavior-test-case-v1",
+          "case_id": "good-external",
+          "title": "合成语义示例，不代表真实产品",
+          "purpose": "branch",
+          "test_level": "business_blackbox",
+          "entry": "见本组 context 的设施/接口约定",
+          "preconditions": [
+            "按本组 context 准备独立会话并记录标识"
+          ],
+          "steps": [
+            {
+              "action": "用 symbol_peer_tool 发送合法 symbol_init_request，保持连接但抑制 symbol_connect_request；从契约计时起点观察当前配置的超时窗口",
+              "expected": "工具按本次连接标识观察到对端结束连接，且本次可用会话未建立；判定窗口采用契约与当前配置，不指定关闭报文"
+            }
+          ],
+          "external_observations": [],
+          "variants": [],
+          "cleanup": [
+            "撤销本次控制并清理本次会话/对象"
+          ],
+          "execution_readiness": "ready",
+          "readiness_reason": "仅在本合成语境中，工具、入口和外部观测已给出依据",
+          "execution_status": "not_run",
+          "source_evidence": [
+            "synthetic:scenario.txt:1-8"
+          ]
+        },
+        "expected_review": {
+          "disposition": "pass",
+          "reason": "保持外部刺激，把连接/会话观测作为主要判据，内部因果只放源码依据。"
+        }
+      },
+      "repair_scope": "原 worker 定向修正该原记录对应内容，保留无关有效字段；冻结首轮文件不改写"
+    },
+    {
+      "id": "empty-paraphrase",
+      "context": [
+        "所有 symbol_* 均为合成占位名，不是真实产品事实。",
+        "协议契约规定：初始化后未继续建立会话，应在已配置超时窗口结束连接，不得建立可用会话。",
+        "symbol_peer_tool 已提供发送初始化、抑制后续请求以及按会话标识观察对端连接结束/会话状态的能力。",
+        "计时起点和窗口由本语境契约及现行配置读取；不规定数值，也未规定具体关闭报文。",
+        "源码中 symbol_timeout_callback 检查 symbol_connected，再调用 symbol_close，清理 symbol_queue；仅证明内部处理链。"
+      ],
+      "negative": {
+        "record_id": "empty-paraphrase-before",
+        "body": {
+          "format_version": "behavior-test-case-v1",
+          "case_id": "bad-vague",
+          "title": "合成语义示例，不代表真实产品",
+          "purpose": "branch",
+          "test_level": "business_blackbox",
+          "entry": "见本组 context 的设施/接口约定",
+          "preconditions": [
+            "按本组 context 准备独立会话并记录标识"
+          ],
+          "steps": [
+            {
+              "action": "用 symbol_peer_tool 发送合法 symbol_init_request，保持连接但抑制 symbol_connect_request；从契约计时起点观察当前配置的超时窗口",
+              "expected": "超时后正常处理，连接正确关闭"
+            }
+          ],
+          "external_observations": [],
+          "variants": [],
+          "cleanup": [
+            "撤销本次控制并清理本次会话/对象"
+          ],
+          "execution_readiness": "ready",
+          "readiness_reason": "仅在本合成语境中，工具、入口和外部观测已给出依据",
+          "execution_status": "not_run",
+          "source_evidence": [
+            "synthetic:scenario.txt:1-8"
+          ]
+        },
+        "expected_review": {
+          "disposition": "finding",
+          "field_paths": [
+            "body.steps[0].expected"
+          ],
+          "counterevidence": "无符号的正文仍未给出观察对象、入口及可判定结果。",
+          "correction": "补本次连接标识、协议工具观察与会话未建立的判据，时限只用已给出的契约/配置。"
+        }
+      },
+      "positive": {
+        "record_id": "empty-paraphrase-after",
+        "body": {
+          "format_version": "behavior-test-case-v1",
+          "case_id": "good-specific",
+          "title": "合成语义示例，不代表真实产品",
+          "purpose": "branch",
+          "test_level": "business_blackbox",
+          "entry": "见本组 context 的设施/接口约定",
+          "preconditions": [
+            "按本组 context 准备独立会话并记录标识"
+          ],
+          "steps": [
+            {
+              "action": "用 symbol_peer_tool 发送合法 symbol_init_request，保持连接但抑制 symbol_connect_request；从契约计时起点观察当前配置的超时窗口",
+              "expected": "工具按本次连接标识观察到对端结束连接，且本次可用会话未建立；判定窗口采用契约与当前配置，不指定关闭报文"
+            }
+          ],
+          "external_observations": [],
+          "variants": [],
+          "cleanup": [
+            "撤销本次控制并清理本次会话/对象"
+          ],
+          "execution_readiness": "ready",
+          "readiness_reason": "仅在本合成语境中，工具、入口和外部观测已给出依据",
+          "execution_status": "not_run",
+          "source_evidence": [
+            "synthetic:scenario.txt:1-8"
+          ]
+        },
+        "expected_review": {
+          "disposition": "pass",
+          "reason": "补本次连接标识、协议工具观察与会话未建立的判据，时限只用已给出的契约/配置。"
+        }
+      },
+      "repair_scope": "原 worker 定向修正该原记录对应内容，保留无关有效字段；冻结首轮文件不改写"
+    },
+    {
+      "id": "unknown-skeleton",
+      "context": [
+        "只有内部源码：初始化完成后，未接收后续建链请求走超时关闭链。",
+        "外部工具、计时起点/阈值、公开查询和关闭表现均未核实；不允许从源码符号捏造这些事实。"
+      ],
+      "negative": {
+        "record_id": "unknown-skeleton-before",
+        "body": {
+          "format_version": "behavior-test-case-v1",
+          "case_id": "bad-ready",
+          "title": "合成语义示例，不代表真实产品",
+          "purpose": "branch",
+          "test_level": "business_blackbox",
+          "entry": "见本组 context 的设施/接口约定",
+          "preconditions": [
+            "按本组 context 准备独立会话并记录标识"
+          ],
+          "steps": [
+            {
+              "action": "初始化后不发送后续建链请求",
+              "expected": "等待某固定秒数后抓到指定关闭报文"
+            }
+          ],
+          "external_observations": [],
+          "variants": [],
+          "cleanup": [
+            "撤销本次控制并清理本次会话/对象"
+          ],
+          "execution_readiness": "ready",
+          "readiness_reason": "已有超时函数所以可执行",
+          "execution_status": "not_run",
+          "source_evidence": [
+            "synthetic:scenario.txt:1-8"
+          ]
+        },
+        "expected_review": {
+          "disposition": "finding",
+          "field_paths": [
+            "body.steps[0].expected",
+            "body.execution_readiness",
+            "body.readiness_reason"
+          ],
+          "counterevidence": "内部超时链不能证明具体等待值、关闭报文或现有观测能力。",
+          "correction": "保留候选场景与源码依据，明确未知项并标 unknown，不补造参数。"
+        }
+      },
+      "positive": {
+        "record_id": "unknown-skeleton-after",
+        "body": {
+          "format_version": "behavior-test-case-v1",
+          "case_id": "good-unknown",
+          "title": "合成语义示例，不代表真实产品",
+          "purpose": "branch",
+          "test_level": "business_blackbox",
+          "entry": "见本组 context 的设施/接口约定",
+          "preconditions": [
+            "按本组 context 准备独立会话并记录标识"
+          ],
+          "steps": [
+            {
+              "action": "候选：初始化后不继续建链；实际协议入口待核实",
+              "expected": "候选外部结果：本次连接结束且会话未建立；判定入口、时限与关闭表现待核实"
+            }
+          ],
+          "external_observations": [],
+          "variants": [],
+          "cleanup": [
+            "撤销本次控制并清理本次会话/对象"
+          ],
+          "execution_readiness": "unknown",
+          "readiness_reason": "仅有源码推导；工具、时限和外部连接/会话观测未核实，不能作为可实施用例",
+          "execution_status": "not_run",
+          "source_evidence": [
+            "synthetic:scenario.txt:1-8"
+          ]
+        },
+        "expected_review": {
+          "disposition": "pass",
+          "reason": "保留候选场景与源码依据，明确未知项并标 unknown，不补造参数。"
+        }
+      },
+      "repair_scope": "原 worker 定向修正该原记录对应内容，保留无关有效字段；冻结首轮文件不改写"
+    },
+    {
+      "id": "graybox-injection",
+      "context": [
+        "冻结 objective=product-behavior。",
+        "合成设施 symbol_fault_ctl 已存在，可按请求标识在 symbol_alloc 注入一次失败并撤销；产品入口 symbol_submit 与查询接口已给出。",
+        "契约规定分配失败时请求被拒绝、资源占用回到基线；撤桩后相同业务请求成功。"
+      ],
+      "negative": {
+        "record_id": "graybox-injection-before",
+        "body": {
+          "format_version": "behavior-test-case-v1",
+          "case_id": "bad-gray",
+          "title": "合成语义示例，不代表真实产品",
+          "purpose": "branch",
+          "test_level": "developer_assisted",
+          "entry": "见本组 context 的设施/接口约定",
+          "preconditions": [
+            "按本组 context 准备独立会话并记录标识"
+          ],
+          "steps": [
+            {
+              "action": "记录资源基线；用 symbol_fault_ctl 对本次请求在 symbol_alloc 注入一次失败，通过 symbol_submit 提交；撤桩后再次提交",
+              "expected": "symbol_alloc 返回失败，内部释放函数执行"
+            }
+          ],
+          "external_observations": [],
+          "variants": [],
+          "cleanup": [
+            "撤销本次控制并清理本次会话/对象"
+          ],
+          "execution_readiness": "ready",
+          "readiness_reason": "仅在本合成语境中，工具、入口和外部观测已给出依据",
+          "execution_status": "not_run",
+          "source_evidence": [
+            "synthetic:scenario.txt:1-8"
+          ]
+        },
+        "expected_review": {
+          "disposition": "finding",
+          "field_paths": [
+            "body.steps[0].expected"
+          ],
+          "counterevidence": "现有灰盒注入合法，但内部返回/释放不证明产品拒绝、资源恢复及重试成功。",
+          "correction": "保留注入符号、作用请求、次数与撤销，以产品响应和资源查询作主要判据。"
+        }
+      },
+      "positive": {
+        "record_id": "graybox-injection-after",
+        "body": {
+          "format_version": "behavior-test-case-v1",
+          "case_id": "good-gray",
+          "title": "合成语义示例，不代表真实产品",
+          "purpose": "branch",
+          "test_level": "developer_assisted",
+          "entry": "见本组 context 的设施/接口约定",
+          "preconditions": [
+            "按本组 context 准备独立会话并记录标识"
+          ],
+          "steps": [
+            {
+              "action": "记录资源基线；用 symbol_fault_ctl 对本次请求在 symbol_alloc 注入一次失败，通过 symbol_submit 提交；撤桩后再次提交",
+              "expected": "首次产品响应拒绝且资源查询回到基线；撤桩后第二次响应成功并能查询到对应业务对象"
+            }
+          ],
+          "external_observations": [],
+          "variants": [],
+          "cleanup": [
+            "撤销本次控制并清理本次会话/对象"
+          ],
+          "execution_readiness": "ready",
+          "readiness_reason": "仅在本合成语境中，工具、入口和外部观测已给出依据",
+          "execution_status": "not_run",
+          "source_evidence": [
+            "synthetic:scenario.txt:1-8"
+          ]
+        },
+        "expected_review": {
+          "disposition": "pass",
+          "reason": "保留注入符号、作用请求、次数与撤销，以产品响应和资源查询作主要判据。"
+        }
+      },
+      "repair_scope": "原 worker 定向修正该原记录对应内容，保留无关有效字段；冻结首轮文件不改写"
+    },
+    {
+      "id": "missing-instrumentation",
+      "context": [
+        "与灰盒示例契约相同，但 symbol_fault_ctl 尚未开发；现有环境没有定点注入和资源观测设施。"
+      ],
+      "negative": {
+        "record_id": "missing-instrumentation-before",
+        "body": {
+          "format_version": "behavior-test-case-v1",
+          "case_id": "bad-missing",
+          "title": "合成语义示例，不代表真实产品",
+          "purpose": "branch",
+          "test_level": "developer_assisted",
+          "entry": "见本组 context 的设施/接口约定",
+          "preconditions": [
+            "按本组 context 准备独立会话并记录标识"
+          ],
+          "steps": [
+            {
+              "action": "记录资源基线；用 symbol_fault_ctl 对本次请求在 symbol_alloc 注入一次失败，通过 symbol_submit 提交；撤桩后再次提交",
+              "expected": "首次产品响应拒绝且资源查询回到基线；撤桩后第二次响应成功并能查询到对应业务对象"
+            }
+          ],
+          "external_observations": [],
+          "variants": [],
+          "cleanup": [
+            "撤销本次控制并清理本次会话/对象"
+          ],
+          "execution_readiness": "ready",
+          "readiness_reason": "仅在本合成语境中，工具、入口和外部观测已给出依据",
+          "execution_status": "not_run",
+          "source_evidence": [
+            "synthetic:scenario.txt:1-8"
+          ]
+        },
+        "expected_review": {
+          "disposition": "finding",
+          "field_paths": [
+            "body.execution_readiness",
+            "body.readiness_reason"
+          ],
+          "counterevidence": "源码定位注入点不等于工具已经存在。",
+          "correction": "保留有价值的灰盒场景，但明确缺少设施，改 needs_instrumentation。"
+        }
+      },
+      "positive": {
+        "record_id": "missing-instrumentation-after",
+        "body": {
+          "format_version": "behavior-test-case-v1",
+          "case_id": "good-needs",
+          "title": "合成语义示例，不代表真实产品",
+          "purpose": "branch",
+          "test_level": "developer_assisted",
+          "entry": "见本组 context 的设施/接口约定",
+          "preconditions": [
+            "按本组 context 准备独立会话并记录标识"
+          ],
+          "steps": [
+            {
+              "action": "记录资源基线；用 symbol_fault_ctl 对本次请求在 symbol_alloc 注入一次失败，通过 symbol_submit 提交；撤桩后再次提交",
+              "expected": "首次产品响应拒绝且资源查询回到基线；撤桩后第二次响应成功并能查询到对应业务对象"
+            }
+          ],
+          "external_observations": [],
+          "variants": [],
+          "cleanup": [
+            "撤销本次控制并清理本次会话/对象"
+          ],
+          "execution_readiness": "needs_instrumentation",
+          "readiness_reason": "需实现并核实一次分配失败注入和资源观测；当前只是灰盒设计，不计入可实施分子",
+          "execution_status": "not_run",
+          "source_evidence": [
+            "synthetic:scenario.txt:1-8"
+          ]
+        },
+        "expected_review": {
+          "disposition": "pass",
+          "reason": "保留有价值的灰盒场景，但明确缺少设施，改 needs_instrumentation。"
+        }
+      },
+      "repair_scope": "原 worker 定向修正该原记录对应内容，保留无关有效字段；冻结首轮文件不改写"
+    },
+    {
+      "id": "public-api-boundary",
+      "context": [
+        "冻结 objective=interface-contract。",
+        "公开 symbol_api_open 接受非法标识时返回 symbol_invalid 且输出句柄为空；已有 API 驱动可调用并观察输出。",
+        "私有 symbol_helper 的中间返回值不是该公开契约。"
+      ],
+      "negative": {
+        "record_id": "public-api-boundary-before",
+        "body": {
+          "format_version": "behavior-test-case-v1",
+          "case_id": "bad-private",
+          "title": "合成语义示例，不代表真实产品",
+          "purpose": "branch",
+          "test_level": "interface_contract",
+          "entry": "见本组 context 的设施/接口约定",
+          "preconditions": [
+            "按本组 context 准备独立会话并记录标识"
+          ],
+          "steps": [
+            {
+              "action": "直接调用私有 symbol_helper",
+              "expected": "内部返回零，公开操作因此成功"
+            }
+          ],
+          "external_observations": [],
+          "variants": [],
+          "cleanup": [
+            "撤销本次控制并清理本次会话/对象"
+          ],
+          "execution_readiness": "ready",
+          "readiness_reason": "仅在本合成语境中，工具、入口和外部观测已给出依据",
+          "execution_status": "not_run",
+          "source_evidence": [
+            "synthetic:scenario.txt:1-8"
+          ]
+        },
+        "expected_review": {
+          "disposition": "finding",
+          "field_paths": [
+            "body.steps[0].action",
+            "body.steps[0].expected"
+          ],
+          "counterevidence": "私有 helper 的返回不能冒充公开接口结果，但有函数名的公开 API 调用本身合法。",
+          "correction": "按冻结目标保留公开 API 输入与返回契约，不强制改写为不存在的产品命令。"
+        }
+      },
+      "positive": {
+        "record_id": "public-api-boundary-after",
+        "body": {
+          "format_version": "behavior-test-case-v1",
+          "case_id": "good-api",
+          "title": "合成语义示例，不代表真实产品",
+          "purpose": "branch",
+          "test_level": "interface_contract",
+          "entry": "见本组 context 的设施/接口约定",
+          "preconditions": [
+            "按本组 context 准备独立会话并记录标识"
+          ],
+          "steps": [
+            {
+              "action": "用已有 API 驱动向公开 symbol_api_open 传入契约规定的非法标识",
+              "expected": "返回 symbol_invalid，输出句柄为空"
+            }
+          ],
+          "external_observations": [],
+          "variants": [],
+          "cleanup": [
+            "撤销本次控制并清理本次会话/对象"
+          ],
+          "execution_readiness": "ready",
+          "readiness_reason": "仅在本合成语境中，工具、入口和外部观测已给出依据",
+          "execution_status": "not_run",
+          "source_evidence": [
+            "synthetic:scenario.txt:1-8"
+          ]
+        },
+        "expected_review": {
+          "disposition": "pass",
+          "reason": "按冻结目标保留公开 API 输入与返回契约，不强制改写为不存在的产品命令。"
+        }
+      },
+      "repair_scope": "原 worker 定向修正该原记录对应内容，保留无关有效字段；冻结首轮文件不改写"
+    }
+  ]
+}

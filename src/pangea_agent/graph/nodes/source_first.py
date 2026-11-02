@@ -229,13 +229,25 @@ def prepare_source_first_inputs(state: PangeaState) -> PangeaState:
                 raise ValueError(f"changed_paths 需要具体文件，不能是目录：{repo}:{relative}")
             if path.is_file() and relative not in groups[repo]["code_paths"]:
                 groups[repo]["code_paths"].append(relative)
-    # Query scope limits owned targets; explicit context remains independently readable.
+    # Query scope limits coverage ownership, not the user's authorized read boundary.
     coverage_scopes = [d.get("scope") for d in assets["coverage_diagnostics"]
                        if isinstance(d.get("scope"), dict) and d["scope"].get("requested")]
     if contract.get("analysis_settings", {}).get("scenario") == "coverage-analysis" and coverage_scopes and not incremental:
         from pangea_agent.documents.coverage import in_query_scopes
         for group in expansion.get("groups", []):
-            group["code_paths"] = [p for p in group["code_paths"] if in_query_scopes(p, coverage_scopes)]
+            owned_paths = []
+            for path in group["code_paths"]:
+                if in_query_scopes(path, coverage_scopes):
+                    owned_paths.append(path)
+                else:
+                    # Keep only files already resolved from source_scope. They remain
+                    # searchable/frozen references, never coverage-gap ownership.
+                    group.setdefault("context_paths", []).append(path)
+                    expansion.setdefault("context_files", []).append({
+                        "repo_id": group["repo_id"], "path": path,
+                        "reason": "source_scope_reference",
+                    })
+            group["code_paths"] = owned_paths
     context_scope = list(contract.get("context_scope") or [])
     if incremental:
         # The parent's already explicit context remains readable when present;
@@ -994,6 +1006,12 @@ def review_correction_routes(result, known_unit_ids: set[str]) -> tuple[str | No
                 warnings.append(f"closure_units 的单元 {unit_id} 尚无当前有效 finding 绑定")
         if disposition == "finding" and not units:
             warnings.append("review_decision 声明 finding，但尚未明确选择修正记录或单元")
+    if disposition == "finding" and not routes:
+        warnings.append(
+            "review_decision.disposition=finding，但 correction_record_ids/closure_units "
+            "未形成任何有效修正路由；请同一 Reviewer 在当前回合选择当前有效 finding "
+            "及其有效单元绑定，或自行撤回修正结论为 pass/unresolved。Python 不代选记录"
+        )
     return disposition, routes, warnings
 
 

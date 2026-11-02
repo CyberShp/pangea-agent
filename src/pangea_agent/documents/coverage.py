@@ -43,69 +43,78 @@ def parse_coverage_xlsx(path: Path) -> tuple[list[dict], list[str]]:
             path_index = _column(headers, _PATH_HEADERS)
             function_index = _column(headers, _FUNCTION_HEADERS)
             count_index = _column(headers, _COUNT_HEADERS)
-            if None not in (module_index, function_index, count_index):
-                for row_number, row in enumerate(rows, 2):
-                    module = row[module_index] if module_index < len(row) else None
-                    source_path = row[path_index] if path_index is not None and path_index < len(row) else None
-                    function = row[function_index] if function_index < len(row) else None
-                    count = row[count_index] if count_index < len(row) else None
-                    if module is None and function is None and count is None:
-                        continue
-                    try:
-                        numeric_count = int(count)
-                    except (TypeError, ValueError):
-                        warnings.append(f"sheet {sheet.title} row {row_number}: invalid coverage count {count!r}")
-                        continue
-                    records.append({
-                        "coverage_type": "function",
-                        "module": "" if module is None else str(module),
-                        "path": "" if source_path is None else str(source_path),
-                        "function": "" if function is None else str(function),
-                        "count": numeric_count,
-                        "source": str(path),
-                        "sheet": sheet.title,
-                        "row": row_number,
-                    })
-                continue
-
             branch_id_index = _column(headers, _BRANCH_ID_HEADERS)
             condition_index = _column(headers, _CONDITION_HEADERS)
             true_count_index = _column(headers, _TRUE_COUNT_HEADERS)
             false_count_index = _column(headers, _FALSE_COUNT_HEADERS)
-            if None in (branch_id_index, function_index, condition_index, true_count_index, false_count_index):
-                continue
+            has_functions = None not in (module_index, function_index, count_index)
+            branch_columns = (branch_id_index, condition_index, true_count_index, false_count_index)
+            has_branches = function_index is not None and None not in branch_columns
+            if count_index is not None and not has_functions:
+                warnings.append(f"sheet {sheet.title}: incomplete function coverage columns; expected module/function/count")
+            if any(index is not None for index in branch_columns) and not has_branches:
+                warnings.append(
+                    f"sheet {sheet.title}: incomplete branch coverage columns; "
+                    "expected branch_id/function/condition/true_count/false_count"
+                )
             for row_number, row in enumerate(rows, 2):
-                branch_id = row[branch_id_index] if branch_id_index < len(row) else None
+                if all(value is None for value in row):
+                    continue
                 source_path = row[path_index] if path_index is not None and path_index < len(row) else None
-                function = row[function_index] if function_index < len(row) else None
-                condition = row[condition_index] if condition_index < len(row) else None
-                true_count = row[true_count_index] if true_count_index < len(row) else None
-                false_count = row[false_count_index] if false_count_index < len(row) else None
-                if all(value is None for value in (branch_id, function, condition, true_count, false_count)):
-                    continue
-                try:
-                    numeric_true = int(true_count)
-                    numeric_false = int(false_count)
-                except (TypeError, ValueError):
-                    warnings.append(
-                        f"sheet {sheet.title} row {row_number}: invalid branch counts "
-                        f"{true_count!r}/{false_count!r}"
-                    )
-                    continue
-                records.append({
-                    "coverage_type": "branch",
-                    "branch_id": "" if branch_id is None else str(branch_id),
-                    "module": "",
-                    "path": "" if source_path is None else str(source_path),
-                    "function": "" if function is None else str(function),
-                    "condition": "" if condition is None else str(condition),
-                    "true_count": numeric_true,
-                    "false_count": numeric_false,
-                    "count": numeric_true + numeric_false,
-                    "source": str(path),
-                    "sheet": sheet.title,
-                    "row": row_number,
-                })
+                function = row[function_index] if function_index is not None and function_index < len(row) else None
+                module = row[module_index] if module_index is not None and module_index < len(row) else None
+                count = row[count_index] if count_index is not None and count_index < len(row) else None
+                branch_only_row = has_branches and module is None and count is None and any(
+                    index < len(row) and row[index] is not None for index in branch_columns
+                )
+                if has_functions and not branch_only_row and any(
+                    value is not None for value in (module, function, count)
+                ):
+                    try:
+                        numeric_count = int(count)
+                    except (TypeError, ValueError):
+                        warnings.append(f"sheet {sheet.title} row {row_number}: invalid coverage count {count!r}")
+                    else:
+                        records.append({
+                            "coverage_type": "function",
+                            "module": "" if module is None else str(module),
+                            "path": "" if source_path is None else str(source_path),
+                            "function": "" if function is None else str(function),
+                            "count": numeric_count,
+                            "source": str(path),
+                            "sheet": sheet.title,
+                            "row": row_number,
+                        })
+                if has_branches:
+                    branch_id = row[branch_id_index] if branch_id_index < len(row) else None
+                    condition = row[condition_index] if condition_index < len(row) else None
+                    true_count = row[true_count_index] if true_count_index < len(row) else None
+                    false_count = row[false_count_index] if false_count_index < len(row) else None
+                    if all(value is None for value in (branch_id, condition, true_count, false_count)):
+                        continue
+                    try:
+                        numeric_true = int(true_count)
+                        numeric_false = int(false_count)
+                    except (TypeError, ValueError):
+                        warnings.append(
+                            f"sheet {sheet.title} row {row_number}: invalid branch counts "
+                            f"{true_count!r}/{false_count!r}"
+                        )
+                    else:
+                        records.append({
+                            "coverage_type": "branch",
+                            "branch_id": "" if branch_id is None else str(branch_id),
+                            "module": "",
+                            "path": "" if source_path is None else str(source_path),
+                            "function": "" if function is None else str(function),
+                            "condition": "" if condition is None else str(condition),
+                            "true_count": numeric_true,
+                            "false_count": numeric_false,
+                            "count": numeric_true + numeric_false,
+                            "source": str(path),
+                            "sheet": sheet.title,
+                            "row": row_number,
+                        })
     finally:
         workbook.close()
     return records, warnings
@@ -126,19 +135,25 @@ def match_coverage_records(records: list[dict], inventory: dict) -> dict:
     ambiguous: list[dict] = []
     for record in records:
         requested_path = str(record.get("path", "")).replace("\\", "/").strip("/")
+        path_files = []
+        if requested_path:
+            exact_files = []
+            suffix_files = []
+            for file in inventory.get("files", []):
+                file_path = file["path"].replace("\\", "/").strip("/")
+                if file_path == requested_path:
+                    exact_files.append(file)
+                elif file_path.endswith("/" + requested_path) or requested_path.endswith("/" + file_path):
+                    suffix_files.append(file)
+            path_files = exact_files or suffix_files
         if record.get("coverage_type") in {"line", "branch"} and "line" in record:
             # Query line/block/branch IDs are coverage-tool coordinates, not
             # parser branch IDs. Match the file and exact line, never invent a
             # true/false condition or select one of several same-name files.
             candidates = [
                 {"repo_id": file["repo_id"], "path": file["path"], "line": record["line"]}
-                for file in inventory.get("files", [])
-                if requested_path and (
-                    file["path"].replace("\\", "/").strip("/") == requested_path
-                    or requested_path.endswith("/" + file["path"].replace("\\", "/").strip("/"))
-                    or file["path"].replace("\\", "/").strip("/").endswith("/" + requested_path)
-                )
-                and 1 <= record["line"] <= file.get("line_count", 0)
+                for file in path_files
+                if 1 <= record["line"] <= file.get("line_count", 0)
             ]
         elif requested_path:
             candidates = [
@@ -147,14 +162,7 @@ def match_coverage_records(records: list[dict], inventory: dict) -> dict:
                     "path": file["path"],
                     "line": function["line"],
                 }
-                for file in inventory.get("files", [])
-                if (
-                    file["path"].replace("\\", "/").strip("/") == requested_path
-                    or file["path"].replace("\\", "/").strip("/").endswith("/" + requested_path)
-                    or requested_path.endswith(
-                        "/" + file["path"].replace("\\", "/").strip("/")
-                    )
-                )
+                for file in path_files
                 for function in file.get("functions", [])
                 if function["symbol"] == record["function"]
             ]
