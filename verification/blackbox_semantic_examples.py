@@ -44,7 +44,9 @@ class BlackboxExampleCorpus(unittest.TestCase):
         ids = [pair["id"] for pair in pairs]
         self.assertEqual(len(ids), len(set(ids)))
         self.assertEqual(set(ids), {"internal-oracle", "empty-paraphrase", "unknown-skeleton",
-                                    "graybox-injection", "missing-instrumentation", "public-api-boundary"})
+                                    "graybox-injection", "missing-instrumentation", "public-api-boundary",
+                                    "auth-mixed-oracle", "auth-automatic-exchange",
+                                    "auth-message-public-state", "auth-resource-substitution"})
         for pair in pairs:
             with self.subTest(pair=pair["id"]):
                 self.assertTrue(pair["context"])

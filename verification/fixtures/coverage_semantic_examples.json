@@ -7,72 +7,176 @@
       "topic": "已覆盖主干与未覆盖异常",
       "evidence": "同版本实测：提交函数执行12次；网络中断错误分支为0，正常提交分支为12。公开提交入口与可控断网设施已确认。",
       "gap": "G-01：提交期间网络中断分支侧0，不是提交函数0。",
-      "positive": {"expected": "保留缺口用例", "proposal": "开始提交后通过已有设施断开网络，确认失败提示、无重复提交，恢复网络后重试成功。", "reason": "普通在线提交不会制造进行中断网；断网是新增必要条件，重试成功是恢复检查。"},
-      "negative": {"expected": "修正原用例", "proposal": "独立用例：正常提交成功，关联G-01。", "reason": "真实ID存在但正常操作不能触发网络中断目标；不能因需要理解主干就补基础case。"}
+      "positive": {
+        "expected": "保留缺口用例",
+        "proposal": "开始提交后通过已有设施断开网络，确认失败提示、无重复提交，恢复网络后重试成功。",
+        "reason": "普通在线提交不会制造进行中断网；断网是新增必要条件，重试成功是恢复检查。"
+      },
+      "negative": {
+        "expected": "修正原用例",
+        "proposal": "独立用例：正常提交成功，关联G-01。",
+        "reason": "真实ID存在但正常操作不能触发网络中断目标；不能因需要理解主干就补基础case。"
+      }
     },
     {
       "id": "uncovered_normal_path",
       "topic": "真实未覆盖正常路径",
       "evidence": "同版本实测：导出入口函数0；源码确认公开导出操作进入该函数，查询功能已执行不涉及导出。",
       "gap": "G-02：导出函数零执行。",
-      "positive": {"expected": "保留正常路径补测", "proposal": "准备有记录的查询结果，执行导出，核对下载文件字段与记录。", "reason": "已有查询不进入导出入口；新增导出操作命中真实函数缺口，成功结果不使它成为冗余。"},
-      "negative": {"expected": "修正遗漏", "proposal": "所有成功场景都是基础用例，删除导出用例。", "reason": "不能按成功结果排除真实未覆盖正常路径。"}
+      "positive": {
+        "expected": "保留正常路径补测",
+        "proposal": "准备有记录的查询结果，执行导出，核对下载文件字段与记录。",
+        "reason": "已有查询不进入导出入口；新增导出操作命中真实函数缺口，成功结果不使它成为冗余。"
+      },
+      "negative": {
+        "expected": "修正遗漏",
+        "proposal": "所有成功场景都是基础用例，删除导出用例。",
+        "reason": "不能按成功结果排除真实未覆盖正常路径。"
+      }
     },
     {
       "id": "setup_not_case",
       "topic": "前置不成独立用例",
       "evidence": "同版本实测：创建任务、启动任务均已覆盖；运行中取消的资源回收分支0；可公开取消。",
       "gap": "G-03：运行中取消后的资源回收分支侧0。",
-      "positive": {"expected": "保留一个缺口用例", "proposal": "创建并启动任务作为前置，运行中取消，确认任务终止及同等资源可用于下一任务。", "reason": "新增运行中取消条件；创建和再次启动只承担前置及恢复。"},
-      "negative": {"expected": "修正原用例集合", "proposal": "另列创建成功、启动成功两个coverage用例并都挂G-03。", "reason": "独立前置不触发取消回收；原worker应supersedes修正冗余记录而非只追加取消用例。"}
+      "positive": {
+        "expected": "保留一个缺口用例",
+        "proposal": "创建并启动任务作为前置，运行中取消，确认任务终止及同等资源可用于下一任务。",
+        "reason": "新增运行中取消条件；创建和再次启动只承担前置及恢复。"
+      },
+      "negative": {
+        "expected": "修正原用例集合",
+        "proposal": "另列创建成功、启动成功两个coverage用例并都挂G-03。",
+        "reason": "独立前置不触发取消回收；原worker应supersedes修正冗余记录而非只追加取消用例。"
+      }
     },
     {
       "id": "same_title_distinct_parameters",
       "topic": "同标题不同参数可能必要",
       "evidence": "同版本实测：上传函数count=9；单片上传已覆盖，分片上传完成合并分支0。协议支持分片，阈值与构造方式已确认。",
       "gap": "G-04：分片合并分支侧0。",
-      "positive": {"expected": "保留参数差异用例", "proposal": "标题上传成功；使用超过分片阈值的文件，经公开上传入口上传并核对下载内容一致。", "reason": "与已有同标题小文件用例相比新增超过阈值的参数，能进入目标分支。"},
-      "negative": {"expected": "修正错误删除", "proposal": "上传函数count>0且标题相同，直接删除大文件用例。", "reason": "函数有覆盖不等于分支有覆盖；不能按标题或函数计数机械去重。"}
+      "positive": {
+        "expected": "保留参数差异用例",
+        "proposal": "标题上传成功；使用超过分片阈值的文件，经公开上传入口上传并核对下载内容一致。",
+        "reason": "与已有同标题小文件用例相比新增超过阈值的参数，能进入目标分支。"
+      },
+      "negative": {
+        "expected": "修正错误删除",
+        "proposal": "上传函数count>0且标题相同，直接删除大文件用例。",
+        "reason": "函数有覆盖不等于分支有覆盖；不能按标题或函数计数机械去重。"
+      }
     },
     {
       "id": "no_gap_zero_cases",
       "topic": "有效无新缺口",
       "evidence": "已核实同版本、同范围的有效覆盖数据，没有新的零覆盖提示；未提供全模块分母。",
       "gap": null,
-      "positive": {"expected": "接受零新增", "proposal": "交付结构化流程和数据范围说明：当前有效数据未识别新缺口，新增用例0。", "reason": "流程理解不是基础用例义务，也不能推导100%覆盖。"},
-      "negative": {"expected": "修正虚构补测", "proposal": "为避免空交付补正常登录、查询、退出三个基础case，并宣称100%覆盖。", "reason": "没有gap支撑，且缺分母。"}
+      "positive": {
+        "expected": "接受零新增",
+        "proposal": "交付结构化流程和数据范围说明：当前有效数据未识别新缺口，新增用例0。",
+        "reason": "流程理解不是基础用例义务，也不能推导100%覆盖。"
+      },
+      "negative": {
+        "expected": "修正虚构补测",
+        "proposal": "为避免空交付补正常登录、查询、退出三个基础case，并宣称100%覆盖。",
+        "reason": "没有gap支撑，且缺分母。"
+      }
     },
     {
       "id": "source_limitations",
       "topic": "来源限制不能被引用洗掉",
       "evidence": "合成示例来源，版本未知；G-DEMO唯一定位到关闭函数；另一测量批次存在非零计数。",
       "gap": "G-DEMO：合成零计数提示，未确认当前真实缺口。",
-      "positive": {"expected": "保留限制与待确认", "proposal": "分来源说明版本、合成与计数冲突；可演示关闭补测设计，但不能标为已确认真实缺口。", "reason": "位置匹配不证明来源适用，不能取最后一条计数；待确认不等于无缺口。"},
-      "negative": {"expected": "修正实测断言", "proposal": "报告开头声明仅供参考，正文写当前关闭从未执行，必须新增关闭成功用例。", "reason": "免责声明不能覆盖正文无依据实测断言。"}
+      "positive": {
+        "expected": "保留限制与待确认",
+        "proposal": "分来源说明版本、合成与计数冲突；可演示关闭补测设计，但不能标为已确认真实缺口。",
+        "reason": "位置匹配不证明来源适用，不能取最后一条计数；待确认不等于无缺口。"
+      },
+      "negative": {
+        "expected": "修正实测断言",
+        "proposal": "报告开头声明仅供参考，正文写当前关闭从未执行，必须新增关闭成功用例。",
+        "reason": "免责声明不能覆盖正文无依据实测断言。"
+      }
     },
     {
       "id": "missing_external_trigger",
       "topic": "无法确认外部触发",
       "evidence": "同版本实测内部队列溢出分支0；当前冻结范围未包含入口调用者，没有故障注入或限额调整设施证据。",
       "gap": "G-05：队列溢出分支侧0。",
-      "positive": {"expected": "说明执行条件缺口", "proposal": "说明尚缺公开入口及可控制造队列满条件的证据；若需要新增注入设施则标needs_instrumentation，不能承诺已可执行。", "reason": "没有调用者不证明不可达或从未测试；不凭空生成ready用例。"},
-      "negative": {"expected": "修正伪可执行用例", "proposal": "直接把私有队列变量设为上限后调用内部函数，声明产品黑盒ready。", "reason": "源码内部条件不是已证实的公开触发方式。"}
+      "positive": {
+        "expected": "说明执行条件缺口",
+        "proposal": "说明尚缺公开入口及可控制造队列满条件的证据；若需要新增注入设施则标needs_instrumentation，不能承诺已可执行。",
+        "reason": "没有调用者不证明不可达或从未测试；不凭空生成ready用例。"
+      },
+      "negative": {
+        "expected": "修正伪可执行用例",
+        "proposal": "直接把私有队列变量设为上限后调用内部函数，声明产品黑盒ready。",
+        "reason": "源码内部条件不是已证实的公开触发方式。"
+      }
     },
     {
       "id": "reuse_existing_branch_case",
       "topic": "已有branch用例充分命中时零新增",
       "evidence": "同版本实测：导入重复标识的拒绝分支0；当前结果已有purpose=branch用例B-07，公开导入入口、重复标识数据和拒绝结果判据齐全，源码证明其步骤能触发目标，但没有执行该用例的记录。",
       "gap": "G-07：重复标识拒绝分支侧0。",
-      "positive": {"expected": "复用已有用例零新增", "proposal": "复用B-07并补充真实coverage_refs=G-07，保留purpose=branch；summary说明G-07由该设计覆盖、零新增、执行及覆盖提升待验证。", "reason": "现有用例已包含精确必要条件，无须复制一个coverage用例；引用表达设计追溯，不证明已执行。"},
-      "negative": {"expected": "修正重复与实测断言", "proposal": "复制B-07为purpose=coverage新用例，将B-07也改为coverage，并因关联G-07宣称该分支已覆盖。", "reason": "purpose应保留，设计已充分时允许零新增；真实引用与触发论证不是执行记录。"}
+      "positive": {
+        "expected": "复用已有用例零新增",
+        "proposal": "复用B-07并补充真实coverage_refs=G-07，保留purpose=branch；该case的body.summary说明G-07对应重复标识拒绝分支，普通唯一标识不会触发，B-07现有重复标识已满足必要条件、零新增、执行及覆盖提升待验证。",
+        "reason": "现有用例已包含精确必要条件，无须复制一个coverage用例；引用表达设计追溯，不证明已执行。"
+      },
+      "negative": {
+        "expected": "修正重复与实测断言",
+        "proposal": "复制B-07为purpose=coverage新用例，将B-07也改为coverage，并因关联G-07宣称该分支已覆盖。",
+        "reason": "purpose应保留，设计已充分时允许零新增；真实引用与触发论证不是执行记录。"
+      }
     },
     {
       "id": "cross_unit_owner",
       "topic": "跨单元缺口主责",
       "evidence": "同版本实测：请求取消从接口单元进入异步执行单元，完成通知到接口单元；取消完成通知分支0。",
       "gap": "G-06：取消完成通知分支侧0。",
-      "positive": {"expected": "单一owner闭合处置", "proposal": "规划在接口单元purpose与coverage_ids指定G-06主责，执行单元提供context；设计运行中取消后收到完成通知的用例。", "reason": "一个owner核实入口、时序和外部判据，跨单元不新增schema或全局Agent。"},
-      "negative": {"expected": "修正责任遗漏", "proposal": "两单元分别补提交成功主干用例，并各自假定取消通知由另一单元覆盖。", "reason": "每个case不支撑gap且gap没有真实处置，双向核查均不成立。"}
+      "positive": {
+        "expected": "单一owner闭合处置",
+        "proposal": "规划在接口单元purpose与coverage_ids指定G-06主责，执行单元提供context；设计运行中取消后收到完成通知的用例。",
+        "reason": "一个owner核实入口、时序和外部判据，跨单元不新增schema或全局Agent。"
+      },
+      "negative": {
+        "expected": "修正责任遗漏",
+        "proposal": "两单元分别补提交成功主干用例，并各自假定取消通知由另一单元覆盖。",
+        "reason": "每个case不支撑gap且gap没有真实处置，双向核查均不成立。"
+      }
+    },
+    {
+      "id": "per_case_gap_explanation",
+      "topic": "全局说明不能替代逐case缺口依据",
+      "evidence": "合成同版本实测夹具：提交函数12次，断网分支G-08为0；超限分支G-09为0。公开入口与各自触发设施明确。",
+      "gap": "G-08：提交期间断网分支侧0；G-09：请求超过已核实限额分支侧0。",
+      "positive": {
+        "expected": "每个case独立可追溯",
+        "proposal": "断网case的body.summary对应G-08，说明进行中断网条件和普通在线提交不足；超限case的body.summary对应G-09，说明超过限额参数和普通小请求不足；各自coverage_refs仅关联对应gap。",
+        "reason": "逐case说明具体缺口、外部条件及增量，不靠同一全局摘要泛化。"
+      },
+      "negative": {
+        "expected": "修正缺少逐case依据",
+        "proposal": "全局summary列G-08/G-09，两个case均只写正常提交成功并挂两个refs，case无说明。",
+        "reason": "真实引用与全局解释不能证明每个case实际触发精确目标；应定向修正原case。"
+      }
+    },
+    {
+      "id": "multiple_measurement_batches",
+      "topic": "多源与增量历史缺口不是当前测量",
+      "evidence": "旧版本批次A导出函数0，新版本批次B导出函数12；增量父记录保留A的G-A，但当前分支测量未提供。",
+      "gap": "G-A：批次A旧版本导出函数0；不是批次B的函数缺口，也不代表B全部分支已覆盖。",
+      "positive": {
+        "expected": "保留来源限制并按当前依据处置",
+        "proposal": "若保留G-A参考设计，在该case的body.summary明确引用A及旧版本限制、外部导出操作和原普通查询不足；说明B的函数12不证明分支全覆盖，当前适用性待核实，不能把历史gap声明为当前未执行。",
+        "reason": "各批次独立解释；历史继承不是重新测量，不能相互自动抵消。"
+      },
+      "negative": {
+        "expected": "修正原case的适用性断言",
+        "proposal": "全局声明有旧数据，case却凭G-A写当前导出从未执行，或因B为12自动删除所有历史与分支候选。",
+        "reason": "逐case仍需来源和当前适用性依据；两个方向都不能机械推断。"
+      }
     }
   ]
 }

@@ -7,6 +7,7 @@ from pathlib import Path
 from pangea_agent.agent_io import read_json, write_json
 from pangea_agent.risk_schema import RISK_FORMAT, RISK_FORMAT_V2
 from pangea_agent.test_case_schema import TEST_CASE_FORMAT
+from pangea_agent.coverage_diagnostics import COVERAGE_REFERENCE_CONTRACT
 
 PROFILE = "behavior-test-v2"
 RISK_METHOD = "risk-method-v1"
@@ -34,6 +35,8 @@ def scene_spec(scenario: str) -> dict:
         "record_contracts": {"risk": RISK_FORMAT, "test_case": TEST_CASE_FORMAT, "diagram": "diagram-contract-v1"},
         "presentation": {"risks": risk != "none", "coverage": coverage, "textual_flow": True},
     }
+    if scenario == 'coverage-analysis':
+        spec['record_contracts']['coverage_reference'] = COVERAGE_REFERENCE_CONTRACT
     if scenario == 'risk-analysis':
         spec.update(method_version=RISK_METHOD, risk_signals=True,
                     record_contracts={'risk': RISK_FORMAT_V2, 'check': 'behavior-check-v1', 'review_check': 'behavior-review-check-v1', 'test_case': TEST_CASE_FORMAT, 'diagram': 'diagram-contract-v1'},

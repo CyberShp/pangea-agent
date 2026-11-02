@@ -34,6 +34,7 @@ class CoverageRuleExamples(unittest.TestCase):
             "covered_main_uncovered_error", "uncovered_normal_path", "setup_not_case",
             "same_title_distinct_parameters", "no_gap_zero_cases", "source_limitations",
             "missing_external_trigger", "cross_unit_owner", "reuse_existing_branch_case",
+            "per_case_gap_explanation", "multiple_measurement_batches",
         })
         for example in examples:
             with self.subTest(example=example["id"]):

@@ -23,6 +23,7 @@ from pangea_agent.diagram_contract import DIAGRAM_CONTRACT, diagram_diagnostics
 from pangea_agent.risk_schema import RISK_FORMAT, RISK_FORMAT_V2, check_risk_structure, format_risk_errors
 from pangea_agent.test_case_schema import TEST_CASE_FORMAT, check_test_case_structure, format_test_case_errors
 from pangea_agent.contract_context import ContractContext
+from pangea_agent.coverage_diagnostics import COVERAGE_REFERENCE_CONTRACT, coverage_reference_diagnostics
 from pangea_agent.check_schema import CHECK_FORMAT, check_check_structure
 from pangea_agent.review_check_schema import REVIEW_CHECK_FORMAT, check_review_check_structure, check_review_references
 from pangea_agent.evidence_quotes import check_quotes
@@ -61,6 +62,16 @@ def _check_record_contract(
     context: ContractContext | None = None,
 ) -> list[dict]:
     """按任务冻结格式检查本次写入；未声明的旧任务沿用其原格式。"""
+    if (record_contracts or {}).get("coverage_reference") == COVERAGE_REFERENCE_CONTRACT and kind in {"unit_plan", "test_case", "test_case_group"}:
+        if context is None:
+            return [{"kind": "coverage_reference_hint", "record_index": offset,
+                     "code": "coverage_context_unavailable", "message": "缺少冻结 Coverage 上下文，引用待核对；原文保留。"}]
+        try:
+            gaps = read_json(context.run_dir / "inputs" / "coverage-gaps.json")
+        except (OSError, ValueError):
+            gaps = None  # Unavailable evidence is not an empty set of gaps.
+        return [{"record_index": offset, **item} for item in coverage_reference_diagnostics(
+            kind, body, gaps)]
     if kind == "flow":
         errors = check_flow_structure(body)
         if errors:
@@ -283,7 +294,7 @@ def active_diagram_diagnostics(result: NotesResult) -> list[dict[str, Any]]:
 _RECORD_WARNING_KINDS = {
     "flow_path_hint", "risk_contract_hint", "planning_contract_hint", "check_contract_hint",
     "review_check_contract_hint", "review_check_reference_hint", "evidence_quote_mismatch",
-    "diagram_format_diagnostic",
+    "diagram_format_diagnostic", "coverage_reference_hint",
 }
 
 
@@ -367,6 +378,7 @@ def current_warning_degradations(degradations: list, results: dict[str, NotesRes
 def _bound_warnings(warnings: list[dict], path: Path, binding: SourceBinding,
                     record_id: str, revision: int) -> list[dict]:
     return [{**warning, "record_id": record_id,
+             **({"record_revision": revision} if warning.get("kind") == "coverage_reference_hint" else {}),
              **({"revision": revision, "record_revision": revision,
                  "result_path": str(path.resolve()), "data_root": binding.data_root, "run_id": binding.run_id,
                  "action_id": binding.action_id, "task_id": binding.task_id}

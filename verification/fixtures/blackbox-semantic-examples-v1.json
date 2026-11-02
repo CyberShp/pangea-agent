@@ -515,6 +515,348 @@
         }
       },
       "repair_scope": "原 worker 定向修正该原记录对应内容，保留无关有效字段；冻结首轮文件不改写"
+    },
+    {
+      "id": "auth-mixed-oracle",
+      "context": [
+        "以下是围绕用户真实措辞构造的能力边界夹具，不规定NVMe协议收发顺序或必需阶段。",
+        "现有主机连接入口自动完成认证，测试人员不能逐条控制交互；入口返回本次连接标识和完成结果，查询可确认该连接可用。协议记录可关联本次会话并识别已核实消息；未提供中途暂停或资源观测能力。",
+        "源码含私有SUCCESS2枚举和认证资源清理，但未提供公开状态查询。"
+      ],
+      "negative": {
+        "record_id": "auth-mixed-oracle-negative",
+        "body": {
+          "format_version": "behavior-test-case-v1",
+          "case_id": "auth-mixed-oracle-negative",
+          "title": "合成语义示例，不代表真实产品",
+          "purpose": "branch",
+          "test_level": "business_blackbox",
+          "entry": "见本组 context 的设施/接口约定",
+          "preconditions": [
+            "按本组 context 准备独立会话并记录标识"
+          ],
+          "steps": [
+            {
+              "action": "通过现有主机入口发起认证连接并查询本次连接",
+              "expected": "认证成功：目标端最终进入 SUCCESS2 终态并释放本次认证资源，认证完成"
+            }
+          ],
+          "external_observations": [],
+          "variants": [],
+          "cleanup": [
+            "撤销本次控制并清理本次会话/对象"
+          ],
+          "execution_readiness": "ready",
+          "readiness_reason": "仅在本组明确给出的合成设施与契约下成立，不代表真实NVMe产品事实",
+          "execution_status": "not_run",
+          "source_evidence": [
+            "synthetic:auth-mixed-oracle:1-8"
+          ]
+        },
+        "expected_review": {
+          "disposition": "finding",
+          "field_paths": [
+            "body.steps[0].expected"
+          ],
+          "counterevidence": "成功响应不证明私有枚举可观察，也不证明资源释放；并列内部断言不能因外部成功而通过。",
+          "correction": "逐断言限定证据，保留真实业务结果和资源验证缺口。"
+        }
+      },
+      "positive": {
+        "record_id": "auth-mixed-oracle-positive",
+        "body": {
+          "format_version": "behavior-test-case-v1",
+          "case_id": "auth-mixed-oracle-positive",
+          "title": "合成语义示例，不代表真实产品",
+          "purpose": "branch",
+          "test_level": "business_blackbox",
+          "entry": "见本组 context 的设施/接口约定",
+          "preconditions": [
+            "按本组 context 准备独立会话并记录标识"
+          ],
+          "steps": [
+            {
+              "action": "通过现有主机入口发起认证连接并查询本次连接",
+              "expected": "入口返回本次连接成功，按返回标识查询到该连接可用；内部终态与释放仅保留源码依据，资源验证缺少观测设施"
+            }
+          ],
+          "external_observations": [],
+          "variants": [],
+          "cleanup": [
+            "撤销本次控制并清理本次会话/对象"
+          ],
+          "execution_readiness": "ready",
+          "readiness_reason": "仅在本组明确给出的合成设施与契约下成立，不代表真实NVMe产品事实",
+          "execution_status": "not_run",
+          "source_evidence": [
+            "synthetic:auth-mixed-oracle:1-8"
+          ]
+        },
+        "expected_review": {
+          "disposition": "pass",
+          "reason": "逐断言限定证据，保留真实业务结果和资源验证缺口。"
+        }
+      },
+      "repair_scope": "原 worker 定向修正该原记录对应内容，保留无关有效字段；冻结首轮文件不改写"
+    },
+    {
+      "id": "auth-automatic-exchange",
+      "context": [
+        "以下是围绕用户真实措辞构造的能力边界夹具，不规定NVMe协议收发顺序或必需阶段。",
+        "现有主机连接入口自动完成认证，测试人员不能逐条控制交互；入口返回本次连接标识和完成结果，查询可确认该连接可用。协议记录可关联本次会话并识别已核实消息；未提供中途暂停或资源观测能力。",
+        "源码含私有SUCCESS2枚举和认证资源清理，但未提供公开状态查询。"
+      ],
+      "negative": {
+        "record_id": "auth-automatic-exchange-negative",
+        "body": {
+          "format_version": "behavior-test-case-v1",
+          "case_id": "auth-automatic-exchange-negative",
+          "title": "合成语义示例，不代表真实产品",
+          "purpose": "branch",
+          "test_level": "business_blackbox",
+          "entry": "见本组 context 的设施/接口约定",
+          "preconditions": [
+            "按本组 context 准备独立会话并记录标识"
+          ],
+          "steps": [
+            {
+              "action": "主机Connect，目标响应AUTHREQ后AuthSend/AuthReceive",
+              "expected": "主机继续认证而非直接建立会话"
+            },
+            {
+              "action": "主机依次Negotiate、Challenge、Reply、Success1、Success2",
+              "expected": "认证完成"
+            }
+          ],
+          "external_observations": [],
+          "variants": [],
+          "cleanup": [
+            "撤销本次控制并清理本次会话/对象"
+          ],
+          "execution_readiness": "ready",
+          "readiness_reason": "仅在本组明确给出的合成设施与契约下成立，不代表真实NVMe产品事实",
+          "execution_status": "not_run",
+          "source_evidence": [
+            "synthetic:auth-automatic-exchange:1-8"
+          ]
+        },
+        "expected_review": {
+          "disposition": "finding",
+          "field_paths": [
+            "body.steps[0].action",
+            "body.steps[0].expected",
+            "body.steps[1].action",
+            "body.steps[1].expected"
+          ],
+          "counterevidence": "自动交互不是逐条可控动作，未提供中间观察窗口，且用户消息清单不足以证明各方收发顺序。",
+          "correction": "只保留已提供操作能力；协议时序需实际资料，不凭消息清单补协议。"
+        }
+      },
+      "positive": {
+        "record_id": "auth-automatic-exchange-positive",
+        "body": {
+          "format_version": "behavior-test-case-v1",
+          "case_id": "auth-automatic-exchange-positive",
+          "title": "合成语义示例，不代表真实产品",
+          "purpose": "branch",
+          "test_level": "business_blackbox",
+          "entry": "见本组 context 的设施/接口约定",
+          "preconditions": [
+            "按本组 context 准备独立会话并记录标识"
+          ],
+          "steps": [
+            {
+              "action": "通过现有主机连接入口发起连接，收集本次会话关联的协议记录",
+              "expected": "记录包含契约已核实的认证交互；具体消息及收发方须按本夹具提供的记录核对，不推导未提供的协议顺序"
+            },
+            {
+              "action": "读取入口完成结果，按返回连接标识查询",
+              "expected": "入口报告连接成功且查询到该连接可用；缺中途控制能力，不声称已单独检验认证中会话不可用"
+            }
+          ],
+          "external_observations": [],
+          "variants": [],
+          "cleanup": [
+            "撤销本次控制并清理本次会话/对象"
+          ],
+          "execution_readiness": "ready",
+          "readiness_reason": "仅在本组明确给出的合成设施与契约下成立，不代表真实NVMe产品事实",
+          "execution_status": "not_run",
+          "source_evidence": [
+            "synthetic:auth-automatic-exchange:1-8"
+          ]
+        },
+        "expected_review": {
+          "disposition": "pass",
+          "reason": "只保留已提供操作能力；协议时序需实际资料，不凭消息清单补协议。"
+        }
+      },
+      "repair_scope": "原 worker 定向修正该原记录对应内容，保留无关有效字段；冻结首轮文件不改写"
+    },
+    {
+      "id": "auth-message-public-state",
+      "context": [
+        "合成契约明确提供协议工具，可按会话标识观察名为SUCCESS2的线上消息；另有公开状态查询，字段state=SUCCESS2是本夹具的公开完成状态。",
+        "本夹具不声称这些接口真实存在于NVMe产品，也不证明资源释放；可查询完成状态不能反推私有枚举。"
+      ],
+      "negative": {
+        "record_id": "auth-message-public-state-negative",
+        "body": {
+          "format_version": "behavior-test-case-v1",
+          "case_id": "auth-message-public-state-negative",
+          "title": "合成语义示例，不代表真实产品",
+          "purpose": "branch",
+          "test_level": "business_blackbox",
+          "entry": "见本组 context 的设施/接口约定",
+          "preconditions": [
+            "按本组 context 准备独立会话并记录标识"
+          ],
+          "steps": [
+            {
+              "action": "用已提供协议工具观察本次会话并查询公开状态",
+              "expected": "删除SUCCESS2等所有技术词，只要求正常完成"
+            }
+          ],
+          "external_observations": [],
+          "variants": [],
+          "cleanup": [
+            "撤销本次控制并清理本次会话/对象"
+          ],
+          "execution_readiness": "ready",
+          "readiness_reason": "仅在本组明确给出的合成设施与契约下成立，不代表真实NVMe产品事实",
+          "execution_status": "not_run",
+          "source_evidence": [
+            "synthetic:auth-message-public-state:1-8"
+          ]
+        },
+        "expected_review": {
+          "disposition": "finding",
+          "field_paths": [
+            "body.steps[0].expected"
+          ],
+          "counterevidence": "线上消息与公开字段是有来源的外部判据，不能按与枚举同名而删除。",
+          "correction": "保留实际外部消息和公开状态，不把它们等同内部状态或资源证明。"
+        }
+      },
+      "positive": {
+        "record_id": "auth-message-public-state-positive",
+        "body": {
+          "format_version": "behavior-test-case-v1",
+          "case_id": "auth-message-public-state-positive",
+          "title": "合成语义示例，不代表真实产品",
+          "purpose": "branch",
+          "test_level": "business_blackbox",
+          "entry": "见本组 context 的设施/接口约定",
+          "preconditions": [
+            "按本组 context 准备独立会话并记录标识"
+          ],
+          "steps": [
+            {
+              "action": "用已提供协议工具观察本次会话并查询公开状态",
+              "expected": "协议记录出现契约规定的本次SUCCESS2消息，公开查询本次会话state字段为SUCCESS2；两项分别按已给出的协议和查询契约判定，不推出私有枚举或资源释放"
+            }
+          ],
+          "external_observations": [],
+          "variants": [],
+          "cleanup": [
+            "撤销本次控制并清理本次会话/对象"
+          ],
+          "execution_readiness": "ready",
+          "readiness_reason": "仅在本组明确给出的合成设施与契约下成立，不代表真实NVMe产品事实",
+          "execution_status": "not_run",
+          "source_evidence": [
+            "synthetic:auth-message-public-state:1-8"
+          ]
+        },
+        "expected_review": {
+          "disposition": "pass",
+          "reason": "保留实际外部消息和公开状态，不把它们等同内部状态或资源证明。"
+        }
+      },
+      "repair_scope": "原 worker 定向修正该原记录对应内容，保留无关有效字段；冻结首轮文件不改写"
+    },
+    {
+      "id": "auth-resource-substitution",
+      "context": [
+        "以下是围绕用户真实措辞构造的能力边界夹具，不规定NVMe协议收发顺序或必需阶段。",
+        "现有主机连接入口自动完成认证，测试人员不能逐条控制交互；入口返回本次连接标识和完成结果，查询可确认该连接可用。协议记录可关联本次会话并识别已核实消息；未提供中途暂停或资源观测能力。",
+        "源码含私有SUCCESS2枚举和认证资源清理，但未提供公开状态查询。"
+      ],
+      "negative": {
+        "record_id": "auth-resource-substitution-negative",
+        "body": {
+          "format_version": "behavior-test-case-v1",
+          "case_id": "auth-resource-substitution-negative",
+          "title": "合成语义示例，不代表真实产品",
+          "purpose": "branch",
+          "test_level": "business_blackbox",
+          "entry": "见本组 context 的设施/接口约定",
+          "preconditions": [
+            "按本组 context 准备独立会话并记录标识"
+          ],
+          "steps": [
+            {
+              "action": "通过现有主机入口完成认证并再次建立独立连接",
+              "expected": "两次连接都成功，因此本次认证资源已经全部释放"
+            }
+          ],
+          "external_observations": [],
+          "variants": [],
+          "cleanup": [
+            "撤销本次控制并清理本次会话/对象"
+          ],
+          "execution_readiness": "ready",
+          "readiness_reason": "仅在本组明确给出的合成设施与契约下成立，不代表真实NVMe产品事实",
+          "execution_status": "not_run",
+          "source_evidence": [
+            "synthetic:auth-resource-substitution:1-8"
+          ]
+        },
+        "expected_review": {
+          "disposition": "finding",
+          "field_paths": [
+            "body.steps[0].expected"
+          ],
+          "counterevidence": "后续成功不排除资源仍占用，不能替代释放观测。",
+          "correction": "保留两次业务结果，删除无依据释放结论并保留资源验证缺口。"
+        }
+      },
+      "positive": {
+        "record_id": "auth-resource-substitution-positive",
+        "body": {
+          "format_version": "behavior-test-case-v1",
+          "case_id": "auth-resource-substitution-positive",
+          "title": "合成语义示例，不代表真实产品",
+          "purpose": "branch",
+          "test_level": "business_blackbox",
+          "entry": "见本组 context 的设施/接口约定",
+          "preconditions": [
+            "按本组 context 准备独立会话并记录标识"
+          ],
+          "steps": [
+            {
+              "action": "通过现有主机入口完成认证并再次建立独立连接",
+              "expected": "两个连接的完成响应均成功，按各自标识查询可用；这些结果只证明连接业务结果，资源释放验证仍缺本次资源归属、基线和完成条件的观测设施"
+            }
+          ],
+          "external_observations": [],
+          "variants": [],
+          "cleanup": [
+            "撤销本次控制并清理本次会话/对象"
+          ],
+          "execution_readiness": "ready",
+          "readiness_reason": "仅在本组明确给出的合成设施与契约下成立，不代表真实NVMe产品事实",
+          "execution_status": "not_run",
+          "source_evidence": [
+            "synthetic:auth-resource-substitution:1-8"
+          ]
+        },
+        "expected_review": {
+          "disposition": "pass",
+          "reason": "保留两次业务结果，删除无依据释放结论并保留资源验证缺口。"
+        }
+      },
+      "repair_scope": "原 worker 定向修正该原记录对应内容，保留无关有效字段；冻结首轮文件不改写"
     }
   ]
 }

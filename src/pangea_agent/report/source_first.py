@@ -77,11 +77,17 @@ _CASE_LEVELS = {
 
 _CASE_PURPOSES = {
     "branch": "分支用例",
-    "coverage": "未覆盖用例",
+    "coverage": "覆盖率补测用例",
     "risk": "风险用例",
 }
 
 _FIELD_LABELS = {
+    "coverage_id": "Coverage 编号", "coverage_type": "测量粒度",
+    "asset_id": "来源资产", "source": "测量来源", "path": "路径",
+    "function": "函数", "line": "行号", "branch_id": "分支编号",
+    "count": "执行计数", "true_count": "true 计数", "false_count": "false 计数",
+    "condition": "来源条件原文", "matches": "冻结位置匹配", "meaning": "输入含义限制",
+
     "evidence_quotes": "源码引文", "check_id": "检查编号", "lens": "检查镜头",
     "object": "检查对象", "hypothesis": "假设", "conclusion": "结论", "reasoning": "依据",
     "sites": "位置", "signal_ids": "关联信号", "risk_ids": "关联风险",
@@ -275,14 +281,23 @@ def _case_purpose(record: Any) -> str:
     return "unclassified"
 
 
-def _coverage_summary(state: dict, case_records: list) -> dict:
-    """Count explicit IDs only; never infer execution or semantic coverage."""
-    path = run_directory(state) / "inputs" / "coverage-gaps.json"
+def _frozen_coverage_input(state: dict, name: str) -> list | None:
+    """Read only this Run's frozen input; unreadable is not an empty input."""
     try:
-        gaps = read_json(path)
-        known = {row["coverage_id"] for row in gaps if isinstance(row, dict) and isinstance(row.get("coverage_id"), str) and row["coverage_id"]} if isinstance(gaps, list) else None
+        value = read_json(run_directory(state) / "inputs" / name)
+        return value if isinstance(value, list) else None
     except (OSError, ValueError):
-        known = None
+        return None
+
+
+def _coverage_summary(state: dict, case_records: list) -> dict:
+    """Count explicit, unambiguous IDs only; never infer semantic coverage."""
+    gaps = _frozen_coverage_input(state, "coverage-gaps.json")
+    counts = Counter(row["coverage_id"] for row in gaps or []
+                     if isinstance(row, dict) and isinstance(row.get("coverage_id"), str) and row["coverage_id"])
+    readable = gaps is not None and all(isinstance(row, dict) and isinstance(row.get("coverage_id"), str)
+                                        and row["coverage_id"].strip() for row in gaps)
+    known = {key for key, count in counts.items() if count == 1} if readable else None
     refs = set()
     linked_cases = 0
     linked_coverage_cases = 0
@@ -322,7 +337,7 @@ def _nested_record_text(body: Any) -> str:
     text = _body_text(body)
     return re.sub(
         r"^(#{1,5})(\s+)",
-        lambda match: "#" * min(6, len(match.group(1)) + 2) + match.group(2),
+        lambda match: "#" * min(6, max(4, len(match.group(1)) + 2)) + match.group(2),
         text,
         flags=re.MULTILINE,
     )
@@ -459,9 +474,12 @@ def _record_markdown(
     unit_id: str = "unit",
     anchors: dict[tuple[str, str, str], str] | None = None,
     review_context: bool = False,
+    coverage_gaps: list | None = None,
+    coverage_sources: list | None = None,
 ) -> str:
     if record.kind in {"test_case", "test_case_group"}:
-        return _case_markdown(record, unit_id=unit_id, anchors=anchors or {})
+        return _case_markdown(record, unit_id=unit_id, anchors=anchors or {},
+                              coverage_gaps=coverage_gaps, coverage_sources=coverage_sources)
     mapping = _body_mapping(record.body)
     if (review_context or record.kind in {"review_decision", "review_finding", "finding"}
             or (mapping or {}).get("format_version") in {"review-note-v1", "behavior-review-check-v1"}):
@@ -481,6 +499,8 @@ def _case_markdown(
     *,
     unit_id: str = "unit",
     anchors: dict[tuple[str, str, str], str] | None = None,
+    coverage_gaps: list | None = None,
+    coverage_sources: list | None = None,
 ) -> str:
     anchors = anchors or {}
     body = _body_mapping(record.body)
@@ -554,6 +574,12 @@ def _case_markdown(
         "",
         *_markdown_list(body.get("cleanup"), "未提供"),
     ])
+    if body.get("summary"):
+        lines.extend(["", "##### 补测依据说明" if purpose == "coverage" else "##### 用例说明", "", _nested_record_text(body["summary"])])
+    elif purpose == "coverage":
+        lines.extend(["", "##### 补测依据说明", "", "未提供逐用例 summary；具体缺口、普通操作不足及新增触发条件尚未说明。"])
+    if purpose == "coverage" or body.get("coverage_refs"):
+        lines.extend(_case_coverage_markdown(record, body, coverage_gaps, coverage_sources))
     evidence = _items(body.get("source_evidence"))
     references = [
         ("关联流程", "flow_id", body.get("flow_refs")),
@@ -574,6 +600,40 @@ def _case_markdown(
     if evidence:
         lines.extend(["", "##### 源码证据", "", *_markdown_list(evidence)])
     return "\n".join(lines)
+
+
+def _case_coverage_markdown(record: Any, body: dict, gaps: list | None, sources: list | None) -> list[str]:
+    """Present frozen facts and authored rationale separately; never infer a trigger."""
+    from pangea_agent.coverage_diagnostics import coverage_reference_diagnostics
+
+    lines = ["", "##### 冻结缺口事实", ""]
+    if gaps is None:
+        lines.append("- 本次冻结缺口不可读取，无法核实引用；不表示没有缺口。")
+        return lines
+    for warning in coverage_reference_diagnostics(record.kind, body, gaps):
+        lines.append("- 依据待核实：" + warning["message"])
+    for ref in _items(body.get("coverage_refs")):
+        identifier = ref.get("coverage_id") if isinstance(ref, dict) else ref
+        if not isinstance(identifier, str) or not identifier:
+            continue
+        matches = [row for row in gaps if isinstance(row, dict) and row.get("coverage_id") == identifier]
+        if not matches:
+            continue
+        lines.extend(["", f"**冻结引用：{_markdown_cell(identifier)}**", ""])
+        if len(matches) != 1:
+            lines.append("编号重复或冲突，无法唯一核实；以下原始记录全部保留，不选择其中之一。")
+        for gap in matches:
+            lines.extend(["", _mapping_markdown(gap), ""])
+            source_rows = [row for row in sources or [] if isinstance(row, dict)
+                           and gap.get("asset_id") and row.get("asset_id") == gap["asset_id"]]
+            lines.extend(["<details><summary>来源与限制（冻结记录）</summary>", ""])
+            if source_rows:
+                for source in source_rows:
+                    lines.extend([_mapping_markdown(source), ""])
+            else:
+                lines.append("未提供可关联的来源诊断；版本、批次及来源限制未核实，不推定适用。")
+            lines.extend(["", "</details>", ""])
+    return lines
 
 
 def _action_records(state: dict, progress: dict) -> list[tuple[dict, Any]]:
@@ -789,6 +849,9 @@ def _behavior_markdown(
         retired = [record for record in result.records if record.record_id in retired_by]
         return active, retired, retired_by
 
+    coverage_gaps = _frozen_coverage_input(state, "coverage-gaps.json")
+    coverage_sources = _frozen_coverage_input(state, "coverage-diagnostics.json")
+
     def add_records(
         title: str,
         selected: list[tuple[dict, Any]],
@@ -820,6 +883,7 @@ def _behavior_markdown(
                 body = _record_markdown(
                     record, unit_id=unit_id, anchors=anchors,
                     review_context=action.get("stage") in {"independent_review", "comparison_review"},
+                    coverage_gaps=coverage_gaps, coverage_sources=coverage_sources,
                 )
                 anchor = _record_anchor(unit_id, record.record_id)
                 lines.extend([
@@ -881,12 +945,12 @@ def _behavior_markdown(
         "",
         "以下数量来自 Analysis 的显式声明；Python 不根据函数名或正文猜测测试目的和层级。",
         "",
-        f"- {'本次输入匹配 Coverage 缺口' if scene else '本次有效 Coverage 缺口'}：{coverage_summary['valid_gaps'] if coverage_summary['valid_gaps'] is not None else '未记录/不可读取'}",
-        f"- 关联有效缺口的用例：{coverage_summary['linked_cases'] if coverage_summary['linked_cases'] is not None else '无法核实'}（其中新增补测用例：{coverage_summary['linked_coverage_cases'] if coverage_summary['linked_coverage_cases'] is not None else '无法核实'}）",
-        f"- 全部层级新增补测用例：{coverage_summary['coverage_cases']}",
-        f"- 全部用例显式关联的去重有效缺口：{coverage_summary['linked_valid_gaps'] if coverage_summary['linked_valid_gaps'] is not None else '无法核实'}",
+        f"- 本次可唯一核实的冻结 Coverage 缺口：{coverage_summary['valid_gaps'] if coverage_summary['valid_gaps'] is not None else '未记录/不可读取'}",
+        f"- 至少关联一项可唯一核实冻结缺口的用例：{coverage_summary['linked_cases'] if coverage_summary['linked_cases'] is not None else '无法核实'}（其中作者声明 coverage：{coverage_summary['linked_coverage_cases'] if coverage_summary['linked_coverage_cases'] is not None else '无法核实'}）",
+        f"- 全部层级作者声明 coverage 的候选用例（非已验证补测）：{coverage_summary['coverage_cases']}",
+        f"- 全部用例显式关联的去重可唯一核实冻结缺口：{coverage_summary['linked_valid_gaps'] if coverage_summary['linked_valid_gaps'] is not None else '无法核实'}",
         f"- 未能由冻结缺口核实的引用：{coverage_summary['unverified_refs']}",
-        "- 关联仅表示作者声明，不代表执行通过或覆盖率提升。未解决原因见本报告的分析记录及待确认项。",
+        "- 关联有依据不等于实际命中；来源适用性与触发条件由作者说明，执行及覆盖率提升待验证。",
         f"- 分支用例：`{purpose_counts['branch']}`",
         f"- 参数变体声明：`{sum(len(_items((_body_mapping(record.body) or {}).get('variants'))) for record in case_records)}`（单独计数，不视为已执行次数）",
         f"- 未覆盖用例：`{purpose_counts['coverage']}`",
@@ -943,7 +1007,7 @@ def _behavior_markdown(
         {"branch"},
     )
     add_records(
-        "未覆盖用例",
+        "覆盖率补测用例",
         delivery,
         {"test_case", "test_case_group"},
         {"business_blackbox", "developer_assisted"},
@@ -1038,6 +1102,7 @@ _NAV_TITLES = {
     "模块流程说明",
     "分支用例",
     "未覆盖用例",
+    "覆盖率补测用例",
     "风险用例",
     "开发辅助附录",
     "风险依据",
