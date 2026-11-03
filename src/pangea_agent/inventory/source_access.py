@@ -189,9 +189,13 @@ def compact_task_view(task: dict[str, Any]) -> dict[str, Any]:
     identities = {"format_version", "task_type", "run_id", "action_id", "task_id", "unit_id",
                   "role", "stage", "review_stage", "review_mode", "version_set_id",
                   "result_path", "analysis_profile", "scenario", "execution_budget_ms", "record_contracts"}
-    # Reserve ordinary small routing fields before spending the delivery budget
-    # on descriptions; every deferred value remains available without alteration.
-    for key in sorted(task, key=lambda name: name not in identities):
+    # Preserve small execution context before arbitrary metadata. Large values
+    # still use the same bound paging contract, without semantic summarization.
+    execution_context = ("analysis_settings", "target", "focus", "title", "purpose",
+                         "test_tool_reference_paths", "owned_regions", "context_regions",
+                         "rubric_paths", "inputs")
+    for key in sorted(task, key=lambda name: (0 if name in identities else
+                                            1 + execution_context.index(name) if name in execution_context else 20)):
         value = task[key]
         size = len(json.dumps({key: value}, ensure_ascii=False))
         if key not in scopes and size <= min(2048, remaining):
@@ -202,6 +206,11 @@ def compact_task_view(task: dict[str, Any]) -> dict[str, Any]:
             if isinstance(value, (list, dict)):
                 deferred[key]["count"] = len(value)
     view["deferred_fields"] = deferred
+    view["execution_context_navigation"] = (
+        "先核对 analysis_settings、target/focus、title/purpose、owned_regions/context_regions、"
+        "test_tool_reference_paths、rubric_paths/inputs；存在于 deferred_fields 时用其中 input_id "
+        "经 input-read 分页读取。缺失字段不推造；大资料按需读，冻结规则沿 next_cursor 读完。"
+    )
     view["scope_navigation"] = "source-index/source-search 按需导航；deferred_fields 用 input-read --input-id ID 分页读取，不全量枚举依赖范围。"
     return view
 

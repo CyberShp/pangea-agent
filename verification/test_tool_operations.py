@@ -30,7 +30,7 @@ c.add_argument("--duration-ms", type=int, required=True)
 s.add_parser("query")
 '''
         self.put("tools", "scripts/probe.py", tool)
-        created, run, planning = self.create([{"repo_id": "tools", "paths": ["scripts/probe.py"]}])
+        created, run, planning = self.create([{"repo_id": "tools", "paths": ["scripts"]}])
         run_id = created["run_id"]
         binding = (str(self.root), run_id, planning["action_id"], "planner")
         bind_action(*binding)

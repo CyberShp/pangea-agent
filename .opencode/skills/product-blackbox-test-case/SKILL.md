@@ -37,3 +37,7 @@ behavior-test-v2 读取共同生成及当前场景 rubric，behavior-test-v1 读
 清理后能否开始下一条用例。示例采用冻结方法论中的短用例，实际结论仍由当前源码和资料决定。
 
 仅按当前 task 冻结的 profile、analysis_scene、objective 与 rubric 执行比例目标：behavior-test-v1 沿用冻结的黑盒与可实施灰盒至少 70% 目标；behavior-test-v2 的 risk 场景及显式 interface-contract 目标豁免该比例，其余按冻结规则执行。缺少 objective 的旧任务保持原冻结口径，不从库/驱动名称推断目标。用例及变体的粒度和计数遵循当前冻结规则，旧 Run 不追补新版场景职责。需要新增桩点的设计如实注明设施待准备，不能改标签或虚构外部命令凑比例。
+
+<!-- FIRST-CASE-REFERENCE:BEGIN -->
+若当前 task 的冻结生成 rubric 含 FIRST-CASE-DELIVERY，按该段在每条 test_case 首次保存前由本 worker 于当前 action 完成逐例语义组织，写好一条即保存，不等 Reviewer。初始、续接、压缩及修复均复用同一冻结版本；未提供该段的旧 Run 继续原合同，不读取工作树新版或追补历史记录。先核对 analysis_settings、target/focus、单元 purpose/归属与测试工具参考；compact 延后字段沿 deferred_fields 的 input_id 分页恢复。
+<!-- FIRST-CASE-REFERENCE:END -->

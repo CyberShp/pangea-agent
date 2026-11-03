@@ -51,14 +51,14 @@ class ObjectiveContracts(unittest.TestCase):
         for mode in ("depth", "speed"):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as td:
                 root = Path(td)
-                repo = root / "repositories/repo"
+                repo = root / "repositories/repo/src"
                 repo.mkdir(parents=True)
                 (repo / "entry.c").write_text("int entry(void) { return 0; }\n")
                 target, focus = "用户目标：启动到资源回收", ["跨文件异常传播", "调用方在边界外时记录缺口"]
                 settings = {"scenario": "module-analysis", "mode": mode, "objective": "interface-contract"}
                 request = root / "request.json"
                 write_json(request, {"data_root": td, "repository": "repo", "target": target, "focus": focus,
-                                     "source_scope": ["."], "analysis_profile": "behavior-test-v2", "analysis_settings": settings})
+                                     "source_scope": ["src"], "analysis_profile": "behavior-test-v2", "analysis_settings": settings})
                 created = run_module_analysis(str(request))
                 run_id = created["run_id"]
                 run = root / "runs" / run_id
@@ -75,7 +75,7 @@ class ObjectiveContracts(unittest.TestCase):
                 assert_goal(task(planning))
                 bind_action(td, run_id, planning["action_id"], "planner")
                 planned = plan_write(td, run_id, planning["action_id"], "planner", expected_revision=0,
-                                     unit={"title": "主干", "purpose": "负责入口及跨单元挂接", "owned_files": [{"repo_id": "repo", "path": "entry.c"}]})
+                                     unit={"title": "主干", "purpose": "负责入口及跨单元挂接", "owned_files": [{"repo_id": "repo", "path": "src/entry.c"}]})
                 finish(planning, "planner", planned["revision"])
                 analysis = next(a for a in actions() if a["role"] == "analysis")
                 assert_goal(task(analysis))

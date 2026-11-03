@@ -38,3 +38,20 @@ flow 的源码契约仅维护 `src/pangea_agent/rubrics/builtin/scene_flow.md` �
 新 risk-analysis Run 冻结语言风险方法、风险信号与 risk/check/review_check 合同；旧 Run 继续使用冻结内容。按契约闭包规划、六镜头逐对象反证、检查账本、盲审探针与对照复核工作；不增加 Agent 或复核轮次，analysis 最多三个并发。风险用例不设黑盒比例目标，库/API 按接口层级如实交付。G1–G4 根据用户 2026-10-15 决定只提示 warning，Python 不判断风险真假。
 
 后续 WP12：编译器/sanitizer 能力冻结与最小驱动复现，本期仅记录设计，另行确认实施。
+
+## 首条用例首次交付
+
+新冻结的 scene_common_generation 在 FIRST-CASE-DELIVERY 段规定同一 Analysis worker 的逐例首写责任。
+ACP 初始、原会话续接、压缩恢复及修复共用该冻结规则引用；CLI 合同与三个客户端 Analysis 角色同步指向它。
+旧 Run 缺此段时不追读安装目录新版、不改旧记录。compact_task_view 优先交付小体积设置、目标、职责及工具索引；
+超量内容仍按 deferred_fields/input-read 分页，不由 Python 摘要或筛选语义。
+
+验证命令：`python tools/sync_worker_prompts.py --check`、`python verification/first_case_delivery.py`、
+`python verification/blackbox_semantic_examples.py`。Companion 使用 `node --test tests/source-first-acp.test.mjs`。
+首写回放覆盖 Reviewer 创建前落盘、同 action 流式续写、公开 API、unknown、缺设施、错误凭据冒充精确协议故障的正反例。
+反例仍允许结构写入，不新增正则语义门禁；这只证明提示装载、分页和持久化合同，不证明模型质量。
+
+真实 provider 首轮验收尚未执行：给 Analysis 未标注场景与冻结证据，不提供 expected_review/正例答案，
+分别记录初始、同 action 续接、上下文压缩和机械修复后的首次 test_case result-write 载荷与落盘版本。
+在 Reviewer 开始前检查业务目标、具体参数、精确触发依据、逐步外部判据、恢复与准备度；合法公开 API/协议字段不得误删，
+工具不足不得虚构命令或伪 ready。保存首写版本作为验收对象，不能以 Reviewer/closure 修正后的结果替代。

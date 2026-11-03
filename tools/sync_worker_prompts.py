@@ -1,4 +1,4 @@
-"""同步 analysis-worker 的冻结 flow 规则指针，不复制契约正文。
+"""同步 analysis-worker 的冻结 flow、首写规则指针，不复制契约正文。
 
 scene_flow.md 是 v2 flow 契约的源码；运行时只读取当前 task 冻结的版本。
 
@@ -28,6 +28,20 @@ ANCHOR = "## behavior-test-v2 场景任务"
 REFERENCE = f"""{BEGIN}
 flow 字段与样例读取当前 task.inputs 中 rubric_scene_flow 对应的冻结 scene_flow.md 的 FLOW-CONTRACT 段，并读完分页；不读取工作树最新版代替。behavior-test-v1 或更早任务未提供 scene_flow 时，按该任务已冻结的生成 rubric 与结果合同执行，不追加新场景规则。
 {END}"""
+CASE_BEGIN, CASE_END = "<!-- FIRST-CASE-REFERENCE:BEGIN -->", "<!-- FIRST-CASE-REFERENCE:END -->"
+CASE_REFERENCE = """<!-- FIRST-CASE-REFERENCE:BEGIN -->
+若当前 task 的冻结生成 rubric 含 FIRST-CASE-DELIVERY，按该段在每条 test_case 首次保存前由本 worker 于当前 action 完成逐例语义组织，写好一条即保存，不等 Reviewer。初始、续接、压缩及修复均复用同一冻结版本；未提供该段的旧 Run 继续原合同，不读取工作树新版或追补历史记录。先核对 analysis_settings、target/focus、单元 purpose/归属与测试工具参考；compact 延后字段沿 deferred_fields 的 input_id 分页恢复。
+<!-- FIRST-CASE-REFERENCE:END -->"""
+
+
+def apply_case_reference(text: str) -> str:
+    if CASE_BEGIN in text:
+        start = text.index(CASE_BEGIN)
+        stop = text.index(CASE_END, start) + len(CASE_END)
+        return text[:start] + CASE_REFERENCE + text[stop:]
+    return text.rstrip() + "\n\n" + CASE_REFERENCE + "\n"
+
+
 RISK_TARGETS = tuple(ROOT / directory / f'{role}-worker.md'
                      for directory in ('.claude/agents', '.opencode/agents', '.agents/pangea')
                      for role in ('analysis', 'review'))
@@ -84,7 +98,7 @@ def sync(check: bool) -> list[Path]:
     drifted: list[Path] = []
     for target in TARGETS:
         text, newline = _read(target)
-        updated = apply_reference(text)
+        updated = apply_case_reference(apply_reference(text))
         if updated == text:
             continue
         drifted.append(target)

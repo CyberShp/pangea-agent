@@ -31,13 +31,13 @@ class RecoveryChecks(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory(prefix="pangea-recovery-")
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
-        repo = self.root / "repositories/demo"
+        repo = self.root / "repositories/demo/src"
         repo.mkdir(parents=True)
         for name in ("one", "two"):
             (repo / f"{name}.c").write_text(f"int {name}(void) {{ return 1; }}\n")
         contract = self.root / "request.json"
         write_json(contract, {"data_root": str(self.root), "repository": "demo", "target": "recovery check",
-                              "source_scope": ["."], "analysis_profile": "behavior-test-v1",
+                              "source_scope": ["src"], "analysis_profile": "behavior-test-v1",
                               "analysis_settings": {"scenario": "module-analysis", "mode": "speed"}})
         created = run_module_analysis(str(contract))
         self.run_id = created["run_id"]
@@ -48,7 +48,7 @@ class RecoveryChecks(unittest.TestCase):
         for name in ("one", "two"):
             output = plan_write(str(self.root), self.run_id, planning, "planner", expected_revision=revision,
                                 unit={"title": name, "purpose": "fault regression fixture",
-                                      "owned_files": [{"repo_id": "demo", "path": f"{name}.c"}]})
+                                      "owned_files": [{"repo_id": "demo", "path": f"src/{name}.c"}]})
             revision = output["revision"]
         work_finish(str(self.root), self.run_id, planning, "planner", revision=revision)
         settle_action(str(self.root), self.run_id, planning)

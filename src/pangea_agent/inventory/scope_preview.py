@@ -23,9 +23,12 @@ def scope_revision(repository: str, scopes: list[str], paths: list[str]) -> str:
                                      separators=(",", ":")).encode()).hexdigest()
 
 
-def preview_scope(data_root: str, repository: str, source_scope: list[str]) -> dict:
+def preview_scope(data_root: str, repository: str, source_scope: list[str], *, require_directories: bool = True) -> dict:
+    if require_directories:
+        from .selected_directories import validate_selected_directories
+        validate_selected_directories(data_root, repository, source_scope)
     if not isinstance(source_scope, list) or not source_scope:
-        raise ValueError("请选择源码范围；分析整个仓库需要明确选择根目录")
+        raise ValueError("请选择真实存在的非根下级目录")
     if any(not isinstance(item, str) or not item.strip() or "\0" in item for item in source_scope):
         raise ValueError("源码范围必须是非空相对路径")
     scopes = sorted(set(item.strip().replace("\\", "/") for item in source_scope))
@@ -71,6 +74,6 @@ def preview_scope(data_root: str, repository: str, source_scope: list[str]) -> d
 def assert_scope_revision(contract: dict, data_root: str) -> None:
     expected = contract.get("expected_scope_revision")
     if expected:
-        current = preview_scope(data_root, contract["repository"], contract["source_scope"])
+        current = preview_scope(data_root, contract["repository"], contract["source_scope"], require_directories=False)
         if current["scope_revision"] != expected:
             raise ValueError("SOURCE_SCOPE_CHANGED: 源码文件集合已变化，请重新预览并确认范围")

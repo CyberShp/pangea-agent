@@ -20,8 +20,8 @@ from pangea_agent.models.analysis import ActionState
 def flow():
     return {"format_version": "behavior-flow-v1", "flow_id": "demo:connect", "layout_version": "stable-v1",
             "main_path_ids": ["success"], "title": "Connect", "role": "main",
-            "nodes": [{"id": "a", "semantic_key": "demo:a.c:connect|entry", "kind": "entry", "label": "Start"},
-                      {"id": "b", "semantic_key": "demo:a.c:connect|accept", "kind": "exit", "label": "Accepted"}],
+            "nodes": [{"id": "a", "semantic_key": "demo:src/a.c:connect|entry", "kind": "entry", "label": "Start"},
+                      {"id": "b", "semantic_key": "demo:src/a.c:connect|accept", "kind": "exit", "label": "Accepted"}],
             "edges": [{"edge_id": "allowed", "source_step_key": "a", "target_step_key": "b", "condition": "allowed"},
                       {"edge_id": "cached", "source_step_key": "a", "target_step_key": "b", "condition": "cached"}],
             "paths": [{"path_id": "success", "node_ids": ["a", "b"], "edge_ids": ["allowed"]},
@@ -93,13 +93,13 @@ class FrozenRunChecks(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory(prefix="pangea-flow-stability-")
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
-        repo = self.root / "repositories/demo"
+        repo = self.root / "repositories/demo/src"
         repo.mkdir(parents=True)
         (repo / "a.c").write_text("int connect(int enabled) { return enabled ? 0 : -1; }\n")
 
     def create(self, run_id, **extra):
         contract = {"run_id": run_id, "data_root": str(self.root), "repository": "demo", "target": "connect",
-                    "source_scope": ["."], "analysis_profile": "behavior-test-v2", "model_id": "test-model",
+                    "source_scope": ["src"], "analysis_profile": "behavior-test-v2", "model_id": "test-model",
                     "model_settings": {"provider": "host", "api_key": "not-a-real-key"},
                     "analysis_settings": {"scenario": "branch-analysis", "mode": "depth"}, **extra}
         path = self.root / f"{run_id}.json"
@@ -178,7 +178,7 @@ class FrozenRunChecks(unittest.TestCase):
         a = read_json(self.root / "runs/one/inputs/flow-stability.json")
         b = read_json(self.root / "runs/two/inputs/flow-stability.json")
         self.assertEqual(a["fingerprint"], b["fingerprint"])
-        (self.root / "repositories/demo/a.c").write_text("int connect(void) { return 0; }\n")
+        (self.root / "repositories/demo/src/a.c").write_text("int connect(void) { return 0; }\n")
         self.create("three")
         c = read_json(self.root / "runs/three/inputs/flow-stability.json")
         self.assertEqual(compare_inputs(a, c)["dimensions"]["source"], "changed")

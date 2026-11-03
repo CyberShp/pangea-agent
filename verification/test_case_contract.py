@@ -146,13 +146,13 @@ class CaseWriteGraphChecks(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory(prefix="pangea-case-contract-")
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
-        repo = self.root / "repositories/demo"
+        repo = self.root / "repositories/demo/src"
         repo.mkdir(parents=True)
         (repo / "one.c").write_text("int one(void) { return 1; }\n", encoding="utf-8")
         request = self.root / "request.json"
         write_json(request, {
             "data_root": str(self.root), "repository": "demo", "target": "用例结构验收",
-            "source_scope": ["."], "analysis_profile": "behavior-test-v2",
+            "source_scope": ["src"], "analysis_profile": "behavior-test-v2",
             "analysis_settings": {"scenario": scenario, "mode": "speed"},
         })
         created = run_module_analysis(str(request))
@@ -161,7 +161,7 @@ class CaseWriteGraphChecks(unittest.TestCase):
         planning = created["agent_actions"][0]["action_id"]
         bind_action(str(self.root), self.run_id, planning, "planner")
         written = plan_write(str(self.root), self.run_id, planning, "planner", expected_revision=0,
-                             unit={"title": "one", "purpose": "结构格式回归", "owned_files": [{"repo_id": "demo", "path": "one.c"}]})
+                             unit={"title": "one", "purpose": "结构格式回归", "owned_files": [{"repo_id": "demo", "path": "src/one.c"}]})
         work_finish(str(self.root), self.run_id, planning, "planner", revision=written["revision"])
         settle_action(str(self.root), self.run_id, planning)
         action = next(value for value in self.progress()["actions"].values() if value["role"] == "analysis")

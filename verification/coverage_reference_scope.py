@@ -53,7 +53,7 @@ class CoverageReferenceScope(unittest.TestCase):
         prepare_asset_extraction(str(self.root), asset.asset_id)
         request = self.root / "request.json"
         write_json(request, {"data_root": str(self.root), "repository": "demo", "target": "module behavior",
-                             "source_scope": scope or ["."], "context_scope": context or [],
+                             "source_scope": scope or ["module", "api", "unrelated"], "context_scope": context or [],
                              "analysis_profile": profile, "analysis_settings": {"scenario": scenario, "mode": "speed"},
                              "asset_ids": [asset.asset_id]})
         created = run_module_analysis(str(request))

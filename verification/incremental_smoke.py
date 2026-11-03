@@ -21,13 +21,13 @@ from pangea_agent.graph.workflow_store import load_progress
 
 
 def create_parent(root: Path) -> tuple[str, Path]:
-    repo = root / "repositories" / "demo"
+    repo = root / "repositories" / "demo" / "src"
     repo.mkdir(parents=True)
     for name, value in (("changed.c", 1), ("deleted.c", 2), ("stable.c", 3)):
         (repo / name).write_text(f"int {name.split('.')[0]}(void) {{ return {value}; }}\n", encoding="utf-8")
     request = root / "parent-request.json"
     write_json(request, {"data_root": str(root), "repository": "demo", "target": "demo module",
-                         "source_scope": ["."], "analysis_profile": "behavior-test-v2",
+                         "source_scope": ["src"], "analysis_profile": "behavior-test-v2",
                          "analysis_settings": {"scenario": "branch-analysis", "mode": "depth"}})
     created = run_module_analysis(str(request))
     run_id = created["run_id"]
@@ -75,7 +75,7 @@ class IncrementalSmoke(unittest.TestCase):
 
     def test_supplement_freezes_parent_and_has_fresh_results(self):
         before = fingerprint(self.parent)
-        (self.root / "repositories/demo/changed.c").write_text("int current_version = 99;\n")
+        (self.root / "repositories/demo/src/changed.c").write_text("int current_version = 99;\n")
         option = derivation_options(str(self.root), self.parent_id)
         self.assertTrue(option["can_derive"])
         self.assertEqual(len(option["records"]), 2)
@@ -85,7 +85,7 @@ class IncrementalSmoke(unittest.TestCase):
         run = self.root / "runs" / child["run_id"]
         self.assertNotEqual(child["run_id"], self.parent_id)
         self.assertEqual(before, fingerprint(self.parent))
-        self.assertIn("return 1", (run / "inputs/source/demo/changed.c").read_text())
+        self.assertIn("return 1", (run / "inputs/source/demo/src/changed.c").read_text())
         self.assertEqual(child["accepted_revisions"], {})
         task = read_json(Path(child["agent_actions"][0]["task_path"]))
         self.assertEqual(read_result(task["result_path"]).revision, 0)
@@ -104,17 +104,17 @@ class IncrementalSmoke(unittest.TestCase):
         self.assertNotIn("Historical one", page["text"])
 
     def test_changed_paths_freeze_diff_and_distinguish_missing_baseline(self):
-        repo = self.root / "repositories/demo"
+        repo = self.root / "repositories/demo/src"
         (repo / "changed.c").write_text("int changed(void) { return 9; }\n")
         (repo / "deleted.c").unlink()
         (repo / "new.c").write_text("int added(void) { return 4; }\n")
-        child = self.derive("changed-files", changed_paths=["changed.c", "deleted.c", "new.c", "stable.c", "unknown.c"])
+        child = self.derive("changed-files", changed_paths=["src/changed.c", "src/deleted.c", "src/new.c", "src/stable.c", "src/unknown.c"])
         detail = run_detail(str(self.root), child["run_id"])
         changes = detail["incremental_changes"]["changed_files"]
         self.assertEqual([c["status"] for c in changes], ["modified", "deleted", "baseline-missing", "unchanged", "missing-both"])
         run = self.root / "runs" / child["run_id"]
-        self.assertFalse((run / "inputs/source/demo/deleted.c").exists())
-        self.assertIn("return 9", (run / "inputs/source/demo/changed.c").read_text())
+        self.assertFalse((run / "inputs/source/demo/src/deleted.c").exists())
+        self.assertIn("return 9", (run / "inputs/source/demo/src/changed.c").read_text())
         self.assertIn("-int changed", (run / "inputs/incremental/diff-0001.txt").read_text())
 
     def test_bad_selection_and_escape_do_not_mutate_parent(self):
@@ -134,7 +134,7 @@ class IncrementalSmoke(unittest.TestCase):
         self.assertIn("先停止", option["blocked_reason"])
         progress["lifecycle_status"] = "stopped"
         write_json(self.parent / "progress.json", progress)
-        (self.parent / "inputs/source/demo/changed.c").unlink()
+        (self.parent / "inputs/source/demo/src/changed.c").unlink()
         self.assertFalse(derivation_options(str(self.root), self.parent_id)["can_derive"])
 
     def test_existing_review_modes_and_worker_input_scopes_are_preserved(self):

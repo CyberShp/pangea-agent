@@ -21,8 +21,12 @@ def _relative(value: str) -> str:
     return str(PurePosixPath(value))
 
 
-def preview_test_tools(data_root: str, selections: list[dict]) -> dict:
+def preview_test_tools(data_root: str, selections: list[dict], *, require_directories: bool = True) -> dict:
     selected = TypeAdapter(list[TestToolSource]).validate_python(selections)
+    if require_directories:
+        from .selected_directories import validate_selected_directories
+        for item in selected:
+            validate_selected_directories(data_root, item.repo_id, item.paths)
     registered = set(list_registered_repositories(data_root))
     grouped: dict[str, set[str]] = {}
     for item in selected:
@@ -89,7 +93,7 @@ def preview_test_tools(data_root: str, selections: list[dict]) -> dict:
 
 
 def add_test_tool_references(data_root: str, contract: dict, repositories: list[dict], expansion: dict) -> dict:
-    preview = preview_test_tools(data_root, contract.get("test_tool_sources") or [])
+    preview = preview_test_tools(data_root, contract.get("test_tool_sources") or [], require_directories=False)
     assert_test_tool_revision(contract.get("expected_test_tool_revision"), preview)
     groups = {g["repo_id"]: g for g in expansion["groups"]}
     known_repos = {r["repo_id"] for r in repositories}

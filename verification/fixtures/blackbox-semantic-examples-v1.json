@@ -857,6 +857,92 @@
         }
       },
       "repair_scope": "原 worker 定向修正该原记录对应内容，保留无关有效字段；冻结首轮文件不改写"
+    },
+    {
+      "id": "exact-protocol-trigger",
+      "context": [
+        "合成协议契约：认证应答中的 length=7 非法，且需要先通过消息类型校验。",
+        "现有 symbol_connect 工具仅支持正常连接、配置凭据和查询最终响应，自动组装报文长度，不支持改写 length 或抓取逐阶段报文。",
+        "错误凭据只能触发认证不匹配，不能证明命中长度检查；私有 symbol_check_length 仅作源码证据。"
+      ],
+      "negative": {
+        "record_id": "exact-protocol-negative",
+        "body": {
+          "format_version": "behavior-test-case-v1",
+          "case_id": "exact-protocol-negative",
+          "title": "非法认证应答长度被拒绝（合成）",
+          "purpose": "branch",
+          "test_level": "business_blackbox",
+          "entry": "symbol_connect 正常连接入口，精确改写入口未提供",
+          "preconditions": [
+            "独立目标已配置合法凭据；本次连接不存在"
+          ],
+          "steps": [
+            {
+              "action": "用 symbol_connect 配置错误密钥 B 后连接",
+              "expected": "连接被拒绝，证明非法 length=7 检查生效"
+            }
+          ],
+          "external_observations": [],
+          "variants": [],
+          "cleanup": [
+            "清理本次连接；若后续增加注入设施，撤销长度改写"
+          ],
+          "execution_readiness": "ready",
+          "readiness_reason": "connect 可配置错误密钥",
+          "execution_status": "not_run",
+          "source_evidence": [
+            "synthetic:protocol.txt:1-3"
+          ]
+        },
+        "expected_review": {
+          "disposition": "finding",
+          "field_paths": [
+            "body.steps[0].action",
+            "body.steps[0].expected",
+            "body.execution_readiness",
+            "body.readiness_reason"
+          ],
+          "counterevidence": "自动编码不能产生 length=7；凭据错误与长度错误不是同一触发。",
+          "correction": "保留长度故障目标，指出准确改写和观测缺口，不伪 ready。"
+        }
+      },
+      "positive": {
+        "record_id": "exact-protocol-positive",
+        "body": {
+          "format_version": "behavior-test-case-v1",
+          "case_id": "exact-protocol-positive",
+          "title": "非法认证应答长度被拒绝（合成）",
+          "purpose": "branch",
+          "test_level": "business_blackbox",
+          "entry": "symbol_connect 正常连接入口，精确改写入口未提供",
+          "preconditions": [
+            "独立目标已配置合法凭据；本次连接不存在"
+          ],
+          "steps": [
+            {
+              "action": "待设施补齐后，经正常连接入口发送消息类型合法且 length=7 的认证应答；当前工具无法制造该条件",
+              "expected": "按合成协议应拒绝该应答；需补齐对应会话的消息长度与拒绝响应关联观测，当前不可验证精确触发"
+            }
+          ],
+          "external_observations": [],
+          "variants": [],
+          "cleanup": [
+            "清理本次连接；若后续增加注入设施，撤销长度改写"
+          ],
+          "execution_readiness": "needs_instrumentation",
+          "readiness_reason": "缺长度字段改写和对应会话逐消息观测；不能用错误凭据替代",
+          "execution_status": "not_run",
+          "source_evidence": [
+            "synthetic:protocol.txt:1-3"
+          ]
+        },
+        "expected_review": {
+          "disposition": "pass",
+          "reason": "保留精确场景与具体缺口，未虚构工具、触发证据或 ready。"
+        }
+      },
+      "repair_scope": "在首条 test_case 首次保存前保留精确协议故障目标和缺口，不以普通错误凭据替换刺激。"
     }
   ]
 }

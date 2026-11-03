@@ -541,6 +541,20 @@ def _case_markdown(
         lines.append("- 未提供可执行步骤。")
     if body.get("expected_results"):
         lines.extend(["", "##### 整体预期（原文单独提供）", "", *_markdown_list(body["expected_results"], "未提供")])
+    evidence = _items(body.get("source_evidence"))
+    has_basis = bool(body.get("summary")) or purpose == "coverage" or bool(body.get("coverage_refs")) or bool(evidence)
+    if has_basis:
+        lines.extend(["", "<details><summary>补测依据</summary>", ""])
+    if body.get("summary"):
+        lines.extend(["", "##### 补测依据说明" if purpose == "coverage" else "##### 用例说明", "", _nested_record_text(body["summary"])])
+    elif purpose == "coverage":
+        lines.extend(["", "##### 补测依据说明", "", "未提供逐用例 summary；具体缺口、普通操作不足及新增触发条件尚未说明。"])
+    if purpose == "coverage" or body.get("coverage_refs"):
+        lines.extend(_case_coverage_markdown(record, body, coverage_gaps, coverage_sources))
+    if evidence:
+        lines.extend(["", "##### 源码证据", "", *_markdown_list(evidence)])
+    if has_basis:
+        lines.extend(["", "</details>"])
     variants = _items(body.get("variants"))
     if variants:
         lines.extend([
@@ -566,23 +580,16 @@ def _case_markdown(
         raw_variants = json.dumps(body.get("variants"), ensure_ascii=False, indent=2)
         fence = "`" * max(3, max((len(part) for part in re.findall(r"`+", raw_variants)), default=0) + 1)
         lines.extend(["", "<details><summary>参数变体原始声明（含扩展字段）</summary>", "", fence + "json", raw_variants, fence, "", "</details>"])
+    # This version's canonical field is external_observations, even when empty.
+    observations = [item for item in _items(body.get("external_observations")) if _body_text(item).strip()]
+    if observations:
+        lines.extend(["", "##### 补充观测", "", *_markdown_list(observations)])
     lines.extend([
-        "",
-        "##### 外部观测",
-        "",
-        *_markdown_list(body.get("external_observations"), "未提供"),
         "",
         "##### 清理与恢复",
         "",
         *_markdown_list(body.get("cleanup"), "未提供"),
     ])
-    if body.get("summary"):
-        lines.extend(["", "##### 补测依据说明" if purpose == "coverage" else "##### 用例说明", "", _nested_record_text(body["summary"])])
-    elif purpose == "coverage":
-        lines.extend(["", "##### 补测依据说明", "", "未提供逐用例 summary；具体缺口、普通操作不足及新增触发条件尚未说明。"])
-    if purpose == "coverage" or body.get("coverage_refs"):
-        lines.extend(_case_coverage_markdown(record, body, coverage_gaps, coverage_sources))
-    evidence = _items(body.get("source_evidence"))
     references = [
         ("关联流程", "flow_id", body.get("flow_refs")),
         ("关联 Coverage", "coverage_id", body.get("coverage_refs")),
@@ -599,8 +606,6 @@ def _case_markdown(
                     for item in _items(values)
                 ],
             ])
-    if evidence:
-        lines.extend(["", "##### 源码证据", "", *_markdown_list(evidence)])
     return "\n".join(lines)
 
 

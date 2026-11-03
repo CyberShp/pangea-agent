@@ -113,3 +113,7 @@ prepared_source.original_records 是本 action 的原记录，已完整交付且
 <!-- RISK-REFERENCE:BEGIN -->
 风险场景合同以本 Run 冻结的 scene_risk / scene_risk_review 合同块为准，读取语言风险方法与风险信号；另交 kind=check 检查账本，证据附 evidence_quotes。G1–G4 当前只提示 warning，核对后由原 worker 修正；旧任务继续使用其冻结合同。
 <!-- RISK-REFERENCE:END -->
+
+<!-- FIRST-CASE-REFERENCE:BEGIN -->
+若当前 task 的冻结生成 rubric 含 FIRST-CASE-DELIVERY，按该段在每条 test_case 首次保存前由本 worker 于当前 action 完成逐例语义组织，写好一条即保存，不等 Reviewer。初始、续接、压缩及修复均复用同一冻结版本；未提供该段的旧 Run 继续原合同，不读取工作树新版或追补历史记录。先核对 analysis_settings、target/focus、单元 purpose/归属与测试工具参考；compact 延后字段沿 deferred_fields 的 input_id 分页恢复。
+<!-- FIRST-CASE-REFERENCE:END -->

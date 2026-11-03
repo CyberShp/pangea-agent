@@ -32,7 +32,11 @@ def open_run(state: PangeaState) -> PangeaState:
     }
     frozen_path = run_directory(opened) / "inputs" / "task-contract.json"
     progress = load_progress(opened)
-    if progress is None:
+    if progress is not None and progress.run_id != run_id:
+        raise ValueError("Run 进度身份与当前 run_id 不一致")
+    if progress is None and not frozen_path.is_file():
+        from pangea_agent.inventory.selected_directories import validate_new_selections
+        validate_new_selections(contract, data_root)
         contract["runtime_provenance"] = {**(contract.get("runtime_provenance") or {}), "agent": runtime_identity()}
         write_json(frozen_path, contract)
         return {**opened, "needs_prepare": True}
@@ -45,6 +49,12 @@ def open_run(state: PangeaState) -> PangeaState:
             contract["runtime_provenance"] = {**(contract.get("runtime_provenance") or {}), "agent": agent_identity}
     if frozen != contract:
         raise ValueError("当前 task contract 与 Run 的冻结输入不一致")
+    if progress is None:
+        # A caller may put a new request at the frozen-contract pathname.
+        # Only an established Run with progress can retain historical scopes.
+        from pangea_agent.inventory.selected_directories import validate_new_selections
+        validate_new_selections(contract, data_root)
+        return {**opened, "needs_prepare": True}
     return {
         **opened,
         "needs_prepare": False,

@@ -107,12 +107,12 @@ class BranchBehaviorContracts(unittest.TestCase):
         # notes are only lifecycle fixtures, never model-quality evidence.
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            repo = root / "repositories/demo"
+            repo = root / "repositories/demo/src"
             repo.mkdir(parents=True)
             (repo / "close.c").write_text("int close_demo(void) { return 0; }\n", encoding="utf-8")
             request = root / "request.json"
             write_json(request, {"data_root": directory, "repository": "demo", "target": "关闭行为",
-                                 "source_scope": ["."], "analysis_profile": PROFILE,
+                                 "source_scope": ["src"], "analysis_profile": PROFILE,
                                  "analysis_settings": {"scenario": "branch-analysis", "mode": "speed",
                                                        "objective": "product-behavior"}})
             created = run_module_analysis(str(request))
@@ -131,7 +131,7 @@ class BranchBehaviorContracts(unittest.TestCase):
             bind_action(directory, run_id, planning["action_id"], "planner")
             written = plan_write(directory, run_id, planning["action_id"], "planner", expected_revision=0,
                                  unit={"title": "关闭", "purpose": "负责关闭入口及结果",
-                                       "owned_files": [{"repo_id": "demo", "path": "close.c"}]})
+                                       "owned_files": [{"repo_id": "demo", "path": "src/close.c"}]})
             finish(planning, "planner", written["revision"])
             for role, worker, names in (
                 ("analysis", "original-worker", ("scene_common_generation", "scene_branch", "scene_flow")),

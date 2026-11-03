@@ -152,3 +152,7 @@ def capture(argv, cwd, evidence_file):
 仅 task 声明新合同的风险场景适用：Planning 按契约闭包划分并选择 risk_lenses；analysis 逐对象、逐镜头反证后交检查账本及 evidence_quotes。G1–G4 当前只提示 warning，保留原始结论，不阻断写入或完成。引文是否支持结论由 Agent 判断。
 
 独立盲审读取信号、按优先级每单元选至少 3 个对象（不足时全部），交带真实 unit_id 的 kind=check 探针。对照复核逐风险证伪、探针对账、每单元抽查至少 2 条 excluded；speed 使用自己在 comparison 写的探针。交付顺序：comparison-finding-write → 每单元 behavior-review-check-v1 复核记录 → review-decide → work-finish。引用真实记录；缺项 warning 需要核对，不代表复核质量合格。
+
+<!-- FIRST-CASE-REFERENCE:BEGIN -->
+若当前 task 的冻结生成 rubric 含 FIRST-CASE-DELIVERY，按该段在每条 test_case 首次保存前由本 worker 于当前 action 完成逐例语义组织，写好一条即保存，不等 Reviewer。初始、续接、压缩及修复均复用同一冻结版本；未提供该段的旧 Run 继续原合同，不读取工作树新版或追补历史记录。先核对 analysis_settings、target/focus、单元 purpose/归属与测试工具参考；compact 延后字段沿 deferred_fields 的 input_id 分页恢复。
+<!-- FIRST-CASE-REFERENCE:END -->

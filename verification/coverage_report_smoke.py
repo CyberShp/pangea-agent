@@ -129,3 +129,45 @@ for level in (1, 2, 3):
 assert '<a href="#section-1">未覆盖用例</a>' in _html('## 未覆盖用例\n旧报告')
 
 print('PASS: case summary, multiple frozen gaps/source limitations, empty/invalid/ambiguous refs, zero gaps, legacy and branch compatibility')
+
+
+# Empty canonical observations must not revive a stale legacy alias.
+for observations in ([], ['request() at repo:src/request.c:123']):
+    authored = copy.deepcopy(body)
+    authored.update(observability=['stale legacy observation'], external_observations=observations)
+    text = _case_markdown(record(authored), coverage_gaps=gaps, coverage_sources=sources)
+    assert ('##### 补充观测' in text) == bool(observations)
+    assert 'stale legacy observation' not in text
+    assert text.index('##### 操作与预期') < text.index('<details><summary>补测依据</summary>')
+    page = _html(text)
+    assert '<details class="fold"><summary>补测依据</summary>' in page
+    if observations:
+        assert observations[0] in text
+print('PASS: collapsed basis follows steps; optional observations honor canonical versioned field')
+
+
+# Unversioned/unknown legacy records keep both authored fields in their raw body,
+# rather than silently interpreting them as the newer version.
+for version in (None, 'legacy-case-v0'):
+    legacy = {'observability': ['旧格式观测'], 'external_observations': ['额外原文字段'], 'summary': 'legacy basis'}
+    if version is not None:
+        legacy['format_version'] = version
+    text = _case_markdown(record(legacy), coverage_gaps=gaps)
+    assert '旧格式观测' in text and '额外原文字段' in text
+    assert '##### 补充观测' not in text
+    assert '<details><summary>补测依据</summary>' not in text
+print('PASS: unversioned and unknown legacy case bodies retain both fields without new-contract interpretation')
+
+# Standalone source evidence is still an optional collapsed basis for ordinary cases.
+for content in ({'summary': '普通用例原文'}, {'source_evidence': ['request() repo:src/request.c:123']}, {'summary': '普通用例原文', 'source_evidence': ['request() repo:src/request.c:123']}):
+    ordinary = {'format_version': 'behavior-test-case-v1', 'purpose': 'branch', **content}
+    text = _case_markdown(record(ordinary), coverage_gaps=[])
+    start = text.index('<details><summary>补测依据</summary>')
+    end = text.index('</details>', start)
+    for original in ([content['summary']] if 'summary' in content else []) + content.get('source_evidence', []):
+        assert original in text[start:end]
+        assert original not in text[end:]
+    assert '冻结缺口事实' not in text
+    assert '未提供逐用例 summary' not in text
+    assert '<details class="fold"><summary>补测依据</summary>' in _html(text)
+print('PASS: standalone evidence is folded after steps; ordinary basis has no coverage diagnostics')

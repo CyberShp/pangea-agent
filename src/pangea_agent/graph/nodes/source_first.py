@@ -302,7 +302,7 @@ def prepare_source_first_inputs(state: PangeaState) -> PangeaState:
         assert_scope_revision(contract, state["data_root"])
         if tool_preview is not None and not incremental:
             from pangea_agent.inventory.test_tool_sources import preview_test_tools, assert_test_tool_revision
-            assert_test_tool_revision(tool_preview["scope_revision"], preview_test_tools(state["data_root"], contract["test_tool_sources"]))
+            assert_test_tool_revision(tool_preview["scope_revision"], preview_test_tools(state["data_root"], contract["test_tool_sources"], require_directories=False))
     module_scope = list(dict.fromkeys(
         path
         for group in expansion.get("groups", [])
