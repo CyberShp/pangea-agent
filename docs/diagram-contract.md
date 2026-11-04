@@ -31,7 +31,7 @@ result.revision 后续增长不会使未修正记录的诊断消失。
 没有 revision 时不补猜 revision；无 record_id、未知 kind、显式外部 action/binding 的
 提示保留。diagram 类继续使用原有严格 record_revision/binding 过滤。
 `read_records.warnings` 仍是历史原文，`current_warnings` 是当前投影；默认 compact、完成验证、
-Reviewer 使用当前投影，显式 include_history 保留历史。
+报告使用当前投影，显式 include_history 保留历史。
 
 旧 validation 曾把 warning 压成 `progress.degradations` 的 action_id + message。
 当前概览与报告只在已验证具体 action/result 中找到精确同文、显式退役的原 warning，
@@ -42,9 +42,9 @@ source_warning 身份，插件的 workflow.diagnostic_history 保留原 degradat
 读写与完成响应提供 `diagram_diagnostics` 当前投影；compact 当前视图把这些诊断作为 warning
 项目分页返回。报告/UI 用 `active_diagram_diagnostics` / `activeDiagramDiagnostics`，只显示
 当前 binding 中尚未 supersede 的同修订记录；历史 warnings 和原始结果始终保留。
-Graph 通过 `copy_result_for_closure` 显式复制原结果到 closure 的新 action/result_path，
+历史数据兼容：旧 Graph 通过 `copy_result_for_closure` 显式复制原结果到 closure 的新 action/result_path，
 保留同一个 task_id，并在 source_diagnostic 保留原诊断身份。未修正的有效诊断继续可见。
 
 写入成功后的 repair_hint 直接回给当前 worker，要求同 task/result_path 的 supersedes 修正。
-如果提示被忽略，诊断保留给既有 Review/closure；没有新自动续接，不以固定重试次数判失败。
+如果提示被忽略，诊断保留在报告；没有新自动续接，不以固定重试次数判失败。
 等待修复沿用现有身份/路径/不可读取结果规则；未提交完成声明或声明未完成不会成为成功交付。

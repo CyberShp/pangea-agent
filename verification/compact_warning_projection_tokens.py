@@ -1,4 +1,5 @@
 """Projection upgrades invalidate old compact cursors without changing results."""
+from history_review_fixture import saved_comparison
 from functools import partial
 import json
 from pathlib import Path
@@ -30,8 +31,7 @@ class CompactWarningTokens(unittest.TestCase):
                                                dict(kind="note", body="retained evidence " * 200)])
             api.work_finish(str(h.root), h.run_id, action, worker, revision=second["revision"])
             settle_action(str(h.root), h.run_id, action)
-        self.review = next(a["action_id"] for a in h.progress()["actions"].values() if a["role"] == "review")
-        self.reviewer = h.bind(self.review, "reviewer")
+        self.review, self.reviewer = saved_comparison(h)
 
     def collect(self, read, **kwargs):
         items, fragments = [], {}

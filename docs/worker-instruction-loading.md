@@ -1,5 +1,7 @@
 # Worker 运行规则加载
 
+新建 Run 只执行 Planning → Analysis → 报告，不派发 Reviewer、盲审、对照审核或 targeted_closure。分析完成后直接组装报告；结果未经过独立审核，不得把流程完成表述为审核通过。审核/定向修正实现与规则保留，但当前主链暂不调用；历史审核记录和冻结合同保持可读，不改写用户已冻结的数据。
+
 运行规则按实际客户端入口加载；文件存在于源码仓库不代表会进入每次 worker 会话。
 
 | 执行入口 | 加载链 | 结果写入 |
@@ -19,7 +21,7 @@ Desktop 仅在 source-first 外部 worker 请求中注入 `PANGEA_WORKER_TRANSPO
 
 ## Profile 与冻结版本
 
-behavior-test-v2 的 Analysis 读取场景共同规则、scene_flow、当前专项及 Planning 为本单元选定的方法论。Reviewer 读取复核共同规则、scene_flow、当前专项及各单元选项的合集。选定的内置和用户方法论均保留；不自动向四场景注入整套旧 DFX。旧 profile 按该 task 已冻结的规则执行。
+behavior-test-v2 的 Analysis 读取场景共同规则、scene_flow、当前专项及 Planning 为本单元选定的方法论。新建 Run 不派发 Reviewer 或加载审核 rubric。选定的内置和用户方法论均保留；不自动向四场景注入整套旧 DFX。旧 profile 按该 task 已冻结的规则执行。
 
 flow 的源码契约仅维护 `src/pangea_agent/rubrics/builtin/scene_flow.md` 中的 FLOW-CONTRACT 段。三份 analysis 角色只保存指向 task 冻结输入的指针；`tools/sync_worker_prompts.py` 更新或检查这些指针，不再内联契约。behavior-test-v1 或更早 task 未提供 scene_flow 时，继续使用原冻结生成 rubric 和结果合同。
 
@@ -27,15 +29,15 @@ flow 的源码契约仅维护 `src/pangea_agent/rubrics/builtin/scene_flow.md` �
 
 ## 业务场景与用例粒度
 
-新建 behavior-test-v2 Run 使用共同生成规则中的场景提炼与拆合方法：结合注释、上下文及状态来源解释业务情形，按业务或公开接口验证目标组织用例。scene_branch 负责有意义的行为发现，scene_common_review 与 scene_branch_review 同时检查过度拆分、错误合并和不可执行表达。流程路径与用例不要求一对一；三种图仍由宿主根据原 Worker 的结构化事实渲染。
+新建 behavior-test-v2 Run 使用共同生成规则中的场景提炼与拆合方法：结合注释、上下文及状态来源解释业务情形，按业务或公开接口验证目标组织用例。scene_branch 负责有意义的行为发现，Analysis 同时核对过度拆分、错误合并和不可执行表达。流程路径与用例不要求一对一；三种图仍由宿主根据原 Worker 的结构化事实渲染。
 
-角色文件和 Desktop CLI 合同只指向当前 task 的冻结规则，不额外要求内部路径逐条成例。OpenCode 辅助 Skill 按 task 实际提供的 profile/rubric 读取，不要求 v2 加载未提供的 v1 规则；协议字段、FIN/RST、抓包及已有注入设施可用于真实刺激和观察。旧 Run 继续使用其原 rubric 快照，本次不改 schema、调度、并发、复核或同一 Worker 定向修正协议。
+角色文件和 Desktop CLI 合同只指向当前 task 的冻结规则，不额外要求内部路径逐条成例。OpenCode 辅助 Skill 按 task 实际提供的 profile/rubric 读取，不要求 v2 加载未提供的 v1 规则；协议字段、FIN/RST、抓包及已有注入设施可用于真实刺激和观察。旧 Run 继续使用其原 rubric 快照，不改写历史冻结合同或记录；新运行仅规划、分析、报告。
 
-`python verification/branch_behavior_contract.py` 覆盖安装规则变化后的真实冻结与派发：旧 Run 字节保持不变，新 Run 读取新快照，必读生成/复核规则不依赖可选方法论。语义验收样例见 [branch-behavior-acceptance.md](branch-behavior-acceptance.md)，其中真实 provider 验收与机械验证分开记录。
+`python verification/branch_behavior_contract.py` 覆盖安装规则变化后的真实冻结与派发：旧 Run 字节保持不变，新 Run 读取新快照，必读生成规则不依赖可选方法论。语义验收样例见 [branch-behavior-acceptance.md](branch-behavior-acceptance.md)，其中真实 provider 验收与机械验证分开记录。
 
 ## risk-method-v1
 
-新 risk-analysis Run 冻结语言风险方法、风险信号与 risk/check/review_check 合同；旧 Run 继续使用冻结内容。按契约闭包规划、六镜头逐对象反证、检查账本、盲审探针与对照复核工作；不增加 Agent 或复核轮次，analysis 最多三个并发。风险用例不设黑盒比例目标，库/API 按接口层级如实交付。G1–G4 根据用户 2026-10-15 决定只提示 warning，Python 不判断风险真假。
+新 risk-analysis Run 冻结语言风险方法、风险信号与 risk/check 合同；旧 Run 继续使用冻结内容。按契约闭包规划、六镜头逐对象反证、检查账本；不派发审核模型，analysis 最多三个并发。风险用例不设黑盒比例目标，库/API 按接口层级如实交付。G1–G4 根据用户 2026-10-15 决定只提示 warning，Python 不判断风险真假。
 
 后续 WP12：编译器/sanitizer 能力冻结与最小驱动复现，本期仅记录设计，另行确认实施。
 
@@ -48,10 +50,10 @@ ACP 初始、原会话续接、压缩恢复及修复共用该冻结规则引用�
 
 验证命令：`python tools/sync_worker_prompts.py --check`、`python verification/first_case_delivery.py`、
 `python verification/blackbox_semantic_examples.py`。Companion 使用 `node --test tests/source-first-acp.test.mjs`。
-首写回放覆盖 Reviewer 创建前落盘、同 action 流式续写、公开 API、unknown、缺设施、错误凭据冒充精确协议故障的正反例。
+首写回放覆盖 Analysis 当回合首次落盘、同 action 流式续写、公开 API、unknown、缺设施、错误凭据冒充精确协议故障的正反例。
 反例仍允许结构写入，不新增正则语义门禁；这只证明提示装载、分页和持久化合同，不证明模型质量。
 
 真实 provider 首轮验收尚未执行：给 Analysis 未标注场景与冻结证据，不提供 expected_review/正例答案，
 分别记录初始、同 action 续接、上下文压缩和机械修复后的首次 test_case result-write 载荷与落盘版本。
-在 Reviewer 开始前检查业务目标、具体参数、精确触发依据、逐步外部判据、恢复与准备度；合法公开 API/协议字段不得误删，
-工具不足不得虚构命令或伪 ready。保存首写版本作为验收对象，不能以 Reviewer/closure 修正后的结果替代。
+在 Analysis 首次交付时检查业务目标、具体参数、精确触发依据、逐步外部判据、恢复与准备度；合法公开 API/协议字段不得误删，
+工具不足不得虚构命令或伪 ready。保存首写版本作为验收对象，不能以事后修正结果替代。

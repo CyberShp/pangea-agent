@@ -584,6 +584,7 @@ def next_actions(data_root: str, run_id: str, limit: int = 8) -> dict:
         "workflow_version": progress.workflow_version,
         "lifecycle_status": progress.lifecycle_status,
         "stage": progress.stage,
+        "review_policy": progress.review_policy,
         "attention_required": progress.needs_user,
         "actions": actions,
     }
@@ -607,6 +608,9 @@ def defer_action(
     if progress is None or action_id not in progress.actions:
         raise ValueError(f"Action 不存在：{action_id}")
     action = progress.actions[action_id]
+    from pangea_agent.graph.review_policy import is_model_review
+    if is_model_review(action) and action.status != "accepted":
+        raise ValueError("MODEL_REVIEW_DISABLED: 模型审核暂不执行，请恢复 Run 以交付已有分析")
     if progress.workflow_version != "source-first-v1" or progress.lifecycle_status != "running":
         raise ValueError("只有运行中的 source-first Run 可以保存宿主续接")
     if action.status != "dispatched" or not task_id or action.task_id != task_id:
@@ -660,6 +664,9 @@ def retry_attention_action(data_root: str, run_id: str, action_id: str) -> dict:
     if progress.lifecycle_status != "running":
         raise ValueError("Run 当前不接受 action 续接")
     action = progress.actions[action_id]
+    from pangea_agent.graph.review_policy import is_model_review
+    if is_model_review(action) and action.status != "accepted":
+        raise ValueError("MODEL_REVIEW_DISABLED: 模型审核暂不执行，请恢复 Run 以交付已有分析")
     if action.action != "continue_agent" or not action.task_id:
         raise ValueError("只能续接已绑定原 Agent 的 continue_agent action")
     if action.status not in {"pending", "dispatched"}:
@@ -686,6 +693,9 @@ def bind_action(data_root: str, run_id: str, action_id: str, task_id: str) -> di
     if progress is None or action_id not in progress.actions:
         raise ValueError(f"Action 不存在：{action_id}")
     action = progress.actions[action_id]
+    from pangea_agent.graph.review_policy import is_model_review
+    if is_model_review(action):
+        raise ValueError("MODEL_REVIEW_DISABLED: 模型审核和审核定向修正暂不执行，请恢复 Run 以交付已有分析")
     if action.task_id == task_id and action.status in {
         "dispatched",
         "settled",
@@ -738,6 +748,9 @@ def _validate_action(data_root: str, run_id: str, action_id: str) -> dict:
     if progress is None or action_id not in progress.actions:
         raise ValueError(f"Action 不存在：{action_id}")
     action = progress.actions[action_id]
+    from pangea_agent.graph.review_policy import is_model_review
+    if is_model_review(action) and action.status != "accepted":
+        raise ValueError("MODEL_REVIEW_DISABLED: 模型审核暂不执行，请恢复 Run 以交付已有分析")
     if action.status == "accepted":
         return {"action_id": action_id, "status": "valid", "already_accepted": True}
     if action.status not in {"dispatched", "settled"} or not action.task_id:
@@ -1012,6 +1025,9 @@ def _settle_action_timed(data_root: str, run_id: str, action_id: str, identity: 
     if progress is None or action_id not in progress.actions:
         raise ValueError(f"Action 不存在：{action_id}")
     action = progress.actions[action_id]
+    from pangea_agent.graph.review_policy import is_model_review
+    if is_model_review(action) and action.status != "accepted":
+        return resume_module_analysis(run_id, data_root)
     identity.update(task_id=action.task_id, execution_id=action.execution_id)
     if action.status == "accepted":
         return next_actions(data_root, run_id)

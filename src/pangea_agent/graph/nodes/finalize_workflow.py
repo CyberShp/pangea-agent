@@ -714,6 +714,7 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
             "lifecycle_status": progress.lifecycle_status,
             "stage": progress.stage,
             "quality_status": progress.quality_status,
+            "review_policy": progress.review_policy,
             "report_path": paths["report_path"],
             "html_report_path": paths["html_report_path"],
         }
@@ -1098,7 +1099,7 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
 
     review = None
     review_action_id = f"{state['run_id']}:review"
-    if review_action_id in progress.actions:
+    if review_action_id in progress.actions and progress.actions[review_action_id].status == "accepted":
         review = IndependentReviewResult.model_validate(
             read_json(validated_result_path(state, review_action_id))
         )
@@ -1109,7 +1110,7 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
 
     comparison_review = None
     comparison_action_id = f"{state['run_id']}:comparison-review"
-    if comparison_action_id in progress.actions:
+    if comparison_action_id in progress.actions and progress.actions[comparison_action_id].status == "accepted":
         comparison_result_path = comparison_review_aggregate_path(state)
         if not comparison_result_path.is_file():
             comparison_result_path = validated_result_path(state, comparison_action_id)
@@ -1166,7 +1167,7 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
     ]
     unresolved.extend(validation_unresolved)
     workflow_diagnostics = validation_unresolved + workflow_review_diagnostics
-    quality_status = "UNRESOLVED" if unresolved else "PASS"
+    quality_status = "UNRESOLVED" if unresolved or progress.review_policy == "disabled" else "PASS"
 
     final_state = {
         **state,
@@ -1186,6 +1187,7 @@ def finalize_workflow(state: PangeaState) -> PangeaState:
             }
             for unit in progress.analysis_units
         ],
+        "review_policy": progress.review_policy,
         "completed_analysis_units": list(progress.completed_analysis_units),
         "completed_closure_units": list(progress.completed_closure_units),
         "analysis_summaries": [

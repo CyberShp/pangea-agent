@@ -11,7 +11,6 @@ from pangea_agent.flow_stability import (
     canonical_flow, compare_flows, compare_inputs, freeze_flow_inputs,
     publish_flow_baseline,
 )
-from pangea_agent.graph.nodes.source_first import _prepare_review, _source_first_advance
 from pangea_agent.graph.result_store import read_result
 from pangea_agent.graph.workflow_store import load_progress
 from pangea_agent.models.analysis import ActionState
@@ -135,33 +134,22 @@ class FrozenRunChecks(unittest.TestCase):
         self.assertTrue(snapshot["eligible"])
         return snapshot
 
-    def test_real_graph_blind_then_comparison_and_frozen_parent_independence(self):
+    def test_delivery_comparison_keeps_frozen_parent_independence_without_review(self):
         parent = self.parent()
         state = self.create("child", flow_baseline={k: parent[k] for k in ("run_id", "version_id")})
         run = self.root / "runs/child"
         self.assertNotIn("api_key", state["task_contract"]["model_settings"])
-        progress, _ = self.accepted_analysis(state)
-        _prepare_review(state, progress)
-        review = progress.actions["child:review"]
-        task = read_json(Path(review.task_path))
-        ids = {i["input_id"] for i in task["inputs"]}
-        self.assertIn("flow_stability", ids)
-        self.assertNotIn("flow_baseline", ids)
-        self.assertNotIn("flow_comparison", ids)
+        progress, records = self.accepted_analysis(state)
         self.root.joinpath("runs/parent").rename(self.root / "parent-offline")
-        review.status, review.task_id, progress.stage = "settled", "review-worker", "reviewing"
-        result = read_json(Path(task["result_path"]))
-        result["binding"]["task_id"] = "review-worker"
-        write_json(Path(task["result_path"]), result)
-        _source_first_advance(state, progress)
-        comparison = read_json(run / "agent-tasks/source-first-comparison.json") if (run / "agent-tasks/source-first-comparison.json").exists() else read_json(Path(progress.actions["child:comparison-review"].task_path))
-        ids = {i["input_id"] for i in comparison["inputs"]}
-        self.assertIn("flow_baseline", ids)
-        self.assertIn("flow_comparison", ids)
-        summary = read_json(run / "inputs/flow-comparison.json")
+        progress.lifecycle_status, progress.quality_status = "complete", "UNRESOLVED"
+        publish_flow_baseline(state, progress.model_dump(mode="json"), records)
+        summary = read_json(run / "outputs/flow-delivery-comparison.json")
         self.assertEqual(summary["summary"]["unchanged"], 1)
         self.assertEqual(summary["comparability"]["dimensions"]["source"], "same")
         self.assertEqual(summary["comparability"]["dimensions"]["model"], "unknown")
+        self.assertFalse(summary["reviewed"])
+        self.assertFalse(any(a.role in {"review", "closure"} for a in progress.actions.values()))
+        self.assertFalse((run / "inputs/flow-comparison.json").exists())
 
     def test_explicit_bad_version_stays_bad_after_partial_preparation(self):
         parent = self.parent()
@@ -189,8 +177,9 @@ class FrozenRunChecks(unittest.TestCase):
                             analysis_settings={"scenario": "branch-analysis", "mode": "speed"})
         run = self.root / "runs/child"
         progress, records = self.accepted_analysis(state)
-        _prepare_review(state, progress)
-        first_round = (run / "inputs/flow-comparison.json").read_bytes()
+        # A historical first-round artifact is frozen data, not a scheduled task.
+        first_round = b'{"format_version":"flow-comparison-v1","historical":true}'
+        (run / "inputs/flow-comparison.json").write_bytes(first_round)
         closure_action = deepcopy(records[0][0])
         closure_action.update(action_id="child:closure:one", stage="targeted_closure", role="closure")
         closure = records[0][1].model_copy(deep=True)

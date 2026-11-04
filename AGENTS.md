@@ -35,14 +35,14 @@ Coverage 通过资产进入，冻结已选输入内容指纹、来源及匹配�
 
 ## 语义权限与机械门禁
 
-- Agent 和 Reviewer 对源码理解、单元划分、流程、风险、finding、证据含义和测试用例拥有语义决定权。Python 只负责输入准备、索引、状态、文件写入、确定性校验和报告组装，不得代写、改写、补全或推翻语义结果。
+- Agent 对源码理解、单元划分、流程、风险、finding、证据含义和测试用例拥有语义决定权。Python 只负责输入准备、索引、状态、文件写入、确定性校验和报告组装，不得代写、改写、补全或推翻语义结果。
 - Python 不得扫描历史 Run、目录、Agent 回复或结果内容来猜测当前 Run、action、task、worker 或下一阶段。所有生命周期操作必须使用当前 Graph 明确返回并已绑定的 `data_root`、`run_id`、`action_id` 和 `task_id`；缺少任何一项时如实停止，不得推断或兜底。
-- 不得以模型稳定性、效率或“更可靠”为由，把语义判断迁移到 Python、schema、Adapter、提交工具或其他机械层。无法证明为确定性事实的判断留给原 Agent/Reviewer；证据不足时使用 `UNRESOLVED`。
-- Python 发现结果不一致时默认只记录 `warning`、`degraded` 或 `evidence pending confirmation`，并保留 Agent 原始结论供 Reviewer 和报告呈现。可解析结果中的缺字段、枚举、ID、引用、路径归属、Coverage、basis、finding 或测试用例问题不得直接把 action/Run 判为失败。
+- 不得以模型稳定性、效率或“更可靠”为由，把语义判断迁移到 Python、schema、Adapter、提交工具或其他机械层。无法证明为确定性事实的判断留给原 Agent；证据不足时使用 `UNRESOLVED`。
+- Python 发现结果不一致时默认只记录 `warning`、`degraded` 或 `evidence pending confirmation`，并保留 Agent 原始结论供报告呈现。可解析结果中的缺字段、枚举、ID、引用、路径归属、Coverage、basis、finding 或测试用例问题不得直接把 action/Run 判为失败。
 - 硬阻断只允许用于当前 action 身份或绑定不成立、路径越出受控数据边界、冻结输入/结果文件损坏，或产物不可读取到下游完全无法继续的情况。即使产物不可读取，也只能保持当前 Run 等待同一 Agent 修复，不能由 Python 否决语义、改派 Agent 或把未审结论写成失败结论。
 - 重试次数、运行时长和 token 消耗由 Agent 宿主负责停止失控执行；Python 可以记录次数和提示升级处理，但不得仅因达到固定次数而获得判定语义 action/Run 失败的权限。
 - 机械检查不得根据关键词、行号重叠、数量、措辞、finding category 或测试用例内容判断分析质量，也不得增加测试用例语义门禁。
-- `kind=flow` 记录的结构校验（`flow_schema.check_flow_structure`：body 为对象、format_version、字段名、节点 id 唯一、edges/paths 的 id 引用）属于格式契约，不属于语义门禁：写入时不合格即拒绝本次写入并逐条返回中文错误，由同一 worker 在本轮修正后重写；Python 不自动修复、不补造节点，也不判断节点 kind/label 的业务含义或流程是否完整（交给 Reviewer）。
+- `kind=flow` 记录的结构校验（`flow_schema.check_flow_structure`：body 为对象、format_version、字段名、节点 id 唯一、edges/paths 的 id 引用）属于格式契约，不属于语义门禁：写入时不合格即拒绝本次写入并逐条返回中文错误，由同一 worker 在本轮修正后重写；Python 不自动修复、不补造节点，也不判断节点 kind/label 的业务含义或流程是否完整（由当前分析 Agent 判断）。
 - 新任务声明 `record_contracts.risk=behavior-risk-v1` 时，同样只校验 risk 的格式、字段与引用形态；旧任务沿用冻结规则。不合格由同一 worker 修正同一结果，Python 不判风险真实性、不补造正文、不据此判 action/Run 失败。
 - 新增或扩大 schema、门禁、自动修复、结果提交工具或 action 自动化之前，方案必须先向用户说明：当前已验证的失败、准备新增的确定性行为、可能误拦有效结果的场景、Python 获得与明确不获得的权限，以及为何不能通过简化合同、Agent 规则或客户端限权解决。用户明确确认前不得实施。
 - 门禁失败不得丢弃已经完成的有效语义内容、改派 Agent、重做整个分析或由主 Agent/Python 代修；只把精确错误交回同一 Agent 修正同一 `result_path`。若不能给出具体可修正字段和确定性依据，该检查不得作为阻断门禁。
@@ -93,21 +93,17 @@ Desktop 外部 source-first worker 读取 `docs/source-first-cli-worker.md`；�
 - 各客户端只读取自己的入口和 Agent 规则。客户端目录中的内容不得引用或调用另一个客户端的规则文件。
 - 共享范围只包括 graph、schema、rubric 和 CLI 契约；客户端专有的命令、会话轨迹和 Agent 调用方式不得写入共享方法论。
 - Python 不调用模型 API，也不做语义拆分。一个 Planning Agent 按功能模块或文件族规划单元；risk-method-v1 按资源申请/释放、数据生产/消费的契约闭包规划，无法同单元时显式放入 context。
-- 新场景按用户显式选择并冻结的 product-behavior/interface-contract 目标规划；不得由 Python 依据库、驱动或名称自动分类。target/focus 原样透传 Planning、Analysis、Review 与原 worker 定向修正。按入口、主干和跨文件行为关系划责，不将文件机械拆为单元；指定已有单元负责主干和跨单元挂接，Reviewer 直接对源码核查关键路径与边界。入口在冻结边界之外时记录缺口，不猜造入口、不增加 caller context UI、Graph 拓扑门禁或完整复核轮次。70% 沿冻结规则解释，risk 及显式 interface-contract 目标豁免，不由 Python 重算语义层级，旧 Run 保持原冻结口径。
+- 新场景按用户显式选择并冻结的 product-behavior/interface-contract 目标规划；不得由 Python 依据库、驱动或名称自动分类。target/focus 原样透传 Planning、Analysis。按入口、主干和跨文件行为关系划责，不将文件机械拆为单元；指定已有单元负责主干和跨单元挂接，Analysis 直接对源码核查关键路径与边界。入口在冻结边界之外时记录缺口，不猜造入口、不增加 caller context UI、Graph 拓扑门禁或完整复核轮次。70% 沿冻结规则解释，risk 及显式 interface-contract 目标豁免，不由 Python 重算语义层级，旧 Run 保持原冻结口径。
 - 首轮 analysis 最多同时派发 3 个互不重叠单元，总单元数不受 3 限制；worker 不得再派发子 Agent。
-- 标准型 analysis 结果齐备后先启动 1 个盲审 Reviewer。`independent_review` task 不包含 analysis result；Graph 接受盲审后，以 `continue_agent` 续接同一 Reviewer 的真实 `task_id` 执行 `comparison_review`，再向该会话开放盲审与首轮结果做对照裁决。Comparison 不是第二次完整分析，也不再启动新的 Reviewer 或第三个复核 Agent。
-- comparison review 保留的 finding 只为受影响单元生成一次 `targeted_closure`；该 action 必须续接对应单元首轮 analysis worker 的真实 `task_id`，在 Workflow 预先复制的 closure 结果中定向补齐，不能创建替代 worker，也不能修改原始 analysis 结果。
+- 新建 Run 只执行 Planning → Analysis → 报告，不派发 Reviewer、盲审、对照审核或 targeted_closure。分析完成后直接组装报告；结果未经过独立审核，不得把流程完成表述为审核通过。审核/定向修正实现与规则保留，但当前主链暂不调用；历史审核记录和冻结合同保持可读，不改写用户已冻结的数据。
 - 生命周期调用只使用 Graph 返回并绑定的 exact data_root/run_id/action_id/task_id；实现需保持原 worker 续接、唯一 result_path、有效内容保留和同一结果修复。具体客户端命令只放对应运行入口，禁止混用客户端。
-- Python 只校验 schema、真实 ID、路径归属、引用关系和流程结构等确定性契约，不根据行号重叠、finding category 或测试用例内容推翻 Agent/Reviewer 的语义结论。Coverage 只提供当前 `source_scope` 中唯一匹配的零覆盖提示，不强制生成测试用例。
+- Python 只校验 schema、真实 ID、路径归属、引用关系和流程结构等确定性契约，不根据行号重叠、finding category 或测试用例内容推翻 Agent 的语义结论。Coverage 只提供当前 `source_scope` 中唯一匹配的零覆盖提示，不强制生成测试用例。
 
-- 速度型 analysis_settings.mode=speed 跳过盲审，派发一个直接审核首轮结果的 Reviewer，沿用 comparison/closure 合同；旧 Run 遵循冻结设置，缺省为标准型。外部 ACP 单元分析最多三个并发，状态变更顺序执行。
+## 分析交付与修复
 
-## 定向修正执行预算与部分交付
-
-- analysis 和 targeted_closure 在内部 DSH 与外部 ACP 均最多三个 worker 并发；Graph/result 写入串行化。复核依赖关系保持不变。
-- 同一单元集中处理关联 finding，只进行一次语义修正，不因措辞变化发起新一轮完整复核。宿主在定向修正原回合后最多自动续接一次机械修复；仍未完成则暂停，覆盖上述通用修复提示次数。速度型每次继续的修正执行窗口 15 分钟，标准型 30 分钟；不是整个 Run 的耗时承诺。
-- 暂停不判语义失败，不替换 worker，不丢弃其他单元成功结果。用户继续时续接原 task；结束修正时先冻结写入和停止执行，再保留已有产物生成 UNRESOLVED 部分报告。
-- 用例统一沿用 execution_readiness=ready/needs_instrumentation/unknown 与 readiness_reason。内部函数和变量只能作为证据，除非有明确的测试桩/注入设施；不由 Python 关键词过滤代替语义审核。新规则只冻结到新 Run。
+- analysis 最多三个 worker 并发，Graph/result 写入串行化。标准型和速度型均不调度审核模型。
+- 不可消费的结果由原 worker 修复同一结果，保留有效内容，不新增语义门禁或替代 worker。
+- 用例沿用 execution_readiness=ready/needs_instrumentation/unknown 与 readiness_reason，不把设计就绪或流程完成当作实测通过。
 
 ## risk-method-v1 的确定性提示
 

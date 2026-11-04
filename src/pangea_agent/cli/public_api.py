@@ -131,6 +131,7 @@ def _run_summary(run_dir: Path) -> dict:
         "phase": phase,
         "stage": progress.get("stage"),
         "quality_status": progress.get("quality_status"),
+        "review_policy": progress.get("review_policy"),
         "unit_count": len({u["unit_id"] for u in units if isinstance(u, dict) and u.get("unit_id")}) if units is not None else None,
         "completed_unit_count": len(completed),
         "errors": progress.get("errors", []),
@@ -211,7 +212,7 @@ def resume_run(data_root: str, run_id: str, *, host_quiescent: bool = False) -> 
     if progress.stage == "reporting":
         from pangea_agent.graph.nodes.finalize_workflow import finalize_workflow
         return finalize_workflow({**state, "workflow_version": "source-first-v1"})
-    if not host_quiescent and any(a.task_id and (a.status in {"dispatched", "paused"}
+    if not host_quiescent and any(not a.review_skipped and a.task_id and (a.status in {"dispatched", "paused"}
                                   or (a.status == "failed" and a.error == "用户停止 Run"))
                                   for a in progress.actions.values()):
         # A stop flag or repeated resume is not evidence that cancellation of
@@ -222,8 +223,11 @@ def resume_run(data_root: str, run_id: str, *, host_quiescent: bool = False) -> 
     import time
     from pangea_agent.graph.result_store import read_result
     now = int(time.time() * 1000)
+    from pangea_agent.graph.review_policy import is_model_review
     settle_ids = []
     for action in progress.actions.values():
+        if is_model_review(action):
+            continue
         if action.status in {"dispatched", "paused"} or (action.status == "failed" and action.error == "用户停止 Run"):
             if action.execution_started_at_ms is not None and action.execution_finished_at_ms is None:
                 action.execution_elapsed_ms += max(0, now - action.execution_started_at_ms)
@@ -336,6 +340,9 @@ def execution_event(data_root: str, run_id: str, action_id: str, task_id: str,
         raise ValueError("当前 action 不再执行")
     now = int(time.time() * 1000)
     if event == "started":
+        from pangea_agent.graph.review_policy import is_model_review
+        if is_model_review(action):
+            raise ValueError("MODEL_REVIEW_DISABLED: 模型审核暂不执行")
         if action.status != "dispatched":
             raise ValueError("启动事件必须来自已绑定 action")
         if action.execution_started_at_ms is not None and action.execution_finished_at_ms is None:

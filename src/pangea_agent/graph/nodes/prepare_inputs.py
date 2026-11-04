@@ -425,7 +425,7 @@ def prepare_inputs(state: PangeaState) -> PangeaState:
         stage="unit_planning",
         task_path=str(task_path),
     )
-    progress = WorkflowProgress(run_id=state["run_id"], stage="planning")
+    progress = WorkflowProgress(run_id=state["run_id"], stage="planning", review_policy="disabled")
     add_action(progress, action)
     save_progress(state, progress)
     return {

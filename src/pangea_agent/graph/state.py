@@ -36,6 +36,7 @@ class PangeaState(TypedDict, total=False):
     lifecycle_status: str
     stage: str
     quality_status: str
+    review_policy: str
     needs_user: bool
     blocking_reason: dict[str, Any]
     ready_to_finalize: bool

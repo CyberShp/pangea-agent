@@ -135,7 +135,6 @@ class BranchBehaviorContracts(unittest.TestCase):
             finish(planning, "planner", written["revision"])
             for role, worker, names in (
                 ("analysis", "original-worker", ("scene_common_generation", "scene_branch", "scene_flow")),
-                ("review", "reviewer", ("scene_common_review", "scene_branch_review", "scene_flow")),
             ):
                 action = action_for(role)
                 task = read_json(Path(action["task_path"]))
@@ -159,6 +158,10 @@ class BranchBehaviorContracts(unittest.TestCase):
                     written = result_write(directory, run_id, action["action_id"], worker, expected_revision=0,
                                            records=[{"kind": "note", "body": "机械派发夹具，不代表业务分析完成或模型通过"}])
                     finish(action, worker, written["revision"])
+
+            progress = read_json(run / "progress.json")
+            self.assertEqual(progress["lifecycle_status"], "complete")
+            self.assertFalse(any(a["role"] in {"review", "closure"} for a in progress["actions"].values()))
 
     def test_existing_freeze_keeps_previous_review_and_flow_contract(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -469,6 +469,7 @@ def prepare_source_first_inputs(state: PangeaState) -> PangeaState:
     progress = WorkflowProgress(
         run_id=state["run_id"],
         workflow_version="source-first-v1",
+        review_policy="disabled",
         runtime_commit=contract.get("runtime_commit"),
         model_id=contract.get("model_id"),
         effective_context_budget=contract.get("effective_context_budget"),
@@ -1039,6 +1040,8 @@ def review_correction_routes(result, known_unit_ids: set[str]) -> tuple[str | No
 
 
 def _source_first_advance(state: PangeaState, progress: WorkflowProgress) -> PangeaState:
+    from pangea_agent.graph.review_policy import retire_model_reviews
+    retire_model_reviews(state, progress)
     # Accept completed closures independently; paused siblings must still block
     # automatic finalization, but never hide another unit's successful writes.
     if progress.stage == "closing":
@@ -1055,7 +1058,7 @@ def _source_first_advance(state: PangeaState, progress: WorkflowProgress) -> Pan
             progress.quality_status = "UNRESOLVED"
             progress.stage = "reporting"
         save_progress(state, progress)
-    current = [action for action in progress.actions.values() if action.status in {"pending", "dispatched", "settled", "paused"}]
+    current = [action for action in progress.actions.values() if action.status in {"pending", "dispatched", "settled", "paused"} and not action.review_skipped]
     if not current or any(action.status != "settled" for action in current):
         return {**state, "ready_to_finalize": progress.stage == "reporting", "lifecycle_status": progress.lifecycle_status, "stage": progress.stage, "agent_actions": [
             action.model_dump(mode="json") for action in current if action.status == "pending"
@@ -1114,6 +1117,12 @@ def _source_first_advance(state: PangeaState, progress: WorkflowProgress) -> Pan
                     progress.accepted_revisions[action.action_id] = result.revision
                 except (OSError, ValueError, KeyError):
                     progress.accepted_revisions[action.action_id] = 0
+        if progress.review_policy == "disabled":
+            progress.quality_status = "UNRESOLVED"
+            progress.stage = "reporting"
+            save_progress(state, progress)
+            return {**state, "ready_to_finalize": True, "lifecycle_status": progress.lifecycle_status,
+                    "stage": progress.stage, "review_policy": "disabled", "agent_actions": []}
         _prepare_review(state, progress)
         progress.stage = "reviewing"
         save_progress(state, progress)

@@ -12,7 +12,7 @@ from pangea_agent.agent_io import read_json, write_json
 from pangea_agent.cli.adapter_api import bind_action, settle_action
 from pangea_agent.cli.public_api import deliver_current, execution_event, resume_run, run_detail, stop_run
 from pangea_agent.cli.run_module_analysis import run_module_analysis
-from pangea_agent.cli.source_first_api import comparison_finding_write, plan_write, result_read, result_write, review_decide, work_finish
+from pangea_agent.cli.source_first_api import plan_write, result_read, result_write, work_finish
 from pangea_agent.execution_view import execution_view
 from pangea_agent.graph.result_store import read_result
 from pangea_agent.runtime_timing import runtime_timing
@@ -68,27 +68,11 @@ class RecoveryChecks(unittest.TestCase):
     def write(self, action_id, worker, *, finish=True, settle=True):
         result = read_result(self.task(action_id)["result_path"])
         output = result_write(str(self.root), self.run_id, action_id, worker, expected_revision=result.revision,
-                              records=[{"kind": "note", "body": "Saved worker evidence; semantic review remains independent."}])
+                              records=[{"kind": "note", "body": "Saved worker evidence; no independent review was performed."}])
         if finish:
             work_finish(str(self.root), self.run_id, action_id, worker, revision=output["revision"])
         if settle:
             settle_action(str(self.root), self.run_id, action_id)
-
-    def closure(self):
-        for action in self.analysis:
-            self.write(action, self.bind(action))
-        review = next(a["action_id"] for a in self.progress()["actions"].values() if a["role"] == "review")
-        worker = self.bind(review, "reviewer")
-        finding = comparison_finding_write(str(self.root), self.run_id, review, worker, expected_revision=0,
-                                          unit_ids=["unit-0001"], finding={"summary": "Need correction", "body": "Keep unresolved until worker completes."})
-        decision = review_decide(str(self.root), self.run_id, review, worker, expected_revision=finding["revision"],
-                                 decision={"disposition": "finding", "version_set_id": self.task(review)["version_set_id"],
-                                           "correction_record_ids": finding["record_ids"]})
-        work_finish(str(self.root), self.run_id, review, worker, revision=decision["revision"])
-        settle_action(str(self.root), self.run_id, review)
-        closure = next(a for a in self.progress()["actions"].values() if a["role"] == "closure")
-        self.bind(closure["action_id"], closure["task_id"])
-        return closure["action_id"], closure["task_id"]
 
     def test_plan_counts_saved_progress_and_polling_are_facts(self):
         detail = run_detail(str(self.root), self.run_id)
@@ -251,10 +235,10 @@ class RecoveryChecks(unittest.TestCase):
         self.assertEqual(self.progress()["actions"][action]["task_id"], f"worker-{action}")
 
     def test_partial_delivery_crash_recovers_report_without_restarting_workers(self):
-        action, worker = self.closure()
-        execution_event(str(self.root), self.run_id, action, worker, "started", budget_ms=900000, execution_id="closure-turn")
-        self.write(action, worker, finish=False, settle=False)
-        execution_event(str(self.root), self.run_id, action, worker, "paused", reason="Host execution window exhausted", execution_id="closure-turn")
+        from history_review_fixture import saved_closure
+        for origin in self.analysis:
+            self.write(origin, self.bind(origin))
+        action, worker = saved_closure(self, self.analysis[0])
         paused = run_detail(str(self.root), self.run_id)["execution_view"]
         self.assertEqual(paused["unit_counts"]["paused"], 1)
         self.assertEqual(paused["unit_counts"]["completed"], 1)

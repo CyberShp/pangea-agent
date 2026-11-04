@@ -2,14 +2,14 @@
 
 `pangea-agent` 是部署在测试人员 Windows 电脑上的 C/C++ 与 Lua 测试分析 Agent。它把冻结源码、经审核的历史缺陷机理、结构化需求/设计资料和相关 Coverage 转成代码流程、资料/代码差异、六维 DFX 风险、测试用例和离线报告。
 
-Python 只负责确定性工作：文件发现、语言识别、源码结构解析、Coverage 匹配、状态、JSON 契约、聚合和报告。单元规划、源码理解、独立复核和资料提取由当前客户端派发 Agent 完成。Python 不调用模型 API。
+Python 只负责确定性工作：文件发现、语言识别、源码结构解析、Coverage 匹配、状态、JSON 契约、聚合和报告。单元规划、源码理解和资料提取由当前客户端派发 Agent 完成。Python 不调用模型 API。
 
 ## 已有 Run 定向补充与文件变更分析
 
 已完成或已停止的 source-first Run 可以派生独立新 Run。定向补充沿用父 Run 冻结源码；
 文件变更分析读取当前工作仓库，并冻结指定文件的前后哈希、差异、删除及基线缺失状态。
 父 Run、旧结果和 Provider 会话不被复用为新结果。历史记录按索引分页读取，Planning
-只规划本次目标或变化影响，必要依赖由 Agent 判定；复核方式及最多三个并发 worker 保持不变。
+只规划本次目标或变化影响，必要依赖由 Agent 判定；最多三个并发 worker，分析后直接生成报告。
 
 ```powershell
 python -m pangea_agent.cli.main runs derivation-options --data-root 'pangea-data' --run-id '父Run-ID'
@@ -35,7 +35,7 @@ python -m pangea_agent.cli.main runs derive --data-root 'pangea-data' --parent-r
 如果当前范围源码全部被删除，需要提供仍存在的受影响源码范围，不能用旧源码冒充当前实现。
 
 机械回归：`python verification/incremental_smoke.py`。该脚本验证独立 Run、源快照、
-文件差异、精确记录引用、父 Run 字节不变、父 Run 不可用后的恢复与输入读取，以及原复核模式。
+文件差异、精确记录引用、父 Run 字节不变、父 Run 不可用后的恢复与输入读取，以及无审核报告路径。
 
 ## 执行进展与恢复
 
@@ -90,14 +90,13 @@ pangea-data/
 ```text
 准备并冻结输入
 → Planning Agent 按功能模块/文件族规划单元
-→ 最多 8 个 analysis Agent 并行完成首轮分析
-→ 1 个看不到首轮结果的独立复核 Agent
-→ 独立 Adjudicator 对照盲审与首轮结果裁决 finding
-→ 原 analysis worker 必要时只补齐受影响单元
+→ 最多 3 个 Analysis Agent 并行分析
 → 聚合 report.md 和 report.html
 ```
 
-“最多 8 个”是并发上限，不是整个 Run 的单元总数。首轮 analysis 已经负责代码/设计理解、主干与异常流程、调用链、资料/代码差异、Coverage 提示、缺陷机理、风险和用例；独立复核寻找遗漏，comparison review 由新的 Adjudicator Session 对照盲审与首轮结果裁决发现，不拆成逐字段审计任务。
+新建 Run 只执行 Planning → Analysis → 报告，不派发 Reviewer、盲审、对照审核或 targeted_closure。分析完成后直接组装报告；结果未经过独立审核，不得把流程完成表述为审核通过。审核/定向修正实现与规则保留，但当前主链暂不调用；历史审核记录和冻结合同保持可读，不改写用户已冻结的数据。
+
+“最多 3 个”是并发上限，不是整个 Run 的单元总数。Analysis 负责当前冻结场景要求的流程、证据、风险和用例，Python 仅做确定性持久化与报告组装。
 
 主 Agent 只处理 CLI 返回的 action：
 
@@ -170,7 +169,7 @@ CLI 每次只向 stdout 输出一个 JSON envelope。主要能力分为：
 - `system capabilities`：返回当前支持语言和接口版本；
 - `adapter`：供客户端绑定、校验和提交 Agent action。
 
-analysis/closure action 的 `methodologies` 字段列出当前单元实际冻结的方法论；`runs get` 在 Run
+analysis action 的 `methodologies` 字段列出当前单元实际冻结的方法论；`runs get` 在 Run
 级别返回同结构清单。每项包含稳定 ID、标题、内容 SHA-256、通用/专项类型、选择依据、来源基线摘要和
 专项来源目录路径。该字段只用于展示和追溯，不参与结果校验，也不替 Agent 判断风险或用例是否成立。
 
@@ -186,3 +185,6 @@ pangea-data/runs/<run-id>/report.html
 ```
 
 HTML 是无外链单文件，并直接渲染主干、分支、异常传播和恢复流程图。报告只展示与当前范围相关并已经处理的输入。
+
+
+当 `progress.review_policy="disabled"` 且 `lifecycle_status=complete`、正式报告齐备时，这是正常的未审核交付，明确说明“未执行模型审核，分析已完成”，给出报告路径。不得仅因 `quality_status=UNRESOLVED` 宣称质量未通过，也不得宣称审核通过；具体待确认项按报告原文呈现。旧记录无此标记时，仅依据真实历史审核结论说明其质量状态，不推测审核结论。

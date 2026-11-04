@@ -38,33 +38,14 @@ completion 时，无须改写正文，核对后重新 pangea_work_finish。
 
 结果外壳不可读时，只按诊断的 sha256 由同一 worker 修复同一 result_path。不得另建结果、
 换 worker 或把语义交给 Python。结束时只回复：完成 action_id=<task.action_id>。
-targeted closure 对一个 finding 默认只做一次直接 replacement；只有旧引用会变成事实错误时才
-级联替换，不反复 supersede 同组记录、不重写无关正文。
-
-定向替换前按 pangea_result_read(record_id=目标) 读完该条，核对正文身份并复制实际 record_id；
-不按 finding/用例编号或记忆推算。当前 revision 已核对原文可复用。写入 supersedes 后，
-核对回执 retired_records/created_records 的实际对象，保留不受影响的流程和首轮原文件。
-
-
-收到 correction_records 后，把每项建议与其反证、目标原文对应核对。优先复用当前会话中已
-完整读取的冻结生产源码，只补读缺少或存在分歧的调用点/实现；测试桩不能代替生产行为。
-根据源码独立决定修正：证据支持则替换；反证不成立则保留原结论并简述依据；资料不足则
-明确 unresolved。不能因为建议来自 Reviewer 就照抄，也不能无依据忽略 finding。
-保存前仅对本次修改核对标题、步骤预期、流程节点和路径说明是否表达同一最终结论，删除
-已被自己推翻的中间推测。处置说明写入现有正文/summary，随后按既有流程 work_finish。
-
-prepared_source.original_records 是本 action 的原记录，已完整交付且身份已核对的记录可直接复用；pending_original_record_ids 只在需要修改该条时补读。引用页的 finding_record_id 属于 Reviewer，不能用作 Analysis 替换目标。pending_reads 是引用的未交付部分，核实建议需要它时继续读取。原文与建议矛盾时保留源码支持的结论并说明；不能用 Reviewer 的引文描述替代实际语句。
-
-普通文字正文（包括 JSON 序列化字符串）优先按单条记录完整替换：target_record_ids 只填当前这一条的精确 record_id，kind 保持原分类，body 填原 worker 修正后的完整正文，省略 edits。保留该条仍有效的内容和证据，不把整个结果集合重写。结构化对象只改明确字段时可用 edits；匹配失败后核对当前原文，按上述单条替换方式完成。保存后从 created_records 复制新 record_id；旧编号已退休，不能继续拿它修改。
-
-核对返修建议时，把源码实际发生的操作与建议声称的操作逐一对应：重复操作必须指出同一执行路径上的两次操作及同一对象；跨次操作必须核对第一次结束后的实际状态和第二次入口。撤回旧判断后，新的判断仍须独立证据，不能由旧判断不成立推出相反故障。每项处置在已有 summary 中简述“接受/驳回/待确认、源码依据、修改后的记录编号”，不新增独立复核阶段。
+当前回合发现具体错误时由本 worker 精确替换原记录，保留其余有效内容；完成后交宿主生成报告，不等待额外审核或修正阶段。
 
 业务用例按当前任务全部冻结 rubric 的黑盒与可实施灰盒要求执行。普通正文只写业务操作和外部判据；注入步骤可定位函数/变量，内部推演单列证据。execution_readiness 与 readiness_reason 如实区分 ready、needs_instrumentation 和 unknown，不虚构设施或实测。场景提炼和用例拆合只按当前 task 冻结的生成规则执行，不从角色文件额外追加按内部代码路径拆例的要求；旧 Run 不追补新版规则。参考文件不扩大主责范围。
 
 <!-- RISK-REFERENCE:BEGIN -->
-风险场景合同以本 Run 冻结的 scene_risk / scene_risk_review 合同块为准，读取语言风险方法与风险信号；另交 kind=check 检查账本，证据附 evidence_quotes。G1–G4 当前只提示 warning，核对后由原 worker 修正；旧任务继续使用其冻结合同。
+风险场景合同以本 Run 冻结的 scene_risk 合同块为准，读取语言风险方法与风险信号；另交 kind=check 检查账本，证据附 evidence_quotes。G1–G4 当前只提示 warning，核对后由原 worker 修正；旧任务继续使用其冻结合同。
 <!-- RISK-REFERENCE:END -->
 
 <!-- FIRST-CASE-REFERENCE:BEGIN -->
-若当前 task 的冻结生成 rubric 含 FIRST-CASE-DELIVERY，按该段在每条 test_case 首次保存前由本 worker 于当前 action 完成逐例语义组织，写好一条即保存，不等 Reviewer。初始、续接、压缩及修复均复用同一冻结版本；未提供该段的旧 Run 继续原合同，不读取工作树新版或追补历史记录。先核对 analysis_settings、target/focus、单元 purpose/归属与测试工具参考；compact 延后字段沿 deferred_fields 的 input_id 分页恢复。
+若当前 task 的冻结生成 rubric 含 FIRST-CASE-DELIVERY，按该段在每条 test_case 首次保存前由本 worker 于当前 action 完成逐例语义组织，写好一条即保存，不等待额外阶段。初始、续接、压缩及修复均复用同一冻结版本；未提供该段的旧 Run 继续原合同，不读取工作树新版或追补历史记录。先核对 analysis_settings、target/focus、单元 purpose/归属与测试工具参考；compact 延后字段沿 deferred_fields 的 input_id 分页恢复。
 <!-- FIRST-CASE-REFERENCE:END -->

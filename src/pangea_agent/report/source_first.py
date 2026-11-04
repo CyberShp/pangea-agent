@@ -649,9 +649,17 @@ def _action_records(state: dict, progress: dict) -> list[tuple[dict, Any]]:
         task_path = action.get("task_path") if isinstance(action, dict) else None
         if not isinstance(task_path, str):
             raise ValueError(f"source-first action 缺少 task_path：{action_id}")
+        run_dir = run_directory(state).resolve()
+        Path(task_path).resolve().relative_to(run_dir)
+        if action.get("review_skipped") and not Path(task_path).is_file():
+            continue
         try:
             task = read_json(Path(task_path))
             result_path = task.get("result_path")
+            if isinstance(result_path, str):
+                Path(result_path).resolve().relative_to(run_dir)
+            if action.get("review_skipped") and action.get("delivery_revision") is None and (not isinstance(result_path, str) or not Path(result_path).is_file()):
+                continue
             if not isinstance(result_path, str) or not Path(result_path).is_file():
                 raise ValueError(f"source-first action 缺少可读取 result：{action_id}")
             items.append((
@@ -672,6 +680,7 @@ def _markdown(state: dict, progress: dict, records: list[tuple[dict, Any]]) -> s
         f"- Lifecycle: `{progress.get('lifecycle_status', 'running')}`",
         f"- Stage: `{progress.get('stage', 'preparing')}`",
         f"- Quality: `{progress.get('quality_status') or 'UNRESOLVED'}`",
+        f"- Model review: `{progress.get('review_policy') or 'historical'}`",
         f"- Needs user: `{bool(progress.get('needs_user', False))}`",
         "",
         "## Revision ledger",
@@ -788,6 +797,8 @@ def _behavior_markdown(
     quality = str(progress.get("quality_status") or "UNRESOLVED")
     if progress.get("partial_delivery"):
         delivery_message = "用户结束定向修正，交付截至停止时已保存的结果；部分修正未完成，未解决事项和未复核内容保留，质量状态为 UNRESOLVED。"
+    elif lifecycle == "complete" and progress.get("review_policy") == "disabled":
+        delivery_message = "分析已完成并交付；未执行模型审核。UNRESOLVED 表示未作审核质量裁决，不代表分析失败或产品测试失败。"
     elif lifecycle == "complete" and quality == "PASS":
         delivery_message = "用例分析与审核已完成；该状态不代表被测系统已经执行通过。"
     elif lifecycle == "complete":
@@ -804,7 +815,7 @@ def _behavior_markdown(
         f"- Analysis profile: `{'behavior-test-v2' if scene else 'behavior-test-v1'}`",
         f"- Lifecycle: `{lifecycle}`",
         f"- Quality: `{quality}`",
-        "- 质量范围：业务行为用例的生成与审核；未附实际执行证据时，不代表被测产品或 Coverage 已通过。",
+        "- 质量范围：业务行为用例的生成；未附实际执行证据时，不代表被测产品或 Coverage 已通过。",
         "",
         "## 交付状态",
         "",
@@ -972,7 +983,7 @@ def _behavior_markdown(
         f"- 业务灰盒（含定点故障注入）：`{level_counts['developer_assisted']}`",
         f"- 可实施黑盒与灰盒（作者声明）：`{ready_count}/{len(case_records)}`，`{ratio}`。",
         ("- 风险场景不设黑盒比例目标；用例层级按实际操作如实声明。" if scene and scene.get('presentation', {}).get('blackbox_target') is False and scene.get('id') == 'risk-analysis' else "- 用户冻结目标为接口契约分析，不设产品黑盒与灰盒 70% 比例目标；用例层级及执行条件如实声明。" if scene and scene.get('presentation', {}).get('blackbox_target') is False else "- 可实施黑盒与灰盒交付目标 ≥70%。"),
-        "- 上述比例只汇总有效记录的显式层级和 ready 声明，未提供声明的不计入分子；语义达标以 Reviewer 结论为准，定向修正后的记录不冒充已独立复核。",
+        "- 上述比例只汇总有效记录的显式层级和 ready 声明，未提供声明的不计入分子；该汇总不作语义质量裁决，也不代表已执行模型审核。",
         f"- 接口与白盒等辅助用例（含待补执行条件）：`{level_counts['interface_contract'] + level_counts['whitebox_support'] + level_counts['unclassified']}`",
         "",
     ])
@@ -1062,7 +1073,7 @@ def _flow_comparison_markdown(state: dict) -> list[str]:
     if not path.is_file():
         return []
     lines = ["## 流程版本对照", "",
-             "> 以下为冻结输入和显式流程身份的机械对照；有差异不等于错误，无差异不证明业务覆盖完整。是否接受变更以 Reviewer 结论为准。", ""]
+             "> 以下为冻结输入和显式流程身份的机械对照；有差异不等于错误，无差异不证明业务覆盖完整。保留原 worker 对变更的说明，不另行执行模型审核。", ""]
     if path == delivery_path:
         lines.extend(["> 当前显示最终交付修订的机械对照，不代表定向修正获得了额外语义审核。首轮审核输入仍保留在冻结记录中。", ""])
     try:
@@ -1426,6 +1437,7 @@ def write_source_first_reports(state: dict, *, progress: dict | None = None) -> 
                 "run_id": progress.get("run_id", state.get("run_id")),
                 "lifecycle_status": progress.get("lifecycle_status"),
                 "quality_status": progress.get("quality_status"),
+                "review_policy": progress.get("review_policy"),
                 "analysis_profile": profile,
                 "review_mode": review_mode,
                 "partial_delivery": progress.get("partial_delivery", False),

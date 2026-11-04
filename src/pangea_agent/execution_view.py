@@ -62,8 +62,11 @@ def execution_view(run_dir: Path, progress: dict, *, now_ms: int | None = None) 
         records = active_records(result) if result else None
         declared = bool(result and result.completion and result.completion.complete
                         and result.completion.declared_revision == result.revision)
-        if lifecycle == "complete" or status == "accepted" or partial_reporting:
+        retired = action.get("role") in {"review", "closure"} or action.get("stage") in {"independent_review", "comparison_review", "targeted_closure"}
+        if lifecycle == "complete" or status == "accepted" or partial_reporting or action.get("review_skipped"):
             operation = "none"
+        elif retired:
+            operation = "advance_workflow"
         elif status == "settled":
             operation = "advance_workflow"
         elif declared and task_id:
@@ -82,7 +85,7 @@ def execution_view(run_dir: Path, progress: dict, *, now_ms: int | None = None) 
             saved_at = None
         row = {"action_id": action_id, "task_id": task_id, "unit_id": unit_id,
                "title": task.get("title") or task.get("target"), "role": action.get("role"),
-               "stage": action.get("stage"), "status": status,
+               "stage": action.get("stage"), "status": status, "review_skipped": action.get("review_skipped", False),
                "saved_revision": result.revision if result else None,
                "saved_record_count": len(records) if records is not None else None,
                "last_saved_at_ms": saved_at, "completion_declared": declared,
@@ -100,7 +103,7 @@ def execution_view(run_dir: Path, progress: dict, *, now_ms: int | None = None) 
                           else "seed" if seed else "draft")
             preserved.append({"action_id": action_id, "unit_id": unit_id, "revision": result.revision,
                               "record_count": len(records), "acceptance": acceptance})
-        if status in {"paused", "failed"} or action.get("attention_required"):
+        if not action.get("review_skipped") and (status in {"paused", "failed"} or action.get("attention_required")):
             unresolved.append({"action_id": action_id, "unit_id": unit_id, "status": status,
                                "reason": action.get("error") or "执行尚未完成，已保存结果保留"})
     units = plan_units(run_dir, progress)
@@ -108,7 +111,7 @@ def execution_view(run_dir: Path, progress: dict, *, now_ms: int | None = None) 
     counts = {"total": len(unit_ids) if units is not None else None,
               "completed": 0, "pending": 0, "active": 0, "paused": 0, "failed": 0}
     for unit_id in unit_ids:
-        unit_actions = [a for a in actions if a["unit_id"] == unit_id and a["role"] in {"analysis", "closure"}]
+        unit_actions = [a for a in actions if a["unit_id"] == unit_id and a["role"] in {"analysis", "closure"} and not a["review_skipped"]]
         closures = [a for a in unit_actions if a["role"] == "closure"]
         action = (closures or unit_actions or [None])[-1]
         status = action["status"] if action else "pending"
@@ -117,7 +120,7 @@ def execution_view(run_dir: Path, progress: dict, *, now_ms: int | None = None) 
                else "failed" if status == "failed" else "pending")
         counts[key] += 1
     requires_quiescence = (lifecycle in {"running", "stopped"} and stage != "reporting"
-                           and any(a["task_id"] and (a["status"] in {"dispatched", "paused"}
+                           and any(not a["review_skipped"] and a["task_id"] and (a["status"] in {"dispatched", "paused"}
                                    or (a["status"] == "failed" and a["error"] == "用户停止 Run")) for a in actions))
     can_resume = lifecycle in {"running", "stopped"}
     resume_from = [{"action_id": a["action_id"], "task_id": a["task_id"], "operation": a["resume_action"]}
@@ -125,7 +128,7 @@ def execution_view(run_dir: Path, progress: dict, *, now_ms: int | None = None) 
     if stage == "reporting" and lifecycle != "complete":
         resume_from = [{"action_id": None, "task_id": None, "operation": "finalize_report"}]
     return {"format_version": "pangea-execution-view-v1", "stage": stage,
-            "lifecycle_status": lifecycle, "quality_status": progress.get("quality_status"),
+            "lifecycle_status": lifecycle, "quality_status": progress.get("quality_status"), "review_policy": progress.get("review_policy"),
             "unit_counts": counts, "last_effective_progress": last_progress, "actions": actions,
             "preserved": preserved, "unresolved": unresolved,
             "recovery": {"can_resume": can_resume, "requires_host_quiescence": requires_quiescence,

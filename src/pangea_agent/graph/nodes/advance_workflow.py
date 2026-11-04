@@ -998,6 +998,12 @@ def _accept_analysis(state: PangeaState, progress) -> PangeaState:
         action.status = "accepted"
         progress.completed_analysis_units.append(unit_id)
 
+    if progress.review_policy == "disabled":
+        progress.quality_status = "UNRESOLVED"
+        progress.stage = "reporting"
+        save_progress(state, progress)
+        return {**state, "ready_to_finalize": True, "stage": "reporting", "agent_actions": []}
+
     run_dir = run_directory(state)
     source_manifest = read_json(run_dir / "inputs" / "source-manifest.json")
     analysis_language = source_manifest.get("analysis_language", "c_cpp")
@@ -2136,6 +2142,10 @@ def advance_workflow(state: PangeaState) -> PangeaState:
         raise ValueError("Run progress 不存在")
     if progress.lifecycle_status != "running":
         return _waiting(state, progress)
+    from pangea_agent.graph.review_policy import retire_model_reviews
+    retire_model_reviews(state, progress)
+    if progress.stage == "reporting":
+        return {**state, "ready_to_finalize": True, "stage": "reporting", "agent_actions": []}
     if not _stage_ready(progress):
         return _waiting(state, progress)
     if progress.stage == "planning":

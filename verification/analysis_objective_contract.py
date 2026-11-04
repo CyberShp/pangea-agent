@@ -1,4 +1,4 @@
-"""Real frozen tasks, original-worker closure and report objective compatibility; no model."""
+"""Frozen task objectives and no-review report compatibility; no model."""
 from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
@@ -10,7 +10,7 @@ from pangea_agent.analysis_scenarios import freeze_scene, scene_spec
 from pangea_agent.cli.adapter_api import bind_action, settle_action
 from pangea_agent.cli.run_module_analysis import run_module_analysis, resume_module_analysis
 from pangea_agent.cli.source_first_api import (
-    comparison_finding_write, plan_write, result_write, review_decide, work_finish,
+    plan_write, result_write, work_finish,
 )
 from pangea_agent.models.contract import TaskContract
 from pangea_agent.models.source_first import NoteRecord
@@ -47,7 +47,7 @@ class ObjectiveContracts(unittest.TestCase):
             self.assertEqual((run / "inputs/analysis-scene.json").read_bytes(), before)
             self.assertFalse(old["presentation"]["blackbox_target"])
 
-    def test_real_graph_preserves_goal_into_analysis_review_comparison_and_original_closure(self):
+    def test_real_graph_preserves_goal_into_analysis_and_finishes_without_review(self):
         for mode in ("depth", "speed"):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as td:
                 root = Path(td)
@@ -83,27 +83,11 @@ class ObjectiveContracts(unittest.TestCase):
                 written = result_write(td, run_id, analysis["action_id"], "original-worker", expected_revision=0,
                                        records=[{"kind": "note", "body": "Caller outside frozen boundary; retain unresolved evidence gap."}])
                 finish(analysis, "original-worker", written["revision"])
-                review = next(a for a in actions() if a["role"] == "review")
-                assert_goal(task(review))
-                bind_action(td, run_id, review["action_id"], "same-reviewer")
-                if mode == "depth":
-                    self.assertEqual(task(review)["review_stage"], "independent_review")
-                    write = result_write(td, run_id, review["action_id"], "same-reviewer", expected_revision=0,
-                                         records=[{"kind": "note", "body": "Independent source review retained."}])
-                    finish(review, "same-reviewer", write["revision"])
-                    review = next(a for a in actions() if a["stage"] == "comparison_review")
-                    self.assertEqual(review["task_id"], "same-reviewer")
-                    bind_action(td, run_id, review["action_id"], "same-reviewer")
-                assert_goal(task(review))
-                finding = comparison_finding_write(td, run_id, review["action_id"], "same-reviewer", expected_revision=0,
-                                                   unit_ids=["unit-0001"], finding={"summary": "核对边界缺口", "body": "Retain current target and missing external caller evidence."})
-                decision = review_decide(td, run_id, review["action_id"], "same-reviewer", expected_revision=finding["revision"],
-                                         decision={"disposition": "finding", "version_set_id": task(review)["version_set_id"],
-                                                   "correction_record_ids": finding["record_ids"]})
-                finish(review, "same-reviewer", decision["revision"])
-                closure = next(a for a in actions() if a["role"] == "closure")
-                assert_goal(task(closure))
-                self.assertEqual(closure["task_id"], "original-worker")
+                progress = read_json(run / "progress.json")
+                self.assertEqual(progress["lifecycle_status"], "complete")
+                self.assertEqual(progress["quality_status"], "UNRESOLVED")
+                self.assertEqual({a["role"] for a in actions()}, {"planning", "analysis"})
+                self.assertEqual(next(a for a in actions() if a["role"] == "analysis")["task_id"], "original-worker")
                 frozen_path = run / "inputs/methodologies/builtin/scene_common_generation.md"
                 frozen = frozen_path.read_bytes()
                 resume_module_analysis(run_id, td)

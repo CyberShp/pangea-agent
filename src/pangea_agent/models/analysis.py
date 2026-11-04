@@ -643,6 +643,7 @@ class ValidationFailureRecord(StrictModel):
 
 class ActionState(AgentAction):
     status: Literal["pending", "dispatched", "settled", "accepted", "paused", "failed"] = "pending"
+    review_skipped: bool = False
     execution_id: str | None = None
     execution_ids: list[str] = Field(default_factory=list)
     execution_started_at_ms: int | None = None
@@ -671,6 +672,7 @@ class WorkflowProgress(StrictModel):
     schema_version: Literal["3.0", "3.1"] = "3.1"
     run_id: str = Field(min_length=1)
     workflow_version: Literal["legacy-v1", "source-first-v1"] | None = None
+    review_policy: Literal["disabled"] | None = None
     runtime_commit: str | None = None
     model_id: str | None = None
     effective_context_budget: int | None = Field(default=None, gt=0)

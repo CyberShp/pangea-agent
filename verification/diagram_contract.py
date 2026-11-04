@@ -136,12 +136,12 @@ class DiagramContractChecks(unittest.TestCase):
                 append_records(path, binding, 1, [{"kind": "note", "body": "not lost"}])
             self.assertEqual(path.read_text(encoding="utf-8"), "broken JSON")
 
-    def test_real_graph_review_and_closure_preserve_ignored_diagnostics(self):
+    def test_real_graph_reports_ignored_diagnostics_without_review(self):
         import observability_recovery as recovery
         from pangea_agent.agent_io import write_json
         from pangea_agent.cli.adapter_api import settle_action
         from pangea_agent.cli.source_first_api import (
-            comparison_finding_write, comparison_read, result_write, review_decide,
+            comparison_read, result_write,
             validate_source_first_result, work_finish,
         )
         harness = recovery.RecoveryChecks(methodName="test_plan_counts_saved_progress_and_polling_are_facts")
@@ -162,40 +162,27 @@ class DiagramContractChecks(unittest.TestCase):
         self.assertIn(harness.progress()["actions"][first]["status"], {"settled", "accepted"})
         second = harness.analysis[1]
         harness.write(second, harness.bind(second))
-        review = next(action["action_id"] for action in harness.progress()["actions"].values() if action["role"] == "review")
-        reviewer = harness.bind(review, "reviewer")
+        progress = harness.progress()
+        self.assertEqual(progress["lifecycle_status"], "complete")
+        self.assertFalse(any(a["role"] in {"review", "closure"} for a in progress["actions"].values()))
+        saved = read_result(task["result_path"])
+        self.assertEqual(len(active_diagram_diagnostics(saved)), 2)
+        from pangea_agent.report.source_first import diagram_diagnostic_markdown
+        report = "\n".join(diagram_diagnostic_markdown([
+            (dict(progress["actions"][first], task=task), saved)]))
+        self.assertIn('"record_id": "rec-000001"', report)
+        self.assertIn('"record_id": "rec-000002"', report)
+        self.assertIn("call_graph.variables[0].writes", report)
+        # Archived comparison projections remain readable, without scheduling.
+        from history_review_fixture import saved_comparison
+        review, reviewer = saved_comparison(harness)
         comparison = comparison_read(str(harness.root), harness.run_id, review, reviewer,
                                      version_set_id=harness.task(review)["version_set_id"], view="compact", max_chars=24000)
         self.assertEqual(len([item for item in comparison["items"] if item["item_type"] == "warning"
                               and item["value"].get("kind") == "diagram_format_diagnostic"]), 2)
-        legacy_comparison = comparison_read(str(harness.root), harness.run_id, review, reviewer,
-                                            version_set_id=harness.task(review)["version_set_id"])
-        self.assertEqual(len(legacy_comparison["entries"][0]["diagram_diagnostics"]), 2)
-        finding = comparison_finding_write(str(harness.root), harness.run_id, review, reviewer, expected_revision=0,
-            unit_ids=["unit-0001"], finding={"summary": "请确认格式字段", "body": "原 worker 修正 writes 字段，保留其他证据。"})
-        decision = review_decide(str(harness.root), harness.run_id, review, reviewer, expected_revision=finding["revision"],
-            decision={"disposition": "finding", "version_set_id": harness.task(review)["version_set_id"], "correction_record_ids": finding["record_ids"]})
-        work_finish(str(harness.root), harness.run_id, review, reviewer, revision=decision["revision"])
-        settle_action(str(harness.root), harness.run_id, review)
-        closure = next(action for action in harness.progress()["actions"].values() if action["role"] == "closure")
-        self.assertEqual(closure["task_id"], worker)
-        task = harness.task(closure["action_id"])
-        saved = read_result(task["result_path"])
-        self.assertEqual(len(active_diagram_diagnostics(saved)), 2)
-        self.assertIsNone(saved.completion)
-        harness.bind(closure["action_id"], worker)
-        fixed = result_write(str(harness.root), harness.run_id, closure["action_id"], worker,
-            expected_revision=saved.revision, records=[{"kind": "flow", "body": deepcopy(FIXTURE["base"]), "supersedes": ["rec-000001"]}])
-        self.assertEqual([item["record_id"] for item in fixed["diagram_diagnostics"]], ["rec-000002"])
-        self.assertEqual(fixed["diagram_diagnostics"][0]["result_path"], str(Path(task["result_path"]).resolve()))
-        current = validate_source_first_result(str(harness.root), harness.run_id, closure["action_id"], worker)
-        self.assertEqual(current["status"], "incomplete")
-        self.assertEqual([item["record_id"] for item in current["warnings"] if item.get("kind") == "diagram_format_diagnostic"], ["rec-000002"])
-        from pangea_agent.report.source_first import diagram_diagnostic_markdown
-        report = "\n".join(diagram_diagnostic_markdown([(dict(closure, task=task), read_result(task["result_path"]))]))
-        self.assertIn('"record_id": "rec-000002"', report)
-        self.assertNotIn('"record_id": "rec-000001"', report)
-        self.assertIn("call_graph.variables[0].writes", report)
+        legacy = comparison_read(str(harness.root), harness.run_id, review, reviewer,
+                                 version_set_id=harness.task(review)["version_set_id"])
+        self.assertEqual(len(legacy["entries"][0]["diagram_diagnostics"]), 2)
 
 
 def compare_js(plugin_root):

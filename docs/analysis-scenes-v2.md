@@ -22,7 +22,7 @@ asset-snapshots.json 保存选定的元数据、解析正文和指纹；coverage
 ## 交付与展示
 
 四场景均先保存 kind=flow，正文为 behavior-flow-v1 的 flow_id/title/description/role/attach_to/nodes/edges/paths/source_evidence。
-text 仅作补充，不替代节点、连线及路径；source_evidence 保留在记录中，业务流程页面不展示。旧纯文本记录保持可读，不自动拆分节点。写入时 Python 只做 flow 结构检查（字段名、节点 id 引用；flow_schema.check_flow_structure），不合格即拒写并返回逐条中文错误，由同一 worker 本轮修正；不自动修复、不补造节点，也不增加语义阻断。Agent 与 Reviewer 决定流程
+text 仅作补充，不替代节点、连线及路径；source_evidence 保留在记录中，业务流程页面不展示。旧纯文本记录保持可读，不自动拆分节点。写入时 Python 只做 flow 结构检查（字段名、节点 id 引用；flow_schema.check_flow_structure），不合格即拒写并返回逐条中文错误，由同一 worker 本轮修正；不自动修复、不补造节点，也不增加语义阻断。Agent 决定流程
 是否准确完整、覆盖数据是否适用、用例是否可实施。文字流程（module-flow-text-v1）不生成流程图。
 
 模块保留综合业务、轻量风险及可选补测；风险专项保留现有风险板块；分支和覆盖率不要求
@@ -42,6 +42,6 @@ text 仅作补充，不替代节点、连线及路径；source_evidence 保留�
 
 ## risk-method-v1
 
-新 risk-analysis Run 冻结语言风险方法、风险信号与 risk/check/review_check 合同；旧 Run 继续使用冻结内容。按契约闭包规划、六镜头逐对象反证、检查账本、盲审探针与对照复核工作；不增加 Agent 或复核轮次，analysis 最多三个并发。风险用例不设黑盒比例目标，库/API 按接口层级如实交付。G1–G4 根据用户 2026-10-15 决定只提示 warning，Python 不判断风险真假。
+新 risk-analysis Run 冻结语言风险方法、风险信号与 risk/check 合同；旧 Run 继续使用冻结内容。按契约闭包规划、六镜头逐对象反证、检查账本；不派发审核模型，analysis 最多三个并发。风险用例不设黑盒比例目标，库/API 按接口层级如实交付。G1–G4 根据用户 2026-10-15 决定只提示 warning，Python 不判断风险真假。
 
 后续 WP12：编译器/sanitizer 能力冻结与最小驱动复现，本期仅记录设计，另行确认实施。

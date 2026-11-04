@@ -2,6 +2,7 @@
 
 Includes real Graph validation and current/history read modes, without a model.
 """
+from history_review_fixture import saved_comparison
 from copy import deepcopy
 from types import SimpleNamespace
 import unittest
@@ -172,8 +173,7 @@ class CurrentWarningProjection(unittest.TestCase):
                                records=[dict(kind="flow", body=broken)])
         work_finish(str(harness.root), harness.run_id, other, other_worker, revision=written["revision"])
         settle_action(str(harness.root), harness.run_id, other)
-        review = next(a["action_id"] for a in harness.progress()["actions"].values() if a["role"] == "review")
-        reviewer = harness.bind(review, "reviewer")
+        review, reviewer = saved_comparison(harness)
         version_set = harness.task(review)["version_set_id"]
         comparison = comparison_read(str(harness.root), harness.run_id, review, reviewer,
                                      version_set_id=version_set, view="compact", max_chars=24000)

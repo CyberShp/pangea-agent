@@ -35,8 +35,7 @@ DSH subagent，并在同一次调用中用 Graph 的 data_root、run_id、action
 真实 task_id 完成 bind；根 Agent 不手写 task_id。
 
 - dispatch_agent：由 dispatch 创建一个 task。
-- continue_agent：必须续接 action 自带的原 task_id，包括 comparison Reviewer
-  与 targeted closure；不得替换 worker、另建 Reviewer 或把 closure 变成新分析。
+- continue_agent：仅续接 action 自带的原 task_id 修复同一结果，不替换 worker。
 - 收到子 Agent 完成通知后，第一且唯一的工作流工具调用是该通知回显的 exact
   action_id 对应的 pangea_action_settle。settle 在一次调用中完成确定性校验和
   Graph 推进；不调用独立 validate。
@@ -45,7 +44,7 @@ DSH subagent，并在同一次调用中用 Graph 的 data_root、run_id、action
   relation/enum/引用问题只记录 warning 并保留原文；空结果或缺少 completion 不能
   伪装完成。
 - 只允许按返回的 exact action_id 结算；不得根据子任务 UUID、单元名、通知顺序
-  或记忆猜测 action。analysis 和 targeted_closure 最多三个 worker 并发；Graph/result 写入串行。
+  或记忆猜测 action。analysis 最多三个 worker 并发；Graph/result 写入串行。
 
 ## Worker 工具边界
 
@@ -56,33 +55,22 @@ DSH subagent，并在同一次调用中用 Graph 的 data_root、run_id、action
 - pangea_plan_write：Planning 增量写 unit plan；
 - pangea_result_read/write/repair：按当前 revision 读取/追加原文 notes；只有结果外壳
   不可读且 sha256 未变化时，同一 worker 才能重发自己的 records 修复；
-- pangea_comparison_read：Comparison 只用 Graph 提供的 opaque
-  version_set_id 读取冻结的首轮 analysis 与盲审版本；
 - pangea_work_finish：以当前 revision 声明本回合完成；
-- pangea_review_decide：Reviewer 追加原文 review decision。
 
 worker 不调用 action 生命周期工具、不越过 task 的结果路径、不访问 live working
 tree 或另一个 Run。Python 只处理身份、路径、revision、持久化和报告组装；风险、
-DFX、可达性、单元边界、finding 与用例质量由 Agent/Reviewer 保持原文记录。
+DFX、可达性、单元边界、finding 与用例质量由 Agent 保持原文记录。
 
-## 审核与报告
+## 报告
 
-标准型 Graph 先派发一个盲审 Reviewer（independent_review），接受后用同一 Reviewer
-task 续接 comparison_review，Comparison 才能读取 Graph 锁定的版本集合。仅由
-Comparison 的 finding 决定一次 targeted closure，closure 续接对应首轮 worker；
-不新增终审层。Reviewer 结论不足时保持 UNRESOLVED。
-盲审先独立确认重要业务行为；Comparison 再检查必要用例遗漏、错误预期、不可执行触发/
-观测、清理恢复和 Coverage 对应，不以先证明产品缺陷为前提。
+新建 Run 只执行 Planning → Analysis → 报告，不派发 Reviewer、盲审、对照审核或 targeted_closure。分析完成后直接组装报告；结果未经过独立审核，不得把流程完成表述为审核通过。历史审核记录和冻结合同仅保留读取兼容，不改写用户已冻结的数据。
 
 正式交付须同时有 lifecycle_status=complete、report.md、report.html 和
 report-complete.json。Desktop reader 同时展示当前 stage、action/revision、
 quality/needs_user 和 Agent 原文 records；空语义投影显示“待解析/原文记录”，
-不显示成零。`lifecycle_status=complete` 只表示流程已收尾；`quality_status=UNRESOLVED`
-必须明确说明本次质量未通过、仍有待确认项，只有 `quality_status=PASS` 才能说质量通过。
-终态为 UNRESOLVED 时只报告未通过、正式产物路径和 Graph 已提供的具体原因；不要追加“是否
-新开 Run、继续修或由用户决定”的泛化反问。只有 Graph 因真实权限、额度、冻结输入或宿主
-身份问题要求选择时才向用户提问。
+不显示成零。当 `progress.review_policy="disabled"` 且 `lifecycle_status=complete`、正式报告齐备时，这是正常的未审核交付，明确说明“未执行模型审核，分析已完成”，给出报告路径。不得仅因 `quality_status=UNRESOLVED` 宣称质量未通过，也不得宣称审核通过；具体待确认项按报告原文呈现。旧记录无此标记时，仅依据真实历史审核结论说明其质量状态，不推测审核结论。
+只有 Graph 因真实权限、额度、冻结输入或宿主身份问题要求选择时才向用户提问；不因未审核追加重新开 Run 或补审核的泛化反问。
 最终摘要中的函数、状态码、业务选项和清理入口必须复用当前 task 或正式报告的原名，
 不得为了说得顺口改名或补写源码中不存在的动作。
 
-速度型 analysis_settings.mode=speed 由 Graph 直接派发 comparison_review，锁定首轮结果但没有盲审产物；只执行实际返回 action，不自行补建盲审。
+标准型和速度型均执行规划、分析、报告，不调度审核模型。

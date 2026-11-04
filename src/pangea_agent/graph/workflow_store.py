@@ -190,13 +190,14 @@ def validation_report_path(state: dict, action_id: str, attempt: int) -> Path:
 def pending_actions(progress: WorkflowProgress, limit: int = 8) -> list[dict]:
     from pangea_agent.methodology import methodology_manifest
 
+    from pangea_agent.graph.review_policy import is_model_review
     active = sum(
-        action.status == "dispatched" for action in progress.actions.values()
+        action.status == "dispatched" and not is_model_review(action) for action in progress.actions.values()
     )
     available = max(0, limit - active)
     pending = []
     for action in progress.actions.values():
-        if action.status != "pending":
+        if action.status != "pending" or is_model_review(action):
             continue
         payload = action.model_dump(mode="json")
         if action.role in {"analysis", "closure"}:

@@ -70,6 +70,7 @@ def run_module_analysis(contract_path: str) -> dict:
             "workflow_version": "source-first-v1",
             "lifecycle_status": result.get("lifecycle_status", progress.lifecycle_status if progress else "running"),
             "stage": result.get("stage", progress.stage if progress else "preparing"),
+            "review_policy": progress.review_policy if progress else None,
             "quality_status": result.get("quality_status", progress.quality_status if progress else None),
             "needs_user": bool(progress.needs_user) if progress else False,
             "blocking_reason": progress.blocking_reason if progress else None,

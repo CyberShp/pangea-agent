@@ -247,6 +247,11 @@
           "default": false,
           "title": "Attention Required",
           "type": "boolean"
+        },
+        "review_skipped": {
+          "default": false,
+          "title": "Review Skipped",
+          "type": "boolean"
         }
       },
       "required": [
@@ -802,6 +807,19 @@
       },
       "title": "Accepted Revisions",
       "type": "object"
+    },
+    "review_policy": {
+      "anyOf": [
+        {
+          "const": "disabled",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Review Policy"
     }
   },
   "required": [

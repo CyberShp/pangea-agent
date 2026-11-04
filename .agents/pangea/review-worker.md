@@ -79,5 +79,5 @@ Comparison 不是第二次完整分析。正确且已表达的内容不重写；
 使用现有 finding/decision 合同交付。不得声称已盲审。标准型仍在原 Reviewer 会话先盲审再对照。
 
 <!-- RISK-REFERENCE:BEGIN -->
-风险场景合同以本 Run 冻结的 scene_risk / scene_risk_review 合同块为准，读取语言风险方法与风险信号；另交 kind=check 检查账本，证据附 evidence_quotes。G1–G4 当前只提示 warning，核对后由原 worker 修正；旧任务继续使用其冻结合同。
+风险场景合同以本 Run 冻结的 scene_risk 合同块为准，读取语言风险方法与风险信号；另交 kind=check 检查账本，证据附 evidence_quotes。G1–G4 当前只提示 warning，核对后由原 worker 修正；旧任务继续使用其冻结合同。
 <!-- RISK-REFERENCE:END -->

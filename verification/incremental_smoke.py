@@ -15,7 +15,7 @@ from pangea_agent.cli.public_api import stop_run, run_detail
 from pangea_agent.cli.adapter_api import bind_action
 from pangea_agent.cli.source_first_api import input_read
 from pangea_agent.documents.incremental import derivation_options, attach_incremental_inputs
-from pangea_agent.graph.nodes.source_first import _make_analysis_actions, _prepare_review
+from pangea_agent.graph.nodes.source_first import _make_analysis_actions
 from pangea_agent.graph.result_store import read_result
 from pangea_agent.graph.workflow_store import load_progress
 
@@ -137,7 +137,7 @@ class IncrementalSmoke(unittest.TestCase):
         (self.parent / "inputs/source/demo/src/changed.c").unlink()
         self.assertFalse(derivation_options(str(self.root), self.parent_id)["can_derive"])
 
-    def test_existing_review_modes_and_worker_input_scopes_are_preserved(self):
+    def test_analysis_input_scopes_and_legacy_frozen_policy_are_preserved(self):
         child = self.derive()
         run = self.root / "runs" / child["run_id"]
         contract = read_json(run / "inputs/task-contract.json")
@@ -150,21 +150,8 @@ class IncrementalSmoke(unittest.TestCase):
         task = read_json(Path(analysis.task_path))
         self.assertIn("incremental_request", task)
         self.assertEqual(read_result(task["result_path"]).records, [])
-        for mode, expected in (("depth", "independent_review"), ("speed", "comparison_review")):
-            contract["analysis_settings"]["mode"] = mode
-            progress.actions.pop(f"{child['run_id']}:review", None)
-            _prepare_review(state, progress)
-            review = read_json(Path(progress.actions[f"{child['run_id']}:review"].task_path))
-            self.assertEqual(review["review_stage"], expected)
-            self.assertIn("incremental_request", review)
-            identifiers = {item["input_id"] for item in review["inputs"]}
-            if mode == "depth":
-                self.assertNotIn("incremental_parent_records", identifiers)
-                self.assertNotIn("incremental_parent_plan", identifiers)
-                self.assertNotIn("incremental_baseline", identifiers)
-                self.assertIn("incremental_request", identifiers)
-            else:
-                self.assertIn("incremental_parent_records", identifiers)
+        self.assertFalse(any(a.role in {"review", "closure"} for a in progress.actions.values()))
+        self.assertIn("incremental_parent_records", {item["input_id"] for item in task["inputs"]})
         # Old frozen Runs without the new input contract retain their original
         # task input policy; reading/resuming them does not silently upgrade it.
         marker = run / "inputs/flow-stability.json"
