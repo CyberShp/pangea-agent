@@ -3,11 +3,16 @@
 Run with this worktree's src on PYTHONPATH. Optional --js-root points at the
 companion plugin directory to compare complete Python/JS diagnostic payloads.
 """
+import sys
+from pathlib import Path
+
+# Embedded Python does not add the script directory to sys.path.
+# Keep sibling verification helpers local to this acceptance process.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 from copy import deepcopy
 import json
-from pathlib import Path
 import subprocess
-import sys
 import tempfile
 import unittest
 

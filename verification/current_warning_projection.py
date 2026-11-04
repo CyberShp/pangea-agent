@@ -2,6 +2,13 @@
 
 Includes real Graph validation and current/history read modes, without a model.
 """
+import sys
+from pathlib import Path
+
+# Embedded Python does not add the script directory to sys.path.
+# Keep sibling verification helpers local to this acceptance process.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 from history_review_fixture import saved_comparison
 from copy import deepcopy
 from types import SimpleNamespace

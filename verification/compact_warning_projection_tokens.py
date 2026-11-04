@@ -1,8 +1,14 @@
 """Projection upgrades invalidate old compact cursors without changing results."""
+import sys
+from pathlib import Path
+
+# Embedded Python does not add the script directory to sys.path.
+# Keep sibling verification helpers local to this acceptance process.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 from history_review_fixture import saved_comparison
 from functools import partial
 import json
-from pathlib import Path
 import unittest
 from unittest.mock import patch
 

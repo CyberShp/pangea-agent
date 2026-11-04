@@ -1,11 +1,17 @@
 """Real Graph fault/retry checks: python verification/observability_recovery.py."""
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+# Embedded Python does not add the script directory to sys.path.
+# Keep sibling verification helpers local to this acceptance process.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 import tempfile
 import unittest
 import json
 import multiprocessing
-from pathlib import Path
 from unittest.mock import patch
 
 from pangea_agent.agent_io import read_json, write_json

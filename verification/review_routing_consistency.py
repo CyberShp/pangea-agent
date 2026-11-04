@@ -2,8 +2,14 @@
 
 Run: python verification/review_routing_consistency.py
 """
-from copy import deepcopy
+import sys
 from pathlib import Path
+
+# Embedded Python does not add the script directory to sys.path.
+# Keep sibling verification helpers local to this acceptance process.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from copy import deepcopy
 from types import SimpleNamespace
 import unittest
 

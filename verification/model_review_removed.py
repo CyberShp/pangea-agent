@@ -1,6 +1,12 @@
 """No-review workflow and historical recovery regressions, without model calls."""
-from copy import deepcopy
+import sys
 from pathlib import Path
+
+# Embedded Python does not add the script directory to sys.path.
+# Keep sibling verification helpers local to this acceptance process.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from copy import deepcopy
 import unittest
 
 import observability_recovery as recovery
