@@ -1422,7 +1422,10 @@ def write_source_first_reports(state: dict, *, progress: dict | None = None) -> 
         markdown = (title + separator + f"\n本次为{label}，父 Run：`{incremental['parent_run_id']}`。源码基线：{source}。"
                     "父记录仅供参考，不计为本次已接受结果；本报告仅覆盖本次目标。历史覆盖率不是本次执行测量。\n" + rest)
     if profile in {"behavior-test-v1", "behavior-test-v2"}:
-        review_label = "速度型：直接审核首轮结果，未执行独立盲审" if review_mode == "speed" else "标准型：独立盲审后对照复核"
+        if progress.get("review_policy") == "disabled":
+            review_label = "已停用：未执行模型审核，直接交付分析结果"
+        else:
+            review_label = "速度型：直接审核首轮结果，未执行独立盲审" if review_mode == "speed" else "标准型：独立盲审后对照复核"
         title, separator, rest = markdown.partition("\n")
         markdown = title + separator + "\n复核模式：" + review_label + "。执行完成情况以本报告状态为准。\n" + rest
     for relative_path, content in diagram_assets.items():

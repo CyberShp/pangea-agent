@@ -9,12 +9,15 @@ import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from pangea_agent.report.source_first import (  # noqa: E402
     _behavior_markdown, _html, _record_markdown, _record_title, _review_markdown,
+    write_source_first_reports,
 )
+from pangea_agent.analysis_scenarios import freeze_scene
 
 
 def record(kind, body, identifier="review", supersedes=None):
@@ -27,6 +30,41 @@ def displayed(markdown):
 
 
 class ReviewReportTests(unittest.TestCase):
+    def render_report(self, mode, policy, profile="behavior-test-v2"):
+        with tempfile.TemporaryDirectory() as directory:
+            state = {"data_root": directory, "run_id": "review-report",
+                     "task_contract": {"analysis_profile": profile,
+                                       "analysis_settings": {"mode": mode, "scenario": "module-analysis"}}}
+            freeze_scene(Path(directory) / "runs" / state["run_id"], state["task_contract"])
+            progress = {"run_id": "review-report", "lifecycle_status": "complete",
+                        "quality_status": "UNRESOLVED" if policy == "disabled" else "PASS"}
+            if policy is not None:
+                progress["review_policy"] = policy
+            with patch("pangea_agent.flow_stability.publish_flow_baseline", return_value=None):
+                paths = write_source_first_reports(state, progress=progress)
+            return {key: Path(path).read_text(encoding="utf-8") for key, path in paths.items()}
+
+    def test_disabled_review_report_is_truthful_in_both_modes_and_profiles(self):
+        for profile in ("behavior-test-v1", "behavior-test-v2"):
+            for mode in ("depth", "speed"):
+                with self.subTest(profile=profile, mode=mode):
+                    for report in self.render_report(mode, "disabled", profile).values():
+                        self.assertIn("复核模式：已停用：未执行模型审核，直接交付分析结果", report)
+                        self.assertIn("分析已完成并交付；未执行模型审核", report)
+                        self.assertIn("UNRESOLVED 表示未作审核质量裁决", report)
+                        for misleading in ("直接审核首轮结果", "独立盲审后对照复核", "用例分析与审核已完成"):
+                            self.assertNotIn(misleading, report)
+
+    def test_enabled_review_report_preserves_historical_mode_labels(self):
+        for policy in (None, "enabled"):
+            for mode, label in (("depth", "标准型：独立盲审后对照复核"),
+                                ("speed", "速度型：直接审核首轮结果，未执行独立盲审")):
+                with self.subTest(policy=policy, mode=mode):
+                    for report in self.render_report(mode, policy).values():
+                        self.assertIn("复核模式：" + label, report)
+                        self.assertIn("用例分析与审核已完成", report)
+                        self.assertNotIn("复核模式：已停用", report)
+
     def test_decision_fields_localized_without_translating_prose(self):
         body = {"summary": "No additional evidence is available.\nKeep the original assessment.",
                 "disposition": "unresolved", "version_set_id": "version-set-123",
