@@ -411,6 +411,7 @@ def prepare_source_first_inputs(state: PangeaState) -> PangeaState:
         "task_type": "source_first_plan",
         "scope_policy": "target-first-v1",
         "planning_policy": "allocation-only-v1",
+        "planning_io_policy": "planning-io-v1",
         "context_budget": compact_metadata["context_budget"],
         "action_id": action_id,
         "run_id": state["run_id"],

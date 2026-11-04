@@ -6,7 +6,7 @@
 先按 task.target、task.focus 和 analysis_scene.objective 理解用户要验证的对象及目标。product-behavior 以产品行为为入口；interface-contract 以公开接口的输入、调用顺序、状态、返回与资源责任为入口。目标只由用户显式选择冻结，不因库、驱动或文件名自行切换。
 只读足以确认入口、主干方向及必要另一侧的源码，再按跨文件业务、共享状态、资源创建/释放和异步受理/完成组织职责；不把文件列表机械转换为单元。主干 owner 的 purpose 简述可见入口、主干责任和必要挂接点，不展开调用链，其他单元写明与主干的关系和负责的边界。接口拥有者、调用方或产品入口在冻结可读范围外时，在范围 note 与 unresolved 记录已知边界及缺少的证据，不猜造入口、不请求越界读取。
 module保持综合范围；risk按下方“风险场景规划”；branch围绕业务路径；coverage按真实缺口选择重点及必要调用链，先理解对象主干，不做全范围风险扫描。
-按需读取coverage_match_summary、资料和methodology_catalog。选择真实方法论ID写入methodology_ids，仅在需要澄清适用边界时简述理由；没有相关方法论不编造ID。不能仅按名称、行数、文件数划分，也不能全量展开清单。
+按需读取coverage_match_summary、资料和methodology_catalog；客户端提供冻结Coverage聚合查询时先按目录/文件定位，再读取所需真实gap ID和原记录，不全量展开匹配明细。选择真实方法论ID写入methodology_ids，仅在需要澄清适用边界时简述理由；没有相关方法论不编造ID。不能仅按名称、行数、文件数划分，也不能全量展开清单。
 methodology_ids是本单元选择的补充方法论；Analysis读取该单元所选的内置/用户方法论，Reviewer读取各单元选择的合集。选择应服务当前场景，不因选择通用方法论扩大branch/coverage的正式风险责任；空选择合法，不逐项写排除论证，不自动补入全套DFX。
 coverage的主干理解和流程交付不等于普通基础功能用例义务。按适用的真实gap及必要调用链分配职责，在现有purpose和coverage_ids中明确负责的缺口；跨单元缺口指定一个已有owner汇总处置，其他单元提供必要context_files/context_regions，不重复补主成功场景。正常路径只有自身有真实未覆盖目标才独立补测，否则只是缺口触发的前置或恢复。规划不穷举case，由Analysis逐gap核实入口、必要条件与普通操作不足之处，并在每个关联case的body.summary中对应真实coverage_refs说明，不仅写全局summary。函数count>0不能排除内部零计数分支侧，不按函数整体计数删去此类职责；复用已有用例保留原purpose，允许零新增。
 覆盖数据没有新缺口时仍安排对象流程理解与数据范围说明，零新增用例合法；无数据、版本未知和不匹配不得解释为100%覆盖。

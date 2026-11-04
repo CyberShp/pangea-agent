@@ -55,6 +55,7 @@ from .source_first_api import (
     input_read,
     parse_json_argument,
     plan_write,
+    plan_candidates,
     result_read,
     result_repair,
     result_supersede,
@@ -66,6 +67,9 @@ from .source_first_api import (
     task_open,
     work_finish,
 )
+from .plan_batch import plan_write_batch
+from pangea_agent.inventory.planning_io import read_batch
+from pangea_agent.inventory.coverage_access import coverage_read
 
 
 def _add_json_argument(parser: argparse.ArgumentParser, name: str, *, required: bool = False, help: str) -> None:
@@ -309,6 +313,26 @@ def main() -> None:
     input_read_cmd.add_argument("--cursor")
     input_read_cmd.add_argument("--max-chars", type=int, default=12000)
 
+    read_batch_cmd = sub.add_parser("read-batch")
+    coverage_read_cmd = sub.add_parser("coverage-read")
+    plan_candidates_cmd = sub.add_parser("plan-candidates")
+    for command in (read_batch_cmd, coverage_read_cmd, plan_candidates_cmd):
+        command.add_argument("--data-root", default="pangea-data")
+        command.add_argument("--run-id", required=True)
+        command.add_argument("--action-id", required=True)
+        command.add_argument("--task-id", required=True)
+        command.add_argument("--max-chars", type=int, default=24000 if command is read_batch_cmd else 12000)
+    _add_json_argument(read_batch_cmd, "requests", required=True, help="JSON array of independent read requests")
+    read_batch_cmd.add_argument("--start-index", type=int, default=0)
+    coverage_read_cmd.add_argument("--input-id", default="coverage_gaps", choices=["coverage_gaps", "coverage_match_summary"])
+    coverage_read_cmd.add_argument("--view", default="summary", choices=["summary", "index", "records"])
+    coverage_read_cmd.add_argument("--repo-id")
+    coverage_read_cmd.add_argument("--path")
+    coverage_read_cmd.add_argument("--depth", type=int, default=1)
+    _add_json_argument(coverage_read_cmd, "gap-ids", help="JSON array of exact frozen Coverage IDs")
+    coverage_read_cmd.add_argument("--page-token")
+    plan_candidates_cmd.add_argument("--page-token")
+
     source_index_cmd = sub.add_parser("source-index")
     source_index_cmd.add_argument("--data-root", default="pangea-data")
     source_index_cmd.add_argument("--run-id", required=True)
@@ -436,6 +460,15 @@ def main() -> None:
     plan_write_cmd.add_argument("--expected-revision", type=int, required=True)
     _add_json_argument(plan_write_cmd, "unit", required=True, help="JSON object")
     plan_write_cmd.add_argument("--request-id")
+
+    plan_batch_cmd = sub.add_parser("plan-write-batch")
+    plan_batch_cmd.add_argument("--data-root", default="pangea-data")
+    plan_batch_cmd.add_argument("--run-id", required=True)
+    plan_batch_cmd.add_argument("--action-id", required=True)
+    plan_batch_cmd.add_argument("--task-id", required=True)
+    plan_batch_cmd.add_argument("--expected-revision", type=int, required=True)
+    _add_json_argument(plan_batch_cmd, "units", required=True, help="JSON array of already decided planning units")
+    plan_batch_cmd.add_argument("--request-id", required=True)
 
     review_decide_cmd = sub.add_parser("review-decide")
     review_decide_cmd.add_argument("--data-root", default="pangea-data")
@@ -674,6 +707,26 @@ def main() -> None:
                 args.data_root, args.run_id, args.action_id, args.task_id,
                 input_id=args.input_id, cursor=args.cursor, max_chars=args.max_chars,
             ))
+        except Exception as exc:
+            print_error(exc)
+            raise SystemExit(1) from exc
+    elif args.command in {"read-batch", "coverage-read", "plan-candidates", "plan-write-batch"}:
+        try:
+            binding = (args.data_root, args.run_id, args.action_id, args.task_id)
+            if args.command == "read-batch":
+                result = read_batch(*binding, requests=_json_payload(args, "requests"),
+                                    start_index=args.start_index, max_chars=args.max_chars)
+            elif args.command == "coverage-read":
+                result = coverage_read(*binding, input_id=args.input_id, view=args.view,
+                                       repo_id=args.repo_id, path=args.path, depth=args.depth,
+                                       gap_ids=_json_payload(args, "gap_ids"),
+                                       page_token=args.page_token, max_chars=args.max_chars)
+            elif args.command == "plan-candidates":
+                result = plan_candidates(*binding, page_token=args.page_token, max_chars=args.max_chars)
+            else:
+                result = plan_write_batch(*binding, expected_revision=args.expected_revision,
+                                          units=_json_payload(args, "units"), request_id=args.request_id)
+            print_success(result)
         except Exception as exc:
             print_error(exc)
             raise SystemExit(1) from exc

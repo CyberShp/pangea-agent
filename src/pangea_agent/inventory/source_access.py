@@ -188,7 +188,8 @@ def compact_task_view(task: dict[str, Any]) -> dict[str, Any]:
     scopes = {"allowed_paths", "all_scope_paths", "owned_scope_paths", "reference_scope_paths"}
     identities = {"format_version", "task_type", "run_id", "action_id", "task_id", "unit_id",
                   "role", "stage", "review_stage", "review_mode", "version_set_id",
-                  "result_path", "analysis_profile", "scenario", "execution_budget_ms", "record_contracts"}
+                  "result_path", "analysis_profile", "scenario", "execution_budget_ms", "record_contracts",
+                  "planning_policy", "planning_io_policy", "scope_policy"}
     # Preserve small execution context before arbitrary metadata. Large values
     # still use the same bound paging contract, without semantic summarization.
     execution_context = ("analysis_settings", "target", "focus", "title", "purpose",
@@ -211,6 +212,11 @@ def compact_task_view(task: dict[str, Any]) -> dict[str, Any]:
         "test_tool_reference_paths、rubric_paths/inputs；存在于 deferred_fields 时用其中 input_id "
         "经 input-read 分页读取。缺失字段不推造；大资料按需读，冻结规则沿 next_cursor 读完。"
     )
+    if task.get("task_type") == "source_first_plan" and task.get("planning_io_policy") == "planning-io-v1":
+        view["execution_context_navigation"] = (
+            "先核对 target/focus、analysis_settings 与 planning_startup 已提供的冻结规划规则；"
+            "仅补读 pending_inputs 或具体缺失字段，不把 inputs、工具参考或候选范围当逐项阅读清单。"
+        )
     view["scope_navigation"] = "source-index/source-search 按需导航；deferred_fields 用 input-read --input-id ID 分页读取，不全量枚举依赖范围。"
     return view
 

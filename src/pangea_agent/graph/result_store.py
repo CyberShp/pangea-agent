@@ -546,6 +546,7 @@ def append_records(
     request_id: str | None = None,
     record_contracts: dict[str, str] | None = None,
     context: ContractContext | None = None,
+    request_fingerprint: str | None = None,
 ) -> dict[str, Any]:
     """Append a small batch and return generated record IDs and warnings."""
 
@@ -556,6 +557,9 @@ def append_records(
     def mutate(current: NotesResult) -> tuple[NotesResult, dict[str, Any]]:
         current = _assert_binding(current, binding)
         if request_id and request_id in current.receipts:
+            stored_fingerprint = current.receipts[request_id].get("request_fingerprint")
+            if (request_fingerprint is not None or stored_fingerprint is not None) and stored_fingerprint != request_fingerprint:
+                raise ResultStoreError("request_id 已用于其他载荷；请复用原载荷重试，修改内容须使用新的 request_id")
             return current, dict(current.receipts[request_id])
         _check_revision(current, expected_revision)
         _check_test_case_records(records, record_contracts)
@@ -650,6 +654,8 @@ def append_records(
         ]
         response["created_records"] = [record_identity(item) for item in generated]
         response["diagram_diagnostics"] = active_diagram_diagnostics(updated)
+        if request_fingerprint is not None:
+            response["request_fingerprint"] = request_fingerprint
         if any(item.get("classification") in {"invalid", "missing"} for item in response["diagram_diagnostics"]):
             response["diagram_repair_hint"] = {
                 "result_path": str(path.resolve()), "run_id": binding.run_id,
@@ -687,6 +693,8 @@ def declare_completion(
     def mutate(current: NotesResult) -> tuple[NotesResult, dict[str, Any]]:
         current = _assert_binding(current, binding)
         if request_id and request_id in current.receipts:
+            if current.receipts[request_id].get("request_fingerprint") is not None:
+                raise ResultStoreError("request_id 已用于规划载荷，不能用于 work-finish；请为完成声明使用新的 request_id")
             return current, dict(current.receipts[request_id])
         _check_revision(current, expected_revision)
         updated = current.model_copy(update={

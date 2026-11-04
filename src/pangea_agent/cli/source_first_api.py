@@ -105,7 +105,7 @@ def _region_id(value: Any) -> str | None:
     return None
 
 
-def _plan_diagnostics(run_dir: Path, task: dict[str, Any], result) -> dict[str, Any]:
+def _plan_diagnostics(run_dir: Path, task: dict[str, Any], result, *, include_unassigned: bool = False) -> dict[str, Any]:
     from pangea_agent.inventory.on_demand import read_index
     index = read_index(run_dir)
     all_regions, required = planning_regions(index, task.get("owned_scope_paths", []))
@@ -143,6 +143,13 @@ def _plan_diagnostics(run_dir: Path, task: dict[str, Any], result) -> dict[str, 
         "ready": bool(units) and not selection_issues and not unknown and not duplicate
         and (task.get("scope_policy") == "target-first-v1" or required <= set(owners)),
     }
+    if (task.get("planning_io_policy") == "planning-io-v1"
+            and task.get("scope_policy") == "target-first-v1" and not include_unassigned):
+        unassigned = diagnostics.pop("unassigned_owned_regions")
+        diagnostics["candidate_owned_region_count"] = diagnostics.pop("required_owned_region_count")
+        diagnostics["unassigned_owned_region_count"] = len(unassigned)
+        diagnostics["unassigned_candidates_query"] = {"command": "plan-candidates", "page_token": None}
+        diagnostics["scope_note"] = "未分配项是冻结候选，不是待办或完成条件；是否属于目标由 Planning 判断。"
     if (task.get('record_contracts') or {}).get('check') == 'behavior-check-v1':
         from pangea_agent.risk_method_diagnostics import planning_diagnostics
         summary_path = run_dir / 'inputs/risk-signal-summary.json'
@@ -348,6 +355,20 @@ def task_open(data_root: str, run_id: str, action_id: str, task_id: str, *, prep
         if (task.get('record_contracts') or {}).get('check') == 'behavior-check-v1':
             opened['write_contract']['unit_example']['risk_lenses'] = ['resource_lifecycle', 'boundary']
             opened['write_contract']['note'] += '申请与释放、生产与消费分在不同单元时，另一侧写入 context_files。'
+        if task.get("planning_io_policy") == "planning-io-v1":
+            from pangea_agent.inventory.planning_io import PLANNING_CAPABILITIES, planning_startup
+            opened["planning_startup"] = planning_startup(data_root, run_id, action_id, task_id, task)
+            opened["write_contract"]["capabilities"] = list(PLANNING_CAPABILITIES)
+            opened["write_contract"]["plan_write_batch"] = [
+                "plan-write-batch", "<binding_args>", "--expected-revision", "<当前revision>",
+                "--units-file", "<scratch内单元对象数组文件>", "--request-id", "<本批稳定唯一ID>",
+            ]
+            opened["write_contract"]["note"] += (
+                " 已确定的多个单元可用 plan-write-batch 一次原子保存，不等待全部规划；"
+                "同一批重试使用相同 request-id 与载荷。复用此处 revision 或成功写入的 revision，"
+                "replayed=true 时后续写入与 work-finish 使用 current_revision，"
+                "只有冲突、状态不明或恢复时再 result-read。"
+            )
     if not prepare_source:
         return opened
     if task.get("task_type") == "source_first_closure":
@@ -398,6 +419,32 @@ def task_open(data_root: str, run_id: str, action_id: str, task_id: str, *, prep
                 pending.append({"input_id": input_id, "cursor": page["next_cursor"]})
         opened["prepared_examples"] = {"pages": pages, "pending_inputs": pending}
     return opened
+
+
+def plan_candidates(data_root: str, run_id: str, action_id: str, task_id: str, *,
+                    page_token: str | None = None, max_chars: int = 12_000) -> dict:
+    """Optional candidate navigation, never a completeness obligation."""
+    from hashlib import sha256
+
+    binding, path, task = _binding_and_result(data_root, run_id, action_id, task_id)
+    if task.get("task_type") != "source_first_plan":
+        raise ResultStoreError("plan-candidates 只用于当前 planning task")
+    result = read_result(path)
+    diagnostics = _plan_diagnostics(path.parents[2], task, result, include_unassigned=True)
+    candidates = diagnostics["unassigned_owned_regions"]
+    # A source-index read can refine the on-demand region inventory without a
+    # result revision. Bind cursors to this exact ordered list as well.
+    candidates_sha256 = sha256(json.dumps(candidates, ensure_ascii=False, separators=(",", ":")).encode("utf-8")).hexdigest()
+    return compact_items_page(
+        metadata={"format_version": "pangea-plan-candidates-v1", "binding": binding.model_dump(mode="json"),
+                  "revision": result.revision, "scope_policy": diagnostics["scope_policy"],
+                  "candidate_count": len(candidates),
+                  "usage": "候选导航不是待办；target-first 不要求全部分配。"},
+        items=[{"item_type": "unassigned_candidate", "region_id": value} for value in candidates],
+        token_context={"kind": "plan-candidates", **binding.model_dump(mode="json"), "revision": result.revision,
+                       "candidates_sha256": candidates_sha256},
+        page_token=page_token, max_chars=max_chars,
+    )
 
 
 def input_read(
@@ -696,6 +743,8 @@ def result_supersede(
         )
     current = read_result(path)
     if request_id and request_id in current.receipts:
+        if current.receipts[request_id].get("request_fingerprint") is not None:
+            raise ResultStoreError("request_id 已用于规划载荷，不能用于 result-supersede；请为替换记录使用新的 request_id")
         return dict(current.receipts[request_id])
     if edits is not None:
         if len(target_record_ids) != 1 or not isinstance(edits, list) or not edits:
@@ -1115,56 +1164,12 @@ def plan_write(
     used to decide whether the proposed unit is semantically good.
     """
 
-    if not isinstance(unit, dict):
-        raise ResultStoreError("plan_write unit 必须是 JSON object")
-    for field in ("title", "purpose"):
-        if not isinstance(unit.get(field), str) or not unit[field].strip():
-            raise ResultStoreError(f"plan_write unit.{field} 必须是非空字符串")
-    list_fields = (
-        "owned_regions",
-        "context_regions",
-        "context_files",
-        "coverage_ids",
-        "asset_item_ids",
-        "mechanism_ids",
-    )
-    for field in list_fields:
-        value = unit.get(field, [])
-        if not isinstance(value, list) or any(
-            not isinstance(item, str) or not item for item in value
-        ):
-            raise ResultStoreError(f"plan_write unit.{field} 必须是字符串数组")
-    binding, path, task = _binding_and_result(data_root, run_id, action_id, task_id, writable=True)
-    from pangea_agent.inventory.on_demand import read_index
-    expand_owned_files(unit, read_index(path.parents[2]), task.get("owned_scope_paths", []))
-    current = read_result(path)
-    existing = {item["unit_id"] for item in _effective_plan_units(current)}
-    requested_id = unit.get("unit_id")
-    if requested_id is not None:
-        if not isinstance(requested_id, str) or requested_id not in existing:
-            raise ResultStoreError("plan_write 更新必须使用该结果中已存在的 machine unit_id")
-        unit_id = requested_id
-        operation = "updated"
-    else:
-        number = 1
-        while f"unit-{number:04d}" in existing:
-            number += 1
-        unit_id = f"unit-{number:04d}"
-        operation = "created"
-    saved_unit = {**unit, "unit_id": unit_id}
-    response = append_records(
-        path,
-        binding,
-        expected_revision,
-        [{"kind": "unit_plan", "body": saved_unit, "relates_to": [unit_id]}],
-        request_id=request_id,
-        record_contracts=task.get("record_contracts"),
-        context=ContractContext(data_root, run_id, task),
-    )
-    response["unit_id"] = unit_id
-    response["operation"] = operation
-    response["diagnostics"] = _plan_diagnostics(path.parents[2], task, read_result(path))
-    return response
+    from pangea_agent.cli.plan_batch import _write_plan_units
+    response = _write_plan_units(data_root, run_id, action_id, task_id,
+                                 expected_revision=expected_revision, units=[unit],
+                                 request_id=request_id, mode="plan-write")
+    saved = response["units"][0]
+    return {**response, **saved}
 
 
 @serialized_run_mutation

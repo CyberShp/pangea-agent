@@ -51,7 +51,7 @@ $binding = @('--data-root', '<data_root>', '--run-id', '<run_id>', '--action-id'
 
 优先使用 task-open 随附的 write_contract 和下列调用方式；仅在调用报参数错误时查询对应 command 的 `--help`。禁止 `stdout[:N]`、截取正文前几行或按字符裁剪输出。按返回的 cursor/page-token 分页，每次展示完整一页。
 
-Windows 下复杂 JSON 保存为 UTF-8 数据文件（接受 BOM），通过显式 `*-file` 参数提交，不需要为每次 CLI 调用生成 Python 包装脚本。载荷只保存你已作出的判断；逐次调用 CLI 并使用刚返回的 revision，不生成循环提交多个单元的业务脚本。`--unit-file`、`--records-file` 分别与原 `--unit`、`--records` 互斥；其余现有 JSON 参数也有对应的 `-file` 形式：target-record-ids、replacement、edits、unit-ids、finding、replace-finding-record-ids、decision、replace-decision-record-ids。内联参数只解析 JSON，不把非法 JSON 当作路径。
+Windows 下复杂 JSON 保存为 UTF-8 数据文件（接受 BOM），通过显式 `*-file` 参数提交，不需要为每次 CLI 调用生成 Python 包装脚本。载荷只保存你已作出的判断；写入使用刚返回的 revision。task-open.write_contract.capabilities 提供 plan-write-batch 时可用正式批量命令，不生成循环提交多个单元的业务脚本。`--unit-file`、`--records-file` 分别与原 `--unit`、`--records` 互斥；其余现有 JSON 参数也有对应的 `-file` 形式：target-record-ids、replacement、edits、unit-ids、finding、replace-finding-record-ids、decision、replace-decision-record-ids。内联参数只解析 JSON，不把非法 JSON 当作路径。
 
 宿主设置 `PANGEA_WORKER_SCRATCH` 时，载荷文件必须放在该 worker 的 scratch 内，CLI 会在解析符号链接后的路径上检查归属。没有该环境变量的人类 CLI 调用可指定任意显式文件。此限制只约束 CLI 的 JSON 载荷文件读取，不是操作系统文件隔离；不能覆盖 task、冻结源码、结果文件或其他 worker 的文件。例中内容、路径及 revision 应替换为本次分析作出的实际判断和刚返回的值：
 
@@ -66,6 +66,32 @@ $unitFile = Join-Path $env:PANGEA_WORKER_SCRATCH 'unit.json'
 ```
 
 输出被宿主截断时，用原绑定和 CLI 的分页参数补读缺失部分；不能把截断页视作已完整阅读。共同规则、场景规则及选定方法论按当前 task.rubric_paths 与 inputs 的 input_id 对应读取，续接复用同一会话已完整读取的冻结版本。
+
+## Planning 合并读取与批量保存
+
+仅当当前 task 声明 `planning_io_policy=planning-io-v1` 且 `write_contract.capabilities` 提供对应能力时使用；旧 Run 没有该标记或能力时沿用既有单条调用，不追补新义务。宿主可能已在初始提示中原样提供当前 task-open 回包，此时直接消费，不重复调用 task-open。续接不能把初始快照的 revision 当作最新值；状态不明时 result-read 恢复当前结果。
+
+- `planning_startup.pages` 是当前绑定输入的原文页，包含必要规划规则、analysis_scene 和目录导航。已完整交付的同一冻结版本不重读；`pending_inputs` 给出未交付或未读完的 input_id/cursor，仅补缺页。总量有界，未出现在 pages 中不代表文件不存在。输入导航是可读目录，不是阅读待办。
+- `read-batch --requests-file <scratch内JSON数组文件> --max-chars N` 合并已经确定的独立只读查询，结果载荷预算默认 24000 字符，范围为 3000–24000 字符。每项用 `operation` 选择 input-read/source-read/source-index/source-search，其他参数使用对应 API 的 snake_case 名称。批量只减少往返，不提前猜测依赖上一项结果的下一次查询。
+- 批量回包 `items` 各项带 `request_index`、`operation`、`ok`，成功项有 `result`，失败项有 `error`。每项 result 的 next_cursor/next_page_token 只用于该项同一查询，`next_request_index` 指向本批尚未执行的请求；对原请求数组使用 `--start-index <next_request_index>` 继续未执行项。逐项保留续读位置；不可把某项的 token 用到另一项，也不能把总预算停止当成全部读完。`all_succeeded=false` 时逐项处理失败，不以批次中其他成功项冒充成功。
+- `coverage-read --input-id coverage_gaps --view summary --repo-id <ID> --path <目录> --depth 1` 先看冻结 Coverage 的目录/文件分布；`--view index` 读取真实 gap ID、位置和状态，`--view records` 读取原记录。仅使用 task 授权的 coverage_gaps/coverage_match_summary；可按 `--gap-ids-file <ID数组文件>` 取指定明细。按 next_page_token 使用 `--page-token` 续页；items/item_fragment 沿现有 compact 分页方式完整消费，片段不得当完整记录。分组和计数不替代语义判断，未知状态、歧义匹配及零计数分支仍保留。
+- `plan-write-batch --expected-revision N --units-file <scratch内单元对象数组文件> --request-id <本批稳定ID>` 保存几个已确定单元。数组元素与单条 plan-write 的 unit 对象相同，不再包 units/plan/kind/body。确定几个就保存几个，不等全部规划结束；回包 `units` 按提交顺序给出 unit_id/plan_record_id/operation，后续引用真实 ID。新提交用返回的 revision 继续；重试回包 `replayed=true` 时 revision 是原保存版本，`current_revision` 才是当前结果版本，后续新写入和 work-finish 使用 current_revision。
+- 批量保存是原子提交：结构错误时本批不落盘，此前成功内容保持；修正当前载荷后继续同一结果。相同载荷重试必须复用 request-id；不同载荷使用新 request-id，不把同 ID 改内容当作重试。不得在响应不明时换 ID 重建同一批单元，应先用原 ID 重试或回读确认。
+- 已确定的 note/summary/unresolved 可以沿现有 result-write 的 records 数组合并保存，原文、evidence 和 relates_to 各自保留。获得单元真实 ID 后再建立关系，不用自造 ID。
+- target-first-v1 下未分配候选不是待办，也不是额外完成条件；不为把数量清零继续检索。只有具体边界问题需要时才用 `plan-candidates --max-chars N` 展开候选，按 next_page_token 使用 `--page-token` 续页，不主动遍历。未知引用、归属冲突等真实诊断仍须原 worker 处理，必要边界写入 note/unresolved。readiness 沿冻结合同解释，不因批量保存跳过语义工作。
+
+只读批量请求示例（文件中的路径及 input_id 替换为本 task 的实际值）：
+
+```json
+[
+  {"operation":"input-read","input_id":"scene_planning_rubric","cursor":"返回的cursor"},
+  {"operation":"source-read","repo_id":"真实仓库ID","path":"src/transport.c","line_start":100,"line_end":150,"view":"text"}
+]
+```
+
+首次读取不填 cursor；续页复制原查询并使用该项真实返回的 cursor/page_token。命令仍携带当前完整 binding，批量不能改变 Run、action、task 或路径权限。
+
+max-chars 是接口结果载荷的分页预算，不是 CLI stdout 的严格长度上限。coverage-read/plan-candidates 按 compact_items_page 的紧凑 JSON 字符数计量；read-batch 按缩进后的结果载荷计量。CLI envelope 和 readable 格式化仍有额外字符，不能因此自行截断正文或分页元数据。
 
 ## 现有命令
 

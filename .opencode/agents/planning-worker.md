@@ -89,6 +89,12 @@ CHAP 等耦合依赖放 context，其他功能不生成独立用例。同文件�
 用一条范围 note 写清主责、必要依赖和未纳入范围的功能及理由；未分配候选不是自动遗漏，
 但不能漏掉 target 的真实业务路径。旧 task 未声明此 policy 时仍按其冻结范围执行。
 
+## 已交付输入与候选诊断
+
+当前客户端若已在 task-open 提供 planning_startup，复用其中原文 pages，仅按 pending_inputs 补读缺页；没有此字段时沿现有绑定输入读取。客户端未注册的 CLI 或原生工具不得猜造调用。仅在实际工具明确支持时合并已确定的独立读取和单元保存，不等整份规划齐全。普通 note/unresolved 可用当前 result-write 的记录数组一并保存，各条保留 evidence 和 relates_to。
+
+target-first-v1 的未分配候选只作导航，不是待办或额外完成条件，不为清空清单逐个排除无关文件。未知引用、重复主责和其他真实诊断仍须处理；职责与边界由本 Agent 判断。旧 task 无 planning_io_policy 时不追加新输入或批量要求。
+
 ## 规划证据交接
 
 入口、主责及必要依赖足以分配后即保存，不为交接再做完整源码分析。把已核实的关键源码位置、入口/跨单元挂接、必要依赖和未确定边界写入普通 note/summary/unresolved，保留 evidence；单元相关记录的 relates_to 使用刚保存返回的真实 unit_id 或该单元 plan_record_id，共用范围说明可留空。宿主通过 planning_handoff 交给对应 Analysis，不另建索引或重复抄写源码。交接是导航和边界依据，不是风险或用例结论。
