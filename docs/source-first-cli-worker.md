@@ -8,9 +8,10 @@
 
 新建 Run 只执行 Planning → Analysis → 报告，不派发 Reviewer、盲审、对照审核或 targeted_closure。分析完成后直接组装报告；结果未经过独立审核，不得把流程完成表述为审核通过。审核/定向修正实现与规则保留，但当前主链暂不调用；历史审核记录和冻结合同保持可读，不改写用户已冻结的数据。
 
-先用 task-open 核对绑定、task_type、analysis_profile、role/stage、目标、主责范围和唯一 result_path；延后字段从 task.deferred_fields 指定的 input_id 读取。不从目录、历史 Run、文件时间或上一轮回复猜身份和阶段。完整读取本 task 列出的全部冻结 rubric，所选内置与用户方法论同样适用；选择的方法论不能扩大场景职责。
+先用 task-open 核对绑定、task_type、analysis_profile、role/stage、目标、主责范围和唯一 result_path；延后字段从 task.deferred_fields 指定的 input_id 读取。不从目录、历史 Run、文件时间或上一轮回复猜身份和阶段。先按 task_type 区分职责：source_first_plan 读取冻结规划规则，不套用下述 Analysis 交付要求；source_first_analysis 完整读取本 task 列出的全部冻结分析 rubric，所选内置与用户方法论同样适用。选择的方法论不能扩大场景职责。inputs 是可读取目录，不是逐项通读清单；同一会话已完整读取的冻结版本不重复读取。
 
-- behavior-test-v2：先读 analysis_scene、共同规则、scene_flow 和当前场景规则，再读语言风险方法、unit_risk_signals 和所选方法论。module 保持综合行为和轻量风险；risk 聚焦有依据失效；branch/coverage 不承担正式风险账本责任。流程字段与样例读取冻结 rubric_scene_flow 的 FLOW-CONTRACT 段；若该冻结版本要求 sequence/call_graph，在同一 analysis 中保存，宿主本地渲染，不能另开生图任务或编写坐标；用例按 task.record_contracts.test_case 与冻结 rubric_scene_common_generation 的 TEST-CASE-CONTRACT 段执行，字段结构是强制 schema；风险格式按 task.record_contracts 和冻结 scene_risk 的合同块执行。
+- source_first_plan：先核对 target/focus、analysis_scene（若有）及 unit_planning_rubric/scene_planning_rubric。仅当归属需要时读取资料、Coverage 和方法论目录；不读取未提供的分析规则，不生成流程、风险、检查账本或用例。
+- behavior-test-v2 的 Analysis：先读 analysis_scene、共同规则、scene_flow 和当前场景规则，再读语言风险方法、unit_risk_signals 和所选方法论。module 保持综合行为和轻量风险；risk 聚焦有依据失效；branch/coverage 不承担正式风险账本责任。流程字段与样例读取冻结 rubric_scene_flow 的 FLOW-CONTRACT 段；若该冻结版本要求 sequence/call_graph，在同一 analysis 中保存，宿主本地渲染，不能另开生图任务或编写坐标；用例按 task.record_contracts.test_case 与冻结 rubric_scene_common_generation 的 TEST-CASE-CONTRACT 段执行，字段结构是强制 schema；风险格式按 task.record_contracts 和冻结 scene_risk 的合同块执行。
 - behavior-test-v1：按本 task 已冻结的 behavior_test_generation/behavior_test_review 执行，不额外读取新 scene_* 规则。未提供 scene_flow 时，流程仍按该任务冻结规则与结果合同解释。
 - 更早的 source-first profile：读取本 task 实际提供的方法论和写入合同，不套用新 profile。task_type=analysis/closure 的旧 Graph 富结构合同由其原客户端执行，不使用本 source-first CLI 合同替换。
 
@@ -99,7 +100,15 @@ external_observations 数组，以及可选 variants 数组中每项非空字符
 
 ## 分阶段工作
 
-Planning：先读冻结附件理解产品功能，按 target 选择主责，再划分单元。source_scope 是候选集合，不是全部交付义务。context 只作必要参考，不把整个参考集合复制给每个单元。用范围 note 说明纳入、依赖、排除及依据。整文件归属无需通读函数体；同文件包含非目标功能时可按 region 划分。context_budget 是资源截断，不证明未冻结依赖不存在；证据缺口如实记录。
+Planning：先按 target/focus 与冻结规划规则选择主责，再划分单元。目标、入口或归属不清楚时才按需读冻结附件，不把全部 inputs 当作前置阅读任务。source_scope 是候选集合，不是全部交付义务。context 只作必要参考，不把整个参考集合复制给每个单元。用范围 note 说明纳入、依赖、排除及依据。整文件归属无需通读函数体；同文件包含非目标功能时可按 region 划分。context_budget 是资源截断，不证明未冻结依赖不存在；证据缺口如实记录。
+
+## Planning：保存规划交接
+
+入口、主责及必要依赖足以分配后即保存，不为交接再做完整源码分析。把已核实的关键源码位置、入口/跨单元挂接、必要依赖和未确定边界写入普通 note/summary/unresolved，保留 evidence；单元相关记录的 relates_to 使用刚保存返回的真实 unit_id 或该单元 plan_record_id，共用范围说明可留空。宿主通过 planning_handoff 交给对应 Analysis，不另建索引或重复抄写源码。交接是导航和边界依据，不是风险或用例结论。
+
+## Analysis：读取规划交接
+
+若 task.inputs 提供 planning_handoff，先读取其中本单元的规划记录及共用边界，复用已有入口、关键证据位置和未决问题，直接定位必要源码。不重新做全局单元规划、不机械重复 Planning 的搜索与目录巡检；仍由本 worker 核对支撑流程、风险和用例预期的源码与必要上下文。交接不是已完成的分析，也不能把 Planner 的未决判断当作事实。发现矛盾按原证据说明并在本单元处理，不扩大主责或另开审核。旧任务没有此输入时按原冻结合同执行，不查历史 Run 补造交接。
 
 Analysis：只分析本单元，按当前 profile 的全部冻结 rubric 交付业务流程、用例和证据。黑盒与可实施灰盒比例按冻结规则计算，辅助用例也如实记录；execution_readiness和readiness_reason说明现有入口、触发设施及观测依据。业务配置、触发、外部响应、观测和恢复构成正文，函数/变量仅在必要注入步骤及独立证据中出现。场景提炼和用例拆合按当前 task 冻结的生成规则执行，业务验证目标与内部代码路径分别判断，不从 CLI 入口追加逐路径成例要求；旧 Run 不追补新版规则。不给无关依赖模块生成用例。缺设备不等于源码无法确定预期。
 若当前冻结 scene_flow 要求 sequence/call_graph，work-finish 前逐条回看已保存的 main/sub flow，按该冻结版本的字段、引用和边界规则自检两份数据；不能只给主流程提供，也不能把 result-write 成功等同于附加图完整。发现具体问题在本回合用 result-supersede 修正该记录，保留原有效正文；不更改冻结规则、不另开图表任务、不要求旧 Run 追补。

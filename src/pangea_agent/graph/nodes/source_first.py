@@ -410,6 +410,7 @@ def prepare_source_first_inputs(state: PangeaState) -> PangeaState:
         "analysis_profile": contract.get("analysis_profile"),
         "task_type": "source_first_plan",
         "scope_policy": "target-first-v1",
+        "planning_policy": "allocation-only-v1",
         "context_budget": compact_metadata["context_budget"],
         "action_id": action_id,
         "run_id": state["run_id"],
@@ -658,7 +659,7 @@ def _required_direct_context_files(manifest: dict) -> list[str]:
     return result
 
 
-def _make_analysis_actions(state: PangeaState, progress: WorkflowProgress, units: list[dict], plan_task: dict) -> None:
+def _make_analysis_actions(state: PangeaState, progress: WorkflowProgress, units: list[dict], plan_task: dict, planning_result=None) -> None:
     scene = frozen_scene(run_directory(state), state["task_contract"])
     lookup = _region_lookup(state)
     source_manifest_path = plan_task["source_manifest_path"]
@@ -774,6 +775,12 @@ def _make_analysis_actions(state: PangeaState, progress: WorkflowProgress, units
             task["risk_lenses"] = unit.get("risk_lenses", [])
             signal_path = generate_unit(run_directory(state), task, key)
             task["inputs"].append(_input("unit_risk_signals", signal_path, "本单元风险检索线索"))
+        if plan_task.get("planning_policy") == "allocation-only-v1" and planning_result is not None:
+            from pangea_agent.graph.planning_handoff import unit_handoff
+            handoff_path = run_directory(state) / "inputs" / "planning-handoff" / f"{key}.json"
+            write_json(handoff_path, unit_handoff(planning_result, units, unit))
+            task["planning_policy"] = plan_task["planning_policy"]
+            task["inputs"].append(_input("planning_handoff", handoff_path, "规划交接：主责、相关证据与待核实边界；不是分析结论"))
         attach_incremental_inputs(run_directory(state), task)
         attach_flow_stability_input(state, task)
         _attach_test_tool_references(task, run_directory(state))
@@ -1100,7 +1107,7 @@ def _source_first_advance(state: PangeaState, progress: WorkflowProgress) -> Pan
         progress.actions[action.action_id].status = "accepted"
         progress.accepted_revisions[action.action_id] = result.revision
         with runtime_timing(state["data_root"], state["run_id"], timing_identity, "planning_advance", "create_analysis_tasks"):
-            _make_analysis_actions(state, progress, units, task)
+            _make_analysis_actions(state, progress, units, task, result)
         progress.stage = "analyzing"
         save_progress(state, progress)
         return {**state, "lifecycle_status": progress.lifecycle_status, "stage": progress.stage, "agent_actions": [

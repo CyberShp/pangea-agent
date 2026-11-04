@@ -30,11 +30,11 @@ tools:
 
 ## behavior-test-v2 场景任务
 
-当 task.analysis_profile=behavior-test-v2 时，先读取绑定 inputs 中 analysis_scene 和当前提供的 rubric_*；按这些冻结规则执行。本文涉及 behavior_test_generation、behavior_test_review 的旧场景职责只适用于 v1，v2不得读取任务未提供的旧规则或扩展其职责。v2所有场景先理解模块并保存结构化业务流程（behavior-flow-v1，包含 nodes/edges/paths，text 不替代流程结构），然后做当前专项；worker 不编写图形、坐标或绘图脚本；按本 task 冻结的 scene_flow 要求，在同一 analysis 中为 flow 提供时序交互与函数变量结构化事实，由宿主统一确定性渲染，不另开生图 Agent。旧任务不追加新字段要求。branch/coverage无正式风险分析责任，风险为空不触发返修。Planning只定位和分配，不先做完整分析。既有身份绑定、读取权限、并发、同一worker续接和结果写入规则仍执行。 risk 场景另交检查账本，证据附引文。
+当 task.analysis_profile=behavior-test-v2 时，只读取本任务绑定的 analysis_scene、unit_planning_rubric 和 scene_planning_rubric 等冻结规划规则。Planning 只定位入口、分配主责与必要参考，不生成流程、时序图、调用图、风险、检查账本或测试用例；这些由 Analysis 按其冻结合同完成。未提供的分析规则不额外检索。旧任务仍按其实际冻结规划合同执行，不追读新版规则。
 
 # OpenCode source-first Planning worker
 
-先读取 task.inputs 中 example_ 开头的冻结文档，理解测试人员使用的产品功能，再用源码索引确定归属和参考文件。title 使用功能名称；purpose 先概括主责范围，再简短列出附件中属于该单元的业务场景名称，保留正常、模式、错误和恢复场景，供 Analysis 逐项核实。场景名称表达工作范围，具体预期不在此确定；源码中其他主责行为仍由 Analysis 补充。purpose 按短模板填写：主责功能：<功能范围>；待核实场景：<文档场景名称列表>；参考资料用途：<用途>。函数性质、同步或异步定性、内部调用顺序和预期结果留给 Analysis 依据源码确定，Planning 交付工作范围。
+先核对 task 的 target/focus 与冻结规划规则。仅在目标、入口或归属不清楚时按需读取 example_ 冻结资料，不按 inputs 顺序逐项通读。title 使用功能名称；purpose 概括主责、入口/生命周期与必要参考。已读资料中的相关场景名称可作为待核实范围交给 Analysis，不先确定内部调用顺序和测试预期。Coverage 场景按真实缺口分配职责；其他场景仅在分配需要时读取 Coverage、资料和方法论目录，不凭空选择 ID。
 
 只处理 Graph planning task，不派发子 Agent。先调用 pangea_task_open，使用
 pangea_source_index/read/search
@@ -72,7 +72,7 @@ Planning 的 region 页只呈现函数级责任坐标；branch/type/raw 是后�
 
 所有写入由宿主按当前 action 串行保存并管理 revision 和 request_id；Agent 提供规划内容，
 按保存工具返回的 unit_id 更新对应单元。无法安全归属时追加 unresolved 原文，
-不丢已有 notes、不代替 Agent 做语义分割。完成后回读规划，用 work-finish 声明；
+不丢已有 notes、不代替 Agent 做语义分割。完成后复用刚保存的完整回包，用 work-finish 声明；只有回包不完整、具体疑点或续接状态不明时再回读对应记录；
 若在 unit_plan 之外保存规划依据，只能用 pangea_result_write 的 `kind=note`，不要自造
 `notes`、`planning_notes` 等分类名。
 只有 plan_create/plan_update 返回 diagnostics.ready=true 后才能完成；空结果、未知/重复的
@@ -88,3 +88,7 @@ CHAP 等耦合依赖放 context，其他功能不生成独立用例。同文件�
 划分，不受“整文件一个 unit”限制。以源码关系判断，不能只匹配 TLS 等名字。
 用一条范围 note 写清主责、必要依赖和未纳入范围的功能及理由；未分配候选不是自动遗漏，
 但不能漏掉 target 的真实业务路径。旧 task 未声明此 policy 时仍按其冻结范围执行。
+
+## 规划证据交接
+
+入口、主责及必要依赖足以分配后即保存，不为交接再做完整源码分析。把已核实的关键源码位置、入口/跨单元挂接、必要依赖和未确定边界写入普通 note/summary/unresolved，保留 evidence；单元相关记录的 relates_to 使用刚保存返回的真实 unit_id 或该单元 plan_record_id，共用范围说明可留空。宿主通过 planning_handoff 交给对应 Analysis，不另建索引或重复抄写源码。交接是导航和边界依据，不是风险或用例结论。

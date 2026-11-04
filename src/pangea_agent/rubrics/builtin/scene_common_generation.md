@@ -314,3 +314,7 @@ needs_instrumentation 保留设计但不计入可实施分子；内部推演与�
 
 旧 Run 以其 task 和冻结 rubric 为准，不追溯追加本格式要求。
 <!-- RISK-CONTRACT:END -->
+
+## 规划交接
+
+若 inputs 包含 planning_handoff，先经 input-read 分页读取。按 origin、record.kind、scope 与原 relates_to 区分全局说明、本单元责任和未解析关系，保留不确定性。交接只帮助定位必要边界，不是已完成分析；对相关证据与 unresolved 在本单元职责内重新核对源码，不能照抄为事实。无需承担明确属于其他单元的职责。
