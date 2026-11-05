@@ -15,7 +15,7 @@ risk 场景（method_version=risk-method-v1）按 scene_risk 的工作顺序，�
 关键判断用独立节点表达；不同条件走向实际处理或结果节点，汇合时再引用同一后继。若两条路径条件不同但node_ids完全相同，核对是否漏掉判断后的处理差异，不靠改标题表达真假分支。普通顺序连线的condition留空，只有实际守卫或选择条件才填写，不能把“下一步”当作条件分支。调用者不在冻结范围时，区分已证实的函数内行为与待确认的业务调度顺序，不把使用建议写成已验证调用链。
 
 实际证据引用冻结源码，保存在 source_evidence 中供追溯，业务流程页面不展示该字段。文档预期与实现不同时分开说明。
-保存前由当前 worker 核对节点、连线和路径引用；Reviewer 负责核实流程语义。flow 记录的结构校验（字段、id 引用）属于格式契约，不属于语义门禁：不合格时写入被拒绝并逐条返回错误，由同一 worker 在本轮修正；Python 不拆分自由文本、不自动修复、不补造节点、不新增语义门禁。
+保存前由当前 worker 随本轮分析核对流程语义及节点、连线和路径引用，不等待额外审核。flow 记录的结构校验（字段、id 引用）属于格式契约，不属于语义门禁：不合格时写入被拒绝并逐条返回错误，由同一 worker 在本轮修正；Python 不拆分自由文本、不自动修复、不补造节点、不新增语义门禁。
 已有 module-flow-text-v1 记录保留可读；需要补齐时由原 worker 结合冻结源码修正原流程，不能由客户端猜测。流程使用稳定flow_id；修正以准确record_id supersedes，保留旧记录及正确的用例关联，不重做其他单元。
 采用本版冻结规则的 worker 在同一 analysis 中为每条 flow 保存 `sequence`（时序交互）与 `call_graph`（函数与变量关系）。先保存已核实的流程，随后随同一次源码阅读补充这些事实；不因等待附加数据而推迟已有流程和用例交付。缺口明确标为 partial/unknown 或有依据的 not_applicable，不为画图扩大目标范围。worker 不编写坐标、SVG、HTML，不生成图任务、不调用绘图脚本；宿主根据同一 flow 记录确定性渲染三种图。
 
@@ -61,7 +61,7 @@ risk 场景（method_version=risk-method-v1）按 scene_risk 的工作顺序，�
 
 这些字段帮助机械对应与确定性排序/渲染，不证明业务正确或覆盖充分。缺元数据的旧流程继续可读，不追加语义门禁，也不靠宿主重写成稳定版本。
 
-只有当前 task 的 comparison 阶段明确提供 `flow_baseline` 和 `flow_comparison` 时才对照这份流程稳定性基线。普通新建 Analysis 不接收这两个输入；显式增量 Analysis 仍按其冻结职责读取 `incremental_parent_records` 等父记录，并重新核验，不能将此规则误解为禁止增量参考旧流程。采用本版稳定规则的新 Run，其 independent_review 不读取首轮结果、流程基线或增量父记录；旧 Run 保留原冻结输入合同。所有角色均不得自行检索其他 Run。机械 diff 只表示显式身份、字段或拓扑变化；Reviewer 核实新增、删除、拆分、合并、条件与连线变化的依据，并在现有 note/finding 中区分输入变化、纠正旧遗漏、展示变化或待确认。源码未变仍允许有证据的纠错；不为稳定外观隐藏实质变化，不以相似标题宣称等价，不自动把本轮候选替换为已验收基线。
+普通新建 Analysis 不接收 `flow_baseline` 和 `flow_comparison`，不等待 comparison 或 independent_review。显式增量 Analysis 仍按其冻结职责读取 `incremental_parent_records` 等父记录，并由本 worker 核实新增、删除、拆合、条件与连线变化的依据，在已有 note 中区分输入变化、纠正旧遗漏、展示变化或待确认；不自行检索其他 Run。机械 diff 只表示显式身份、字段或拓扑变化，不证明语义等价。源码未变仍允许有证据的纠错，不为稳定外观隐藏变化，不用相似标题或旧基线自动替换本轮结论。历史 comparison/independent_review 任务继续使用原冻结输入合同，不追补新职责。
 
 <!-- FLOW-CONTRACT:BEGIN -->
 ### 同一流程的三种展示
@@ -75,7 +75,7 @@ risk 场景（method_version=risk-method-v1）按 scene_risk 的工作顺序，�
 - `call_graph.format_version="call-graph-v1"`，包含 `title/status/root/functions/calls/variables/notes`。functions 是 `{id,kind,label,signature,file,line}`，kind 为 `function/macro/external`；calls 是 `{from,to,file,line,args:[],returns}`；variables 是 `{function,name,reads:[],compute,writes,line}`。file 为当前冻结仓库中的相对源码位置，line 为真实行号；args 逐条说明实参→形参，returns 写返回值接收变量。每条 call 必须有真实调用点，不把内部判断、赋值、返回或未证实的调度当调用。变量按已核对的执行顺序记录读取、计算、写入及重要类型转换；不推测运行时数值。
   `reads` 为字符串数组，`compute`、`writes` 为字符串；多个写入事实在 writes 字符串中逐条说明。旧 Run 依自己的冻结版本解释；未明确字符串限制的旧 writes 数组保留每个项目用于兼容展示。
 
-新任务冻结 `record_contracts.diagram="diagram-contract-v1"` 时，写入成功响应的 `diagram_diagnostics` 按 record_id/record_revision/field/code 指出格式问题。invalid 是字段或引用格式错误；missing/unknown 明确保留未提供或待确认状态；valid_but_unsupported 是宿主展示能力边界，不要求 worker 捏造事实来迎合渲染。原 worker 在当前回合根据精确字段局部修正，使用 supersedes 指向旧 record_id，并写回相同 task/result_path；有效内容和原始修订始终保留。仍未确认的诊断进入既有 Reviewer/closure，不因提示新增自动续接、替换 worker 或把 Run 判失败。
+新任务冻结 `record_contracts.diagram="diagram-contract-v1"` 时，写入成功响应的 `diagram_diagnostics` 按 record_id/record_revision/field/code 指出格式问题。invalid 是字段或引用格式错误；missing/unknown 明确保留未提供或待确认状态；valid_but_unsupported 是宿主展示能力边界，不要求 worker 捏造事实来迎合渲染。原 worker 在当前回合根据精确字段局部修正，使用 supersedes 指向旧 record_id，并写回相同 task/result_path；有效内容和原始修订始终保留。仍未确认的关系以 partial/unknown 和具体缺口交付，不等待 Reviewer/closure，不因提示新增自动续接、替换 worker 或把 Run 判失败。
 - 两个对象的 `status` 均由 Agent 声明：`ready`（当前范围事实已提供）、`partial`（已知内容和待确认缺口并存）、`not_applicable`（有证据说明此范围不适用）、`unknown`（尚不能确认）。`notes` 解释边界、动态调用、未知外部实现或不适用原因。就绪不表示已实测；已有有效事实保留，未知关系不能猜画。
 - 这些是当前冻结 rubric 的分析交付职责；不新增 Python 写入门禁、不增加 Agent 或完整复核轮次。旧 Run 按旧冻结规则执行，不追补新合同。报告和客户端保留缺字段、未知或无法结构化的原始内容并提示，不能据此判定主分析失败。
 
@@ -162,4 +162,4 @@ risk 场景（method_version=risk-method-v1）按 scene_risk 的工作顺序，�
 - attach_to 写子流程挂接到主流程的位置，如 {"flow_id": "F-001", "node_id": "verify"}；不确定时写 null。role/attach_to 只用于排版，缺失时按 sub、未挂接处理。
 - 写入时会做结构检查（字段名、id 唯一与引用）；不合格时 pangea_result_write 返回逐条错误，请在本轮按错误修正后重写同一结果。
 <!-- FLOW-CONTRACT:END -->
-若新合同 sequence_review=sequence-path-review-v1，closure 修改 flow 后声明 sequence.status=ready，须用普通 note 留下本次最终版本的路径复核依据。body 含 format_version=sequence-path-review-v1、version_set_id=当前 closure action_id、unit_id、record_id=新写入的有效记录、checks 数组。每项含 field（每条 paths[i] 及每个 sequence.fragments[i].operands[j]，二者皆无用 sequence）和 basis（具体源码锚点、该路径的消息次序与后继；循环展开两轮）。资料不足保留 partial/unknown 并说明缺口。
+当前 Analysis 在本轮修订 sequence 时核对受影响路径的最终消息次序与后继；资料不足保留 partial/unknown 并说明缺口。不另建 sequence_review 记录或等待 closure。历史 sequence_review=sequence-path-review-v1 的 closure 任务继续按其原冻结规则提交路径复核依据，不迁移为新任务的额外义务。

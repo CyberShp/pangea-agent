@@ -49,6 +49,11 @@ def scene_spec(scenario: str) -> dict:
         spec.update(method_version=BRANCH_METHOD)
         spec['review_rubrics'].append('scene_branch_review')
         spec['presentation'].update(behavior_coverage=True)
+    # Required Analysis methods are part of the new frozen scene. Do not infer
+    # or backfill them when reading an existing Run, and keep risk methods intact.
+    analysis_languages = spec.setdefault("language_rubrics", {}).setdefault("analysis", {})
+    for language in ("c_cpp", "lua"):
+        analysis_languages.setdefault(language, []).append(f"{language}_business_semantics")
     spec["record_contracts"]["sequence_review"] = "sequence-path-review-v1"
     return spec
 

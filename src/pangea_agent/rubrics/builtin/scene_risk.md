@@ -30,7 +30,7 @@
 
 ## 引文与验证
 
-risk 的每个 source_evidence、check 的 confirmed/excluded 依据附 evidence_quotes：ref 与引用完全一致；snippet 从该行段逐字摘录最短充分片段。忽略空白差异；每条跨度 ≤40 行，snippet ≤400 字符。不能改写、拼接不连续片段或引用无关 include。Python 只核对文字是否在所引位置，相关性和充分性由 Agent/Reviewer 判断。不符时提示 warning 并返回实际片段。
+risk 的每个 source_evidence、check 的 confirmed/excluded 依据附 evidence_quotes：ref 与引用完全一致；snippet 从该行段逐字摘录最短充分片段。忽略空白差异；每条跨度 ≤40 行，snippet ≤400 字符。不能改写、拼接不连续片段或引用无关 include。Python 只核对文字是否在所引位置，相关性和充分性由当前 Analysis 判断。不符时提示 warning 并返回实际片段。
 
 - 不设 70% 黑盒比例目标，层级如实声明。库/API 默认 interface_contract，有真实产品入口才用 business_blackbox，入口必须可执行。
 - 用例步骤实际制造 trigger，正常路径不能替代风险验证。风险允许暂无用例，external_observation 与 summary 说明缺口，不硬造配对。
@@ -38,7 +38,7 @@ risk 的每个 source_evidence、check 的 confirmed/excluded 依据附 evidence
 
 ## 零风险与修正
 
-账本覆盖主责文件、高优先级对象有结论时，零正式风险合法。summary 写范围与 unresolved，不宣称安全；Reviewer 不因零风险要求补造。定向修正确认风险不成立时，由原 worker 用 result-supersede 显式替换为 kind=check、conclusion=excluded 并写反证，保留审计历史及其他单元内容。
+账本覆盖主责文件、高优先级对象有结论时，零正式风险合法。summary 写范围与 unresolved，不宣称安全、不因零风险补造。当前 worker 发现具体问题并确认风险不成立时，用 result-supersede 显式替换为 kind=check、conclusion=excluded 并写反证，保留历史及其他单元内容，不等待额外修正阶段。
 
 <!-- CHECK-CONTRACT:BEGIN -->
 ### 检查记录标准样例（behavior-check-v1）

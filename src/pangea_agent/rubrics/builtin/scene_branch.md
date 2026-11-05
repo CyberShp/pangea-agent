@@ -27,7 +27,7 @@
 
 ## 业务覆盖记录：已有 kind=note，不新增写入门禁
 
-每个分析单元维护一份 kind=note，body 约定 format_version=behavior-coverage-v1。它是 Agent 的分析记录与报告展示约定，不是 record_contracts，也不是 Python 对完整性、正确性或完成状态的判断。格式异常、旧格式、缺项保留原文和提示；由原 worker/Reviewer 核实，不拒写、不自动补造内容。
+每个分析单元维护一份 kind=note，body 约定 format_version=behavior-coverage-v1。它是 Agent 的分析记录与报告展示约定，不是 record_contracts，也不是 Python 对完整性、正确性或完成状态的判断。格式异常、旧格式、缺项保留原文和提示；由原 worker 在当前 action 核实，不拒写、不自动补造内容，不等待审核阶段。
 
 一项代表一个有业务意义的条件/配置/状态/顺序及预期，不按函数、语句或所有内部变量制造清单。item_id 在本单元内稳定，case_refs 指向本单元的实际用例；跨单元关系在 scope/reason 中明确 owner 和证据。scope、combination_strategy、operation、expected_behavior、reason 为字符串；conditions、constraints、source_evidence、unresolved_dependencies 为字符串数组；items 与 case_refs 为对象数组。可选 flow_refs 引用实际流程/路径，不要求猜造。
 复用 items 的 operation/conditions/constraints/expected_behavior/source_evidence 说明场景依据，在 reason 简述验证目标、拆合理由及触发/判据依据；必要的共用操作和未知事项引用已有 note。无需新增必填字段或平行账本。覆盖项、流程路径和用例不要求一对一，多项关联同一用例时须核实其真实输入确实适用，不能凭共享函数或行号关联。

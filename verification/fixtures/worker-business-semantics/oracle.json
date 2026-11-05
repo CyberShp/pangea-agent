@@ -1,0 +1,78 @@
+{
+  "format_version": "worker-business-semantics-acceptance-v1",
+  "synthetic": true,
+  "generator_inputs": {
+    "c": ["CONTRACT.md", "queue.c"],
+    "lua": ["CONTRACT.md", "queue.lua"]
+  },
+  "evaluation_boundary": "本文件仅用于生成之后的独立评价与合成夹具自检；评价记录须注明是人工还是模型评价。不传入生成模型，不用于产品语义门禁，不要求固定用例数量或措辞。",
+  "behaviors": [
+    {
+      "id": "cancel-ack-and-completion",
+      "requirement": "取消受理与实际取消区分；待执行和执行中任务均可取消，已打印页保留，取消后不再打印。",
+      "acceptance": "通过 add/step/cancel/query 的实际时序和公开输出判断，而非直接修改或读取取消标志；不能在 ACCEPTED 响应时断言已 cancelled。允许变体或多个用例。",
+      "readiness": "ready",
+      "evidence": {"CONTRACT.md": "尚不代表任务已取消", "queue.c": "if (j->cancel_requested)", "queue.lua": "if job.cancel_requested then"}
+    },
+    {
+      "id": "unsubscribe-does-not-cancel",
+      "requirement": "退订仅停止后续通知；任务仍打印至完成，已有通知数不清零。",
+      "acceptance": "使用 unwatch 后 step/query 同时区分 printed 继续增加与 events 不再增加；不能把 watching 清空作为任务取消或资源释放证明。",
+      "readiness": "ready",
+      "evidence": {"CONTRACT.md": "仅停止该任务后续进度通知", "queue.c": "jobs[id].watching = 0;", "queue.lua": "jobs[tonumber(id)].watching = nil"}
+    },
+    {
+      "id": "batch-selection",
+      "requirement": "组取消只影响指定组的 queued/running 任务；其他组和已结束任务保持其原有行为。",
+      "acceptance": "构造多个有明确编号及组别的任务，分别查询对象和打印页数；ACCEPTED N 与实际选择集合一致。不能仅复述内部循环或只验证一个对象。",
+      "readiness": "ready",
+      "evidence": {"CONTRACT.md": "其他组、已结束任务不受影响", "queue.c": "active(&jobs[id]) && jobs[id].group == group", "queue.lua": "active(job) and job.group == group"}
+    },
+    {
+      "id": "existing-fault-control",
+      "requirement": "已有 fail-next 设施可使下一次打印尝试失败，保留打印及通知计数。",
+      "acceptance": "准确使用 fail-next ID 和 step，在 query 观察 failed 与不增加的计数；无需虚构写内存或直接调用内部函数，未实测仍 not_run。",
+      "readiness": "ready",
+      "evidence": {"CONTRACT.md": "使指定任务下一次实际打印尝试失败", "queue.c": "if (j->fail_next)", "queue.lua": "if job.fail_next then"}
+    },
+    {
+      "id": "cancel-before-print-fault",
+      "requirement": "同一任务已设置打印失败注入但先取消时，下次调度产生取消结果，不能声称覆盖打印失败。",
+      "acceptance": "保留取消与故障发生顺序的业务区别，以 cancelled 而非 failed 判定。不得将同一条没有实际失败尝试的用例算作打印失败路径。",
+      "readiness": "ready",
+      "evidence": {"CONTRACT.md": "若任务先被取消", "queue.c": "j->fail_next = 0;", "queue.lua": "job.fail_next = false"}
+    },
+    {
+      "id": "missing-device-control",
+      "requirement": "驱动主动报告介质脱落有独立触发和业务要求，但当前没有该故障设施。",
+      "acceptance": "保留待补控制设施的设计及独立触发缺口；不能用 fail-next 替代介质脱落，不能将回调可链接/模块导出称为产品操作。可在依据中定位内部回调。",
+      "readiness": "needs_instrumentation",
+      "evidence": {"CONTRACT.md": "测试台没有介质脱落注入", "queue.c": "void printer_media_lost(int id)", "queue.lua": "function M.printer_media_lost(id)"}
+    },
+    {
+      "id": "unknown-maintenance-contract",
+      "requirement": "维护函数的内部动作可见，但支持入口、模式与业务要求未给出。",
+      "acceptance": "保留可确认实现事实及具体缺口即可；不强制生成正式用例。若保留候选则 unknown，不得凭名称发明维护命令或直接将内部动作断言为业务契约。",
+      "readiness": "unknown_or_note",
+      "evidence": {"CONTRACT.md": "未提供其调用方、对外绑定、允许模式或业务要求", "queue.c": "void printer_maintenance(int mode)", "queue.lua": "function M.printer_maintenance(mode)"}
+    }
+  ],
+  "cross_cutting_checks": [
+    "每个业务断言须有实际入口、具体对象和可用观察；内部变量赋值不能承担唯一判据。",
+    "保留全部有意义行为及具体缺口；不按用例数、ready比例或文字流畅度打分。",
+    "允许公开状态及 printed/events 字段；不能把技术词汇本身当成白盒错误。",
+    "已提供测试台能力无需因没有真实设备而降级；未提供能力不得虚构。",
+    "用例可拆分或合并变体，但独立触发与先后顺序必须可追踪。",
+    "清理可使用 reset 或退出本次隔离进程，不凭空要求不存在的撤桩命令。",
+    "评估首次产物，后续修正另记；准备度不代表实际执行或测试通过。"
+  ],
+  "smoke_scenarios": [
+    {"id": "cancel-queued", "args": ["add 1 A 2", "cancel A", "query 1", "step", "query 1", "step", "query 1", "reset"], "stdout": ["CREATED", "ACCEPTED 1", "queued printed=0 events=0", "ADVANCED", "cancelled printed=0 events=0", "ADVANCED", "cancelled printed=0 events=0", "RESET"]},
+    {"id": "cancel-running", "args": ["add 1 A 3", "step", "cancel A", "query 1", "step", "query 1"], "stdout": ["CREATED", "ADVANCED", "ACCEPTED 1", "running printed=1 events=1", "ADVANCED", "cancelled printed=1 events=1"]},
+    {"id": "unsubscribe", "args": ["add 1 A 3", "step", "unwatch 1", "step", "step", "query 1"], "stdout": ["CREATED", "ADVANCED", "UNWATCHED", "ADVANCED", "ADVANCED", "done printed=3 events=1"]},
+    {"id": "group-selection", "args": ["add 1 A 3", "add 2 B 3", "add 3 A 1", "step", "add 4 A 2", "cancel A", "step", "query 1", "query 2", "query 3", "query 4"], "stdout": ["CREATED", "CREATED", "CREATED", "ADVANCED", "CREATED", "ACCEPTED 2", "ADVANCED", "cancelled printed=1 events=1", "running printed=2 events=2", "done printed=1 events=1", "cancelled printed=0 events=0"]},
+    {"id": "print-failure", "args": ["add 1 A 3", "step", "fail-next 1", "step", "query 1"], "stdout": ["CREATED", "ADVANCED", "ARMED", "ADVANCED", "failed printed=1 events=1"]},
+    {"id": "cancel-preempts-failure", "args": ["add 1 A 3", "fail-next 1", "cancel A", "step", "query 1"], "stdout": ["CREATED", "ARMED", "ACCEPTED 1", "ADVANCED", "cancelled printed=0 events=0"]},
+    {"id": "reset", "args": ["add 1 A 2", "fail-next 1", "reset", "add 1 B 1", "step", "query 1"], "stdout": ["CREATED", "ARMED", "RESET", "CREATED", "ADVANCED", "done printed=1 events=1"]}
+  ]
+}
