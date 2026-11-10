@@ -140,7 +140,7 @@ def _audit_acceptance_rule(
                 "INT_MAX/对应 TYPE_MAX 符号，不得追加固定 32 位或十进制边界。"
             )
         if check == "system_result_and_observation":
-            if analysis_language == "c_cpp":
+            if analysis_language in {"c_cpp", "mixed"}:
                 return (
                     "C/C++ UB 的普通构建没有稳定产品 Oracle；可能后果不得写成固定值、必然结果"
                     "或穷举，也不得把数学上的 INT_MAX + 1 称为该 int 运算可比较的预期值。sanitizer "
@@ -619,10 +619,14 @@ def _merge_comparison_results(
     )
 
 
-def _general_rubrics(analysis_language: str) -> list[str]:
+def _general_rubrics(analysis_language: str, analysis_languages: list[str] | None = None) -> list[str]:
+    languages = analysis_languages or [analysis_language]
+    names = [f"{language}_analysis.md" for language in languages]
+    if len(languages) > 1:
+        names.append("mixed_analysis.md")
     return [
         str(project_path("src", "pangea_agent", "rubrics", "builtin", name))
-        for name in (f"{analysis_language}_analysis.md", *COMMON_RUBRIC_NAMES)
+        for name in (*names, *COMMON_RUBRIC_NAMES)
     ]
 
 SPECIALIZED_RUBRICS = {
@@ -892,7 +896,7 @@ def _prepare_analysis(state: PangeaState, progress) -> PangeaState:
     write_json(global_inputs_path, global_inputs)
     source_manifest = read_json(run_dir / "inputs" / "source-manifest.json")
     analysis_language = source_manifest.get("analysis_language", "c_cpp")
-    general_rubrics = _general_rubrics(analysis_language)
+    general_rubrics = _general_rubrics(analysis_language, source_manifest.get("analysis_languages"))
     repositories = {
         item["repo_id"]: RepositoryRef.model_validate(item)
         for item in source_manifest["repositories"]
@@ -927,6 +931,7 @@ def _prepare_analysis(state: PangeaState, progress) -> PangeaState:
             run_id=state["run_id"],
             target=state["task_contract"]["target"],
             analysis_language=analysis_language,
+            analysis_languages=source_manifest.get("analysis_languages", [analysis_language]),
             unit=unit,
             evidence_scope=_evidence_scope(unit),
             repository=repositories[unit.repo_id],
@@ -1007,7 +1012,7 @@ def _accept_analysis(state: PangeaState, progress) -> PangeaState:
     run_dir = run_directory(state)
     source_manifest = read_json(run_dir / "inputs" / "source-manifest.json")
     analysis_language = source_manifest.get("analysis_language", "c_cpp")
-    review_rubrics = _general_rubrics(analysis_language)
+    review_rubrics = _general_rubrics(analysis_language, source_manifest.get("analysis_languages"))
     action_id = f"{state['run_id']}:review"
     user_rubric_paths = {
         Path(path).stem: path for path in frozen_methodology_paths(run_dir)
@@ -1027,6 +1032,7 @@ def _accept_analysis(state: PangeaState, progress) -> PangeaState:
         run_id=state["run_id"],
         target=state["task_contract"]["target"],
         analysis_language=analysis_language,
+        analysis_languages=source_manifest.get("analysis_languages", [analysis_language]),
         repositories=[
             RepositoryRef.model_validate(item) for item in source_manifest["repositories"]
         ],
@@ -1785,6 +1791,7 @@ def _accept_independent_review(state: PangeaState, progress, action) -> PangeaSt
         run_id=state["run_id"],
         target=state["task_contract"]["target"],
         analysis_language=task.analysis_language,
+        analysis_languages=task.analysis_languages,
         evidence_scope_by_unit=_evidence_scope_by_unit(progress),
         unit_plan_path=task.unit_plan_path,
         analysis_task_paths={
@@ -2040,6 +2047,7 @@ def _accept_comparison_review(state: PangeaState, progress, action) -> PangeaSta
             run_id=state["run_id"],
             target=state["task_contract"]["target"],
             analysis_language=original_task.analysis_language,
+            analysis_languages=original_task.analysis_languages,
             unit=unit,
             evidence_scope=_evidence_scope(unit),
             repository=repositories[unit.repo_id],

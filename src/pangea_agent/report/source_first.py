@@ -676,6 +676,7 @@ def _markdown(state: dict, progress: dict, records: list[tuple[dict, Any]]) -> s
         "# PANGEA Source-First Report",
         "",
         f"- Run: `{progress.get('run_id', state.get('run_id', ''))}`",
+        *_language_lines(state),
         f"- Workflow: `{progress.get('workflow_version') or 'source-first-v1'}`",
         f"- Lifecycle: `{progress.get('lifecycle_status', 'running')}`",
         f"- Stage: `{progress.get('stage', 'preparing')}`",
@@ -784,6 +785,15 @@ def _markdown(state: dict, progress: dict, records: list[tuple[dict, Any]]) -> s
     return "\n".join(lines).rstrip() + "\n"
 
 
+def _language_lines(state: dict) -> list[str]:
+    from pangea_agent.inventory.languages import LANGUAGE_LABELS
+    manifest_path = Path(state["data_root"]) / "runs" / state["run_id"] / "inputs" / "source-manifest.json" if state.get("data_root") and state.get("run_id") else None
+    if not manifest_path or not manifest_path.is_file():
+        return []
+    languages = read_json(manifest_path).get("analysis_languages", [])
+    return ["- 分析语言：" + " + ".join(LANGUAGE_LABELS.get(item, item) for item in languages)] if languages else []
+
+
 def _behavior_markdown(
     state: dict,
     progress: dict,
@@ -812,6 +822,7 @@ def _behavior_markdown(
         f"# PANGEA {scene['label'] if scene else '业务行为测试用例'}报告",
         "",
         f"- Run: `{progress.get('run_id', state.get('run_id', ''))}`",
+        *_language_lines(state),
         f"- Analysis profile: `{'behavior-test-v2' if scene else 'behavior-test-v1'}`",
         f"- Lifecycle: `{lifecycle}`",
         f"- Quality: `{quality}`",

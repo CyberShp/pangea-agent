@@ -17,7 +17,8 @@ def quotes_markdown(quotes, language=None):
             continue
         snippet = str(q.get('snippet', ''))
         fence = '`' * max(3, 1 + max((len(m[0]) for m in re.finditer(r'`+', snippet)), default=0))
-        lang = language or ('lua' if '.lua:' in str(q.get('ref')) else 'c')
+        suffix = Path(str(q.get('ref', '')).rsplit(':', 1)[0]).suffix.lower()
+        lang = language or {'.lua': 'lua', '.py': 'python', '.pyw': 'python', '.sh': 'sh', '.bash': 'bash', '.c': 'c', '.h': 'c', '.cpp': 'cpp', '.cc': 'cpp', '.cxx': 'cpp', '.hpp': 'cpp'}.get(suffix, 'text')
         lines.extend([str(q.get('ref', '')), '', f'{fence}{lang}', snippet, fence, ''])
     return '\n'.join(lines)
 
@@ -45,7 +46,7 @@ def ledger_markdown(delivery, anchors):
                 label += ' ' + ' '.join(links)
             lines.append('| ' + ' | '.join([label, *(cell(b.get(k)) for k in ('lens', 'object', 'hypothesis', 'conclusion')), cell(b.get('sites'))]) + ' |')
         for r in checks:
-            lines.extend(['', f'<details><summary>{html.escape(str(r.body.get("check_id", r.record_id)))} · 依据与引文</summary>', '', str(r.body.get('reasoning', '')), '', quotes_markdown(r.body.get('evidence_quotes'), 'lua' if task.get('analysis_language') == 'lua' else 'c'), '</details>', ''])
+            lines.extend(['', f'<details><summary>{html.escape(str(r.body.get("check_id", r.record_id)))} · 依据与引文</summary>', '', str(r.body.get('reasoning', '')), '', quotes_markdown(r.body.get('evidence_quotes'), {'lua': 'lua', 'python': 'python', 'shell': 'bash'}.get(task.get('analysis_language'))), '</details>', ''])
         for r in active_records(result):
             if r.kind == 'check' and not isinstance(r.body, dict):
                 lines.extend(['', '#### 检查原文（格式待核对）', '', quotes_markdown([{'ref': r.record_id, 'snippet': str(r.body)}], 'text')])

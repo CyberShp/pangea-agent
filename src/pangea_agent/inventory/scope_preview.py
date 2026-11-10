@@ -6,13 +6,14 @@ import json
 import os
 from pathlib import Path
 
-from .languages import C_CPP_SUFFIXES, LUA_SUFFIXES, IGNORED_PARTS, detect_analysis_language
+from .languages import C_CPP_SUFFIXES, LUA_SUFFIXES, IGNORED_PARTS, detect_analysis_languages, language_mode, file_language, PYTHON_SUFFIXES, SHELL_SUFFIXES
 from .on_demand import requested_files
 from pangea_agent.repositories.resolver import resolve_repositories_from_contract
 
 RULES_REVISION = hashlib.sha256(json.dumps({
     "policy": "on-demand-v1", "c_cpp": sorted(C_CPP_SUFFIXES),
-    "lua": sorted(LUA_SUFFIXES), "ignored": sorted(IGNORED_PARTS),
+    "lua": sorted(LUA_SUFFIXES), "python": sorted(PYTHON_SUFFIXES),
+    "shell": sorted(SHELL_SUFFIXES), "shebang": "sh-bash-python-v1", "ignored": sorted(IGNORED_PARTS),
 }, sort_keys=True).encode()).hexdigest()
 
 
@@ -48,9 +49,10 @@ def preview_scope(data_root: str, repository: str, source_scope: list[str], *, r
                 for _directory, directories, _files in os.walk(candidate, onerror=unreadable):
                     directories[:] = [name for name in directories if name not in IGNORED_PARTS]
     try:
-        language = detect_analysis_language(repositories, scopes)
+        languages = detect_analysis_languages(repositories, scopes)
+        language = language_mode(languages)
     except ValueError as exc:
-        if str(exc) == "用户指定范围没有可分析的 C/C++ 或 Lua 源码":
+        if str(exc) == "用户指定范围没有可分析的 C/C++、Lua、Python 或 sh/Bash 源码":
             return {"preview_state": "complete", "normalized_scope": scopes,
                     "matched_file_count": 0, "files": [], "rules_revision": RULES_REVISION,
                     "scope_revision": scope_revision(repository, scopes, [])}
@@ -64,9 +66,9 @@ def preview_scope(data_root: str, repository: str, source_scope: list[str], *, r
             # Validate accessibility now; never turn a read fault into zero hits.
             with file.open("rb") as source:
                 source.read(1)
-            files.append({"relative_path": relative, "size_bytes": file.stat().st_size})
+            files.append({"relative_path": relative, "size_bytes": file.stat().st_size, "language": file_language(file)})
     return {"preview_state": "complete", "normalized_scope": scopes,
-            "analysis_language": language, "matched_file_count": len(files), "files": files,
+            "analysis_language": language, "analysis_languages": languages, "matched_file_count": len(files), "files": files,
             "rules_revision": RULES_REVISION,
             "scope_revision": scope_revision(repository, scopes, [item["relative_path"] for item in files])}
 

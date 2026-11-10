@@ -24,6 +24,9 @@ from pangea_agent.models.methodology import (
 
 
 GENERAL_METHODOLOGIES = {
+    "python_analysis.md": ("Python 源码分析", "Python 分析单元", "项目内置通用方法"),
+    "shell_analysis.md": ("sh/Bash 源码分析", "Shell 分析单元", "项目内置通用方法"),
+    "mixed_analysis.md": ("多语言联合分析", "跨语言调用与数据边界", "项目内置通用方法"),
     "c_cpp_analysis.md": (
         "C/C++ 源码分析",
         "每个分析单元默认加载",

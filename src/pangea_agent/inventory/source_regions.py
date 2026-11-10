@@ -159,6 +159,7 @@ def build_file_regions(file_record: dict) -> SourceFileIndex:
         repo_id=repo_id,
         path=path,
         line_count=line_count,
+        language=file_record.get("language"),
         regions=regions,
         parse_complete=parse_complete,
         region_count=len(regions),

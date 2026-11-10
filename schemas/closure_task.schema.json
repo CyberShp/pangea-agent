@@ -490,10 +490,26 @@
       "default": "c_cpp",
       "enum": [
         "c_cpp",
-        "lua"
+        "lua",
+        "python",
+        "shell",
+        "mixed"
       ],
       "title": "Analysis Language",
       "type": "string"
+    },
+    "analysis_languages": {
+      "items": {
+        "enum": [
+          "c_cpp",
+          "lua",
+          "python",
+          "shell"
+        ],
+        "type": "string"
+      },
+      "title": "Analysis Languages",
+      "type": "array"
     },
     "unit": {
       "$ref": "#/$defs/AnalysisUnit"

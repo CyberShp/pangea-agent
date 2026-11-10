@@ -36,7 +36,8 @@ from pangea_agent.graph.workflow_store import (
     source_first_version_set_path,
     project_path,
 )
-from pangea_agent.inventory.languages import detect_analysis_language
+from pangea_agent.inventory.languages import detect_analysis_languages, language_mode
+from pangea_agent.inventory.multilanguage import build_inventory, scoped_languages
 from pangea_agent.inventory.lua_source_scanner import build_lua_inventory
 from pangea_agent.inventory.source_access import resolve_binding, expand_owned_files
 from pangea_agent.inventory.source_regions import build_source_index
@@ -186,11 +187,18 @@ def _analysis_rubric_names(
     analysis_profile: str | None,
     analysis_language: str,
     methodology_ids: list[str] | None = None,
+    analysis_languages: list[str] | None = None,
 ) -> list[str]:
+    languages = analysis_languages or [analysis_language]
+    language_rubrics = [f"{language}_analysis" for language in languages]
+    if len(languages) > 1 and "mixed_analysis" not in language_rubrics:
+        language_rubrics.append("mixed_analysis")
     if analysis_profile == "behavior-test-v1":
-        return ["behavior_test_generation"]
+        # Preserve the old profile while adding script and interoperability guidance.
+        return ["behavior_test_generation", *[name for name in language_rubrics
+                if name in {"python_analysis", "shell_analysis", "mixed_analysis"}]]
     return [
-        f"{analysis_language}_analysis",
+        *language_rubrics,
         "dfx",
         "risk_reproducibility",
         "test_case_generation",
@@ -217,7 +225,10 @@ def prepare_source_first_inputs(state: PangeaState) -> PangeaState:
     if not supplement:
         assert_scope_revision(contract, state["data_root"])
     requested_scope = list(contract.get("source_scope") or ["."])
-    analysis_language = incremental["parent_manifest"]["analysis_language"] if incremental else detect_analysis_language(repositories, requested_scope)
+    detection_scope = requested_scope + ([relative for _, relative in incremental["changed_keys"]] if incremental and not supplement else [])
+    analysis_languages = (incremental["parent_manifest"].get("analysis_languages") or
+                          [incremental["parent_manifest"]["analysis_language"]]) if supplement else detect_analysis_languages(repositories, detection_scope)
+    analysis_language = language_mode(analysis_languages)
     from pangea_agent.inventory.on_demand import requested_files, file_inventory, directory_overview
     expansion = deepcopy(incremental["parent_manifest"]["scope_expansion"]) if supplement else requested_files(repositories, requested_scope, analysis_language)
     if incremental and not supplement:
@@ -309,13 +320,17 @@ def prepare_source_first_inputs(state: PangeaState) -> PangeaState:
         for path in group.get("code_paths", [])
     ))
     inventory = file_inventory(frozen_repositories, expansion)
+    # Explicit context and changed files can introduce another language even
+    # when the parent's owned scope selected a single file.
+    analysis_languages = sorted({f["language"] for f in inventory["files"] if f.get("language")}) or analysis_languages
+    analysis_language = language_mode(analysis_languages)
     # Coverage matching needs symbols only when actual coverage records exist.
     # Pathless legacy coverage still needs global disambiguation.
     coverage_inventory = {"files": []}
     if assets["coverage_records"]:
         tool_keys = {(i["repo_id"], i["path"]) for i in expansion.get("context_files", []) if i.get("reason") == "test_tool_reference"}
         paths = [str(r.get("path", "")).replace("\\", "/") for r in assets["coverage_records"]]
-        scan = build_lua_inventory if analysis_language == "lua" else build_lightweight_inventory
+        scan = build_inventory
         for repo in frozen_repositories:
             selected = [f["path"] for f in inventory["files"] if f["repo_id"] == repo["repo_id"]
                         and (f["repo_id"], f["path"]) not in tool_keys
@@ -334,7 +349,7 @@ def prepare_source_first_inputs(state: PangeaState) -> PangeaState:
         incremental["examples"] if incremental else list(contract.get("test_case_examples", [])),
     )
 
-    compact_metadata = {"index_policy": "on-demand-v1", "file_count": inventory["file_count"],
+    compact_metadata = {"analysis_languages": analysis_languages, "index_policy": "on-demand-v1", "file_count": inventory["file_count"],
                         "directories": directory_overview(inventory),
                         "context_budget": expansion["context_budget"],
                         "usage": "目录是可检索范围，不是分析义务；按目标定位文件后查询结构，不逐项排除无关文件。"}
@@ -368,6 +383,9 @@ def prepare_source_first_inputs(state: PangeaState) -> PangeaState:
         "workflow_version": "source-first-v1",
         "analysis_profile": contract.get("analysis_profile"),
         "analysis_language": analysis_language,
+        "analysis_languages": analysis_languages,
+        "file_languages": [{"repo_id": f["repo_id"], "path": f["path"], "language": f["language"]}
+                           for f in inventory["files"] if f.get("language")],
         "repositories": frozen_repositories,
         "requested_scope": requested_scope,
         "source_scope": module_scope,
@@ -419,6 +437,7 @@ def prepare_source_first_inputs(state: PangeaState) -> PangeaState:
         "focus": list(contract.get("focus", [])),
         "analysis_settings": dict(contract.get("analysis_settings") or {}),
         "analysis_language": analysis_language,
+        "analysis_languages": analysis_languages,
         "repositories": frozen_repositories,
         "source_manifest_path": str(source_manifest_path),
         "source_index_path": str(source_first_index_path(state)),
@@ -712,10 +731,12 @@ def _make_analysis_actions(state: PangeaState, progress: WorkflowProgress, units
             manifest.get("scope_expansion", {}),
             allowed,
         )
+        unit_languages = scoped_languages(manifest, [*owned, *context, *context_files])
         rubric_names = _analysis_rubric_names(
             analysis_profile,
             plan_task.get("analysis_language", "c_cpp"),
             unit.get("methodology_ids", []),
+            analysis_languages=unit_languages,
         )
         task = {
             "format_version": "source-first-task-v1",
@@ -727,7 +748,8 @@ def _make_analysis_actions(state: PangeaState, progress: WorkflowProgress, units
             "target": state["task_contract"]["target"],
             "focus": list(state["task_contract"].get("focus", [])),
             "analysis_settings": dict(state["task_contract"].get("analysis_settings") or {}),
-            "analysis_language": plan_task.get("analysis_language", "c_cpp"),
+            "analysis_language": language_mode(unit_languages),
+            "analysis_languages": unit_languages,
             "unit_id": unit["unit_id"],
             "title": unit["title"],
             "purpose": unit["purpose"],
@@ -767,7 +789,7 @@ def _make_analysis_actions(state: PangeaState, progress: WorkflowProgress, units
         if scene:
             task["scenario"] = scene["id"]
             task["record_contracts"] = dict(scene.get("record_contracts", {}))
-            task["rubric_paths"] = scene_rubric_paths(run_directory(state), scene, "analysis", unit.get("methodology_ids", []), task["analysis_language"])
+            task["rubric_paths"] = scene_rubric_paths(run_directory(state), scene, "analysis", unit.get("methodology_ids", []), task["analysis_language"], task["analysis_languages"])
             task["inputs"] = [item for item in task["inputs"] if not item["input_id"].startswith("rubric_")]
             task["inputs"].extend(scene_task_inputs(run_directory(state), scene))
             task["inputs"].extend(_input(f"rubric_{'user_' if Path(path).parent.name == 'user' else ''}{Path(path).stem}", path, f"方法论 {Path(path).stem}") for path in task["rubric_paths"])
@@ -821,9 +843,10 @@ def _prepare_review(state: PangeaState, progress: WorkflowProgress) -> None:
     review_rubric_names = _analysis_rubric_names(
         analysis_profile,
         manifest.get("analysis_language", "c_cpp"),
+        analysis_languages=manifest.get("analysis_languages"),
     )
     if analysis_profile == "behavior-test-v1" and "behavior_test_review" in frozen_rubrics:
-        review_rubric_names = ["behavior_test_review"]
+        review_rubric_names = ["behavior_test_review", *[name for name in review_rubric_names if name != "behavior_test_generation"]]
     review_rubrics = [
         frozen_rubrics[name]
         for name in review_rubric_names
@@ -832,7 +855,7 @@ def _prepare_review(state: PangeaState, progress: WorkflowProgress) -> None:
     plan = read_json(run_directory(state) / "inputs" / "source-first-plan.json")
     if scene:
         review_rubrics = scene_rubric_paths(run_directory(state), scene, "review", [
-            name for unit in plan.get("units", []) for name in unit.get("methodology_ids", [])], manifest.get("analysis_language", "c_cpp"))
+            name for unit in plan.get("units", []) for name in unit.get("methodology_ids", [])], manifest.get("analysis_language", "c_cpp"), manifest.get("analysis_languages"))
     review_owned = _scope_paths(manifest.get("scope_expansion", {}), "code_paths")
     review_regions = []
     if plan.get("scope_policy") == "target-first-v1":
@@ -854,6 +877,7 @@ def _prepare_review(state: PangeaState, progress: WorkflowProgress) -> None:
         "focus": list(state["task_contract"].get("focus", [])),
         "analysis_settings": dict(state["task_contract"].get("analysis_settings") or {}),
         "analysis_language": manifest.get("analysis_language", "c_cpp"),
+        "analysis_languages": manifest.get("analysis_languages", [manifest.get("analysis_language", "c_cpp")]),
         "source_manifest_path": str(run_directory(state) / "inputs" / "source-manifest.json"),
         "source_index_path": str(source_first_index_path(state)),
         "allowed_paths": _all_scope_paths(manifest.get("scope_expansion", {})),

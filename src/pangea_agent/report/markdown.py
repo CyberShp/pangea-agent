@@ -257,7 +257,7 @@ def _contract_rows(state: Mapping[str, Any], contract: Mapping[str, Any]) -> lis
         ("运行编号", state.get("run_id") or contract.get("run_id")),
         ("分析对象", contract.get("target")),
         ("分析类型", MODE_LABELS.get(str(contract.get("mode")), contract.get("mode"))),
-        ("分析语言", {"c_cpp": "C/C++", "lua": "Lua"}.get(analysis_language, analysis_language)),
+        ("分析语言", {"c_cpp": "C/C++", "lua": "Lua", "python": "Python", "shell": "sh/Bash", "mixed": "多语言联合分析"}.get(analysis_language, analysis_language)),
         ("源码仓", contract.get("repositories") or contract.get("repository")),
         ("分析重点", contract.get("focus")),
         ("用户指定源码", contract.get("source_scope")),
@@ -354,7 +354,7 @@ def _quality_summary(state: Mapping[str, Any], incomplete: bool) -> str:
     analysis_language = (
         manifest.get("analysis_language") if isinstance(manifest, Mapping) else None
     )
-    source_label = {"c_cpp": "C/C++ 文件", "lua": "Lua 文件"}.get(
+    source_label = {"c_cpp": "C/C++ 文件", "lua": "Lua 文件", "python": "Python 文件", "shell": "sh/Bash 文件"}.get(
         analysis_language, "源码文件"
     )
     context_count = len(_items(expansion.get("context_files"))) if isinstance(expansion, Mapping) else 0

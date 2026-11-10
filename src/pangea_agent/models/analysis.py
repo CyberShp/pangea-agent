@@ -4,7 +4,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-AnalysisLanguage = Literal["c_cpp", "lua"]
+SourceLanguage = Literal["c_cpp", "lua", "python", "shell"]
+AnalysisLanguage = Literal["c_cpp", "lua", "python", "shell", "mixed"]
 
 
 class StrictModel(BaseModel):
@@ -68,6 +69,7 @@ class PlanningTask(StrictModel):
     target: str = Field(min_length=1)
     focus: list[str] = Field(default_factory=list)
     analysis_language: AnalysisLanguage = "c_cpp"
+    analysis_languages: list[SourceLanguage] = Field(default_factory=list)
     repositories: list[RepositoryRef] = Field(min_length=1)
     requested_scope: list[str] = Field(min_length=1)
     requested_context_scope: list[str] = Field(default_factory=list)
@@ -400,6 +402,7 @@ class AnalysisTask(StrictModel):
     run_id: str = Field(min_length=1)
     target: str = Field(min_length=1)
     analysis_language: AnalysisLanguage = "c_cpp"
+    analysis_languages: list[SourceLanguage] = Field(default_factory=list)
     unit: AnalysisUnit
     evidence_scope: EvidenceScopeContract | None = None
     repository: RepositoryRef
@@ -437,6 +440,7 @@ class IndependentReviewTask(StrictModel):
     run_id: str = Field(min_length=1)
     target: str = Field(min_length=1)
     analysis_language: AnalysisLanguage = "c_cpp"
+    analysis_languages: list[SourceLanguage] = Field(default_factory=list)
     repositories: list[RepositoryRef] = Field(min_length=1)
     evidence_scope_by_unit: dict[str, EvidenceScopeContract] = Field(default_factory=dict)
     unit_plan_path: str = Field(min_length=1)
@@ -542,6 +546,7 @@ class ComparisonReviewTask(StrictModel):
     run_id: str = Field(min_length=1)
     target: str = Field(min_length=1)
     analysis_language: AnalysisLanguage = "c_cpp"
+    analysis_languages: list[SourceLanguage] = Field(default_factory=list)
     evidence_scope_by_unit: dict[str, EvidenceScopeContract] = Field(default_factory=dict)
     unit_plan_path: str = Field(min_length=1)
     analysis_task_paths: dict[str, str] = Field(min_length=1)
@@ -571,6 +576,7 @@ class ClosureTask(StrictModel):
     run_id: str = Field(min_length=1)
     target: str = Field(min_length=1)
     analysis_language: AnalysisLanguage = "c_cpp"
+    analysis_languages: list[SourceLanguage] = Field(default_factory=list)
     unit: AnalysisUnit
     evidence_scope: EvidenceScopeContract | None = None
     repository: RepositoryRef

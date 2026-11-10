@@ -19,7 +19,9 @@ from pangea_agent.graph.workflow_store import (
 )
 from pangea_agent.graph.schema_contract import freeze_run_contracts
 from pangea_agent.inventory.scope_expander import expand_analysis_scope
-from pangea_agent.inventory.languages import detect_analysis_language
+from pangea_agent.inventory.languages import detect_analysis_languages, language_mode
+from pangea_agent.inventory.multilanguage import build_inventory
+from pangea_agent.inventory.on_demand import requested_files
 from pangea_agent.inventory.lua_scope_expander import expand_lua_analysis_scope
 from pangea_agent.inventory.lua_source_scanner import build_lua_inventory
 from pangea_agent.inventory.source_scanner import build_lightweight_inventory
@@ -150,6 +152,8 @@ def _compact_inventory(
         record = {
             "repo_id": item["repo_id"],
             "path": item["path"],
+            "language": item.get("language", analysis_language),
+            "imports": item.get("imports", []),
             "line_count": item.get("line_count", 0),
             "parse_complete": item.get("parse_complete", False),
             "functions": [
@@ -160,7 +164,7 @@ def _compact_inventory(
             "calls": item.get("calls", []),
             "resource_signals": item.get("resource_signals", []),
         }
-        if analysis_language == "lua":
+        if item.get("language", analysis_language) == "lua":
             record.update({
                 "requires": item.get("requires", []),
                 "module_exports": item.get("module_exports", []),
@@ -254,9 +258,12 @@ def prepare_inputs(state: PangeaState) -> PangeaState:
     )
     repositories = resolve_repositories_from_contract(contract, state["data_root"])
     requested_scope = list(contract.get("source_scope") or ["."])
-    analysis_language = detect_analysis_language(repositories, requested_scope)
+    analysis_languages = detect_analysis_languages(repositories, requested_scope)
+    analysis_language = language_mode(analysis_languages)
     if analysis_language == "lua":
         expansion = expand_lua_analysis_scope(repositories, requested_scope)
+    elif analysis_language != "c_cpp":
+        expansion = requested_files(repositories, requested_scope, analysis_language)
     else:
         expansion = expand_analysis_scope(
             repositories,
@@ -302,10 +309,7 @@ def prepare_inputs(state: PangeaState) -> PangeaState:
         for group in expansion.get("groups", [])
         for path in [*group.get("code_paths", []), *group.get("context_paths", [])]
     ]))
-    if analysis_language == "lua":
-        inventory = build_lua_inventory(frozen_repositories, inventory_scope)
-    else:
-        inventory = build_lightweight_inventory(frozen_repositories, inventory_scope)
+    inventory = build_inventory(frozen_repositories, inventory_scope)
     assets = analysis_asset_inputs(state["data_root"], contract.get("asset_ids"))
     coverage_match = match_coverage_records(assets["coverage_records"], inventory)
     zero_coverage = _coverage_for_owned_sources(
@@ -334,6 +338,8 @@ def prepare_inputs(state: PangeaState) -> PangeaState:
     write_json(inventory_path, inventory)
     write_json(source_manifest_path, {
         "analysis_language": analysis_language,
+        "analysis_languages": analysis_languages,
+        "file_languages": [{"repo_id": f["repo_id"], "path": f["path"], "language": f["language"]} for f in inventory["files"]],
         "repositories": frozen_repositories,
         "requested_scope": requested_scope,
         "source_scope": module_scope,
@@ -386,6 +392,7 @@ def prepare_inputs(state: PangeaState) -> PangeaState:
         target=contract["target"],
         focus=list(contract.get("focus", [])),
         analysis_language=analysis_language,
+        analysis_languages=analysis_languages,
         repositories=[RepositoryRef.model_validate(item) for item in frozen_repositories],
         requested_scope=requested_scope,
         requested_context_scope=[

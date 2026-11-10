@@ -53,7 +53,9 @@ def system_capabilities(data_root: str) -> dict:
             ],
         },
         "asset_operations": {"metadata": False, "restore": False, "revisions": False, "item_review": False, "preview": False, "list_filters": False},
-        "analysis_languages": ["c_cpp", "lua"],
+        "analysis_languages": ["c_cpp", "lua", "python", "shell"],
+        "mixed_language_analysis": True,
+        "shell_dialects": ["sh", "bash"],
         "asset_types": [
             "requirement",
             "design",

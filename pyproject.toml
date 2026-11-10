@@ -1,7 +1,7 @@
 [project]
 name = "pangea-agent"
 version = "0.1.0"
-description = "Evidence-driven C/C++ and Lua testing analysis workflow for coding agents"
+description = "Evidence-driven C/C++, Lua, Python and sh/Bash testing analysis workflow for coding agents"
 readme = "README.md"
 requires-python = ">=3.10,<3.13"
 dependencies = [
@@ -15,6 +15,7 @@ dependencies = [
   "tree-sitter-c>=0.23,<0.25",
   "tree-sitter-cpp>=0.23,<0.25",
   "tree-sitter-lua>=0.5,<0.6",
+  "tree-sitter-bash>=0.23,<0.26",
 ]
 
 [project.scripts]

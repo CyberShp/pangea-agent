@@ -105,7 +105,7 @@ def scene_task_inputs(run_dir: Path, spec: dict | None) -> list[dict]:
             ]]
 
 
-def scene_rubric_paths(run_dir: Path, spec: dict, role: str, selected: list[str], language: str | None = None) -> list[str]:
+def scene_rubric_paths(run_dir: Path, spec: dict, role: str, selected: list[str], language: str | None = None, languages: list[str] | None = None) -> list[str]:
     root = run_dir / "inputs" / "methodologies"
     available = {p.stem: p for p in (root / "builtin").glob("*.md")}
     manifest = read_json(root / "manifest.json")
@@ -114,7 +114,13 @@ def scene_rubric_paths(run_dir: Path, spec: dict, role: str, selected: list[str]
         path = Path(item["path"])
         path.resolve().relative_to(root.resolve())
         user[item["methodology_id"]] = path
-    required = [*spec[f"{role}_rubrics"], *spec.get("language_rubrics", {}).get(role, {}).get(language, [])]
+    required = list(spec[f"{role}_rubrics"])
+    for member in languages or [language]:
+        required.extend(spec.get("language_rubrics", {}).get(role, {}).get(member, []))
+        if role in {"analysis", "review"} and member in {"python", "shell"}:
+            required.append(f"{member}_analysis")
+    if role in {"analysis", "review"} and (language == "mixed" or len(languages or []) > 1):
+        required.append("mixed_analysis")
     missing = [name for name in required if name not in available or not available[name].is_file()]
     if missing:
         raise ValueError(f"冻结场景规则不可读取：{', '.join(missing)}")

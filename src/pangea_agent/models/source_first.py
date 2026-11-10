@@ -47,6 +47,7 @@ class SourceFileIndex(SourceFirstModel):
     repo_id: str = Field(min_length=1)
     path: str = Field(min_length=1)
     line_count: int = Field(ge=0)
+    language: str | None = None
     regions: list[SourceRegion] = Field(default_factory=list)
     parse_complete: bool = True
     scope_role: Literal["owned", "reference"] = "reference"
@@ -65,6 +66,7 @@ class SourceIndexFilePage(SourceFirstModel):
     repo_id: str = Field(min_length=1)
     path: str = Field(min_length=1)
     line_count: int = Field(ge=0)
+    language: str | None = None
     scope_role: Literal["owned", "reference"] = "reference"
     region_count: int = Field(default=0, ge=0)
     regions: list[SourceRegionSummary] = Field(default_factory=list)

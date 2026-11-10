@@ -73,6 +73,8 @@ def _ast(path, text):
 
 
 def scan_text(repo_id, path, text, *, language='c_cpp', detailed=False, defined_functions=()):
+    if language not in {'c_cpp', 'lua'}:
+        return [], 'raw_source_required'
     lines, signals, seen = text.splitlines(), [], set()
     functions, calls, arrays, exits, subscripts, shared = [], [], [], [], [], []
     mode = 'regex'
@@ -157,6 +159,7 @@ def scan_text(repo_id, path, text, *, language='c_cpp', detailed=False, defined_
 
 def generate_summary(run_dir, task, language):
     from pangea_agent.evidence_quotes import FrozenSourceResolver
+    from .languages import file_language
     resolver = FrozenSourceResolver(run_dir.parents[1], run_dir.name, task)
     files, skipped, used = [], [], 0
     for item in sorted(task['owned_scope_paths'], key=lambda x: (x['repo_id'], x['path'])):
@@ -168,7 +171,11 @@ def generate_summary(run_dir, task, language):
             continue
         used += size
         lines = resolver.lines(repo, path)
-        signals, _ = scan_text(repo, path, '\n'.join(lines), language=language)
+        detected = file_language(source)
+        if detected not in {'c_cpp', 'lua'}:
+            skipped.append({**item, 'reason': 'Read raw source using language rubric; C/Lua risk signals do not apply'})
+            continue
+        signals, _ = scan_text(repo, path, '\n'.join(lines), language=detected)
         counts = Counter(s['category'] for s in signals)
         tokens = {category: sorted({s['token'] for s in signals if s['category'] == category})[:12] for category in sorted(counts)}
         fields = sorted({m[1] for s in signals if s['category'] in {'acquire', 'release', 'lock', 'refcount'} for m in FIELD.finditer(lines[s['line']-1])})[:20]
@@ -180,6 +187,7 @@ def generate_summary(run_dir, task, language):
 
 def generate_unit(run_dir, task, key):
     from pangea_agent.evidence_quotes import FrozenSourceResolver
+    from .languages import file_language
     resolver = FrozenSourceResolver(run_dir.parents[1], run_dir.name, task)
     selections = defaultdict(list)
     for role, group in (('owned', task.get('owned_regions', [])), ('context', task.get('context_regions', [])), ('context', task.get('context_files', []))):
@@ -189,7 +197,7 @@ def generate_unit(run_dir, task, key):
     texts = {(repo, path): '\n'.join(resolver.lines(repo, path)) for repo, path in sorted(selections)}
     defined_functions = {m[1] for text in texts.values() for m in re.finditer(r'\b([A-Za-z_]\w*)\s*\([^;{}]*\)\s*\{', text) if m[1] not in {'if', 'for', 'while', 'switch'}}
     for (repo, path), ranges in sorted(selections.items()):
-        signals, parser = scan_text(repo, path, texts[(repo, path)], language=task.get('analysis_language', 'c_cpp'), detailed=True, defined_functions=defined_functions)
+        signals, parser = scan_text(repo, path, texts[(repo, path)], language=file_language(resolver.repositories[repo][0] / path), detailed=True, defined_functions=defined_functions)
         kept = []
         for s in signals:
             roles = [role for role, start, end in ranges if start <= s['line'] <= (end or 10**12)]
