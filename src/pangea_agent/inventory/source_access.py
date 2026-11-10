@@ -13,6 +13,7 @@ import json
 import re
 from pathlib import Path, PurePosixPath
 from typing import Any
+from . import repository_source
 
 from pangea_agent.agent_io import read_json
 from pangea_agent.graph.result_store import compact_items_page, compact_page_resume, source_text_page
@@ -189,7 +190,8 @@ def compact_task_view(task: dict[str, Any]) -> dict[str, Any]:
     identities = {"format_version", "task_type", "run_id", "action_id", "task_id", "unit_id",
                   "role", "stage", "review_stage", "review_mode", "version_set_id",
                   "result_path", "analysis_profile", "scenario", "execution_budget_ms", "record_contracts",
-                  "planning_policy", "planning_io_policy", "scope_policy"}
+                  "planning_policy", "planning_io_policy", "scope_policy",
+                  "source_investigation_policy", "source_investigation_instructions"}
     # Preserve small execution context before arbitrary metadata. Large values
     # still use the same bound paging contract, without semantic summarization.
     execution_context = ("analysis_settings", "target", "focus", "title", "purpose",
@@ -520,6 +522,9 @@ def source_index(
         raise SourceAccessError(f"未知 source_index view：{view}")
     if page_size < 1 or page_size > 200:
         raise SourceAccessError("page_size 必须在 1 到 200 之间")
+    if repository_source.enabled(task) and (repo_id is None or repo_id in repository_source.roots(run_dir, task)):
+        return repository_source.list_index(binding, run_dir, task, repo_id, path,
+                                            cursor, page_size, view, page_token, max_chars)
     manifest = _source_manifest(run_dir, task)
     allowed = _allowed_paths(task, manifest)
     index = _inventory_index(run_dir, task)
@@ -743,6 +748,8 @@ def source_read(
     allowed = _allowed_paths(task, manifest)
     index = _inventory_index(run_dir, task)
     candidate_region = None
+    if repository_source.enabled(task):
+        index = {**index, "files": [*index.get("files", []), *repository_source.supplemental_index(run_dir)]}
     if region_id:
         for item in index.get("files", []):
             for region in item.get("regions", []) if isinstance(item, dict) else []:
@@ -766,7 +773,9 @@ def source_read(
     if not path:
         raise SourceAccessError("source_read 需要 path 或 region_id")
     path = _normal_path(path)
-    if not _file_allowed(repo_id, path, allowed):
+    if repository_source.enabled(task) and not _file_allowed(repo_id, path, allowed):
+        repository_source.materialize(run_dir, task, repo_id, path, action_id)
+    elif not _file_allowed(repo_id, path, allowed):
         raise SourceAccessError(f"源码读取越出当前 task scope：{repo_id}:{path}")
     _, lines = _read_frozen_file(_repositories(run_dir, manifest), repo_id, path)
     start = 1 if line_start is None else int(line_start)
@@ -870,6 +879,9 @@ def source_search(
         raise SourceAccessError("source_search query 不能为空")
     if page_size < 1 or page_size > 500:
         raise SourceAccessError("page_size 必须在 1 到 500 之间")
+    if repository_source.enabled(task) and (repo_id is None or repo_id in repository_source.roots(run_dir, task)):
+        return repository_source.search(binding, run_dir, task, query, repo_id, path,
+                                        cursor, page_size, view, page_token, max_chars)
     manifest = _source_manifest(run_dir, task)
     allowed = _allowed_paths(task, manifest)
     if repo_id and repo_id not in {item[0] for item in allowed}:

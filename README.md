@@ -4,6 +4,20 @@
 
 Python 只负责确定性工作：文件发现、语言识别、源码结构解析、Coverage 匹配、状态、JSON 契约、聚合和报告。单元规划、源码理解和资料提取由当前客户端派发 Agent 完成。Python 不调用模型 API。
 
+## 仓内拓展调查
+
+新 source-first 合同可显式设置 `source_investigation_policy: "repository-local-v1"`。
+所选仓库是调查边界，`source_scope` 是起始范围；`source-index`、`source-search`、
+`source-read` 可沿调用关系调查同仓其他目录，不能进入未选仓库或通过符号链接越界。
+`allowed_paths`、单元主责和原始 source-index 仍限定初始分析责任，不因调查自动增加全仓分析任务。
+
+完整仓库位置冻结在 `inputs/source-investigation.json`。仅列文件名不复制代码；
+读取或返回搜索片段时，相关文件按需保存到 Run 的 `inputs/source/`，由
+`inputs/source-supplemental.json` 记录来源、字节数和 SHA-256。代码按静态输入处理，
+后续引用使用已保存副本，不引入刷新、多版本或 Reviewer 流程。
+定向补充继承父 Run 的策略、仓库位置和已保存证据，并校验继承字节；
+旧 Run 未声明此策略时继续使用原读取边界，不能在派生时静默扩大权限。
+
 ## 已有 Run 定向补充与文件变更分析
 
 已完成或已停止的 source-first Run 可以派生独立新 Run。定向补充沿用父 Run 冻结源码；

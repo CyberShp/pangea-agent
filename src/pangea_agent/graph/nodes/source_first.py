@@ -309,6 +309,8 @@ def prepare_source_first_inputs(state: PangeaState) -> PangeaState:
         )
 
     frozen_repositories = _freeze_sources(state, repositories, expansion, tool_reference_roots)
+    from pangea_agent.inventory.investigation_policy import freeze_investigation, attach_investigation
+    freeze_investigation(state, repositories, incremental)
     if not supplement:
         assert_scope_revision(contract, state["data_root"])
         if tool_preview is not None and not incremental:
@@ -474,6 +476,7 @@ def prepare_source_first_inputs(state: PangeaState) -> PangeaState:
             for f in sorted(summary["files"], key=lambda f: (-sum(f["counts"].values()), f["repo_id"], f["path"]))[:100]]
         write_json(compact_path, compact_metadata)
         task["inputs"].append(_input("risk_signal_summary", inputs / "risk-signal-summary.json", "风险检索线索"))
+    attach_investigation(run_dir, task)
     attach_incremental_inputs(run_dir, task)
     attach_flow_stability_input(state, task)
     _attach_test_tool_references(task, run_directory(state))
@@ -804,6 +807,8 @@ def _make_analysis_actions(state: PangeaState, progress: WorkflowProgress, units
             write_json(handoff_path, unit_handoff(planning_result, units, unit))
             task["planning_policy"] = plan_task["planning_policy"]
             task["inputs"].append(_input("planning_handoff", handoff_path, "规划交接：主责、相关证据与待核实边界；不是分析结论"))
+        from pangea_agent.inventory.investigation_policy import attach_investigation
+        attach_investigation(run_directory(state), task)
         attach_incremental_inputs(run_directory(state), task)
         attach_flow_stability_input(state, task)
         _attach_test_tool_references(task, run_directory(state))

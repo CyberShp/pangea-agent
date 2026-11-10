@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import hashlib
 import unicodedata
 from pathlib import Path
 
@@ -28,6 +29,17 @@ class FrozenSourceResolver:
         self.run_dir = _run_dir(data_root, run_id)
         manifest = _source_manifest(self.run_dir, task)
         self.allowed = _allowed_paths(task, manifest)
+        self.supplemental = {}
+        from pangea_agent.inventory.repository_source import enabled, roots, SUPPLEMENTAL, relative_path
+        if enabled(task):
+            from pangea_agent.agent_io import read_json
+            selected = roots(self.run_dir, task)
+            supplemental = self.run_dir / "inputs" / SUPPLEMENTAL
+            if supplemental.is_file():
+                self.supplemental = {(item["repo_id"], relative_path(item["path"])): item
+                                     for item in read_json(supplemental).get("files", [])
+                                     if item["repo_id"] in selected}
+                self.allowed.update(self.supplemental)
         self.repositories = _repositories(self.run_dir, manifest)
         self.cache = {}
 
@@ -37,7 +49,15 @@ class FrozenSourceResolver:
             raise ValueError(f'引文路径不在 task allowed_paths：{repo}:{path}')
         key = (repo, path)
         if key not in self.cache:
-            self.cache[key] = _read_frozen_file(self.repositories, repo, path)[1]
+            if key in self.supplemental:
+                from pangea_agent.inventory.repository_source import saved_path
+                content = saved_path(self.run_dir, repo, path).read_bytes()
+                item = self.supplemental[key]
+                if hashlib.sha256(content).hexdigest() != item.get("sha256") or len(content) != item.get("bytes"):
+                    raise ValueError(f"已保存补充源码损坏：{repo}:{path}")
+                self.cache[key] = content.decode("utf-8", errors="replace").splitlines()
+            else:
+                self.cache[key] = _read_frozen_file(self.repositories, repo, path)[1]
         return self.cache[key]
 
 

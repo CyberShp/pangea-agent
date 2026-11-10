@@ -34,6 +34,12 @@ def open_run(state: PangeaState) -> PangeaState:
     progress = load_progress(opened)
     if progress is not None and progress.run_id != run_id:
         raise ValueError("Run 进度身份与当前 run_id 不一致")
+    if progress is None and contract.get("incremental_request"):
+        from pangea_agent.documents.incremental import _run
+        parent = _run(data_root, contract["incremental_request"]["parent_run_id"])
+        parent_contract = read_json(parent / "inputs" / "task-contract.json")
+        if contract.get("source_investigation_policy") != parent_contract.get("source_investigation_policy"):
+            raise ValueError("增量分析必须沿用父 Run 的源码调查策略")
     if progress is None and not frozen_path.is_file():
         from pangea_agent.inventory.selected_directories import validate_new_selections
         validate_new_selections(contract, data_root)

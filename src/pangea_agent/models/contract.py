@@ -67,6 +67,7 @@ class TaskContract(BaseModel):
     # for old frozen contracts, which remain read-only compatible.
     workflow_version: Literal["legacy-v1", "source-first-v1"] | None = None
     analysis_profile: Literal["behavior-test-v1", "behavior-test-v2"] | None = None
+    source_investigation_policy: Literal["repository-local-v1"] | None = None
     runtime_commit: str | None = None
     runtime_provenance: dict | None = None
     incremental_request: IncrementalRequest | None = None
@@ -108,6 +109,8 @@ class TaskContract(BaseModel):
 
     @model_validator(mode="after")
     def validate_mode(self) -> "TaskContract":
+        if self.source_investigation_policy and self.workflow_version != "source-first-v1":
+            raise ValueError("仓内调查仅支持 source-first-v1")
         if self.test_tool_sources and self.workflow_version != "source-first-v1":
             raise ValueError("测试工具参考仅支持 source-first-v1 新 Run")
         if self.flow_baseline and (self.workflow_version != "source-first-v1" or self.analysis_profile != "behavior-test-v2"):
