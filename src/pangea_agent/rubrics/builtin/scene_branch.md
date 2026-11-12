@@ -63,3 +63,5 @@
 ```
 
 summary 说明已识别项的去向、组合/序列取舍及未知范围；计数用于导航，不是质量分数。不得宣称“找到所有未知遗漏”“100%业务覆盖”或把 variants 数量当作实测分支覆盖率。时间不足保留 missing/unresolved 及已有有效用例，不为清空缺口伪造设计。定向修正只更新受影响记录，保留稳定 item_id 和真实用例引用。
+
+覆盖项及关联用例遵守 scene_common_generation 的 BOUNDARY-ASSERTION：unresolved_dependencies 不只是登记，依赖缺口的 expected_behavior/reason 与用例判据都保留 open-question；已证实的局部事实不随之丢弃。

@@ -57,3 +57,9 @@ ACP 初始、原会话续接、压缩恢复及修复共用该冻结规则引用�
 分别记录初始、同 action 续接、上下文压缩和机械修复后的首次 test_case result-write 载荷与落盘版本。
 在 Analysis 首次交付时检查业务目标、具体参数、精确触发依据、逐步外部判据、恢复与准备度；合法公开 API/协议字段不得误删，
 工具不足不得虚构命令或伪 ready。保存首写版本作为验收对象，不能以事后修正结果替代。
+
+## 跨边界行为断言（Issue #7）
+
+新冻结 scene_common_generation 的 BOUNDARY-ASSERTION 由四场景 Analysis 必读，scene_flow 和 scene_branch 沿用同一责任；DSH 与 ACP 不另造客户端规则。repository-local-v1 只在所选仓库内按命令字/事件定位接收方，未知沿覆盖项、用例、流程与总结传播。使用现有说明字段，不增加 schema、语义门禁、Reviewer 或动态多版本。旧 Run 不回填。
+
+`python verification/boundary_assertion_loading.py` 验证四场景必读派发与新旧 Run 冻结隔离；原有 first_case_delivery、branch_behavior_contract 验证可写与续接合同。它们不证明模型会遵从。真实模型验收应使用未标答案的合成发送/接收代码：仓内接收方执行断链、接收方在 other 仓不可读、异步仅受理、反向事件四类路径，检查首写覆盖项、用例、流程、summary 是否引用相关证据并一致保留未知；不能用事后人工改写替代首次输出。
