@@ -1,6 +1,17 @@
 # 场景分析共同规则
 当前场景规则与本文件对同一事项规定不同时，以场景规则为准。
 
+## 用例关联打桩方案
+
+需要故障注入的用例，在已有源码分析基础上可随 `test_case.body` 保存 `instrumentation` 对象：
+`{points:[{id,repo_id,path,symbol,action,trigger,times,enable,disable,observe,cleanup,depends_on,exclusive_with}]}`。
+path、symbol 引用真实已读源码；action 说明模拟的故障，trigger/times 说明对象、阶段和次数，
+observe 说明如何确认实际命中。已有设施才能填写实际启停命令；需新增的控制入口明确标为待实现。
+只记录已发现的依赖或互斥，不要求全仓组合分析。一个用例可以关联多个桩点，不同用例可复用桩点。
+业务步骤保留测试人员操作，内部位置和注入细节放此对象。注入只制造原因，保留被验证的错误处理。
+本轮分析不改源码、不生成补丁、不推送；用户在用例页面启动独立打桩任务后再生成实际修改。
+已有用例和无需打桩的用例不要求该字段，不增加用例提交门禁，不因候选方案存在就将 needs_instrumentation 改为 ready。
+
 仅用于 behavior-test-v2。先读 analysis_scene；按 scene_flow 先保存模块结构化业务流程，再开展当前场景工作。
 用户文档和方法论通过 input-read 按需读取，不把全仓清单或所有资料全文写入提示。
 
