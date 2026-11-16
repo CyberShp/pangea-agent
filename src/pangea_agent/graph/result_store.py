@@ -57,7 +57,27 @@ def _check_test_case_records(records: list, record_contracts: dict[str, str] | N
         raise ResultStoreError(format_test_case_errors(errors))
 
 
-def _check_record_contract(
+def _check_record_contract(offset, kind, body, record_contracts, context=None):
+    from pangea_agent.readiness_diagnostics import READINESS_CONTRACT, readiness_diagnostics
+    from pangea_agent.source_fact_diagnostics import SOURCE_FACT_CONTRACT, source_fact_diagnostics, DeferredSourceResolver
+    from pangea_agent.risk_falsifier import FALSIFIER_CONTRACT, falsifier_diagnostics
+    warnings = _check_existing_record_contract(offset, kind, body, record_contracts, context)
+    contracts = record_contracts or {}
+    if kind == "test_case" and contracts.get("readiness") == READINESS_CONTRACT:
+        warnings.extend({"record_index": offset, **item} for item in readiness_diagnostics(body))
+    if kind in {"risk", "test_case", "flow"} and contracts.get("source_facts") == SOURCE_FACT_CONTRACT:
+        if context is None:
+            warnings.append({"record_index": offset, "kind": "source_fact_hint", "code": "context_unavailable",
+                             "field": "body.source_evidence", "message": "冻结源码上下文不可用，核对未完成；原文保留。"})
+        else:
+            warnings.extend({"record_index": offset, **item} for item in source_fact_diagnostics(body, DeferredSourceResolver(context)))
+    if kind == "risk" and contracts.get("risk_falsifier") == FALSIFIER_CONTRACT:
+        resolver = DeferredSourceResolver(context) if context is not None else None
+        warnings.extend({"record_index": offset, **item} for item in falsifier_diagnostics(body, resolver))
+    return warnings
+
+
+def _check_existing_record_contract(
     offset: int, kind: Any, body: Any, record_contracts: dict[str, str] | None,
     context: ContractContext | None = None,
 ) -> list[dict]:
@@ -294,7 +314,7 @@ def active_diagram_diagnostics(result: NotesResult) -> list[dict[str, Any]]:
 _RECORD_WARNING_KINDS = {
     "flow_path_hint", "risk_contract_hint", "planning_contract_hint", "check_contract_hint",
     "review_check_contract_hint", "review_check_reference_hint", "evidence_quote_mismatch",
-    "diagram_format_diagnostic", "coverage_reference_hint",
+    "diagram_format_diagnostic", "coverage_reference_hint", "readiness_hint", "source_fact_hint", "risk_falsifier_hint",
 }
 
 
@@ -382,7 +402,7 @@ def _bound_warnings(warnings: list[dict], path: Path, binding: SourceBinding,
              **({"revision": revision, "record_revision": revision,
                  "result_path": str(path.resolve()), "data_root": binding.data_root, "run_id": binding.run_id,
                  "action_id": binding.action_id, "task_id": binding.task_id}
-                if warning.get("kind") == "diagram_format_diagnostic" else {})}
+                if warning.get("kind") in {"diagram_format_diagnostic", "readiness_hint", "source_fact_hint", "risk_falsifier_hint"} else {})}
             for warning in warnings]
 
 

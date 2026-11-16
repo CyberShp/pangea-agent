@@ -1021,6 +1021,12 @@ def _behavior_markdown(
             lines_out.extend(["", "</details>", ""])
         return lines_out
 
+    if scene and scene.get("record_contracts", {}).get("boundary_reconciliation") == "interface-boundary-reconciliation-v1":
+        from pangea_agent.boundary_reconciliation import reconcile_boundaries
+        reconciliation = reconcile_boundaries(delivery)
+        lines.extend(["## 跨单元接口声明对账", "",
+                      "以下仅核对显式接口与错误码集合。差异交回原单元核查前置条件，不等同于已确认缺陷；缺记录保持待确认。", "",
+                      _body_text(reconciliation), ""])
     lines.extend(diagram_diagnostic_markdown(delivery))
     lines.extend(flow_section_markdown(
         [

@@ -55,6 +55,9 @@ def scene_spec(scenario: str) -> dict:
     for language in ("c_cpp", "lua"):
         analysis_languages.setdefault(language, []).append(f"{language}_business_semantics")
     spec["record_contracts"]["sequence_review"] = "sequence-path-review-v1"
+    spec["record_contracts"].update(readiness="instrumentation-readiness-v1", source_facts="source-facts-v1",
+                                    risk_falsifier="high-risk-caller-falsifier-v1",
+                                    boundary_reconciliation="interface-boundary-reconciliation-v1")
     return spec
 
 

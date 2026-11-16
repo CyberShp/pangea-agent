@@ -332,3 +332,27 @@ purpose 表达主要设计目的，coverage_refs 表达与本次真实缺口的�
 interface_contract 只用于有依据的公开接口契约验证；内部 helper 并不因可调用就成为公开接口。若本单元候选用例集中为 call 某函数、检查返回值，先从调用方追到产品 CLI/RPC/配置/服务入口，改写实际触发步骤、外部预期与清理，而不是只改 test_level 或翻译标题。确实只有开发测试桩可执行的内容按真实边界保留辅助分类，说明缺少的业务触发手段。
 
 保存 flow 时逐项对照本文件 behavior-flow-v1 示例：节点键是 id、kind、label、description，连线使用 source_step_key、target_step_key、condition；paths.node_ids 引用已有节点。不使用 node_id/name 或中文机器字段替换正式合同。发现偏差，只替换当前 unit 的受影响记录并保留稳定 ID、用例关联及其他正确记录；不得重做其他 unit。
+
+## 执行准备度与内部故障构造（instrumentation-readiness-v1）
+
+ready 仅用于已核实能通过公开 API 入参、合法配置和标准客户端命令稳定构造的场景。
+涉及内部函数返回错误、ENOMEM、网络/链路超时断连瞬态、内存/句柄耗尽、硬件/介质故障、
+锁竞争窗口等，若正常外部输入不能稳定命中，必须标 needs_instrumentation；不能以“模拟”二字替代设施。
+即便已有注入工具，内部故障构造仍标 needs_instrumentation，并在 readiness_reason 说明设施已具备。
+入口、条件或预期尚不能确认时保留 unknown，不能为了二分掩盖未知。
+能定位源码时填写 instrumentation.points 的 repo_id/path/symbol/action/observe，未定位时明确缺口，禁止猜造符号。
+新合同的 readiness_hint/source_fact_hint 是精确核对提示：原 worker 在当前回合局部修正并保留有效内容；
+关键词可能命中否定句或示例，必须读上下文，不因提示自动改写、另开 worker、重做分析或宣称审核通过。
+
+
+### HIGH-RISK-CALLER-FALSIFIER-V1（仅新冻结合同）
+
+当 `record_contracts.risk_falsifier=high-risk-caller-falsifier-v1` 时，每条 risk 显式声明 `severity=Low/Medium/High/Critical/Unknown`，由作者依据后果和触发条件定级；Unknown 表示等级未确定，不推断为低危。原 Analysis worker 对自己显式声明为 High/Critical 的每条风险，在当前任务内执行一次窄域 Caller 取证：从触发点向上游追溯最多两层，查前置参数校验、状态门禁、互斥、重试是否阻断完整触发条件。只读当前冻结源码，不开 Reviewer，不重写其他单元或无关用例，不启动 targeted_closure，也不循环重试本轮反证。
+
+在该 risk 的 `upstream_falsification` 保存：`format_version`（上述合同名）、`initial_severity`（原等级）、`depth`（实际 0/1/2）、`outcome`（counterevidence_found/no_counterevidence/unresolved）、`reason`、`source_evidence`、`evidence_quotes`（ref 与 snippet，逐字引文），并在 reason 中写明所查 Caller、调用边与阻断条件。证据不足/Caller 不在可读冻结范围时 depth=0、unresolved，保留原风险和等级，说明缺口。没有反证时提供已查上游证据并保留等级；有明确反证时仅降低等级或补 exclusion_condition，保存原等级；不成立的风险按现有显式 supersede 协议留下历史并转为 excluded check。Python 的提示不代表反证结论，也不替你定级。
+
+### INTERFACE-BOUNDARY-RECONCILIATION-V1（仅新冻结合同）
+
+涉及跨单元调用或错误传播时，在相关 risk/test_case/flow 的 `interface_assumptions` 数组记录所引用接口的准确 `repo_id`、`path`、`symbol`，声明角色 `role=producer/consumer`、`error_codes`（字符串数组）和 `source_evidence`。接口标识必须是被调接口本身，不能用调用方的名称替代。只记录源码支持的条目；不知道归属、条件或返回集合时明确记录证据缺口，不补造。
+
+汇总仅比较同一显式接口的跨单元生产/消费声明以及 risk_refs、flow_refs、linked_test_case_ids 的 ID 闭合。集合差异可能来自条件不同，不自动判为缺陷。原单元核查对应调用条件后局部修正自己的记录；没有声明时报告 evidence_pending，不宣称边界审核通过。
