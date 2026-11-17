@@ -1,6 +1,8 @@
 """Freeze the explicit selected-repository read boundary, separately from ownership."""
 from __future__ import annotations
 
+from pangea_agent.fs_paths import long_path, resolve_path
+
 import hashlib
 from pathlib import Path, PurePosixPath
 
@@ -20,8 +22,8 @@ INSTRUCTIONS = (
 
 
 def _inside(root: Path, path: Path) -> Path:
-    resolved = path.resolve()
-    if not resolved.is_relative_to(root.resolve()):
+    resolved = resolve_path(path)
+    if not resolved.is_relative_to(resolve_path(root)):
         raise ValueError(f"源码调查路径越过边界：{path}")
     return resolved
 
@@ -30,7 +32,7 @@ def freeze_investigation(state: dict, repositories: list[dict], incremental: dic
     contract = state["task_contract"]
     if contract.get("source_investigation_policy") != POLICY:
         return
-    run = run_directory(state).resolve()
+    run = resolve_path(run_directory(state))
     selected = set(contract.get("repositories") or [contract.get("repository")])
     roots = repositories
     parent = None
@@ -53,7 +55,7 @@ def freeze_investigation(state: dict, repositories: list[dict], incremental: dic
     if {r["repo_id"] for r in roots} != selected:
         raise ValueError("源码调查根与本次选中代码仓不一致")
     payload = {"policy": POLICY, "repositories": [
-        {"repo_id": r["repo_id"], "source_root": str(Path(r["source_root"]).resolve())}
+        {"repo_id": r["repo_id"], "source_root": str(resolve_path(Path(r["source_root"])))}
         for r in roots
     ]}
     write_json(run / "inputs/source-investigation.json", payload)
@@ -63,7 +65,7 @@ def freeze_investigation(state: dict, repositories: list[dict], incremental: dic
 
 def _inherit_supplemental(parent: Path, run: Path, selected: set[str]) -> None:
     manifest_path = _inside(parent, parent / "inputs/source-supplemental.json")
-    if not manifest_path.is_file():
+    if not long_path(manifest_path).is_file():
         return
     manifest = read_json(manifest_path)
     if manifest.get("format_version") != "pangea-source-supplemental-v1":
@@ -81,12 +83,12 @@ def _inherit_supplemental(parent: Path, run: Path, selected: set[str]) -> None:
         # Validate precisely the bytes being inherited, not a second read of
         # the parent path after validation. Never attach a manifest to differing
         # bytes already frozen in the child Run.
-        content = source.read_bytes()
+        content = long_path(source).read_bytes()
         if (type(item.get("bytes")) is not int or item["bytes"] != len(content)
                 or item.get("sha256") != hashlib.sha256(content).hexdigest()):
             raise ValueError(f"父 Run 补充源码完整性校验失败：{repo}/{relative}")
-        if target.exists():
-            if target.read_bytes() != content:
+        if long_path(target).exists():
+            if long_path(target).read_bytes() != content:
                 raise ValueError(f"子 Run 已保存源码与继承证据不一致：{repo}/{relative}")
         else:
             from .repository_source import atomic_bytes

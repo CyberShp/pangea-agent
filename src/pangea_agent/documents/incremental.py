@@ -5,6 +5,8 @@ Planning and Review retain responsibility for semantic impact and applicability.
 """
 from __future__ import annotations
 
+from pangea_agent.fs_paths import long_path, resolve_path, glob_paths
+
 import base64
 import difflib
 import hashlib
@@ -19,8 +21,8 @@ from pangea_agent.models.contract import IncrementalRequest
 
 
 def _inside(root: Path, path: str | Path) -> Path:
-    path = Path(path).resolve()
-    if not path.is_relative_to(root.resolve()):
+    path = resolve_path(Path(path))
+    if not path.is_relative_to(resolve_path(root)):
         raise ValueError(f"增量分析输入越过 Run 边界：{path}")
     return path
 
@@ -28,9 +30,9 @@ def _inside(root: Path, path: str | Path) -> Path:
 def _run(data_root: str, run_id: str) -> Path:
     if not run_id or run_id in {".", ".."} or any(c in run_id for c in "/\\"):
         raise ValueError("parent_run_id 必须是明确 Run ID，不能包含路径分隔符")
-    root = (Path(data_root) / "runs").resolve()
+    root = resolve_path(Path(data_root) / "runs")
     path = _inside(root, root / run_id)
-    if path.parent != root or not path.is_dir():
+    if path.parent != root or not long_path(path).is_dir():
         raise ValueError(f"父 Run 不存在：{run_id}")
     return path
 
@@ -46,7 +48,7 @@ def _source_files(run: Path, manifest: dict) -> dict[tuple[str, str], Path]:
         for relative in dict.fromkeys([*group.get("code_paths", []), *group.get("context_paths", [])]):
             repo = group["repo_id"]
             path = _inside(roots[repo], roots[repo] / relative)
-            if not path.is_file():
+            if not long_path(path).is_file():
                 raise ValueError(f"父 Run 源码快照缺失：{repo}:{relative}")
             files[repo, relative] = path
     return files
@@ -75,7 +77,7 @@ def _parent(data_root: str, run_id: str):
         result_path = _inside(run, task["result_path"])
         result = read_result(result_path)
         if (result.binding.run_id != run_id or result.binding.action_id != action_id
-                or Path(result.binding.data_root).resolve() != Path(data_root).resolve()
+                or resolve_path(Path(result.binding.data_root)) != resolve_path(Path(data_root))
                 or (action.get("task_id") and result.binding.task_id != action["task_id"])):
             raise ValueError(f"父 Run 结果身份绑定不一致：{action_id}")
         expected = action.get("delivery_revision") if action.get("delivery_revision") is not None else progress.get("accepted_revisions", {}).get(action_id)
@@ -147,7 +149,7 @@ def prepare_incremental(state: dict) -> dict | None:
     if request["parent_run_id"] == state["run_id"]:
         raise ValueError("增量分析必须新建独立 Run，不能复用父 Run ID")
     parent, contract, progress, manifest, sources, plan, entries = _parent(state["data_root"], request["parent_run_id"])
-    child = run_directory(state).resolve()
+    child = resolve_path(run_directory(state))
     repo_ids = set(contract.get("repositories") or [contract.get("repository")])
     current_repos = set(state["task_contract"].get("repositories") or [state["task_contract"].get("repository")])
     if repo_ids != current_repos:
@@ -160,7 +162,7 @@ def prepare_incremental(state: dict) -> dict | None:
     if any((r["action_id"], r["record_id"]) not in addresses for r in request["selected_records"]):
         raise ValueError("选中的记录不属于父 Run 可复用结果；请刷新候选记录")
     root = child / "inputs" / "incremental"
-    root.mkdir(parents=True, exist_ok=True)
+    long_path(root).mkdir(parents=True, exist_ok=True)
     write_json(root / "request.json", request)
     write_json(root / "parent-contract.json", contract)
     write_json(root / "parent-plan.json", plan)
@@ -177,25 +179,25 @@ def prepare_incremental(state: dict) -> dict | None:
                            "input_id": "incremental_parent_records", "chars": len(text),
                            "cursor": base64.urlsafe_b64encode(str(offset).encode("ascii")).decode("ascii").rstrip("=")})
         offset += len(text)
-    (root / "parent-records.jsonl").write_text("".join(reference_text), encoding="utf-8")
-    baseline_files = [{"repo_id": repo, "path": relative, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+    (long_path(root / "parent-records.jsonl")).write_text("".join(reference_text), encoding="utf-8")
+    baseline_files = [{"repo_id": repo, "path": relative, "sha256": hashlib.sha256(long_path(path).read_bytes()).hexdigest()}
                       for (repo, relative), path in sorted(sources.items())]
     # Freeze asset material as reference even in changed-files mode; never refresh
     # it during resume or relabel historical coverage as a new measurement.
     for name in ("asset-candidates.json", "asset-items.json", "coverage-gaps.json", "coverage-diagnostics.json",
                  "asset-snapshots.json", "coverage-match-summary.json"):
         path = _inside(parent, parent / "inputs" / name)
-        if path.is_file():
-            shutil.copyfile(path, root / name)
+        if long_path(path).is_file():
+            shutil.copyfile(long_path(path), long_path(root / name))
     examples = []
     for index, raw_path in enumerate(_json(parent, "inputs/test-case-examples.json")):
         source = _inside(parent, raw_path)
         target = root / "examples" / f"{index:04d}-{source.name}"
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(source, target)
+        long_path(target.parent).mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(long_path(source), long_path(target))
         examples.append(str(target))
-    previous_rules = {p.name: hashlib.sha256(_inside(parent, p).read_bytes()).hexdigest()
-                      for p in (parent / "inputs/methodologies/builtin").glob("*.md")}
+    previous_rules = {p.name: hashlib.sha256(long_path(_inside(parent, p)).read_bytes()).hexdigest()
+                      for p in glob_paths(parent / "inputs/methodologies/builtin", "*.md")}
     metadata = {"parent_run_id": request["parent_run_id"], "mode": request["mode"],
                 "parent_lifecycle_status": progress.get("lifecycle_status"), "parent_quality_status": progress.get("quality_status"),
                 "source_policy": "parent-frozen" if request["mode"] == "supplement" else "current-working-tree",
@@ -208,7 +210,7 @@ def prepare_incremental(state: dict) -> dict | None:
     for index, key in enumerate(changed, 1):
         if key in sources:
             target = root / f"before-{index:04d}.txt"
-            shutil.copyfile(sources[key], target)
+            shutil.copyfile(long_path(sources[key]), long_path(target))
     return {"root": root, "request": request, "repositories": manifest["repositories"],
             "parent_manifest": manifest, "changed_keys": changed, "examples": examples, "metadata": metadata}
 
@@ -217,7 +219,7 @@ def incremental_assets(context: dict) -> dict:
     root = context["root"]
     def optional(name, default):
         path = root / name
-        return read_json(path) if path.is_file() else default
+        return read_json(path) if long_path(path).is_file() else default
     return {"candidates": optional("asset-candidates.json", []), "items": optional("asset-items.json", {}),
             "coverage_records": [], "coverage_diagnostics": optional("coverage-diagnostics.json", []),
             "snapshots": optional("asset-snapshots.json", [])}
@@ -232,21 +234,21 @@ def finish_incremental(context: dict | None, run_dir: Path, manifest: dict) -> N
     for index, (repo, relative) in enumerate(context["changed_keys"], 1):
         path = current.get((repo, relative))
         before = baseline.get((repo, relative))
-        after = hashlib.sha256(path.read_bytes()).hexdigest() if path else None
+        after = hashlib.sha256(long_path(path).read_bytes()).hexdigest() if path else None
         status = ("unchanged" if before and before == after else "modified" if before and after
                   else "deleted" if before else "baseline-missing" if after else "missing-both")
         entry = {"repo_id": repo, "path": relative, "status": status, "before_sha256": before,
                  "after_sha256": after, "baseline_input_id": f"baseline_source_{index:04d}" if before else None}
         before_path = context["root"] / f"before-{index:04d}.txt"
-        previous = before_path.read_text(encoding="utf-8", errors="replace") if before_path.is_file() else ""
-        following = path.read_text(encoding="utf-8", errors="replace") if path else ""
+        previous = long_path(before_path).read_text(encoding="utf-8", errors="replace") if long_path(before_path).is_file() else ""
+        following = long_path(path).read_text(encoding="utf-8", errors="replace") if path else ""
         diff_path = context["root"] / f"diff-{index:04d}.txt"
-        diff_path.write_text("".join(difflib.unified_diff(previous.splitlines(keepends=True), following.splitlines(keepends=True),
+        long_path(diff_path).write_text("".join(difflib.unified_diff(previous.splitlines(keepends=True), following.splitlines(keepends=True),
                                                        fromfile=f"parent/{repo}/{relative}", tofile=f"current/{repo}/{relative}")), encoding="utf-8")
         entry["diff_input_id"] = f"source_diff_{index:04d}"
         changes.append(entry)
-    current_rules = {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
-                     for p in (run_dir / "inputs/methodologies/builtin").glob("*.md")}
+    current_rules = {p.name: hashlib.sha256(long_path(p).read_bytes()).hexdigest()
+                     for p in glob_paths(run_dir / "inputs/methodologies/builtin", "*.md")}
     write_json(context["root"] / "changes.json", {
         "changed_files": changes, "rules_changed": current_rules != context["metadata"]["rule_hashes"],
         "applicability": "requires_agent_revalidation",
@@ -255,13 +257,13 @@ def finish_incremental(context: dict | None, run_dir: Path, manifest: dict) -> N
 
 def attach_incremental_inputs(run_dir: Path, task: dict) -> None:
     root = run_dir / "inputs" / "incremental"
-    if not (root / "request.json").is_file():
+    if not (long_path(root / "request.json")).is_file():
         return
     request = read_json(root / "request.json")
     task["incremental_request"] = request
     # New stable-flow Runs preserve blind review isolation from prior semantic
     # results too. Old frozen tasks retain their original input contract.
-    if task.get("review_stage") == "independent_review" and (run_dir / "inputs/flow-stability.json").is_file():
+    if task.get("review_stage") == "independent_review" and (long_path(run_dir / "inputs/flow-stability.json")).is_file():
         # The user's current objective remains visible, but historical plans,
         # records and flow conclusions are withheld until comparison.
         task.setdefault("inputs", []).append({"input_id": "incremental_request", "path": str(root / "request.json"),
@@ -278,10 +280,10 @@ def attach_incremental_inputs(run_dir: Path, task: dict) -> None:
     # initial analysis results. Standard independent review remains independent.
     for index, _ in enumerate(request["changed_paths"], 1):
         path = root / f"before-{index:04d}.txt"
-        if path.is_file():
+        if long_path(path).is_file():
             inputs.append((f"baseline_source_{index:04d}", path, "变更前源码，仅作历史证据"))
         diff_path = root / f"diff-{index:04d}.txt"
-        if diff_path.is_file():
+        if long_path(diff_path).is_file():
             inputs.append((f"source_diff_{index:04d}", diff_path, "指定文件字节差异；影响由 Agent 判定"))
     declared = {item.get("input_id") for item in task.get("inputs", [])}
     task.setdefault("inputs", []).extend({"input_id": key, "path": str(path), "label": label}

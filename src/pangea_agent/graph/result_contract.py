@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pangea_agent.fs_paths import long_path, resolve_path
+
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass
@@ -58,11 +60,11 @@ def source_evidence_excerpt_errors(
         source_root = source_roots.get(evidence.repo_id)
         if source_root is None:
             continue
-        root = Path(source_root).resolve()
-        source_path = (root / evidence.path.replace("\\", "/").strip("/")).resolve()
+        root = resolve_path(Path(source_root))
+        source_path = resolve_path(root / evidence.path.replace("\\", "/").strip("/"))
         try:
             source_path.relative_to(root)
-            lines = source_path.read_text(encoding="utf-8").splitlines()
+            lines = long_path(source_path).read_text(encoding="utf-8").splitlines()
         except (OSError, UnicodeError, ValueError):
             # Existing scope/input checks own unreadable or out-of-root paths.
             continue

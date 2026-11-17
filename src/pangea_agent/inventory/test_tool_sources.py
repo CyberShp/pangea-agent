@@ -1,9 +1,10 @@
 """Explicit text references: one resolver for preview and frozen read boundaries."""
 from __future__ import annotations
 
+from pangea_agent.fs_paths import walk_paths, long_path, resolve_path
+
 import hashlib
 import json
-import os
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from pydantic import TypeAdapter
@@ -39,22 +40,22 @@ def preview_test_tools(data_root: str, selections: list[dict], *, require_direct
     for repo_id, paths in sorted(grouped.items()):
         normalized.append({"repo_id": repo_id, "paths": sorted(paths)})
         repository = resolve_repositories_from_contract({"repository": repo_id}, data_root)[0]
-        root = Path(repository["source_root"]).resolve()
+        root = resolve_path(Path(repository["source_root"]))
         def checked(path):
-            if not path.resolve().is_relative_to(root):
+            if not resolve_path(path).is_relative_to(root):
                 raise ValueError(f"TEST_TOOL_PATH_INVALID: 工具路径越过仓库边界：{repo_id}:{path.relative_to(root)}")
             return path
         def unreadable(error):
             raise error
         for relative in sorted(paths):
             candidate = checked(root / relative)
-            if not candidate.exists():
+            if not long_path(candidate).exists():
                 raise ValueError(f"TEST_TOOL_FILE_MISSING: 工具路径不存在：{repo_id}:{relative}")
-            if not candidate.is_file() and not candidate.is_dir():
+            if not long_path(candidate).is_file() and not long_path(candidate).is_dir():
                 raise ValueError(f"TEST_TOOL_NOT_TEXT: 工具路径不是普通文件或目录：{repo_id}:{relative}")
-            candidates = [candidate] if candidate.is_file() else []
-            if candidate.is_dir():
-                for directory, directories, names in os.walk(candidate, onerror=unreadable):
+            candidates = [candidate] if long_path(candidate).is_file() else []
+            if long_path(candidate).is_dir():
+                for directory, directories, names in walk_paths(candidate, onerror=unreadable):
                     # Do not silently omit selected symlink trees from the preview.
                     for name in list(directories):
                         if name in {".git", ".hg", ".svn", "__pycache__"}:
@@ -63,21 +64,21 @@ def preview_test_tools(data_root: str, selections: list[dict], *, require_direct
                             directories.remove(name)
                             continue
                         child = checked(Path(directory) / name)
-                        if child.is_symlink():
+                        if long_path(child).is_symlink():
                             raise ValueError(f"TEST_TOOL_PATH_INVALID: 请直接选择实际目录，不支持符号链接目录：{repo_id}:{child.relative_to(root)}")
                     candidates.extend(checked(Path(directory) / name) for name in names)
             for file in candidates:
-                if not checked(file).is_file():
+                if not long_path(checked(file)).is_file():
                     key = (repo_id, file.relative_to(root).as_posix())
                     excluded[key] = {"repo_id": repo_id, "relative_path": key[1], "reason": "not_regular_file"}
                     continue
-                content = file.read_bytes()
+                content = long_path(file).read_bytes()
                 try:
                     content.decode("utf-8-sig")
                     if b"\0" in content:
                         raise UnicodeError("NUL byte")
                 except UnicodeError as exc:
-                    if candidate.is_dir():
+                    if long_path(candidate).is_dir():
                         key = (repo_id, file.relative_to(root).as_posix())
                         excluded[key] = {"repo_id": repo_id, "relative_path": key[1], "reason": "not_utf8_text"}
                         continue

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pangea_agent.fs_paths import long_path
+
 from collections import defaultdict
 import json
 from pathlib import Path
@@ -259,7 +261,7 @@ def _analysis_audit_targets(
                 relative_path = item.path.replace("\\", "/").strip("/")
                 source_path = Path(task.repository.source_root, relative_path)
                 try:
-                    lines = source_path.read_text(encoding="utf-8").splitlines()
+                    lines = long_path(source_path).read_text(encoding="utf-8").splitlines()
                 except (OSError, UnicodeError):
                     lines = []
                 line_end = item.line_end or item.line_start
@@ -1839,7 +1841,7 @@ def _accept_independent_review(state: PangeaState, progress, action) -> PangeaSt
 
 def _accept_comparison_review(state: PangeaState, progress, action) -> PangeaState:
     task_path = Path(action.task_path)
-    if not task_path.is_file():
+    if not long_path(task_path).is_file():
         task_path = comparison_review_task_path(state)
     comparison_task = ComparisonReviewTask.model_validate(
         read_json(task_path)
@@ -1870,7 +1872,7 @@ def _accept_comparison_review(state: PangeaState, progress, action) -> PangeaSta
 
     aggregate_path = comparison_review_aggregate_path(state)
     aggregate = None
-    if aggregate_path.is_file():
+    if long_path(aggregate_path).is_file():
         aggregate = ComparisonReviewResult.model_validate(read_json(aggregate_path))
     aggregate = _merge_comparison_results(aggregate, comparison)
     write_json(aggregate_path, aggregate.model_dump(mode="json"))

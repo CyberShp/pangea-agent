@@ -1,6 +1,8 @@
 """Bounded source clues. No defect classification and no eager structural index."""
 from __future__ import annotations
 
+from pangea_agent.fs_paths import long_path
+
 from collections import Counter, defaultdict
 import hashlib
 import re
@@ -165,7 +167,7 @@ def generate_summary(run_dir, task, language):
     for item in sorted(task['owned_scope_paths'], key=lambda x: (x['repo_id'], x['path'])):
         repo, path = item['repo_id'], item['path']
         source = resolver.repositories[repo][0] / path
-        size = source.stat().st_size
+        size = long_path(source).stat().st_size
         if used + size > 40*1024*1024:
             skipped.append(item)
             continue

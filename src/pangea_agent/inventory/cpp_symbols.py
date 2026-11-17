@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pangea_agent.fs_paths import long_path
+
 import re
 from pathlib import Path
 from typing import Any
@@ -51,7 +53,7 @@ def externally_callable_definitions(path: Path) -> set[str]:
             and not item.get("is_static", False)
         }
     except TreeSitterUnavailableError:
-        text = path.read_text(encoding="utf-8", errors="replace")
+        text = long_path(path).read_text(encoding="utf-8", errors="replace")
         return {
             match.group("name")
             for match in _CALLABLE_FALLBACK_RE.finditer(text)
@@ -140,7 +142,7 @@ def _function_is_static(node, source: bytes) -> bool:
 
 def parse_cpp_file(path: Path) -> dict:
     """Parse a C/C++ file and retain syntax and preprocessor evidence."""
-    source = path.read_bytes()
+    source = long_path(path).read_bytes()
     parser, grammar_package = _load_parser(path)
     tree = parser.parse(source)
     functions: list[dict] = []

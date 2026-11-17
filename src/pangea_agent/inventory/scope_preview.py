@@ -1,9 +1,10 @@
 """Read-only projection of the exact explicit source selection used by source-first."""
 from __future__ import annotations
 
+from pangea_agent.fs_paths import walk_paths, long_path, resolve_path
+
 import hashlib
 import json
-import os
 from pathlib import Path
 
 from .languages import C_CPP_SUFFIXES, LUA_SUFFIXES, IGNORED_PARTS, detect_analysis_languages, language_mode, file_language, PYTHON_SUFFIXES, SHELL_SUFFIXES
@@ -35,18 +36,18 @@ def preview_scope(data_root: str, repository: str, source_scope: list[str], *, r
     scopes = sorted(set(item.strip().replace("\\", "/") for item in source_scope))
     repositories = resolve_repositories_from_contract({"repository": repository}, data_root)
     for repo in repositories:
-        root = Path(repo["source_root"]).resolve()
+        root = resolve_path(Path(repo["source_root"]))
         for scope in scopes:
-            candidate = (root / scope).resolve()
+            candidate = resolve_path(root / scope)
             candidate.relative_to(root)
-            if not candidate.exists():
+            if not long_path(candidate).exists():
                 raise ValueError(f"源码范围不存在：{scope}")
-            if candidate.is_dir():
+            if long_path(candidate).is_dir():
                 # pathlib.rglob may omit unreadable subtrees. A preview must fail
                 # explicitly rather than presenting a partial file count as final.
                 def unreadable(error):
                     raise error
-                for _directory, directories, _files in os.walk(candidate, onerror=unreadable):
+                for _directory, directories, _files in walk_paths(candidate, onerror=unreadable):
                     directories[:] = [name for name in directories if name not in IGNORED_PARTS]
     try:
         languages = detect_analysis_languages(repositories, scopes)
@@ -64,9 +65,9 @@ def preview_scope(data_root: str, repository: str, source_scope: list[str], *, r
         for relative in group["code_paths"]:
             file = roots[group["repo_id"]] / relative
             # Validate accessibility now; never turn a read fault into zero hits.
-            with file.open("rb") as source:
+            with long_path(file).open("rb") as source:
                 source.read(1)
-            files.append({"relative_path": relative, "size_bytes": file.stat().st_size, "language": file_language(file)})
+            files.append({"relative_path": relative, "size_bytes": long_path(file).stat().st_size, "language": file_language(file)})
     return {"preview_state": "complete", "normalized_scope": scopes,
             "analysis_language": language, "analysis_languages": languages, "matched_file_count": len(files), "files": files,
             "rules_revision": RULES_REVISION,

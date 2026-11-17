@@ -6,6 +6,8 @@ the comparison reviewer. Missing identities remain visible as uncertainty.
 """
 from __future__ import annotations
 
+from pangea_agent.fs_paths import long_path, resolve_path, glob_paths
+
 from copy import deepcopy
 from hashlib import sha256
 import json
@@ -32,12 +34,12 @@ def _list(value: Any) -> list:
 
 
 def _file_hash(path: Path) -> str:
-    return sha256(path.read_bytes()).hexdigest()
+    return sha256(long_path(path).read_bytes()).hexdigest()
 
 
 def _inside(root: Path, path: Path) -> Path:
-    path = path.resolve()
-    if not path.is_relative_to(root.resolve()):
+    path = resolve_path(path)
+    if not path.is_relative_to(resolve_path(root)):
         raise ValueError(f"流程稳定性输入越过 Run 边界：{path}")
     return path
 
@@ -65,9 +67,9 @@ def freeze_flow_inputs(state: dict, manifest: dict, scene: dict | None) -> dict 
     """Called once while preparing a new Run; old frozen Runs are never upgraded."""
     if not scene or scene.get("flow_layout_version") != "stable-v1":
         return None
-    run = run_directory(state).resolve()
+    run = resolve_path(run_directory(state))
     path = run / "inputs/flow-stability.json"
-    if path.is_file():
+    if long_path(path).is_file():
         freeze_selected_baseline(state)
         return read_json(path)
     contract = state["task_contract"]
@@ -75,14 +77,14 @@ def freeze_flow_inputs(state: dict, manifest: dict, scene: dict | None) -> dict 
     sources = [{"repo_id": repo, "path": relative, "sha256": _file_hash(source)}
                for (repo, relative), source in sorted(_source_files(run, manifest).items())]
     assets_path = run / "inputs/asset-snapshots.json"
-    snapshots = read_json(assets_path) if assets_path.is_file() else []
+    snapshots = read_json(assets_path) if long_path(assets_path).is_file() else []
     assets = sorted([{"asset_id": item.get("asset_id"), "input_revision": item.get("input_revision"),
                       "content_sha256": _hash(item.get("result"))} for item in snapshots], key=_json)
     examples_path = run / "inputs/test-case-examples.json"
-    examples = sorted(_file_hash(_inside(run, Path(p))) for p in read_json(examples_path)) if examples_path.is_file() else []
+    examples = sorted(_file_hash(_inside(run, Path(p))) for p in read_json(examples_path)) if long_path(examples_path).is_file() else []
     rules_root = run / "inputs/methodologies"
     rules = [{"path": p.relative_to(rules_root).as_posix(), "sha256": _file_hash(_inside(run, p))}
-             for p in sorted(rules_root.rglob("*.md"))]
+             for p in sorted(glob_paths(rules_root, "*.md", recursive=True))]
     declared = ModelSettings.model_validate(contract.get("model_settings") or {}).model_dump(exclude_none=True)
     complete_model_metadata = (contract.get("model_id") and declared.get("provider")
                                and (declared.get("model_revision") or declared.get("system_fingerprint"))
@@ -113,9 +115,9 @@ def freeze_selected_baseline(state: dict) -> None:
     request = state["task_contract"].get("flow_baseline")
     if not request:
         return
-    run = run_directory(state).resolve()
+    run = resolve_path(run_directory(state))
     destination = run / "inputs/flow-baseline.json"
-    if destination.is_file():
+    if long_path(destination).is_file():
         previous = read_json(destination)
         _verify_baseline(previous, request)
         return
@@ -277,7 +279,7 @@ def publish_flow_baseline(state: dict, progress: dict, records: list[tuple[dict,
     run = run_directory(state)
     fingerprint = run / "inputs/flow-stability.json"
     baseline_path = run / "inputs/flow-baseline.json"
-    if fingerprint.is_file() and baseline_path.is_file() and progress.get("lifecycle_status") in {"complete", "stopped"}:
+    if long_path(fingerprint).is_file() and long_path(baseline_path).is_file() and progress.get("lifecycle_status") in {"complete", "stopped"}:
         # The Reviewer's frozen first-round comparison is not overwritten after
         # closure. Final delivery gets its own mechanical comparison artifact.
         baseline = read_json(baseline_path)
@@ -294,7 +296,7 @@ def publish_flow_baseline(state: dict, progress: dict, records: list[tuple[dict,
             "summary": {status: sum(d["status"] == status for d in diffs) for status in ("unchanged", "changed", "added", "removed", "unresolved")},
             "note": "交付修订的机械差异，不是新一轮语义审核；首轮 Reviewer 输入仍冻结于 inputs/flow-comparison.json。",
         })
-    if not fingerprint.is_file() or progress.get("lifecycle_status") != "complete" or progress.get("quality_status") != "PASS" or progress.get("partial_delivery"):
+    if not long_path(fingerprint).is_file() or progress.get("lifecycle_status") != "complete" or progress.get("quality_status") != "PASS" or progress.get("partial_delivery"):
         return None
     flows = _flow_records(records)
     if not flows:
@@ -306,7 +308,7 @@ def publish_flow_baseline(state: dict, progress: dict, records: list[tuple[dict,
         if (progress.get("accepted_revisions", {}).get(action["action_id"]) != result.revision
                 or result.binding.run_id != state["run_id"] or result.binding.action_id != action["action_id"]
                 or result.binding.task_id != action.get("task_id")
-                or Path(result.binding.data_root).resolve() != Path(state["data_root"]).resolve()):
+                or resolve_path(Path(result.binding.data_root)) != resolve_path(Path(state["data_root"]))):
             raise ValueError("流程基线不能发布：交付结果与已接受修订或身份绑定不一致")
     contract = state.get("task_contract") or read_json(run / "inputs/task-contract.json")
     payload = {"format_version": "flow-baseline-v1", "run_id": state["run_id"], "review_status": "PASS", "eligible": True,
@@ -327,7 +329,7 @@ def attach_flow_comparison(state: dict, task: dict) -> None:
     run = run_directory(state)
     baseline_path = run / "inputs/flow-baseline.json"
     fingerprint_path = run / "inputs/flow-stability.json"
-    if not baseline_path.is_file() or not fingerprint_path.is_file():
+    if not long_path(baseline_path).is_file() or not long_path(fingerprint_path).is_file():
         return
     baseline = read_json(baseline_path)
     _verify_baseline(baseline, state["task_contract"].get("flow_baseline") or {})
@@ -339,7 +341,7 @@ def attach_flow_comparison(state: dict, task: dict) -> None:
         result = read_result(_inside(run, Path(entry["result_path"])))
         if (result.revision != entry["revision"] or result.binding.run_id != state["run_id"]
                 or result.binding.action_id != entry["action_id"] or result.binding.task_id != entry["task_id"]
-                or Path(result.binding.data_root).resolve() != Path(state["data_root"]).resolve()):
+                or resolve_path(Path(result.binding.data_root)) != resolve_path(Path(state["data_root"]))):
             raise ValueError("流程对照的已接受结果版本或身份不一致")
         for record in active_records(result):
             if record.kind == "flow":
@@ -361,6 +363,6 @@ def attach_flow_comparison(state: dict, task: dict) -> None:
 
 def attach_flow_stability_input(state: dict, task: dict) -> None:
     path = run_directory(state) / "inputs/flow-stability.json"
-    if path.is_file():
+    if long_path(path).is_file():
         task.setdefault("inputs", []).append({"input_id": "flow_stability", "path": str(path),
                                                "label": "本次冻结输入指纹与已声明模型元数据"})

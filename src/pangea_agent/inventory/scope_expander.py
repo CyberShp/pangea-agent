@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pangea_agent.fs_paths import long_path, glob_paths
+
 import re
 from pathlib import Path, PurePosixPath
 
@@ -143,7 +145,7 @@ def expand_analysis_scope(repositories: list[dict], requested_scopes: list[str],
 
         for path in _iter_files(root, CONTEXT_SUFFIXES):
             relative = _relative(path, root)
-            text = path.read_text(encoding="utf-8", errors="replace")
+            text = long_path(path).read_text(encoding="utf-8", errors="replace")
             calls = set(_CALL_RE.findall(text)) & all_symbols
             group_index = _select_group(relative, calls, repo_groups, symbols_by_group)
             if calls:
@@ -236,7 +238,7 @@ def _transitive_caller_context(
     """Add bounded read-only caller context without changing source ownership."""
 
     texts = {
-        code_paths[path]: path.read_text(encoding="utf-8", errors="replace")
+        code_paths[path]: long_path(path).read_text(encoding="utf-8", errors="replace")
         for path in code_files
     }
     calls_by_path = {
@@ -322,8 +324,8 @@ def _transitive_caller_context(
 
 
 def _iter_files(root: Path, suffixes: set[str]):
-    for path in root.rglob("*"):
-        if path.is_file() and path.suffix.lower() in suffixes and not any(part in IGNORED_PARTS for part in path.relative_to(root).parts):
+    for path in glob_paths(root, "*", recursive=True):
+        if long_path(path).is_file() and path.suffix.lower() in suffixes and not any(part in IGNORED_PARTS for part in path.relative_to(root).parts):
             yield path
 
 
@@ -357,9 +359,9 @@ def _declared_symbols(scopes: list[str], root: Path) -> set[str]:
         if relative.suffix.lower() not in HEADER_SUFFIXES:
             continue
         header = root.joinpath(*relative.parts)
-        if not header.is_file():
+        if not long_path(header).is_file():
             continue
-        text = header.read_text(encoding="utf-8", errors="replace")
+        text = long_path(header).read_text(encoding="utf-8", errors="replace")
         declared.update(name for name in _DECL_RE.findall(text) if name not in COMMON_FUNCTIONS)
     return declared
 
@@ -371,7 +373,7 @@ def _definition_symbols_by_path(wanted: set[str], code_paths: dict[Path, str]) -
     for path, relative in code_paths.items():
         if path.suffix.lower() not in SOURCE_SUFFIXES:
             continue
-        text = path.read_text(encoding="utf-8", errors="replace")
+        text = long_path(path).read_text(encoding="utf-8", errors="replace")
         matched = wanted & set(_DEF_RE.findall(text))
         if matched:
             definitions[relative] = matched
@@ -381,11 +383,11 @@ def _definition_symbols_by_path(wanted: set[str], code_paths: dict[Path, str]) -
 def _called_source_definitions(paths, code_paths: dict[Path, str]) -> dict[str, set[str]]:
     """Resolve unique repository-local definitions for direct function calls."""
 
-    source_paths = [path for path in paths if path.is_file()]
+    source_paths = [path for path in paths if long_path(path).is_file()]
     called: set[str] = set()
     current = {code_paths[path] for path in source_paths if path in code_paths}
     for path in source_paths:
-        called.update(_CALL_RE.findall(path.read_text(encoding="utf-8", errors="replace")))
+        called.update(_CALL_RE.findall(long_path(path).read_text(encoding="utf-8", errors="replace")))
     definitions = _definition_symbols_by_path(called - COMMON_FUNCTIONS, code_paths)
     owners: dict[str, set[str]] = {}
     for relative, symbols in definitions.items():
@@ -419,7 +421,7 @@ def _function_pointer_implementation_index(code_paths: dict[Path, str]) -> dict[
     owners: dict[str, set[str]] = {}
     texts: dict[Path, str] = {}
     for path in code_paths:
-        text = path.read_text(encoding="utf-8", errors="replace")
+        text = long_path(path).read_text(encoding="utf-8", errors="replace")
         texts[path] = text
         for struct_name, body in _struct_bodies(text):
             for member in _FUNCTION_POINTER_RE.findall(body):
@@ -441,8 +443,8 @@ def _function_pointer_implementation_index(code_paths: dict[Path, str]) -> dict[
 def _called_function_pointer_implementations(paths, index: dict[str, set[str]]) -> dict[str, set[str]]:
     members: set[str] = set()
     for path in paths:
-        if path.is_file():
-            members.update(_MEMBER_CALL_RE.findall(path.read_text(encoding="utf-8", errors="replace")))
+        if long_path(path).is_file():
+            members.update(_MEMBER_CALL_RE.findall(long_path(path).read_text(encoding="utf-8", errors="replace")))
     implementations: dict[str, set[str]] = {}
     for member in members:
         for relative in index.get(member, set()):
@@ -454,9 +456,9 @@ def _called_inline_headers(paths, code_paths: dict[Path, str]) -> dict[str, set[
     by_relative = {relative: path for path, relative in code_paths.items()}
     dependencies: dict[str, set[str]] = {}
     for source_path in paths:
-        if not source_path.is_file():
+        if not long_path(source_path).is_file():
             continue
-        text = source_path.read_text(encoding="utf-8", errors="replace")
+        text = long_path(source_path).read_text(encoding="utf-8", errors="replace")
         calls = set(_CALL_RE.findall(text))
         source_relative = code_paths.get(source_path)
         if source_relative is None:
@@ -473,7 +475,7 @@ def _called_inline_headers(paths, code_paths: dict[Path, str]) -> dict[str, set[
             header_path = matches[0]
             header_relative = code_paths[header_path]
             inline_symbols = set(_INLINE_DEF_RE.findall(
-                header_path.read_text(encoding="utf-8", errors="replace")
+                long_path(header_path).read_text(encoding="utf-8", errors="replace")
             ))
             used = calls & inline_symbols
             if used:
@@ -505,7 +507,7 @@ def _merge_overlapping_groups(groups: list[dict]) -> list[dict]:
 def _exported_symbols(paths, domain_terms: tuple[str, ...]) -> set[str]:
     symbols: set[str] = set()
     for path in paths:
-        text = path.read_text(encoding="utf-8", errors="replace")
+        text = long_path(path).read_text(encoding="utf-8", errors="replace")
         if path.suffix.lower() in SOURCE_SUFFIXES:
             symbols.update(externally_callable_definitions(path))
         if path.suffix.lower() in HEADER_SUFFIXES:

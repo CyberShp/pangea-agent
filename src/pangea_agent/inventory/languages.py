@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pangea_agent.fs_paths import long_path, resolve_path, glob_paths
+
 from pathlib import Path
 import re
 import shlex
@@ -22,7 +24,7 @@ def file_language(path: Path) -> str | None:
     if suffix in LUA_SUFFIXES:
         return "lua"
     # Bound reads even for extensionless binaries and very long first lines.
-    with path.open("rb") as stream:
+    with long_path(path).open("rb") as stream:
         first = stream.readline(4096)
     if first.startswith(b"#!"):
         try:
@@ -56,18 +58,18 @@ def source_files(repositories: list[dict], scopes: list[str]):
     """Yield unique in-bound source files, retaining repository identity."""
     seen = set()
     for repository in repositories:
-        root = Path(repository["source_root"]).resolve()
+        root = resolve_path(Path(repository["source_root"]))
         for scope in scopes or ["."]:
             candidate = root / _normalize(scope)
-            _ensure_inside_repository(candidate.resolve(), root)
-            if not candidate.exists():
+            _ensure_inside_repository(resolve_path(candidate), root)
+            if not long_path(candidate).exists():
                 continue
-            paths = [candidate] if candidate.is_file() else candidate.rglob("*")
+            paths = [candidate] if long_path(candidate).is_file() else glob_paths(candidate, "*", recursive=True)
             for path in paths:
                 if _ignored(path, root):
                     continue
-                _ensure_inside_repository(path.resolve(), root)
-                if not path.is_file():
+                _ensure_inside_repository(resolve_path(path), root)
+                if not long_path(path).is_file():
                     continue
                 key = (repository["repo_id"], path.relative_to(root).as_posix())
                 if key in seen:

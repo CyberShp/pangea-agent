@@ -18,7 +18,7 @@ VERIFICATION = ROOT / "verification"
 BUILD_SCRIPTS = {
     "incremental_smoke.py", "observability_recovery.py", "test_case_contract.py",
     "branch_behavior_contract.py", "flow_stability.py", "report_delivery_smoke.py",
-    "asset_lifecycle.py",
+    "asset_lifecycle.py", "windows_long_paths.py",
 }
 BOOTSTRAP = """
 import json, runpy, sys

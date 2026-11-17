@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pangea_agent.fs_paths import long_path
+
 from pathlib import Path
 from typing import Any
 
@@ -115,7 +117,7 @@ def _function_symbol(node, source: bytes) -> str:
 
 
 def parse_lua_file(path: Path) -> dict:
-    source = path.read_bytes()
+    source = long_path(path).read_bytes()
     parser, grammar_package = _load_parser()
     tree = parser.parse(source)
     functions: list[dict] = []

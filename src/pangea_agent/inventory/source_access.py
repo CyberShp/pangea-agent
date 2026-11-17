@@ -8,6 +8,8 @@ history lookup, or fallback to a live working tree is performed here.
 
 from __future__ import annotations
 
+from pangea_agent.fs_paths import long_path, resolve_path
+
 import base64
 import json
 import re
@@ -105,13 +107,13 @@ def _run_state(data_root: str, run_id: str) -> dict[str, str]:
 
 
 def _run_dir(data_root: str, run_id: str) -> Path:
-    root = Path(data_root).resolve()
-    directory = (root / "runs" / _safe_identifier(run_id, "run_id")).resolve()
+    root = resolve_path(Path(data_root))
+    directory = resolve_path(root / "runs" / _safe_identifier(run_id, "run_id"))
     try:
         directory.relative_to(root / "runs")
     except ValueError as exc:
         raise SourceAccessError("Run 路径越过 data_root/runs 边界") from exc
-    if not directory.is_dir():
+    if not long_path(directory).is_dir():
         raise SourceAccessError(f"Run 不存在：{run_id}")
     return directory
 
@@ -125,12 +127,12 @@ def _task_payload(run_dir: Path, action_id: str) -> tuple[dict[str, Any], dict[s
     task_path = action.get("task_path")
     if not isinstance(task_path, str) or not task_path:
         raise SourceAccessError(f"Action 缺少 task_path：{action_id}")
-    task_file = Path(task_path).resolve()
+    task_file = resolve_path(Path(task_path))
     try:
         task_file.relative_to(run_dir)
     except ValueError as exc:
         raise SourceAccessError("task_path 越出当前 Run 数据边界") from exc
-    if not task_file.is_file():
+    if not long_path(task_file).is_file():
         raise SourceAccessError(f"Action task 不存在：{task_file}")
     task = read_json(task_file)
     if not isinstance(task, dict):
@@ -170,7 +172,7 @@ def resolve_binding(
     if task_action_id is not None and task_action_id != action_id:
         raise SourceAccessError("task.action_id 与当前 Action 不一致")
     binding = SourceBinding(
-        data_root=str(Path(data_root).resolve()),
+        data_root=str(resolve_path(Path(data_root))),
         run_id=run_id,
         action_id=action_id,
         task_id=task_id,
@@ -351,15 +353,15 @@ def input_read(
     elif item is None:
         raise SourceAccessError(f"input_id 不在当前 task scope：{input_id}")
     else:
-        path = Path(str(item["path"])).resolve()
+        path = resolve_path(Path(str(item["path"])))
         try:
             path.relative_to(run_dir)
         except ValueError as exc:
             raise SourceAccessError("冻结输入路径越出当前 Run 数据边界") from exc
-        if not path.is_file():
+        if not long_path(path).is_file():
             raise SourceAccessError(f"冻结输入不存在：{input_id}")
         try:
-            content = path.read_text(encoding="utf-8", errors="replace")
+            content = long_path(path).read_text(encoding="utf-8", errors="replace")
         except OSError as exc:
             raise SourceAccessError(f"冻结输入不可读取：{input_id}") from exc
     offset = _decode_cursor(cursor)
@@ -381,12 +383,12 @@ def _source_manifest(run_dir: Path, task: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(manifest_path, str) or not manifest_path:
         candidate = run_dir / "inputs" / "source-manifest.json"
     else:
-        candidate = Path(manifest_path).resolve()
+        candidate = resolve_path(Path(manifest_path))
         try:
             candidate.relative_to(run_dir)
         except ValueError as exc:
             raise SourceAccessError("source_manifest_path 越出当前 Run 数据边界") from exc
-    if not candidate.is_file():
+    if not long_path(candidate).is_file():
         raise SourceAccessError(f"冻结 source manifest 不存在：{candidate}")
     manifest = read_json(candidate)
     if not isinstance(manifest, dict):
@@ -443,12 +445,12 @@ def _allowed_paths(task: dict[str, Any], manifest: dict[str, Any]) -> set[tuple[
 
 def _repositories(run_dir: Path, manifest: dict[str, Any]) -> dict[str, tuple[Path, dict[str, Any]]]:
     roots: dict[str, tuple[Path, dict[str, Any]]] = {}
-    frozen_root = (run_dir / "inputs" / "source").resolve()
+    frozen_root = resolve_path(run_dir / "inputs" / "source")
     for item in manifest.get("repositories", []):
         if not isinstance(item, dict) or not item.get("repo_id") or not item.get("source_root"):
             continue
         repo_id = str(item["repo_id"])
-        root = Path(str(item["source_root"])).resolve()
+        root = resolve_path(Path(str(item["source_root"])))
         try:
             root.relative_to(frozen_root)
         except ValueError as exc:
@@ -463,13 +465,13 @@ def _repositories(run_dir: Path, manifest: dict[str, Any]) -> dict[str, tuple[Pa
 
 def _inventory_index(run_dir: Path, task: dict[str, Any]) -> dict[str, Any]:
     index_path = run_dir / "inputs" / "source-index.json"
-    if index_path.is_file():
+    if long_path(index_path).is_file():
         value = read_json(index_path)
         if isinstance(value, dict) and value.get("format_version") == "pangea-source-index-v1":
             from .on_demand import read_index
             return read_index(run_dir)
     inventory_path = task.get("inventory_path") or str(run_dir / "inputs" / "inventory.json")
-    path = Path(str(inventory_path)).resolve()
+    path = resolve_path(Path(str(inventory_path)))
     try:
         path.relative_to(run_dir)
     except ValueError as exc:
@@ -707,15 +709,15 @@ def _read_frozen_file(
     if repository is None:
         raise SourceAccessError(f"未知冻结 repository：{repo_id}")
     root = repository[0]
-    source = (root / path).resolve()
+    source = resolve_path(root / path)
     try:
         source.relative_to(root)
     except ValueError as exc:
         raise SourceAccessError(f"源码路径越过冻结 repository 边界：{repo_id}:{path}") from exc
-    if not source.is_file():
+    if not long_path(source).is_file():
         raise SourceAccessError(f"冻结源码文件不存在：{repo_id}:{path}")
     try:
-        lines = source.read_text(encoding="utf-8", errors="replace").splitlines()
+        lines = long_path(source).read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError as exc:
         raise SourceAccessError(f"冻结源码不可读取：{source}") from exc
     return source, lines

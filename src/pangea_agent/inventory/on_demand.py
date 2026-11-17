@@ -1,4 +1,6 @@
 """Frozen file catalogue and per-file structural queries; no target inference."""
+
+from pangea_agent.fs_paths import long_path, resolve_path
 from pathlib import Path
 
 from pangea_agent.agent_io import read_json, write_json
@@ -12,7 +14,7 @@ def requested_files(repositories, scopes, language):
     for repo, path, detected in source_files(repositories, scopes):
         if language != "mixed" and detected != language:
             continue
-        relative = path.relative_to(Path(repo["source_root"]).resolve()).as_posix()
+        relative = path.relative_to(resolve_path(Path(repo["source_root"]))).as_posix()
         by_repo[repo["repo_id"]]["code_paths"].append(relative)
     for group in groups:
         group["code_paths"].sort()
@@ -28,8 +30,8 @@ def file_inventory(repositories, expansion):
             file = roots[group["repo_id"]] / relative
             files.append({"repo_id": group["repo_id"], "path": relative,
                           "language": file_language(file),
-                          "line_count": len(file.read_text(encoding="utf-8", errors="replace").splitlines()),
-                          "size_bytes": file.stat().st_size, "parse_complete": False,
+                          "line_count": len(long_path(file).read_text(encoding="utf-8", errors="replace").splitlines()),
+                          "size_bytes": long_path(file).stat().st_size, "parse_complete": False,
                           "fallback_analysis": "结构尚未查询；可按文件读取或检索冻结原文"})
     return {"files": files, "file_count": len(files), "index_policy": "on-demand-v1"}
 
@@ -52,7 +54,7 @@ def read_index(run_dir):
     files = []
     for entry in index["files"]:
         cached = detail_path(run_dir, entry["repo_id"], entry["path"])
-        if cached.is_file():
+        if long_path(cached).is_file():
             detail = read_json(cached)
             # Keep the original whole-file handle stable after detailed queries.
             known = {r["region_id"] for r in detail["regions"]}
@@ -62,8 +64,8 @@ def read_index(run_dir):
 
 
 def detail_path(run_dir, repo_id, relative):
-    base = (run_dir / "inputs" / "source-details").resolve()
-    path = (base / repo_id / (relative + ".json")).resolve()
+    base = resolve_path(run_dir / "inputs" / "source-details")
+    path = resolve_path(base / repo_id / (relative + ".json"))
     path.relative_to(base)
     return path
 
@@ -71,7 +73,7 @@ def detail_path(run_dir, repo_id, relative):
 def ensure_file_index(run_dir, repo_id, relative, root):
     """Called only after the source access layer validates the exact file."""
     destination = detail_path(run_dir, repo_id, relative)
-    if destination.is_file():
+    if long_path(destination).is_file():
         return
     from .multilanguage import build_inventory
     inventory = build_inventory([{"repo_id": repo_id, "source_root": str(root)}], [relative])

@@ -1,4 +1,6 @@
 """Dispatch each file to its own language parser, preserving existing parsers."""
+
+from pangea_agent.fs_paths import resolve_path
 from pathlib import Path
 
 from .languages import source_files
@@ -11,7 +13,7 @@ def build_inventory(repositories: list[dict], scopes: list[str]) -> dict:
     groups = {}
     for repo, path, language in source_files(repositories, scopes):
         key = (repo["repo_id"], language)
-        groups.setdefault(key, (repo, []))[1].append(path.relative_to(Path(repo["source_root"]).resolve()).as_posix())
+        groups.setdefault(key, (repo, []))[1].append(path.relative_to(resolve_path(Path(repo["source_root"]))).as_posix())
     files, failures, missing = [], [], set()
     for (_, language), (repo, paths) in groups.items():
         scanner = {"c_cpp": build_lightweight_inventory, "lua": build_lua_inventory}.get(language, build_script_inventory)

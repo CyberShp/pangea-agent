@@ -1,4 +1,6 @@
 """Deterministic boundaries for new source and tool directory selections."""
+
+from pangea_agent.fs_paths import long_path, resolve_path
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from pangea_agent.repositories.resolver import resolve_repositories_from_contract
@@ -10,8 +12,8 @@ def validate_selected_directories(data_root: str, repository: str, paths: list[s
         raise ValueError("仓库身份无效")
     if not isinstance(paths, list) or not paths:
         raise ValueError("请选择真实存在的非根下级目录")
-    root = Path(resolve_repositories_from_contract({"repository": repository}, data_root)[0]["source_root"]).resolve()
-    parent = (Path(data_root) / "repositories").resolve()
+    root = resolve_path(Path(resolve_repositories_from_contract({"repository": repository}, data_root)[0]["source_root"]))
+    parent = resolve_path(Path(data_root) / "repositories")
     if root == parent:
         raise ValueError("仓库不能指向仓库集合根目录")
     normalized = []
@@ -23,10 +25,10 @@ def validate_selected_directories(data_root: str, repository: str, paths: list[s
         if relative.is_absolute() or PureWindowsPath(value).drive or ".." in relative.parts:
             raise ValueError(f"目录必须位于仓库内，不能使用绝对路径或上级路径：{item}")
         try:
-            candidate = (root / value).resolve(strict=True)
+            candidate = resolve_path(root / value, strict=True)
         except (OSError, RuntimeError) as exc:
             raise ValueError(f"目录不存在或无法读取：{item}") from exc
-        if candidate == root or not candidate.is_relative_to(root) or not candidate.is_dir():
+        if candidate == root or not candidate.is_relative_to(root) or not long_path(candidate).is_dir():
             raise ValueError(f"请选择真实存在的非根下级目录：{item}")
         normalized.append(candidate.relative_to(root).as_posix())
     return sorted(set(normalized))

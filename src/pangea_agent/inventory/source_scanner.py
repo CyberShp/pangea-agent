@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pangea_agent.fs_paths import long_path, glob_paths
+
 from pathlib import Path
 
 from .branch_ids import assign_branch_ids
@@ -22,19 +24,19 @@ def build_lightweight_inventory(repositories: list[dict], module_scope: list[str
         seen_paths: set[Path] = set()
         for scope in module_scope or ["."]:
             scoped_root = root / scope
-            if not scoped_root.exists():
+            if not long_path(scoped_root).exists():
                 continue
-            candidates = [scoped_root] if scoped_root.is_file() else scoped_root.rglob("*")
+            candidates = [scoped_root] if long_path(scoped_root).is_file() else glob_paths(scoped_root, "*", recursive=True)
             for path in candidates:
                 if (
-                    not path.is_file()
+                    not long_path(path).is_file()
                     or path.suffix.lower() not in CODE_SUFFIXES
                     or any(part in IGNORED_PARTS for part in path.parts)
                     or path in seen_paths
                 ):
                     continue
                 seen_paths.add(path)
-                lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+                lines = long_path(path).read_text(encoding="utf-8", errors="replace").splitlines()
                 relative_path = path.relative_to(root).as_posix()
                 structural_complete = True
                 try:

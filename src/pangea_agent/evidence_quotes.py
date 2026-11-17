@@ -1,6 +1,8 @@
 """Literal quotation checks against the same frozen source view as source-read."""
 from __future__ import annotations
 
+from pangea_agent.fs_paths import long_path
+
 import re
 import hashlib
 import unicodedata
@@ -35,7 +37,7 @@ class FrozenSourceResolver:
             from pangea_agent.agent_io import read_json
             selected = roots(self.run_dir, task)
             supplemental = self.run_dir / "inputs" / SUPPLEMENTAL
-            if supplemental.is_file():
+            if long_path(supplemental).is_file():
                 self.supplemental = {(item["repo_id"], relative_path(item["path"])): item
                                      for item in read_json(supplemental).get("files", [])
                                      if item["repo_id"] in selected}
@@ -51,7 +53,7 @@ class FrozenSourceResolver:
         if key not in self.cache:
             if key in self.supplemental:
                 from pangea_agent.inventory.repository_source import saved_path
-                content = saved_path(self.run_dir, repo, path).read_bytes()
+                content = long_path(saved_path(self.run_dir, repo, path)).read_bytes()
                 item = self.supplemental[key]
                 if hashlib.sha256(content).hexdigest() != item.get("sha256") or len(content) != item.get("bytes"):
                     raise ValueError(f"已保存补充源码损坏：{repo}:{path}")

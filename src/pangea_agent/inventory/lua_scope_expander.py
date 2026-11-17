@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pangea_agent.fs_paths import long_path, resolve_path, glob_paths
+
 from pathlib import Path, PurePosixPath
 
 from .languages import IGNORED_PARTS, LUA_SUFFIXES
@@ -109,15 +111,15 @@ def expand_lua_analysis_scope(
 
 
 def _iter_lua_files(root: Path):
-    resolved_root = root.resolve()
-    for path in root.rglob("*"):
-        resolved_path = path.resolve()
+    resolved_root = resolve_path(root)
+    for path in glob_paths(root, "*", recursive=True):
+        resolved_path = resolve_path(path)
         try:
             resolved_path.relative_to(resolved_root)
         except ValueError as exc:
             raise ValueError(f"源码范围越过仓库边界：{path}") from exc
         if (
-            path.is_file()
+            long_path(path).is_file()
             and path.suffix.lower() in LUA_SUFFIXES
             and not any(
                 part in IGNORED_PARTS for part in path.relative_to(root).parts

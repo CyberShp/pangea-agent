@@ -5,6 +5,8 @@ commands, imports and FFI targets remain for the Agent to interpret.
 """
 from __future__ import annotations
 
+from pangea_agent.fs_paths import long_path, resolve_path
+
 import ast
 from pathlib import Path
 import tokenize
@@ -21,7 +23,7 @@ def _empty(parser: str) -> dict:
 def parse_python_file(path: Path) -> dict:
     result = _empty("python-ast")
     # Honor PEP 263 encoding declarations without importing the target module.
-    with tokenize.open(path) as stream:
+    with tokenize.open(long_path(path)) as stream:
         source = stream.read()
     tree = ast.parse(source, filename=str(path))
     for node in ast.walk(tree):
@@ -48,7 +50,7 @@ def parse_shell_file(path: Path) -> dict:
     import tree_sitter_bash
 
     result = _empty("tree-sitter-bash")
-    source = path.read_bytes()
+    source = long_path(path).read_bytes()
     root = Parser(Language(tree_sitter_bash.language())).parse(source).root_node
     pending = [root]
     while pending:
@@ -79,7 +81,7 @@ def build_script_inventory(repositories: list[dict], scopes: list[str]) -> dict:
     for repository, path, language in source_files(repositories, scopes):
         if language not in {"python", "shell"}:
             continue
-        relative = path.relative_to(Path(repository["source_root"]).resolve()).as_posix()
+        relative = path.relative_to(resolve_path(Path(repository["source_root"]))).as_posix()
         try:
             parsed = parse_python_file(path) if language == "python" else parse_shell_file(path)
         except (ImportError, SyntaxError, UnicodeError, ValueError, RuntimeError, RecursionError) as exc:
@@ -94,7 +96,7 @@ def build_script_inventory(repositories: list[dict], scopes: list[str]) -> dict:
                              "locations": parsed["parse_errors"]})
         parsed["branches"] = assign_branch_ids(repository["repo_id"], relative, parsed["branches"])
         files.append({**parsed, "repo_id": repository["repo_id"], "path": relative,
-                      "language": language, "line_count": len(path.read_bytes().splitlines()),
+                      "language": language, "line_count": len(long_path(path).read_bytes().splitlines()),
                       "preprocessor": [], "resource_signals": [],
                       "fallback_analysis": None if parsed["parse_complete"] else "raw_text"})
     return {"files": files, "file_count": len(files), "parse_failures": failures,

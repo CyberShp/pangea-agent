@@ -5,6 +5,8 @@ Counts describe frozen inputs and explicit references, never semantic benefit.
 
 from __future__ import annotations
 
+from pangea_agent.fs_paths import long_path, resolve_path
+
 import hashlib
 from pathlib import Path
 from typing import Any
@@ -16,7 +18,7 @@ from pangea_agent.report.source_first import _body_mapping
 
 
 def _inside(root: Path, path: str | Path) -> Path:
-    resolved = Path(path).resolve()
+    resolved = resolve_path(path)
     if not resolved.is_relative_to(root):
         raise ValueError(f"comparison input is outside Run boundary: {path}")
     return resolved
@@ -42,7 +44,7 @@ def _fingerprint_sources(run: Path, manifest: dict | None) -> list[dict] | None:
             for relative in group.get(role, []):
                 path = _inside(roots[repo_id], roots[repo_id] / relative)
                 sources.append({"repo_id": repo_id, "path": relative,
-                                "role": role, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()})
+                                "role": role, "sha256": hashlib.sha256(long_path(path).read_bytes()).hexdigest()})
     return sorted(sources, key=lambda item: (item["repo_id"], item["path"], item["role"]))
 
 
@@ -144,9 +146,9 @@ def _run_evidence(data_root: str, run_id: str) -> tuple[dict, dict]:
     provenance = contract.get("runtime_provenance")
     runtime = {key: value for key, value in provenance.items() if key != "recorded_at"} if isinstance(provenance, dict) else None
     builtin = _inside(run, run / "inputs/methodologies/builtin")
-    rubrics = {path.name: hashlib.sha256(_inside(run, path).read_bytes()).hexdigest() for path in sorted(builtin.glob("*.md"))} if builtin.is_dir() else None
+    rubrics = {path.name: hashlib.sha256(long_path(_inside(run, path)).read_bytes()).hexdigest() for path in sorted(builtin.glob("*.md"))} if builtin.is_dir() else None
     examples = _optional(run, "inputs/test-case-examples.json", warnings)
-    example_hashes = [hashlib.sha256(_inside(run, path).read_bytes()).hexdigest() for path in examples] if isinstance(examples, list) else None
+    example_hashes = [hashlib.sha256(long_path(_inside(run, path)).read_bytes()).hexdigest() for path in examples] if isinstance(examples, list) else None
     comparable = {**settings, "source_snapshot": _fingerprint_sources(run, manifest),
                   "runtime": runtime, "builtin_rubrics": rubrics, "test_case_examples": example_hashes}
     return ({"run_id": run_id, "lifecycle_status": progress.get("lifecycle_status") if progress else None,

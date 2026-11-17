@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pangea_agent.fs_paths import long_path, resolve_path
+
 import shutil
 from pathlib import Path
 from pathlib import PurePosixPath
@@ -74,15 +76,15 @@ def _explicit_context_files(
         for repository in repositories:
             if repo_hint and repository["repo_id"] != repo_hint:
                 continue
-            root = Path(repository["source_root"]).resolve()
-            path = (root / relative).resolve()
+            root = resolve_path(Path(repository["source_root"]))
+            path = resolve_path(root / relative)
             try:
                 path.relative_to(root)
             except ValueError as exc:
                 raise ValueError(
                     f"context_scope 越过仓库边界：{repository['repo_id']}:{relative}"
                 ) from exc
-            if path.is_file():
+            if long_path(path).is_file():
                 matches.append((repository["repo_id"], relative))
         if len(matches) != 1:
             if not matches:
@@ -102,6 +104,18 @@ def _explicit_context_files(
     return records
 
 
+def _copy_source(source: Path, destination: Path) -> None:
+    try:
+        shutil.copy2(long_path(source), long_path(destination))
+    except OSError as exc:
+        raise RuntimeError(
+            f"源码快照复制失败：{exc}; "
+            f"source={source} (length={len(str(source))}); "
+            f"destination={destination} (length={len(str(destination))}); "
+            f"winerror={getattr(exc, 'winerror', None)}; errno={exc.errno}"
+        ) from exc
+
+
 def _freeze_sources(state: PangeaState, repositories: list[dict], expansion: dict,
                     reference_roots: dict | None = None) -> list[dict]:
     paths_by_repo: dict[str, set[str]] = {}
@@ -113,34 +127,34 @@ def _freeze_sources(state: PangeaState, repositories: list[dict], expansion: dic
     run_dir = run_directory(state)
     staging_root = run_dir / "inputs" / ".source-staging"
     frozen_root = run_dir / "inputs" / "source"
-    if staging_root.exists():
-        shutil.rmtree(staging_root)
-    staging_root.mkdir(parents=True)
+    if long_path(staging_root).exists():
+        shutil.rmtree(long_path(staging_root))
+    long_path(staging_root).mkdir(parents=True)
     frozen_repositories = []
     for repository in repositories:
         repo_id = repository["repo_id"]
-        source_root = Path(repository["source_root"]).resolve()
+        source_root = resolve_path(Path(repository["source_root"]))
         destination_root = staging_root / repo_id
         for relative in sorted(paths_by_repo.get(repo_id, set())):
-            read_root = Path((reference_roots or {}).get((repo_id, relative), source_root)).resolve()
-            source = (read_root / relative).resolve()
+            read_root = resolve_path(Path((reference_roots or {}).get((repo_id, relative), source_root)))
+            source = resolve_path(read_root / relative)
             try:
                 source.relative_to(read_root)
             except ValueError as exc:
                 raise ValueError(f"源码范围越过仓库边界：{repo_id}:{relative}") from exc
-            if not source.is_file():
+            if not long_path(source).is_file():
                 raise ValueError(f"源码文件不存在：{repo_id}:{relative}")
             destination = destination_root / relative
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source, destination)
+            long_path(destination.parent).mkdir(parents=True, exist_ok=True)
+            _copy_source(source, destination)
         frozen_repositories.append({
             "repo_id": repo_id,
             "source_root": str(frozen_root / repo_id),
             "git": repository.get("git", {}),
         })
-    if frozen_root.exists():
-        shutil.rmtree(frozen_root)
-    staging_root.replace(frozen_root)
+    if long_path(frozen_root).exists():
+        shutil.rmtree(long_path(frozen_root))
+    long_path(staging_root).replace(long_path(frozen_root))
     return frozen_repositories
 
 
@@ -234,12 +248,12 @@ def _freeze_test_case_examples(state: PangeaState, examples: list[str]) -> list[
     destination_root = run_directory(state) / "inputs" / "test-case-examples"
     frozen: list[str] = []
     for number, raw_path in enumerate(examples, 1):
-        source = Path(raw_path).expanduser().resolve()
-        if not source.is_file():
+        source = resolve_path(Path(raw_path).expanduser())
+        if not long_path(source).is_file():
             raise ValueError(f"用例示例不是文件：{raw_path}")
         destination = destination_root / f"{number:03d}-{source.name}"
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, destination)
+        long_path(destination.parent).mkdir(parents=True, exist_ok=True)
+        _copy_source(source, destination)
         frozen.append(str(destination))
     return frozen
 

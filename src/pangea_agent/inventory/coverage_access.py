@@ -5,6 +5,8 @@ No assets are queried and neither frozen inputs nor the task are rewritten.
 """
 from __future__ import annotations
 
+from pangea_agent.fs_paths import long_path, resolve_path
+
 import hashlib
 import json
 from collections import Counter
@@ -125,13 +127,13 @@ def coverage_read(
                 if isinstance(item, dict) and item.get("input_id") == input_id and item.get("path")]
     if len(declared) != 1:
         raise SourceAccessError("Coverage 输入未唯一授权给当前 task")
-    input_path = Path(declared[0]["path"]).resolve()
+    input_path = resolve_path(Path(declared[0]["path"]))
     try:
         input_path.relative_to(run_dir)
     except ValueError as exc:
         raise SourceAccessError("Coverage 输入路径越出当前 Run 数据边界") from exc
     try:
-        raw = input_path.read_bytes()
+        raw = long_path(input_path).read_bytes()
         content = json.loads(raw.decode("utf-8-sig"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise SourceAccessError("冻结 Coverage 输入不可读取") from exc

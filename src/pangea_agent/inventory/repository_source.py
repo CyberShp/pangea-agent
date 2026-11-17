@@ -7,6 +7,8 @@ files. No model relevance or completeness decisions are made here.
 """
 from __future__ import annotations
 
+from pangea_agent.fs_paths import long_path, resolve_path, iterdir_paths
+
 import hashlib
 import json
 import os
@@ -45,9 +47,9 @@ def relative_path(value):
 
 
 def inside(root, relative):
-    path = (root / relative_path(relative)).resolve()
+    path = resolve_path(root / relative_path(relative))
     try:
-        path.relative_to(root.resolve())
+        path.relative_to(resolve_path(root))
     except ValueError as exc:
         raise error(f"源码路径越出已选仓库：{relative}") from exc
     return path
@@ -65,7 +67,7 @@ def roots(run_dir, task):
         if relative_path(repo) != repo or "/" in repo or repo == ".":
             raise error("非法仓库标识")
         root = Path(item["source_root"])
-        if not root.is_absolute() or root.resolve() != root:
+        if not root.is_absolute() or resolve_path(root) != root:
             raise error(f"已选仓库根发生路径重定向：{repo}")
         result[repo] = root
     if not result:
@@ -74,14 +76,14 @@ def roots(run_dir, task):
 
 
 def atomic_bytes(path, content):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temporary = tempfile.mkstemp(prefix=".source-", dir=path.parent)
+    long_path(path.parent).mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=".source-", dir=long_path(path.parent))
     try:
         with os.fdopen(fd, "wb") as stream:
             stream.write(content)
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temporary, path)
+        os.replace(temporary, long_path(path))
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
@@ -92,7 +94,7 @@ def atomic_json(path, payload):
 
 
 def saved_path(run_dir, repo, relative):
-    base = (run_dir / "inputs" / "source").resolve()
+    base = resolve_path(run_dir / "inputs" / "source")
     root = inside(base, repo)
     return inside(root, relative)
 
@@ -106,33 +108,33 @@ def materialize(run_dir, task, repo, relative, action_id):
     # All writers use this OS-level lock, including independent CLI processes.
     with _file_lock(run_dir / "inputs" / ".source-supplemental.lock"):
         manifest_path = run_dir / "inputs" / SUPPLEMENTAL
-        manifest = read_json(manifest_path) if manifest_path.exists() else {
+        manifest = read_json(manifest_path) if long_path(manifest_path).exists() else {
             "format_version": "pangea-source-supplemental-v1", "files": []}
         entry = next((f for f in manifest["files"] if (f["repo_id"], f["path"]) == (repo, relative)), None)
         from .source_access import _allowed_paths
         initial = read_json(run_dir / "inputs" / "source-manifest.json")
         is_initial = (repo, relative) in _allowed_paths({}, initial)
-        if is_initial and not target.is_file():
+        if is_initial and not long_path(target).is_file():
             raise error(f"初始冻结源码缺失，不允许以现场文件替换：{repo}:{relative}")
-        if target.is_file():
+        if long_path(target).is_file():
             # Verify supplemental integrity, but retain initial snapshots as-is.
-            if entry and hashlib.sha256(target.read_bytes()).hexdigest() != entry["sha256"]:
+            if entry and hashlib.sha256(long_path(target).read_bytes()).hexdigest() != entry["sha256"]:
                 raise error(f"已保存补充源码损坏：{repo}:{relative}")
             if entry is None:
                 if not is_initial:
                     # Recover a copy committed just before a process died while
                     # updating the manifest. Never fabricate a new source read.
-                    content = target.read_bytes()
+                    content = long_path(target).read_bytes()
                     manifest["files"].append(record(repo, relative, content, action_id, recovered=True))
                     atomic_json(manifest_path, manifest)
             return target
         if entry:
             raise error(f"补充清单引用的源码文件缺失：{repo}:{relative}")
         source = inside(selected[repo], relative)
-        if not source.is_file():
+        if not long_path(source).is_file():
             raise error(f"仓内源码不存在或不是普通文件：{repo}:{relative}")
         # A bounded read avoids holding the cross-process lock for huge files.
-        with source.open("rb") as stream:
+        with long_path(source).open("rb") as stream:
             content = stream.read(MAX_BYTES + 1)
         if len(content) > MAX_BYTES:
             raise error(f"源码超过读取上限 {MAX_BYTES} 字节：{repo}:{relative}")
@@ -155,12 +157,12 @@ def supplemental_index(run_dir):
     """Read supplemental detail only for source tools, never for ownership."""
     from .on_demand import detail_path
     path = run_dir / "inputs" / SUPPLEMENTAL
-    if not path.is_file():
+    if not long_path(path).is_file():
         return []
     result = []
     for item in read_json(path).get("files", []):
         detail = detail_path(run_dir, item["repo_id"], relative_path(item["path"]))
-        if detail.is_file():
+        if long_path(detail).is_file():
             result.append(read_json(detail))
     return result
 
@@ -177,23 +179,23 @@ def list_index(binding, run_dir, task, repo_id, path, cursor, page_size, view, p
         relative = relative_path(path or ".")
         source = inside(selected[repo_id], relative)
         saved = saved_path(run_dir, repo_id, relative)
-        if saved.is_file() or source.is_file():
+        if long_path(saved).is_file() or long_path(source).is_file():
             materialize(run_dir, task, repo_id, relative, binding.action_id)
             from .on_demand import ensure_file_index, detail_path
             ensure_file_index(run_dir, repo_id, relative, run_dir / "inputs" / "source" / repo_id)
             detail = detail_path(run_dir, repo_id, relative)
-            if not detail.is_file():
+            if not long_path(detail).is_file():
                 # Discovery may skip vendor/build paths or unknown languages;
                 # an explicit file query must still expose readable raw text.
                 from .source_regions import _region_id
-                count = len(saved_path(run_dir, repo_id, relative).read_text(encoding="utf-8", errors="replace").splitlines())
+                count = len(long_path(saved_path(run_dir, repo_id, relative)).read_text(encoding="utf-8", errors="replace").splitlines())
                 regions = [{"region_id": _region_id(repo_id, relative, "raw", 1, count, None),
                             "repo_id": repo_id, "path": relative, "kind": "raw",
                             "line_start": 1, "line_end": count, "parse_complete": False,
                             "parsing_note": "此文件无结构解析结果，可直接读取原文"}] if count else []
                 atomic_json(detail, {"repo_id": repo_id, "path": relative,
                                      "line_count": count, "regions": regions, "parse_complete": False})
-            if detail.is_file():
+            if long_path(detail).is_file():
                 item = read_json(detail)
                 entries = [{"item_type": "region", "value": r} for r in item["regions"]]
             else:
@@ -202,13 +204,13 @@ def list_index(binding, run_dir, task, repo_id, path, cursor, page_size, view, p
         else:
             mode = "files"
             try:
-                for child in sorted(source.iterdir(), key=lambda p: p.name):
+                for child in sorted(iterdir_paths(source), key=lambda p: p.name):
                     rel = child.relative_to(selected[repo_id]).as_posix()
                     if child.name == ".git":
                         continue
                     try:
                         resolved = inside(selected[repo_id], rel)
-                        kind = "directory" if resolved.is_dir() else "file"
+                        kind = "directory" if long_path(resolved).is_dir() else "file"
                         entries.append({"item_type": kind, "value": {
                             "repo_id": repo_id, "path": rel, "entry_type": kind,
                             "scope_role": "reference"}})
@@ -255,7 +257,7 @@ def search(binding, run_dir, task, query, repo_id, path, cursor, page_size, view
     context = {"binding": binding.model_dump(mode="json"), "query": query, "repo_id": repo_id,
                "path": relative, "view": view, "page_size": page_size, "max_chars": max_chars}
     cache = run_dir / "inputs" / "source-search-pages"
-    cache.mkdir(parents=True, exist_ok=True)
+    long_path(cache).mkdir(parents=True, exist_ok=True)
     if token:
         if not re_token(token):
             raise error("无效仓内搜索游标")
@@ -280,10 +282,10 @@ def search(binding, run_dir, task, query, repo_id, path, cursor, page_size, view
         try:
             live = inside(root, rel)
             frozen = saved_path(run_dir, repo, rel)
-            if (repo, rel) in initial_paths and not frozen.is_file():
+            if (repo, rel) in initial_paths and not long_path(frozen).is_file():
                 raise error("初始冻结源码缺失，不允许以现场文件替换")
-            current = frozen if frozen.is_file() else live
-            if current.is_dir():
+            current = frozen if long_path(frozen).is_file() else live
+            if long_path(current).is_dir():
                 canonical = f"{repo}:{live}"
                 if canonical in state["visited"]:
                     skipped.append({"repo_id": repo, "path": rel, "reason": "directory_already_visited"})
@@ -294,22 +296,22 @@ def search(binding, run_dir, task, query, repo_id, path, cursor, page_size, view
                 # the complete repository. Merge names without replacing saved
                 # file contents with live contents.
                 for directory in (live, frozen):
-                    if directory.is_dir():
-                        names.update(child.name for child in directory.iterdir())
+                    if long_path(directory).is_dir():
+                        names.update(child.name for child in iterdir_paths(directory))
                 for name in sorted(names, reverse=True):
                     if name == ".git":
                         continue
                     child_rel = (PurePosixPath(rel) / name).as_posix()
                     state["pending"].append([repo, child_rel, 0])
                 continue
-            if not current.is_file():
+            if not long_path(current).is_file():
                 raise error("文件不存在或不是普通文件")
             scanned += 1
             state["scanned_files"] += int(line_offset == 0)
-            if current.stat().st_size > MAX_BYTES:
+            if long_path(current).stat().st_size > MAX_BYTES:
                 skipped.append({"repo_id": repo, "path": rel, "reason": "size_limit"})
                 continue
-            content = current.read_bytes()
+            content = long_path(current).read_bytes()
             if b"\x00" in content:
                 skipped.append({"repo_id": repo, "path": rel, "reason": "binary"})
                 continue
@@ -318,7 +320,7 @@ def search(binding, run_dir, task, query, repo_id, path, cursor, page_size, view
             if not any(query in line for line in lines[line_offset:]):
                 continue
             saved = materialize(run_dir, task, repo, rel, binding.action_id)
-            lines = saved.read_text(encoding="utf-8", errors="replace").splitlines()
+            lines = long_path(saved).read_text(encoding="utf-8", errors="replace").splitlines()
             for i in range(line_offset, len(lines)):
                 line = lines[i]
                 if query not in line:
