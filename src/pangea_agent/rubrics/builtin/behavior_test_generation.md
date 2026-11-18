@@ -2,11 +2,11 @@
 
 ## 用例关联打桩方案
 
-需要打桩时，可在 `test_case.body.instrumentation` 保存
+当用例声明 `execution_readiness=needs_instrumentation` 且本轮已读到目标源码时，在 `test_case.body.instrumentation` 填写候选方案：
 `{points:[{id,repo_id,path,symbol,action,trigger,times,enable,disable,observe,cleanup,depends_on,exclusive_with}]}`。
-使用已读源码说明注入位置、故障、作用对象、触发阶段/次数、启停、命中检查及恢复；只记录有依据的依赖/互斥。
+使用已读源码写明挂点文件、函数/分支符号、模拟故障、作用对象、触发阶段/次数、启停、命中检查及恢复；若已读源码或构建文件中见到测试编译宏（如 `-D*_SIMU_FAULT`）、超时阈值宏或对应单元测试目录，一并在 `enable`/`trigger` 说明中保留真实符号与路径，只记录有依据的依赖/互斥。
 已有设施才填写实际命令，需新增设施写明待实现。业务步骤仍用业务语言，注入不改写被验证的错误处理和预期结果。
-分析只保存方案，实际改代码和推送由用户在用例页启动独立打桩任务。无需打桩/老用例不强制此字段，
+分析只保存方案，实际改代码和推送由用户在用例页启动独立打桩任务。无需打桩、源码挂点尚未核实（`unknown`）或历史旧用例不要求此字段，
 不增加结果提交门禁，不将候选方案存在当作已具备执行设施或已经实测。
 
 ## 每个单元的交付语言
