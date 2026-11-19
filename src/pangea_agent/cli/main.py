@@ -5,17 +5,6 @@ import os
 from functools import partial
 from pathlib import Path
 
-from .adapter_api import (
-    bind_action,
-    bind_asset_action,
-    defer_action,
-    next_actions,
-    retry_attention_action,
-    settle_action,
-    settle_asset_action,
-    validate_action,
-    validate_asset_action,
-)
 from .init_data import init_data
 from .json_api import print_error as emit_error, print_success as emit_success
 from .public_api import (
@@ -48,7 +37,6 @@ from .result_check import check_result_json
 from pangea_agent.documents.coverage_query import query_coverage
 from pangea_agent.documents.incremental import derivation_options
 from pangea_agent.report.asset_comparison import compare_run_assets
-from .run_module_analysis import resume_module_analysis, run_module_analysis, derive_run
 from .source_first_api import (
     comparison_finding_write,
     comparison_read,
@@ -517,12 +505,16 @@ def main() -> None:
             raise SystemExit(1) from exc
     elif args.command == "module-analysis":
         try:
+            from .run_module_analysis import run_module_analysis
+
             print_success(run_module_analysis(args.contract))
         except Exception as exc:
             print_error(exc)
             raise SystemExit(1) from exc
     elif args.command == "resume-run":
         try:
+            from .run_module_analysis import resume_module_analysis
+
             print_success(resume_module_analysis(args.run_id, args.data_root))
         except Exception as exc:
             print_error(exc)
@@ -628,8 +620,12 @@ def main() -> None:
             elif args.run_command == "report":
                 print_success(run_report(args.data_root, args.run_id, args.format))
             elif args.run_command == "create":
+                from .run_module_analysis import run_module_analysis
+
                 print_success(run_module_analysis(args.contract))
             elif args.run_command == "derive":
+                from .run_module_analysis import derive_run
+
                 print_success(derive_run(args.data_root, args.parent_run_id, args.request))
             elif args.run_command == "derivation-options":
                 print_success(derivation_options(args.data_root, args.run_id))
@@ -652,6 +648,20 @@ def main() -> None:
             raise SystemExit(1) from exc
     elif args.command == "adapter":
         try:
+            # Graph execution is only needed by adapter/mutation commands.
+            # Keep read-only CLI calls from loading LangGraph at process startup.
+            from .adapter_api import (
+                bind_action,
+                bind_asset_action,
+                defer_action,
+                next_actions,
+                retry_attention_action,
+                settle_action,
+                settle_asset_action,
+                validate_action,
+                validate_asset_action,
+            )
+
             if args.adapter_command == "next":
                 print_success(next_actions(args.data_root, args.run_id, args.limit))
             elif args.adapter_command == "bind":
