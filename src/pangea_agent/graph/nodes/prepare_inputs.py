@@ -6,7 +6,7 @@ import shutil
 from pathlib import Path
 from pathlib import PurePosixPath
 
-from pangea_agent.agent_io import read_json, write_json
+from pangea_agent.agent_io import atomic_replace, read_json, write_json
 from pangea_agent.assets import analysis_asset_inputs
 from pangea_agent.documents.coverage import match_coverage_records, relevant_zero_coverage
 from pangea_agent.graph.state import PangeaState
@@ -154,7 +154,7 @@ def _freeze_sources(state: PangeaState, repositories: list[dict], expansion: dic
         })
     if long_path(frozen_root).exists():
         shutil.rmtree(long_path(frozen_root))
-    long_path(staging_root).replace(long_path(frozen_root))
+    atomic_replace(staging_root, frozen_root)
     return frozen_repositories
 
 

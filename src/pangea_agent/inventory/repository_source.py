@@ -18,7 +18,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
-from pangea_agent.agent_io import read_json
+from pangea_agent.agent_io import atomic_replace, read_json
 from pangea_agent.graph.result_store import _file_lock, compact_items_page
 
 POLICY = "repository-local-v1"
@@ -83,7 +83,7 @@ def atomic_bytes(path, content):
             stream.write(content)
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temporary, long_path(path))
+        atomic_replace(temporary, path)
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)

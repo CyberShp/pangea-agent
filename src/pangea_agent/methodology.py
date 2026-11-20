@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Literal
 from uuid import uuid4
 
-from pangea_agent.agent_io import read_json, write_json
+from pangea_agent.agent_io import atomic_replace, read_json, write_json
 from pangea_agent.assets import analysis_asset_inputs
 from pangea_agent.models.methodology import (
     FrozenMethodologyCatalog,
@@ -616,7 +616,7 @@ def freeze_enabled_methodologies(
     )
     if destination_root.exists():
         shutil.rmtree(destination_root)
-    staging_root.replace(destination_root)
+    atomic_replace(staging_root, destination_root)
     return _validate_frozen_manifest(manifest)
 
 

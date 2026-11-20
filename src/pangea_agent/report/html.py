@@ -9,6 +9,9 @@ from pathlib import Path
 from datetime import datetime, timezone
 from typing import Any
 
+from pangea_agent.agent_io import atomic_replace
+from pangea_agent.fs_paths import long_path
+
 from .markdown import (
     _boundary_text,
     _coverage_decision_rows,
@@ -442,10 +445,12 @@ def reports_are_complete(run_dir: str | Path) -> bool:
 def _atomic_write_text(path: Path, content: str) -> None:
     temporary_path: Path | None = None
     try:
+        parent = long_path(path.parent)
+        parent.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(
             mode="w",
             encoding="utf-8",
-            dir=path.parent,
+            dir=parent,
             prefix=f".{path.name}.",
             suffix=".tmp",
             delete=False,
@@ -453,7 +458,7 @@ def _atomic_write_text(path: Path, content: str) -> None:
             temporary.write(content)
             temporary.flush()
             temporary_path = Path(temporary.name)
-        temporary_path.replace(path)
+        atomic_replace(temporary_path, path)
     finally:
         if temporary_path is not None:
             temporary_path.unlink(missing_ok=True)

@@ -16,7 +16,8 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from pangea_agent.agent_io import read_json
+from pangea_agent.agent_io import atomic_replace, read_json
+from pangea_agent.fs_paths import long_path
 from pangea_agent.graph.result_store import active_diagram_diagnostics, current_warning_degradations, read_result, supersession_map
 from pangea_agent.graph.workflow_store import run_directory
 from pangea_agent.report.flow_section import flow_section_markdown
@@ -46,9 +47,10 @@ def diagram_diagnostic_markdown(delivery: list[tuple[dict, Any]]) -> list[str]:
 
 
 def _atomic_text(path: Path, value: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    parent = long_path(path.parent)
+    parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(
-        dir=path.parent,
+        dir=parent,
         prefix=f".{path.name}.",
         suffix=".tmp",
         text=True,
@@ -57,7 +59,7 @@ def _atomic_text(path: Path, value: str) -> None:
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
             stream.write(value)
-        os.replace(temporary, path)
+        atomic_replace(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
 

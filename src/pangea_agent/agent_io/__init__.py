@@ -1,5 +1,5 @@
 """JSON file contracts exchanged with semantic agents."""
 
-from .files import read_json, write_json
+from .files import atomic_replace, read_json, write_json
 
-__all__ = ["read_json", "write_json"]
+__all__ = ["atomic_replace", "read_json", "write_json"]
