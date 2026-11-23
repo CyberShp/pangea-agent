@@ -745,6 +745,7 @@ def _make_analysis_actions(state: PangeaState, progress: WorkflowProgress, units
             "format_version": "source-first-task-v1",
             "workflow_version": "source-first-v1",
             "analysis_profile": analysis_profile,
+            "analysis_io_policy": "analysis-io-v1",
             "task_type": "source_first_analysis",
             "action_id": action_id,
             "run_id": state["run_id"],

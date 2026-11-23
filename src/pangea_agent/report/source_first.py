@@ -543,6 +543,8 @@ def _case_markdown(
         lines.append("- 未提供可执行步骤。")
     if body.get("expected_results"):
         lines.extend(["", "##### 整体预期（原文单独提供）", "", *_markdown_list(body["expected_results"], "未提供")])
+    if body.get("instrumentation") is not None:
+        lines.extend(_case_instrumentation_markdown(body.get("instrumentation")))
     evidence = _items(body.get("source_evidence"))
     has_basis = bool(body.get("summary")) or purpose == "coverage" or bool(body.get("coverage_refs")) or bool(evidence)
     if has_basis:
@@ -609,6 +611,46 @@ def _case_markdown(
                 ],
             ])
     return "\n".join(lines)
+
+
+def _case_instrumentation_markdown(instrumentation: Any) -> list[str]:
+    """Render candidate instrumentation points authored on a test case without mutating them."""
+    if instrumentation is None:
+        return []
+    lines = ["", "##### 候选打桩方案（未修改源码）", ""]
+    points = instrumentation.get("points") if isinstance(instrumentation, dict) else None
+    if not isinstance(points, list) or not points:
+        lines.append(_nested_record_text(instrumentation))
+        return lines
+    point_fields = (
+        ("symbol", "目标符号"),
+        ("action", "注入动作"),
+        ("trigger", "触发条件"),
+        ("times", "触发次数"),
+        ("enable", "启用方式"),
+        ("disable", "关闭方式"),
+        ("observe", "命中观测"),
+        ("cleanup", "恢复操作"),
+        ("depends_on", "依赖桩点"),
+        ("exclusive_with", "互斥桩点"),
+    )
+    for index, point in enumerate(points, 1):
+        if not isinstance(point, dict):
+            lines.append(f"- 第 {index} 项：{_markdown_cell(_body_text(point))}")
+            continue
+        point_id = str(point.get("id") or f"P-{index}")
+        location = ":".join(part for part in (str(point.get("repo_id") or "").strip(), str(point.get("path") or "").strip()) if part)
+        header = f"- **`{_markdown_cell(point_id)}`**" + (f"（`{_markdown_cell(location)}`）" if location else "")
+        details = []
+        for key, label in point_fields:
+            value = point.get(key)
+            if value is None or value == "" or value == []:
+                continue
+            rendered = "、".join(_body_text(item) for item in value) if isinstance(value, list) else _body_text(value)
+            if rendered.strip():
+                details.append(f"{label}：{_markdown_cell(rendered)}")
+        lines.append(f"{header} — {'；'.join(details)}" if details else header)
+    return lines
 
 
 def _case_coverage_markdown(record: Any, body: dict, gaps: list | None, sources: list | None) -> list[str]:

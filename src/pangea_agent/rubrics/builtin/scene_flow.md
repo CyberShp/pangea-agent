@@ -81,6 +81,12 @@ risk 场景（method_version=risk-method-v1）按 scene_risk 的工作顺序，�
 
 #### 字段与引用核对（每条 flow 均执行）
 
+| 图类型 | 边/消息数组 | 起点字段 | 终点字段 | 目标 ID 集合 |
+| --- | --- | --- | --- | --- |
+| 业务流程 | `edges[]` | `source_step_key` | `target_step_key` | `nodes[].id` |
+| 时序图 | `sequence.messages[]` | `from` | `to` | `sequence.participants[].id` |
+| 调用图 | `call_graph.calls[]` | `from` | `to` | `call_graph.functions[].id` |
+
 - 两图的 `notes` 均为字符串数组，无备注为 `[]`。参与者、消息、片段的 `id` 非空且各自唯一，名称写 `label`，不能用 `name`；消息 id 不能省略。
 - 片段写 `id/kind/operands`，不用 `type/branches`；alt/par 至少两个 operand，opt/loop 恰一个，message_ids 为非空消息 ID 数组。
 - 函数 `kind` 不省略；`root/calls[].from/calls[].to/variables[].function` 均引用本图 functions.id，不用 caller/callee/scope 等别名。args/reads 为字符串数组，compute/writes/returns 为字符串，line 为正整数或 null。

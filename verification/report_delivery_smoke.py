@@ -157,5 +157,28 @@ with tempfile.TemporaryDirectory() as td:
 
 legacy=copy.deepcopy(flow);legacy.pop("layout_version");legacy.pop("main_path_ids")
 ET.fromstring(render_flow_svg(legacy,"legacy")[0])
-print("PASS: duplicate IDs, entry loop, shortcut rank, permutations(30), multi-main, static SVG escaping/full labels, ledger malformed/unknown, supersession, closure, variant anchors and legacy flow")
+inst_case = copy.deepcopy(case)
+inst_case["execution_readiness"] = "needs_instrumentation"
+inst_case["instrumentation"] = {
+    "points": [{
+        "id": "P-ALLOC",
+        "repo_id": "core",
+        "path": "src/mem.c",
+        "symbol": "alloc_buf",
+        "action": "返回 NULL 模拟内存分配失败",
+        "trigger": "握手阶段首次分配缓冲区",
+        "times": 1,
+        "enable": "待实现控制开关",
+        "observe": "命中日志 PANGEA_HIT_ALLOC",
+        "cleanup": "关闭开关并确认后续建连成功",
+    }]
+}
+inst_md = _record_markdown(record("inst-case", "test_case", inst_case), unit_id="u")
+assert "候选打桩方案（未修改源码）" in inst_md
+assert "P-ALLOC" in inst_md and "core:src/mem.c" in inst_md and "alloc_buf" in inst_md and "PANGEA_HIT_ALLOC" in inst_md
+raw_inst_case = copy.deepcopy(case)
+raw_inst_case["instrumentation"] = {"raw_note": "非标准桩点说明原文保留"}
+raw_inst_md = _record_markdown(record("raw-inst", "test_case", raw_inst_case), unit_id="u")
+assert "非标准桩点说明原文保留" in raw_inst_md
+print("PASS: duplicate IDs, entry loop, shortcut rank, permutations(30), multi-main, static SVG escaping/full labels, ledger malformed/unknown, supersession, closure, variant anchors, instrumentation and legacy flow")
 artifacts.cleanup()

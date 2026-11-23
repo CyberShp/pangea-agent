@@ -369,6 +369,23 @@ def task_open(data_root: str, run_id: str, action_id: str, task_id: str, *, prep
                 "replayed=true 时后续写入与 work-finish 使用 current_revision，"
                 "只有冲突、状态不明或恢复时再 result-read。"
             )
+    if task.get("task_type") == "source_first_analysis" and task.get("analysis_io_policy") == "analysis-io-v1":
+        from pangea_agent.inventory.planning_io import ANALYSIS_CAPABILITIES, analysis_startup
+        _, result_path, _ = _binding_and_result(data_root, run_id, action_id, task_id)
+        opened["analysis_startup"] = analysis_startup(data_root, run_id, action_id, task_id, task)
+        opened["write_contract"] = {
+            "revision": read_result(result_path).revision,
+            "binding_args": ["--data-root", data_root, "--run-id", run_id, "--action-id", action_id, "--task-id", task_id],
+            "capabilities": list(ANALYSIS_CAPABILITIES),
+            "result_write": ["result-write", "<binding_args>", "--expected-revision", "<当前revision>", "--records-file", "<当前worker scratch内的UTF-8 JSON文件>"],
+            "result_supersede": ["result-supersede", "<binding_args>", "--expected-revision", "<当前revision>", "--target-record-ids-file", "<ID数组文件>", "--replacement-file", "<单条替换记录文件>"],
+            "finish": ["work-finish", "<binding_args>", "--revision", "<最后一次写入返回的revision>"],
+            "note": (
+                "本任务提供 analysis_startup：直接消费其中 pages 原文，仅沿 pending_inputs 的 input_id/cursor 补读缺失页；"
+                "多段独立源码或输入读取优先用 read-batch 合并为一次命令。"
+                "复用此处 revision 或成功写入返回的 revision，只有冲突、状态不明或恢复时再 result-read。"
+            ),
+        }
     if not prepare_source:
         return opened
     if task.get("task_type") == "source_first_closure":
@@ -1143,7 +1160,74 @@ def work_finish(
             warnings.extend(item for item in _review_routing_warnings(
                 data_root, run_id, task, read_result(path)
             ) if item not in warnings)
+        if (task.get("task_type") == "source_first_analysis"
+                and (task.get("record_contracts") or {}).get("boundary_reconciliation") == "interface-boundary-reconciliation-v1"):
+            advisories = _boundary_advisories(task, progress)
+            response["boundary_advisories"] = advisories
+            if advisories:
+                warnings = response.setdefault("warnings", [])
+                warnings.append({
+                    "kind": "boundary_reconciliation_advisory",
+                    "count": len(advisories),
+                    "message": (
+                        f"跨单元边界对账提示 {len(advisories)} 项（非阻断，供原单元按需核查前置条件或引用 ID；"
+                        "其他并行单元尚未写完时可忽略缺失提示）。"
+                    ),
+                })
         return response
+
+
+def _boundary_advisories(task: dict[str, Any], progress) -> list[dict[str, Any]]:
+    """Non-blocking cross-unit boundary diagnostics for the finishing analysis unit."""
+    if progress is None:
+        return []
+    current_unit = str(task.get("unit_id") or "")
+    if not current_unit:
+        return []
+    from pangea_agent.boundary_reconciliation import reconcile_boundaries
+    delivery: list[tuple[dict[str, Any], Any]] = []
+    for action in progress.actions.values():
+        if getattr(action, "role", None) != "analysis":
+            continue
+        task_path = getattr(action, "task_path", None)
+        if not task_path:
+            continue
+        tp = Path(task_path)
+        if not tp.is_file():
+            continue
+        try:
+            action_task = read_json(tp)
+            result_path = action_task.get("result_path")
+            if not isinstance(result_path, str) or not result_path:
+                continue
+            rp = Path(result_path)
+            if not rp.is_file():
+                continue
+            action_result = read_result(rp)
+        except Exception:
+            continue
+        delivery.append(({"task": action_task}, action_result))
+    if not delivery:
+        return []
+    reconciled = reconcile_boundaries(delivery)
+    advisories: list[dict[str, Any]] = []
+    for diag in reconciled.get("diagnostics", []):
+        if diag.get("unit_id") == current_unit and diag.get("code") in {"reference_missing", "reference_ambiguous"}:
+            advisories.append({"kind": "reference_diagnostic", **diag})
+    for comp in reconciled.get("comparisons", []):
+        if comp.get("status") != "declared_codes_differ":
+            continue
+        producer_unit = (comp.get("producer") or {}).get("unit_id")
+        consumer_unit = (comp.get("consumer") or {}).get("unit_id")
+        if current_unit in {producer_unit, consumer_unit}:
+            advisories.append({
+                "kind": "declared_codes_differ",
+                "interface": list(comp.get("interface") or []),
+                "producer_unit_id": producer_unit,
+                "consumer_unit_id": consumer_unit,
+                "differing_codes": comp.get("differing_codes", []),
+            })
+    return advisories
 
 
 @serialized_run_mutation

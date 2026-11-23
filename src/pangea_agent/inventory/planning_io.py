@@ -12,6 +12,8 @@ from pangea_agent.inventory.source_access import (
 
 PLANNING_IO_POLICY = "planning-io-v1"
 PLANNING_CAPABILITIES = ["planning-startup-v1", "read-batch", "coverage-read", "plan-write-batch"]
+ANALYSIS_IO_POLICY = "analysis-io-v1"
+ANALYSIS_CAPABILITIES = ["analysis-startup-v1", "read-batch", "coverage-read"]
 
 
 def _size(value: Any) -> int:
@@ -19,13 +21,8 @@ def _size(value: Any) -> int:
     return len(json.dumps(value, ensure_ascii=False, indent=2))
 
 
-def planning_startup(data_root: str, run_id: str, action_id: str, task_id: str,
-                     task: dict, *, max_chars: int = 18_000) -> dict:
-    """Supply only declared small planning inputs, with explicit unread cursors."""
-    declared = {item["input_id"] for item in task.get("inputs", []) if isinstance(item, dict)
-                and isinstance(item.get("input_id"), str)}
-    identifiers = [name for name in ("analysis_scene", "unit_planning_rubric",
-                                    "scene_planning_rubric", "planning_metadata") if name in declared]
+def _bounded_startup(data_root: str, run_id: str, action_id: str, task_id: str,
+                     identifiers: list[str], *, max_chars: int) -> dict:
     result = {"pages": [], "pending_inputs": [], "complete": True, "max_chars": max_chars}
     for number, input_id in enumerate(identifiers):
         # Reserve enough space to name each remaining input and its cursor.
@@ -47,6 +44,27 @@ def planning_startup(data_root: str, run_id: str, action_id: str, task_id: str,
             result["pending_inputs"].append({"input_id": input_id, "cursor": page["next_cursor"]})
     result["complete"] = not result["pending_inputs"]
     return result
+
+
+def planning_startup(data_root: str, run_id: str, action_id: str, task_id: str,
+                     task: dict, *, max_chars: int = 18_000) -> dict:
+    """Supply only declared small planning inputs, with explicit unread cursors."""
+    declared = {item["input_id"] for item in task.get("inputs", []) if isinstance(item, dict)
+                and isinstance(item.get("input_id"), str)}
+    identifiers = [name for name in ("analysis_scene", "unit_planning_rubric",
+                                    "scene_planning_rubric", "planning_metadata") if name in declared]
+    return _bounded_startup(data_root, run_id, action_id, task_id, identifiers, max_chars=max_chars)
+
+
+def analysis_startup(data_root: str, run_id: str, action_id: str, task_id: str,
+                     task: dict, *, max_chars: int = 24_000) -> dict:
+    """Supply declared small analysis inputs (scene, handoff, rubrics) with explicit unread cursors."""
+    declared_order = [item["input_id"] for item in task.get("inputs", []) if isinstance(item, dict)
+                      and isinstance(item.get("input_id"), str)]
+    declared_set = set(declared_order)
+    identifiers = [name for name in ("analysis_scene", "planning_handoff") if name in declared_set]
+    identifiers.extend(name for name in declared_order if name.startswith("rubric_") and name not in identifiers)
+    return _bounded_startup(data_root, run_id, action_id, task_id, identifiers, max_chars=max_chars)
 
 
 _OPERATIONS = {

@@ -67,11 +67,11 @@ $unitFile = Join-Path $env:PANGEA_WORKER_SCRATCH 'unit.json'
 
 输出被宿主截断时，用原绑定和 CLI 的分页参数补读缺失部分；不能把截断页视作已完整阅读。共同规则、场景规则及选定方法论按当前 task.rubric_paths 与 inputs 的 input_id 对应读取，续接复用同一会话已完整读取的冻结版本。
 
-## Planning 合并读取与批量保存
+## Planning 与 Analysis 合并读取及批量保存
 
-仅当当前 task 声明 `planning_io_policy=planning-io-v1` 且 `write_contract.capabilities` 提供对应能力时使用；旧 Run 没有该标记或能力时沿用既有单条调用，不追补新义务。宿主可能已在初始提示中原样提供当前 task-open 回包，此时直接消费，不重复调用 task-open。续接不能把初始快照的 revision 当作最新值；状态不明时 result-read 恢复当前结果。
+仅当当前 task 声明 `planning_io_policy=planning-io-v1` 或 `analysis_io_policy=analysis-io-v1` 且 `write_contract.capabilities` 提供对应能力时使用；旧 Run 没有该标记或能力时沿用既有单条调用，不追补新义务。宿主可能已在初始提示中原样提供当前 task-open 回包，此时直接消费，不重复调用 task-open。续接不能把初始快照的 revision 当作最新值；状态不明时 result-read 恢复当前结果。
 
-- `planning_startup.pages` 是当前绑定输入的原文页，包含必要规划规则、analysis_scene 和目录导航。已完整交付的同一冻结版本不重读；`pending_inputs` 给出未交付或未读完的 input_id/cursor，仅补缺页。总量有界，未出现在 pages 中不代表文件不存在。输入导航是可读目录，不是阅读待办。
+- `planning_startup.pages` / `analysis_startup.pages` 是当前绑定输入的原文页，分别包含规划规则/目录导航或 `analysis_scene`/`planning_handoff`/已冻结 `rubric_*`。已完整交付的同一冻结版本不重读；`pending_inputs` 给出未交付或未读完的 input_id/cursor，仅补缺页。总量有界，未出现在 pages 中不代表文件不存在。输入导航是可读目录，不是阅读待办。
 - `read-batch --requests-file <scratch内JSON数组文件> --max-chars N` 合并已经确定的独立只读查询，结果载荷预算默认 24000 字符，范围为 3000–24000 字符。每项用 `operation` 选择 input-read/source-read/source-index/source-search，其他参数使用对应 API 的 snake_case 名称。批量只减少往返，不提前猜测依赖上一项结果的下一次查询。
 - 批量回包 `items` 各项带 `request_index`、`operation`、`ok`，成功项有 `result`，失败项有 `error`。每项 result 的 next_cursor/next_page_token 只用于该项同一查询，`next_request_index` 指向本批尚未执行的请求；对原请求数组使用 `--start-index <next_request_index>` 继续未执行项。逐项保留续读位置；不可把某项的 token 用到另一项，也不能把总预算停止当成全部读完。`all_succeeded=false` 时逐项处理失败，不以批次中其他成功项冒充成功。
 - `coverage-read --input-id coverage_gaps --view summary --repo-id <ID> --path <目录> --depth 1` 先看冻结 Coverage 的目录/文件分布；`--view index` 读取真实 gap ID、位置和状态，`--view records` 读取原记录。仅使用 task 授权的 coverage_gaps/coverage_match_summary；可按 `--gap-ids-file <ID数组文件>` 取指定明细。按 next_page_token 使用 `--page-token` 续页；items/item_fragment 沿现有 compact 分页方式完整消费，片段不得当完整记录。分组和计数不替代语义判断，未知状态、歧义匹配及零计数分支仍保留。
