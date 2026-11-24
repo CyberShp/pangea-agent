@@ -91,6 +91,9 @@ _FIELD_LABELS = {
     "condition": "来源条件原文", "matches": "冻结位置匹配", "meaning": "输入含义限制",
 
     "evidence_quotes": "源码引文", "check_id": "检查编号", "lens": "检查镜头",
+    "track": "分析轨道", "verification_status": "实证层级", "entity_ref": "底图实体",
+    "matched_dts_pattern_ids": "对标 DTS 拓扑", "interleaving_or_path": "交错/副作用路径",
+    "runtime_uncertainty": "待动态实锤不确定点",
     "object": "检查对象", "hypothesis": "假设", "conclusion": "结论", "reasoning": "依据",
     "sites": "位置", "signal_ids": "关联信号", "risk_ids": "关联风险",
     "action_id": "Action",

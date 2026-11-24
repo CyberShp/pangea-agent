@@ -6,6 +6,12 @@ from pathlib import Path
 
 from pangea_agent.agent_io import read_json, write_json
 from pangea_agent.risk_schema import RISK_FORMAT, RISK_FORMAT_V2
+from pangea_agent.risk_v2_schema import (
+    CHECK_FORMAT_V2,
+    RISK_BLUEPRINT_FORMAT,
+    RISK_FORMAT_V3,
+    RISK_METHOD_V2,
+)
 from pangea_agent.test_case_schema import TEST_CASE_FORMAT
 from pangea_agent.coverage_diagnostics import COVERAGE_REFERENCE_CONTRACT
 
@@ -14,7 +20,7 @@ RISK_METHOD = "risk-method-v1"
 BRANCH_METHOD = "behavior-branch-v1"
 SCENES = {
     "module-analysis": ("模块分析", "lightweight", "optional", "模块综合分析：业务分支、轻量风险及可选覆盖补测。"),
-    "risk-analysis": ("风险分析", "primary", "optional", "聚焦有依据的失效风险及验证用例。"),
+    "risk-analysis": ("风险分析", "primary", "optional", "聚焦异常回滚、时序并发、资源生命周期三大深水区，结合 DTS 真实案例反哺与两级实证直通打桩。"),
     "branch-analysis": ("分支分析", "none", "optional", "依据业务条件、配置、状态、顺序与结果设计分支用例，并逐项说明覆盖与缺口。"),
     "coverage-analysis": ("覆盖率分析", "none", "required", "依据真实覆盖数据定位缺口并设计补测。"),
 }
@@ -38,11 +44,33 @@ def scene_spec(scenario: str) -> dict:
     if scenario == 'coverage-analysis':
         spec['record_contracts']['coverage_reference'] = COVERAGE_REFERENCE_CONTRACT
     if scenario == 'risk-analysis':
-        spec.update(method_version=RISK_METHOD, risk_signals=True,
-                    record_contracts={'risk': RISK_FORMAT_V2, 'check': 'behavior-check-v1', 'review_check': 'behavior-review-check-v1', 'test_case': TEST_CASE_FORMAT, 'diagram': 'diagram-contract-v1'},
-                    language_rubrics={role: {'c_cpp': ['c_cpp_risk_methods'], 'lua': ['lua_risk_methods']} for role in ('analysis', 'review')})
-        spec['review_rubrics'].append('scene_risk_review')
-        spec['presentation'].update(check_ledger=True, blackbox_target=False)
+        spec.update(
+            method_version=RISK_METHOD_V2,
+            risk_signals=False,
+            risk_topology=True,
+            dts_feedback=True,
+            planning_rubrics=["scene_planning", "scene_risk_blueprint"],
+            analysis_rubrics=["scene_common_generation", "scene_flow", "scene_risk_v2"],
+            review_rubrics=["scene_common_review", "scene_flow", "scene_risk_v2", "scene_risk_review"],
+            record_contracts={
+                "blueprint": RISK_BLUEPRINT_FORMAT,
+                "risk": RISK_FORMAT_V3,
+                "check": CHECK_FORMAT_V2,
+                "review_check": "behavior-review-check-v1",
+                "test_case": TEST_CASE_FORMAT,
+                "diagram": "diagram-contract-v1",
+            },
+            language_rubrics={
+                role: {"c_cpp": ["c_cpp_risk_v2"], "lua": ["lua_risk_v2"]}
+                for role in ("analysis", "review")
+            },
+        )
+        spec["presentation"].update(
+            check_ledger=True,
+            blackbox_target=False,
+            two_tier_verification=True,
+            dts_feedback=True,
+        )
     elif scenario == 'branch-analysis':
         # An ordinary note, not a semantic write/completion gate. Existing Runs
         # read their frozen spec and never acquire the new mandatory rubric.

@@ -30,7 +30,12 @@ from .public_api import (
     stop_asset,
     deliver_current,
     execution_event,
+    get_dts_pattern,
+    import_dts_patterns,
+    ingest_dts_file,
+    list_dts_patterns,
     resume_run,
+    set_dts_pattern_status,
     update_asset_result,
 )
 from .result_check import check_result_json
@@ -188,6 +193,30 @@ def main() -> None:
     methodology_disable = methodology_commands.add_parser("disable")
     methodology_disable.add_argument("--data-root", default="pangea-data")
     methodology_disable.add_argument("--id", required=True)
+
+    dts_patterns = sub.add_parser("dts-patterns")
+    dts_commands = dts_patterns.add_subparsers(dest="dts_command", required=True)
+    dts_list = dts_commands.add_parser("list")
+    dts_list.add_argument("--data-root", default="pangea-data")
+    dts_list.add_argument("--track", choices=("error_rollback", "concurrency_timing", "resource_lifecycle"))
+    dts_list.add_argument("--status", choices=("enabled", "disabled"))
+    dts_list.add_argument("--query")
+    dts_list.add_argument("--cursor", type=int, default=0)
+    dts_list.add_argument("--limit", type=int, default=50)
+    dts_get = dts_commands.add_parser("get")
+    dts_get.add_argument("--data-root", default="pangea-data")
+    dts_get.add_argument("--pattern-id", required=True)
+    dts_ingest = dts_commands.add_parser("ingest")
+    dts_ingest.add_argument("--data-root", default="pangea-data")
+    dts_ingest.add_argument("--path", required=True)
+    dts_ingest.add_argument("--source-kind", choices=("mcp_dts_codehub", "offline_file_with_git", "offline_file_text", "manual"))
+    dts_import = dts_commands.add_parser("import")
+    dts_import.add_argument("--data-root", default="pangea-data")
+    _add_json_argument(dts_import, "items", required=True, help="JSON array of DTSPatternInput objects")
+    dts_status = dts_commands.add_parser("set-status")
+    dts_status.add_argument("--data-root", default="pangea-data")
+    dts_status.add_argument("--pattern-id", required=True)
+    dts_status.add_argument("--status", required=True, choices=("enabled", "disabled"))
 
     runs = sub.add_parser("runs")
     run_commands = runs.add_subparsers(dest="run_command", required=True)
@@ -880,6 +909,35 @@ def main() -> None:
                 replace_decision_record_ids=replace_decision_record_ids,
                 request_id=args.request_id,
             ))
+        except Exception as exc:
+            print_error(exc)
+            raise SystemExit(1) from exc
+    elif args.command == "dts-patterns":
+        try:
+            if args.dts_command == "list":
+                print_success(list_dts_patterns(
+                    args.data_root,
+                    track=args.track,
+                    status=args.status,
+                    query=args.query,
+                    cursor=args.cursor,
+                    limit=args.limit,
+                ))
+            elif args.dts_command == "get":
+                print_success(get_dts_pattern(args.data_root, args.pattern_id))
+            elif args.dts_command == "ingest":
+                print_success(ingest_dts_file(
+                    args.data_root,
+                    args.path,
+                    source_kind=args.source_kind,
+                ))
+            elif args.dts_command == "import":
+                items = _json_payload(args, "items")
+                if not isinstance(items, list):
+                    raise ValueError("items 必须是 JSON 数组")
+                print_success(import_dts_patterns(args.data_root, items))
+            elif args.dts_command == "set-status":
+                print_success(set_dts_pattern_status(args.data_root, args.pattern_id, args.status))
         except Exception as exc:
             print_error(exc)
             raise SystemExit(1) from exc

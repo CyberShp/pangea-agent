@@ -27,32 +27,59 @@ def ledger_markdown(delivery, anchors):
     def cell(value):
         return str(value if value is not None else '').replace('|', '\\|').replace('\n', ' ')
     all_checks = [r for _, result in delivery for r in active_records(result) if r.kind == 'check' and isinstance(r.body, dict)]
-    counts = Counter((str(r.body.get('lens')), str(r.body.get('conclusion'))) for r in all_checks)
-    conclusions = ['confirmed', 'excluded', 'unresolved', 'not_applicable']
-    lines = ['## 风险检查账本', '', '| 镜头 | 已证实 | 已排除 | 待确认 | 不适用 |', '|---|---:|---:|---:|---:|']
-    for lens in sorted({lens for lens, _ in counts}):
-        lines.append('| ' + cell(lens) + ' | ' + ' | '.join(str(counts[(lens, c)]) for c in conclusions) + ' |')
+    is_v2 = any(
+        (action.get('task', {}).get('record_contracts') or {}).get('risk') == 'behavior-risk-v3'
+        or r.body.get('format_version') == 'behavior-check-v2'
+        for action, _ in delivery
+        for r in (all_checks[:1] or [type('_R', (), {'body': {}})()])
+    )
+    if is_v2:
+        conclusions = ['confirmed', 'needs_runtime_verification', 'excluded', 'unresolved', 'not_applicable']
+        counts = Counter((str(r.body.get('track') or r.body.get('lens') or ''), str(r.body.get('conclusion'))) for r in all_checks)
+        lines = [
+            '## 三轨风险检查账本（risk-method-v2）', '',
+            '| 轨道 | 静态铁证 | 待动态实锤 | 已排除 | 待确认 | 不适用 |',
+            '|---|---:|---:|---:|---:|---:|',
+        ]
+        for bucket in sorted({b for b, _ in counts}):
+            lines.append('| ' + cell(bucket) + ' | ' + ' | '.join(str(counts[(bucket, c)]) for c in conclusions) + ' |')
+    else:
+        counts = Counter((str(r.body.get('lens')), str(r.body.get('conclusion'))) for r in all_checks)
+        conclusions = ['confirmed', 'excluded', 'unresolved', 'not_applicable']
+        lines = ['## 风险检查账本', '', '| 镜头 | 已证实 | 已排除 | 待确认 | 不适用 |', '|---|---:|---:|---:|---:|']
+        for lens in sorted({lens for lens, _ in counts}):
+            lines.append('| ' + cell(lens) + ' | ' + ' | '.join(str(counts[(lens, c)]) for c in conclusions) + ' |')
     for action, result in delivery:
         task = action.get('task', {})
         uid = task.get('unit_id', '')
         checks = [r for r in active_records(result) if r.kind == 'check' and isinstance(r.body, dict)]
-        lines.extend(['', f'### {cell(uid)}', '', '| 编号 | 镜头 | 对象 | 假设 | 结论 | 位置 |', '|---|---|---|---|---|---|'])
+        col_name = '轨道' if is_v2 else '镜头'
+        lines.extend(['', f'### {cell(uid)}', '', f'| 编号 | {col_name} | 对象 | 假设 | 结论 | 位置 |', '|---|---|---|---|---|---|'])
         for r in checks:
             b = r.body
             label = cell(b.get('check_id', r.record_id))
             risk_ids = b.get('risk_ids', [])
-            if b.get('conclusion') == 'confirmed' and isinstance(risk_ids, list):
+            if b.get('conclusion') in ('confirmed', 'needs_runtime_verification') and isinstance(risk_ids, list):
                 links = [f'[{cell(rid)}](#{anchors[(uid, "risk_id", rid)]})' for rid in risk_ids if isinstance(rid, str) and (uid, 'risk_id', rid) in anchors]
                 label += ' ' + ' '.join(links)
-            lines.append('| ' + ' | '.join([label, *(cell(b.get(k)) for k in ('lens', 'object', 'hypothesis', 'conclusion')), cell(b.get('sites'))]) + ' |')
+            bucket_val = b.get('track') or b.get('lens')
+            lines.append('| ' + ' | '.join([label, cell(bucket_val), *(cell(b.get(k)) for k in ('object', 'hypothesis', 'conclusion')), cell(b.get('sites'))]) + ' |')
         for r in checks:
             lines.extend(['', f'<details><summary>{html.escape(str(r.body.get("check_id", r.record_id)))} · 依据与引文</summary>', '', str(r.body.get('reasoning', '')), '', quotes_markdown(r.body.get('evidence_quotes'), {'lua': 'lua', 'python': 'python', 'shell': 'bash'}.get(task.get('analysis_language'))), '</details>', ''])
         for r in active_records(result):
             if r.kind == 'check' and not isinstance(r.body, dict):
                 lines.extend(['', '#### 检查原文（格式待核对）', '', quotes_markdown([{'ref': r.record_id, 'snippet': str(r.body)}], 'text')])
-        signal_input = next((i for i in task.get('inputs', []) if i.get('input_id') == 'unit_risk_signals'), None)
-        signals = read_json(Path(signal_input['path'])) if signal_input else {}
-        hints = analysis_unit_diagnostics(task, active_records(result), signals)
+        if is_v2:
+            from pangea_agent.risk_v2_schema import blueprint_coverage_diagnostics
+            bp_input = next((i for i in task.get('inputs', []) if i.get('input_id') == 'risk_blueprint'), None)
+            dts_input = next((i for i in task.get('inputs', []) if i.get('input_id') == 'dts_context'), None)
+            blueprint = read_json(Path(bp_input['path'])) if bp_input and Path(bp_input['path']).is_file() else None
+            dts_ctx = read_json(Path(dts_input['path'])) if dts_input and Path(dts_input['path']).is_file() else None
+            hints = blueprint_coverage_diagnostics(task.get('risk_track'), blueprint, active_records(result), dts_ctx)
+        else:
+            signal_input = next((i for i in task.get('inputs', []) if i.get('input_id') == 'unit_risk_signals'), None)
+            signals = read_json(Path(signal_input['path'])) if signal_input else {}
+            hints = analysis_unit_diagnostics(task, active_records(result), signals)
         lines.extend(['### 账本提示（仅供复核参考，不代表质量结论）', '', '```json', json.dumps(hints, ensure_ascii=False, indent=2), '```', ''])
         for warning in result.warnings:
             if warning.get('kind') in {'evidence_quote_mismatch', 'risk_contract_hint', 'check_contract_hint'} and warning.get('record_id') in {r.record_id for r in active_records(result)}:

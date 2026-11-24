@@ -112,6 +112,43 @@ def _check_existing_record_contract(
         if errors:
             raise ResultStoreError(format_risk_errors(offset, errors))
     contracts = record_contracts or {}
+    # risk-method-v2 deterministic write gates (reject malformed structure, unverified quotes,
+    # or missing instrumentation recipes on needs_runtime_verification risks; never judge truth).
+    if (
+        kind == "note"
+        and contracts.get("blueprint") == "risk-blueprint-v1"
+        and isinstance(body, dict)
+        and body.get("format_version") == "risk-blueprint-v1"
+    ):
+        from pangea_agent.risk_v2_schema import check_blueprint_structure, format_v2_gate_errors
+        bp_errors = check_blueprint_structure(body)
+        if bp_errors:
+            raise ResultStoreError(format_v2_gate_errors("risk_blueprint", offset, bp_errors))
+        return []
+    if kind == "check" and contracts.get("check") == "behavior-check-v2":
+        from pangea_agent.risk_v2_schema import check_check_v2_structure, format_v2_gate_errors
+        v2_errors = check_check_v2_structure(body)
+        if not v2_errors and isinstance(body, dict) and body.get("conclusion") in ("confirmed", "needs_runtime_verification", "excluded"):
+            if context is None:
+                raise ResultStoreError("内部错误：缺少冻结源码上下文")
+            v2_errors.extend(check_quotes(body.get("evidence_quotes"), context.resolver))
+        if v2_errors:
+            raise ResultStoreError(format_v2_gate_errors("check", offset, v2_errors))
+        return []
+    if kind == "risk" and contracts.get("risk") == "behavior-risk-v3":
+        from pangea_agent.risk_v2_schema import check_risk_v3_structure, format_v2_gate_errors
+        v3_errors = check_risk_v3_structure(body)
+        if not v3_errors and isinstance(body, dict):
+            if context is None:
+                raise ResultStoreError("内部错误：缺少冻结源码上下文")
+            v3_errors.extend(check_quotes(
+                body.get("evidence_quotes"),
+                context.resolver,
+                required_refs=body.get("source_evidence", []),
+            ))
+        if v3_errors:
+            raise ResultStoreError(format_v2_gate_errors("risk", offset, v3_errors))
+        return []
     new_contract = (kind == 'risk' and contracts.get('risk') == RISK_FORMAT_V2
                     or kind == 'check' and contracts.get('check') == CHECK_FORMAT
                     or kind == 'note' and contracts.get('review_check') == REVIEW_CHECK_FORMAT

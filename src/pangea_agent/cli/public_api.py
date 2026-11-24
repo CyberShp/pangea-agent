@@ -29,6 +29,13 @@ from pangea_agent.methodology import (
     show_methodology_derivation,
     show_methodology,
 )
+from pangea_agent.dts_patterns import (
+    get_dts_pattern,
+    import_dts_patterns,
+    ingest_dts_file,
+    list_dts_patterns,
+    set_dts_pattern_status,
+)
 from pangea_agent.report import reports_are_complete
 
 
@@ -66,6 +73,14 @@ def system_capabilities(data_root: str) -> dict:
         ],
         "repositories": list_registered_repositories(data_root),
         "report_formats": ["html", "markdown"],
+        "dts_patterns": {
+            "format_version": "dts-pattern-v1",
+            "tracks": ["error_rollback", "concurrency_timing", "resource_lifecycle"],
+            "statuses": ["enabled", "disabled"],
+            "default_status": "enabled",
+            "mcp_adaptive": ["DTS-mcp", "codehub-mcp"],
+            "offline_formats": [".json", ".csv", ".xlsx", ".md", ".txt"],
+        },
         "methodologies": {
             "schema_version": "1.0",
             "candidate_schema_path": str(

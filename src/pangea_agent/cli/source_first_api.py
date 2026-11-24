@@ -1152,7 +1152,7 @@ def work_finish(
             with runtime_timing(data_root, run_id, identity, "work_finish", "progress_save"):
                 progress.first_finish_revisions.setdefault(action_id, int(response["revision"]))
                 save_progress(state, progress)
-        if (task.get('record_contracts') or {}).get('check') == 'behavior-check-v1':
+        if (task.get('record_contracts') or {}).get('check') in {'behavior-check-v1', 'behavior-check-v2'}:
             validation = validate_source_first_result(data_root, run_id, action_id, task_id)
             response.update(status=validation['status'], warnings=validation.get('warnings', []), validation=validation)
         if task.get("review_stage") == "comparison_review":

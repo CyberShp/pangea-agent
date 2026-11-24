@@ -476,6 +476,31 @@ def prepare_source_first_inputs(state: PangeaState) -> PangeaState:
             for f in sorted(summary["files"], key=lambda f: (-sum(f["counts"].values()), f["repo_id"], f["path"]))[:100]]
         write_json(compact_path, compact_metadata)
         task["inputs"].append(_input("risk_signal_summary", inputs / "risk-signal-summary.json", "风险检索线索"))
+    if scene and scene.get("risk_topology"):
+        from pangea_agent.inventory.risk_topology_index import generate_topology_summary
+        topo_summary = generate_topology_summary(run_dir, task)
+        compact_metadata["risk_topology_overview"] = [
+            {key: f[key] for key in ("repo_id", "path", "language", "parser", "counts")}
+            for f in sorted(
+                topo_summary["files"],
+                key=lambda f: (-sum(f["counts"].values()), f["repo_id"], f["path"]),
+            )[:100]
+        ]
+        write_json(compact_path, compact_metadata)
+        task["inputs"].append(_input("risk_topology_summary", inputs / "risk-topology-summary.json", "三轨 AST 拓扑结构索引"))
+    if scene and scene.get("dts_feedback"):
+        from pangea_agent.dts_patterns import freeze_dts_context
+        dts_settings = (contract.get("analysis_settings") or {}).get("dts_context") or {}
+        freeze_dts_context(
+            state["data_root"],
+            run_dir,
+            run_id=state["run_id"],
+            scope_paths=[f"{item['repo_id']}:{item['path']}" for item in owned_scope_paths],
+            requested_dts_ids=dts_settings.get("dts_ids") if isinstance(dts_settings, dict) else None,
+            homologous_items=dts_settings.get("homologous_dts") if isinstance(dts_settings, dict) else None,
+            mcp_status=dts_settings.get("mcp_status") if isinstance(dts_settings, dict) else None,
+        )
+        task["inputs"].append(_input("dts_context", inputs / "dts-context.json", "冻结 DTS 故障拓扑库与同源案例"))
     attach_investigation(run_dir, task)
     attach_incremental_inputs(run_dir, task)
     attach_flow_stability_input(state, task)
