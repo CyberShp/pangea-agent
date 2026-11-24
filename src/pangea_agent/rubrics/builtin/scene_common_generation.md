@@ -5,9 +5,9 @@
 
 当用例声明 `execution_readiness=needs_instrumentation` 且本轮已定位目标源码时，在 `test_case.body` 保存 `instrumentation` 对象：
 `{points:[{id,repo_id,path,symbol,action,trigger,times,enable,disable,observe,cleanup,depends_on,exclusive_with}]}`。
-path、symbol 引用真实已读源码；action 说明模拟的故障，trigger/times 说明对象、阶段和次数，
-observe 说明如何确认实际命中；若本轮已见到测试编译开关宏、ASAN/超时条件编译宏或对应单元测试目录，在 `trigger`/`enable` 中保留真实符号与路径。已有设施才能填写实际启停命令；需新增的控制入口明确标为待实现。
-只记录已发现的依赖或互斥，不要求全仓组合分析。一个用例可以关联多个桩点，不同用例可复用桩点。
+path、symbol 引用真实已读源码；action 说明模拟的故障，trigger/times 说明对象、阶段（区分稳态运行期路径与进程启动/初始化路径）和次数，
+observe 说明如何确认实际命中。遇到需内部故障构造的分支时，可依当前 task 源码调查策略在同模块及邻近 `diag`/`dbg`/`cli`/`dfx` 目录按需检索一次既有 `diagnose`/`pgd` 等诊断调测入口：若已有覆盖该故障的现成注入命令，按 `instrumentation-readiness-v1` 仍标 `needs_instrumentation`，在 `readiness_reason` 注明既有注入设施已具备（无需改码出包），并在 `enable`/`disable` 填写核实后的真实命令与 `repo_id:path:line`；若模块仅有诊断命令注册壳子（或测试编译开关宏、ASAN/超时条件编译宏、对应单元测试目录）而缺本故障子命令，在 `trigger`/`enable` 中保留该注册宏/回调样板的真实符号与 `repo_id:path:line` 供下游代码打桩直接复用，需新增的子命令或启动期单次控制文件明确标为待实现。
+只记录已发现的依赖或互斥，不要求全仓枚举诊断命令或组合分析。一个用例可以关联多个桩点，不同用例可复用桩点。
 业务步骤保留测试人员操作，内部位置和注入细节放此对象。注入只制造原因，保留被验证的错误处理。
 本轮分析不改源码、不生成补丁、不推送；用户在用例页面启动独立打桩任务后再生成实际修改。
 已有用例、挂点未定位（`unknown`）和无需打桩的用例不要求该字段，不增加用例提交门禁，不因候选方案存在就将 needs_instrumentation 改为 ready。
