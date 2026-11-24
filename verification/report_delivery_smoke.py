@@ -176,6 +176,8 @@ inst_case["instrumentation"] = {
 inst_md = _record_markdown(record("inst-case", "test_case", inst_case), unit_id="u")
 assert "候选打桩方案（未修改源码）" in inst_md
 assert "P-ALLOC" in inst_md and "core:src/mem.c" in inst_md and "alloc_buf" in inst_md and "PANGEA_HIT_ALLOC" in inst_md
+assert "- **目标符号**：alloc_buf\n- **注入动作**：返回 NULL 模拟内存分配失败" in inst_md
+assert "目标符号：alloc_buf；注入动作：" not in inst_md
 raw_inst_case = copy.deepcopy(case)
 raw_inst_case["instrumentation"] = {"raw_note": "非标准桩点说明原文保留"}
 raw_inst_md = _record_markdown(record("raw-inst", "test_case", raw_inst_case), unit_id="u")

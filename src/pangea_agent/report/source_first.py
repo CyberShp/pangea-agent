@@ -643,16 +643,22 @@ def _case_instrumentation_markdown(instrumentation: Any) -> list[str]:
             continue
         point_id = str(point.get("id") or f"P-{index}")
         location = ":".join(part for part in (str(point.get("repo_id") or "").strip(), str(point.get("path") or "").strip()) if part)
-        header = f"- **`{_markdown_cell(point_id)}`**" + (f"（`{_markdown_cell(location)}`）" if location else "")
-        details = []
+        header = f"###### `{_markdown_cell(point_id)}`" + (f"（`{_markdown_cell(location)}`）" if location else "")
+        if index > 1:
+            lines.append("")
+        lines.append(header)
+        lines.append("")
+        has_detail = False
         for key, label in point_fields:
             value = point.get(key)
             if value is None or value == "" or value == []:
                 continue
             rendered = "、".join(_body_text(item) for item in value) if isinstance(value, list) else _body_text(value)
             if rendered.strip():
-                details.append(f"{label}：{_markdown_cell(rendered)}")
-        lines.append(f"{header} — {'；'.join(details)}" if details else header)
+                has_detail = True
+                lines.append(f"- **{label}**：{_markdown_cell(rendered)}")
+        if not has_detail:
+            lines.append("- 未填写详细挂点参数。")
     return lines
 
 
