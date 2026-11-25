@@ -88,8 +88,8 @@ class CaseStructureChecks(unittest.TestCase):
         for scenario in SCENES:
             self.assertEqual(scene_spec(scenario)["record_contracts"]["test_case"], TEST_CASE_FORMAT)
         risk_contracts = scene_spec("risk-analysis")["record_contracts"]
-        self.assertEqual(risk_contracts["risk"], "behavior-risk-v2")
-        self.assertEqual(risk_contracts["check"], "behavior-check-v1")
+        self.assertEqual(risk_contracts["risk"], "behavior-risk-v3")
+        self.assertEqual(risk_contracts["check"], "behavior-check-v2")
         with tempfile.TemporaryDirectory() as directory:
             run = Path(directory)
             contract = {"analysis_profile": "behavior-test-v2", "analysis_settings": {"scenario": "module-analysis"}}
@@ -268,18 +268,54 @@ class CaseWriteGraphChecks(unittest.TestCase):
         self.assertNotEqual(self.progress()["actions"][self.action_id]["status"], "settled")
 
     def test_risk_v2_diagnostics_stay_hints_with_the_case_contract(self):
+        # 1. Legacy frozen behavior-risk-v2 / behavior-check-v1 runs keep diagnostics non-blocking.
         self.prepare_graph("risk-analysis")
-        written = result_write(*self.args, expected_revision=0, records=[
+        task_path = Path(self.progress()["actions"][self.action_id]["task_path"])
+        legacy_task = read_json(task_path)
+        legacy_task["record_contracts"]["risk"] = "behavior-risk-v2"
+        legacy_task["record_contracts"]["check"] = "behavior-check-v1"
+        write_json(task_path, legacy_task)
+        legacy_written = result_write(*self.args, expected_revision=0, records=[
             case_record(),
             {"kind": "risk", "body": {"format_version": "behavior-risk-v2", "title": "原 worker 待核实的风险"}},
             {"kind": "check", "body": {"signal_ids": ["unconfirmed-signal"]}},
         ])
         self.assertTrue({"risk_contract_hint", "check_contract_hint", "evidence_quote_mismatch"}
-                        <= {item["kind"] for item in written["warnings"]})
+                        <= {item["kind"] for item in legacy_written["warnings"]})
+        legacy_finished = work_finish(*self.args, revision=legacy_written["revision"])
+        self.assertEqual(legacy_finished["status"], "valid")
+        self.assertEqual(len(read_result(self.path).records), 3)
+        self.assertEqual(read_result(self.path).records[1].body["title"], "原 worker 待核实的风险")
+
+        # 2. New risk-analysis runs enforce behavior-risk-v3 / behavior-check-v2 deterministic gates.
+        self.prepare_graph("risk-analysis")
+        with self.assertRaises(ResultStoreError):
+            result_write(*self.args, expected_revision=0, records=[
+                case_record(),
+                {"kind": "risk", "body": {"format_version": "behavior-risk-v2", "title": "旧版格式"}},
+            ])
+        written = result_write(*self.args, expected_revision=0, records=[
+            case_record(),
+            {"kind": "check", "body": {
+                "format_version": "behavior-check-v2", "check_id": "C1", "track": "error_rollback",
+                "object": "one", "sites": ["demo:src/one.c:1"], "hypothesis": "return 1",
+                "conclusion": "confirmed", "reasoning": "synthetic fixture",
+                "evidence_quotes": [{"ref": "demo:src/one.c:1", "snippet": "int one(void) { return 1; }"}],
+                "risk_ids": ["R1"],
+            }},
+            {"kind": "risk", "body": {
+                "format_version": "behavior-risk-v3", "risk_id": "R1", "track": "error_rollback",
+                "verification_status": "static_proven", "severity": "Medium", "title": "合成风险",
+                "trigger": "call one", "interleaving_or_path": ["L1: return 1"],
+                "system_result": "fixture", "external_observation": "fixture", "exclusion_condition": "fixture",
+                "source_evidence": ["demo:src/one.c:1"],
+                "evidence_quotes": [{"ref": "demo:src/one.c:1", "snippet": "int one(void) { return 1; }"}],
+            }},
+        ])
+        self.assertEqual(written["warnings"], [])
         finished = work_finish(*self.args, revision=written["revision"])
         self.assertEqual(finished["status"], "valid")
         self.assertEqual(len(read_result(self.path).records), 3)
-        self.assertEqual(read_result(self.path).records[1].body["title"], "原 worker 待核实的风险")
 
 
 if __name__ == "__main__":
