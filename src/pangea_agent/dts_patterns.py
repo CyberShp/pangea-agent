@@ -410,11 +410,12 @@ def freeze_dts_context(
     run_id: str,
     scope_paths: list[str],
     requested_dts_ids: list[str] | None = None,
+    requested_mr_urls: list[str] | None = None,
     homologous_items: list[dict[str, Any]] | None = None,
     mcp_status: dict[str, Any] | None = None,
     max_patterns: int = 24,
 ) -> dict[str, Any]:
-    """Freeze matched enabled DTS topology cards, explicit user DTS IDs, and homologous DTS into inputs/dts-context.json."""
+    """Freeze matched enabled DTS topology cards, explicit user DTS IDs/MR URLs, and homologous DTS into inputs/dts-context.json."""
     target = run_dir / "inputs" / "dts-context.json"
     if target.is_file():
         return read_json(target)
@@ -422,6 +423,11 @@ def freeze_dts_context(
     clean_dts_ids = [
         str(item).strip()
         for item in (requested_dts_ids or [])
+        if isinstance(item, str) and item.strip()
+    ]
+    clean_mr_urls = [
+        str(item).strip()
+        for item in (requested_mr_urls or [])
         if isinstance(item, str) and item.strip()
     ]
     scope_tokens = {
@@ -450,6 +456,7 @@ def freeze_dts_context(
 
     body_for_hash = {
         "requested_dts_ids": clean_dts_ids,
+        "requested_mr_urls": clean_mr_urls,
         "homologous_dts": [item.model_dump(mode="json") for item in homologous],
         "matched_patterns": [card.model_dump(mode="json") for card in matched],
     }
@@ -462,6 +469,7 @@ def freeze_dts_context(
         frozen_at=utc_now(),
         content_sha256=digest,
         requested_dts_ids=clean_dts_ids,
+        requested_mr_urls=clean_mr_urls,
         mcp_status=mcp_status or {
             "dts_mcp_detected": False,
             "codehub_mcp_detected": False,

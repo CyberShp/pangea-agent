@@ -85,6 +85,7 @@ class DTSContextSnapshot(StrictModel):
     frozen_at: AwareDatetime
     content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     requested_dts_ids: list[NonEmptyText] = Field(default_factory=list)
+    requested_mr_urls: list[NonEmptyText] = Field(default_factory=list)
     mcp_status: dict = Field(default_factory=dict)
     homologous_dts: list[FrozenHomologousDTS] = Field(default_factory=list)
     matched_patterns: list[DTSPatternCard] = Field(default_factory=list)

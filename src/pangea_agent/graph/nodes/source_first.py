@@ -497,6 +497,7 @@ def prepare_source_first_inputs(state: PangeaState) -> PangeaState:
             run_id=state["run_id"],
             scope_paths=[f"{item['repo_id']}:{item['path']}" for item in owned_scope_paths],
             requested_dts_ids=dts_settings.get("dts_ids") if isinstance(dts_settings, dict) else None,
+            requested_mr_urls=dts_settings.get("mr_urls") if isinstance(dts_settings, dict) else None,
             homologous_items=dts_settings.get("homologous_dts") if isinstance(dts_settings, dict) else None,
             mcp_status=dts_settings.get("mcp_status") if isinstance(dts_settings, dict) else None,
         )
