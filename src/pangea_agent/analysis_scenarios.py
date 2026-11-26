@@ -20,7 +20,7 @@ RISK_METHOD = "risk-method-v1"
 BRANCH_METHOD = "behavior-branch-v1"
 SCENES = {
     "module-analysis": ("模块分析", "lightweight", "optional", "模块综合分析：业务分支、轻量风险及可选覆盖补测。"),
-    "risk-analysis": ("风险分析", "primary", "optional", "聚焦异常回滚、时序并发、资源生命周期三大深水区，结合 DTS 真实案例反哺与两级实证直通打桩。"),
+    "risk-analysis": ("风险分析", "primary", "optional", "聚焦异常回滚、时序并发、资源生命周期、踩内存与悬空访问四大深水区，结合 DTS 真实案例反哺与两级实证直通打桩。"),
     "branch-analysis": ("分支分析", "none", "optional", "依据业务条件、配置、状态、顺序与结果设计分支用例，并逐项说明覆盖与缺口。"),
     "coverage-analysis": ("覆盖率分析", "none", "required", "依据真实覆盖数据定位缺口并设计补测。"),
 }

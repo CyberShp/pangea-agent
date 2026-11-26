@@ -37,7 +37,7 @@ def ledger_markdown(delivery, anchors):
         conclusions = ['confirmed', 'needs_runtime_verification', 'excluded', 'unresolved', 'not_applicable']
         counts = Counter((str(r.body.get('track') or r.body.get('lens') or ''), str(r.body.get('conclusion'))) for r in all_checks)
         lines = [
-            '## 三轨风险检查账本（risk-method-v2）', '',
+            '## 四轨风险检查账本（risk-method-v2）', '',
             '| 轨道 | 静态铁证 | 待动态实锤 | 已排除 | 待确认 | 不适用 |',
             '|---|---:|---:|---:|---:|---:|',
         ]

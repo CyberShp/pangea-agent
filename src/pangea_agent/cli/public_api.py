@@ -75,11 +75,11 @@ def system_capabilities(data_root: str) -> dict:
         "report_formats": ["html", "markdown"],
         "dts_patterns": {
             "format_version": "dts-pattern-v1",
-            "tracks": ["error_rollback", "concurrency_timing", "resource_lifecycle"],
+            "tracks": ["error_rollback", "concurrency_timing", "resource_lifecycle", "memory_corruption"],
             "statuses": ["enabled", "disabled"],
             "default_status": "enabled",
             "mcp_adaptive": ["DTS-mcp", "codehub-mcp"],
-            "offline_formats": [".json", ".csv", ".xlsx", ".md", ".txt"],
+            "offline_formats": [".json", ".csv", ".xlsx", ".md", ".txt", ".diff", ".patch"],
         },
         "methodologies": {
             "schema_version": "1.0",

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -73,7 +73,7 @@ class TaskContract(BaseModel):
     incremental_request: IncrementalRequest | None = None
     flow_baseline: FlowBaselineRef | None = None
     model_settings: ModelSettings | None = None
-    analysis_settings: dict[str, str] | None = None
+    analysis_settings: dict[str, Any] | None = None
     model_id: str | None = None
     effective_context_budget: int | None = Field(default=None, gt=0)
     mode: Literal["module_analysis", "mr_analysis"] = "module_analysis"
@@ -120,9 +120,12 @@ class TaskContract(BaseModel):
         if self.analysis_profile == "behavior-test-v2":
             from pangea_agent.analysis_scenarios import SCENES
             settings = self.analysis_settings or {}
+            dts_ctx = settings.get("dts_context")
             if (self.workflow_version != "source-first-v1" or not {"scenario", "mode"}.issubset(settings)
-                    or set(settings) - {"scenario", "mode", "objective"}
+                    or set(settings) - {"scenario", "mode", "objective", "dts_context"}
+                    or not isinstance(settings.get("scenario"), str) or not isinstance(settings.get("mode"), str)
                     or ("objective" in settings and settings["objective"] not in {"product-behavior", "interface-contract"})
+                    or ("dts_context" in settings and dts_ctx is not None and not isinstance(dts_ctx, dict))
                     or settings.get("scenario") not in SCENES or settings.get("mode") not in {"depth", "speed"}):
                 raise ValueError("behavior-test-v2 requires a supported scenario and depth/speed mode")
             if self.asset_revisions and not set(self.asset_revisions).issubset(self.asset_ids):

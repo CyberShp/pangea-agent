@@ -109,13 +109,21 @@ def _plan_diagnostics(run_dir: Path, task: dict[str, Any], result, *, include_un
     from pangea_agent.inventory.on_demand import read_index
     index = read_index(run_dir)
     all_regions, required = planning_regions(index, task.get("owned_scope_paths", []))
+    is_v2_risk_tracks = (task.get("record_contracts") or {}).get("blueprint") == "risk-blueprint-v1"
     owners: dict[str, list[str]] = {}
+    track_owners: dict[tuple[str, str], list[str]] = {}
     unknown: list[dict[str, str]] = []
     units = _effective_plan_units(result)
     selection_issues = []
     for raw_unit in units:
         unit, issues = expand_owned_files(raw_unit, index, task.get("owned_scope_paths", []))
         unit_id = str(unit["unit_id"])
+        raw_track = raw_unit.get("risk_track")
+        track_bucket = (
+            raw_track.strip()
+            if is_v2_risk_tracks and isinstance(raw_track, str) and raw_track.strip()
+            else ""
+        )
         selection_issues.extend({"unit_id": unit_id, **issue} for issue in issues)
         if not unit.get("owned_regions"):
             selection_issues.append({"unit_id": unit_id, "field": "owned_regions", "reason": "owned_selection_required"})
@@ -127,11 +135,19 @@ def _plan_diagnostics(run_dir: Path, task: dict[str, Any], result, *, include_un
                     unknown.append({"unit_id": unit_id, "field": key, "region_id": str(region_id)})
                 elif key == "owned_regions":
                     owners.setdefault(region_id, []).append(unit_id)
-    duplicate = [
-        {"region_id": region_id, "unit_ids": unit_ids}
-        for region_id, unit_ids in sorted(owners.items())
-        if len(unit_ids) > 1
-    ]
+                    track_owners.setdefault((track_bucket, region_id), []).append(unit_id)
+    if is_v2_risk_tracks:
+        duplicate = [
+            {"region_id": region_id, **({"risk_track": track} if track else {}), "unit_ids": unit_ids}
+            for (track, region_id), unit_ids in sorted(track_owners.items())
+            if len(unit_ids) > 1
+        ]
+    else:
+        duplicate = [
+            {"region_id": region_id, "unit_ids": unit_ids}
+            for region_id, unit_ids in sorted(owners.items())
+            if len(unit_ids) > 1
+        ]
     diagnostics = {
         "unit_count": len(units),
         "required_owned_region_count": len(required),
@@ -236,6 +252,15 @@ def validate_source_first_result(
         signal_input = next((i for i in task.get('inputs', []) if i.get('input_id') == 'unit_risk_signals'), None)
         signals = read_json(Path(signal_input['path'])) if signal_input else {}
         warnings.append({'kind': 'risk_method_hint', **analysis_unit_diagnostics(task, records, signals)})
+    if (task.get('record_contracts') or {}).get('check') == 'behavior-check-v2' and task.get('task_type') in {'source_first_analysis', 'source_first_closure'}:
+        from pangea_agent.risk_v2_schema import blueprint_coverage_diagnostics
+        bp_input = next((i for i in task.get('inputs', []) if i.get('input_id') == 'risk_blueprint'), None)
+        dts_input = next((i for i in task.get('inputs', []) if i.get('input_id') == 'dts_context'), None)
+        bp_data = read_json(Path(bp_input['path'])) if bp_input and Path(bp_input['path']).is_file() else None
+        dts_data = read_json(Path(dts_input['path'])) if dts_input and Path(dts_input['path']).is_file() else None
+        v2_diag = blueprint_coverage_diagnostics(task.get('risk_track'), bp_data, records, dts_data)
+        if v2_diag['missing_blueprint_entities'] or v2_diag['unaddressed_homologous_dts']:
+            warnings.append({'kind': 'risk_v2_coverage_hint', **v2_diag})
     if not records:
         return {
             "status": "incomplete",
@@ -355,6 +380,12 @@ def task_open(data_root: str, run_id: str, action_id: str, task_id: str, *, prep
         if (task.get('record_contracts') or {}).get('check') == 'behavior-check-v1':
             opened['write_contract']['unit_example']['risk_lenses'] = ['resource_lifecycle', 'boundary']
             opened['write_contract']['note'] += '申请与释放、生产与消费分在不同单元时，另一侧写入 context_files。'
+        if (task.get('record_contracts') or {}).get('blueprint') == 'risk-blueprint-v1':
+            opened['write_contract']['unit_example']['risk_track'] = 'memory_corruption'
+            opened['write_contract']['note'] += (
+                ' risk-method-v2 四轨派单需填写 risk_track（error_rollback / concurrency_timing / '
+                'resource_lifecycle / memory_corruption）；不同 risk_track 的单元允许共享同一 owned_files。'
+            )
         if task.get("planning_io_policy") == "planning-io-v1":
             from pangea_agent.inventory.planning_io import PLANNING_CAPABILITIES, planning_startup
             opened["planning_startup"] = planning_startup(data_root, run_id, action_id, task_id, task)

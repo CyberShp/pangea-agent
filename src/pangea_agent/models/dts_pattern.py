@@ -8,9 +8,15 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validato
 
 
 NonEmptyText = Annotated[str, Field(min_length=1)]
-DTSPatternTrack = Literal["error_rollback", "concurrency_timing", "resource_lifecycle"]
+DTSPatternTrack = Literal["error_rollback", "concurrency_timing", "resource_lifecycle", "memory_corruption"]
 DTSPatternStatus = Literal["enabled", "disabled"]
-DTSSourceKind = Literal["mcp_dts_codehub", "offline_file_with_git", "offline_file_text", "manual"]
+DTSSourceKind = Literal[
+    "mcp_dts_codehub",
+    "offline_file_with_git",
+    "offline_file_text",
+    "historical_defect_asset",
+    "manual",
+]
 
 
 def utc_now() -> datetime:

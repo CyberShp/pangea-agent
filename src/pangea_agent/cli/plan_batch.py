@@ -30,6 +30,8 @@ def _check_unit(unit: Any, offset: int) -> None:
     for field in ("title", "purpose"):
         if not isinstance(unit.get(field), str) or not unit[field].strip():
             raise ResultStoreError(f"{label}.{field} 必须是非空字符串")
+    if "risk_track" in unit and (not isinstance(unit.get("risk_track"), str) or not unit["risk_track"].strip()):
+        raise ResultStoreError(f"{label}.risk_track 必须是非空字符串")
     for field in ("owned_regions", "context_regions", "context_files", "coverage_ids",
                   "asset_item_ids", "mechanism_ids"):
         value = unit.get(field, [])

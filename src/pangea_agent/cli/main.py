@@ -198,7 +198,10 @@ def main() -> None:
     dts_commands = dts_patterns.add_subparsers(dest="dts_command", required=True)
     dts_list = dts_commands.add_parser("list")
     dts_list.add_argument("--data-root", default="pangea-data")
-    dts_list.add_argument("--track", choices=("error_rollback", "concurrency_timing", "resource_lifecycle"))
+    dts_list.add_argument(
+        "--track",
+        choices=("error_rollback", "concurrency_timing", "resource_lifecycle", "memory_corruption"),
+    )
     dts_list.add_argument("--status", choices=("enabled", "disabled"))
     dts_list.add_argument("--query")
     dts_list.add_argument("--cursor", type=int, default=0)
@@ -209,7 +212,10 @@ def main() -> None:
     dts_ingest = dts_commands.add_parser("ingest")
     dts_ingest.add_argument("--data-root", default="pangea-data")
     dts_ingest.add_argument("--path", required=True)
-    dts_ingest.add_argument("--source-kind", choices=("mcp_dts_codehub", "offline_file_with_git", "offline_file_text", "manual"))
+    dts_ingest.add_argument(
+        "--source-kind",
+        choices=("mcp_dts_codehub", "offline_file_with_git", "offline_file_text", "historical_defect_asset", "manual"),
+    )
     dts_import = dts_commands.add_parser("import")
     dts_import.add_argument("--data-root", default="pangea-data")
     _add_json_argument(dts_import, "items", required=True, help="JSON array of DTSPatternInput objects")

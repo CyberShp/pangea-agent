@@ -49,21 +49,26 @@ def _bounded_startup(data_root: str, run_id: str, action_id: str, task_id: str,
 def planning_startup(data_root: str, run_id: str, action_id: str, task_id: str,
                      task: dict, *, max_chars: int = 18_000) -> dict:
     """Supply only declared small planning inputs, with explicit unread cursors."""
-    declared = {item["input_id"] for item in task.get("inputs", []) if isinstance(item, dict)
-                and isinstance(item.get("input_id"), str)}
+    declared_order = [item["input_id"] for item in task.get("inputs", []) if isinstance(item, dict)
+                      and isinstance(item.get("input_id"), str)]
+    declared = set(declared_order)
+    extra_scene_rubrics = [name for name in declared_order if name.startswith("scene_planning_rubric_")]
     identifiers = [name for name in ("analysis_scene", "unit_planning_rubric",
-                                    "scene_planning_rubric", "planning_metadata") if name in declared]
+                                    "scene_planning_rubric", *extra_scene_rubrics, "planning_metadata",
+                                    "dts_context", "asset_candidates") if name in declared]
     return _bounded_startup(data_root, run_id, action_id, task_id, identifiers, max_chars=max_chars)
 
 
 def analysis_startup(data_root: str, run_id: str, action_id: str, task_id: str,
                      task: dict, *, max_chars: int = 24_000) -> dict:
-    """Supply declared small analysis inputs (scene, handoff, rubrics) with explicit unread cursors."""
+    """Supply declared small analysis inputs (scene, handoff, blueprint, dts_context, rubrics) with explicit unread cursors."""
     declared_order = [item["input_id"] for item in task.get("inputs", []) if isinstance(item, dict)
                       and isinstance(item.get("input_id"), str)]
     declared_set = set(declared_order)
-    identifiers = [name for name in ("analysis_scene", "planning_handoff") if name in declared_set]
+    identifiers = [name for name in ("analysis_scene", "planning_handoff", "risk_blueprint", "dts_context") if name in declared_set]
     identifiers.extend(name for name in declared_order if name.startswith("rubric_") and name not in identifiers)
+    if task.get("asset_item_ids") and "asset_items" in declared_set:
+        identifiers.append("asset_items")
     return _bounded_startup(data_root, run_id, action_id, task_id, identifiers, max_chars=max_chars)
 
 

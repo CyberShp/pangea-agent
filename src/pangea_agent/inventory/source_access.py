@@ -190,7 +190,7 @@ def compact_task_view(task: dict[str, Any]) -> dict[str, Any]:
     remaining = 8000
     scopes = {"allowed_paths", "all_scope_paths", "owned_scope_paths", "reference_scope_paths"}
     identities = {"format_version", "task_type", "run_id", "action_id", "task_id", "unit_id",
-                  "role", "stage", "review_stage", "review_mode", "version_set_id",
+                  "role", "stage", "review_stage", "review_mode", "version_set_id", "risk_track",
                   "result_path", "analysis_profile", "scenario", "execution_budget_ms", "record_contracts",
                   "planning_policy", "planning_io_policy", "scope_policy",
                   "source_investigation_policy", "source_investigation_instructions"}

@@ -16,7 +16,7 @@ from pangea_agent.agent_io import write_json
 from pangea_agent.fs_paths import long_path
 
 NOTE = (
-    "确定性三轨结构索引（仅结构事实与检索锚点，不构成缺陷结论；"
+    "确定性四轨结构索引（仅结构事实与检索锚点，不构成缺陷结论；"
     "宏展开、函数指针间接调用与条件编译仍须由轨道 Worker 核对源码）。"
 )
 
@@ -27,7 +27,14 @@ _ACQUIRE_EXACT = frozenset(
 )
 _RELEASE_EXACT = frozenset(
     "free fclose close munmap closedir pthread_join timer_delete kfree vfree "
-    "kmem_cache_free".split()
+    "kmem_cache_free shmdt".split()
+)
+_RAW_MEM_WRITE_EXACT = frozenset(
+    "memcpy memmove memset bcopy bzero strcpy strncpy strcat strncat "
+    "sprintf vsprintf snprintf vsnprintf".split()
+)
+_SHARED_MEM_OR_SLOT_VERBS = frozenset(
+    "shmget shmat shmdt mmap munmap mremap pool slab slot ring".split()
 )
 _LOCK_EXACT = frozenset(
     "pthread_mutex_lock pthread_mutex_trylock pthread_rwlock_rdlock "
@@ -49,6 +56,7 @@ _CALLBACK_VERBS = frozenset("register subscribe set_cb set_callback on_event tim
 _LUA_YIELD_RE = re.compile(r"\b(?:coroutine\.yield|skynet\.(?:call|sleep|wait|timeout|yield))\b")
 _LUA_RESOURCE_RE = re.compile(r"\b(?:io\.open|socket\.\w+|skynet\.timeout|skynet\.fork)\b|:close\s*\(")
 _LUA_ERROR_RE = re.compile(r"\b(?:error|assert|pcall|xpcall)\s*\(")
+_LUA_MEM_RE = re.compile(r"\b(?:ffi\.(?:copy|fill|cast|new|gc)|string\.unpack)\b")
 _REFCOUNT_RE = re.compile(
     r"\b(ref|refs|refcnt|refcount|cnt|count|users)\s*(?:\+\+|--|\+=|-=)|"
     r"(?:\+\+|--)\s*(ref|refs|refcnt|refcount|cnt|count|users)\b"
@@ -78,6 +86,14 @@ def _callee_name(call_node, data: bytes) -> str:
     return raw.split("->")[-1].split(".")[-1].split("::")[-1].strip()
 
 
+def _first_call_arg_text(call_node, data: bytes) -> str:
+    args = call_node.child_by_field_name("arguments")
+    if args is None or not args.named_children:
+        return ""
+    raw = _node_text(args.named_children[0], data).strip()
+    return re.sub(r"^\s*&\s*", "", raw)
+
+
 def _c_function_name(fn_node, data: bytes) -> str:
     decl = fn_node.child_by_field_name("declarator")
     if decl is None:
@@ -89,18 +105,23 @@ def _c_function_name(fn_node, data: bytes) -> str:
 
 def _classify_c_call(callee: str) -> list[str]:
     tags: list[str] = []
-    if callee in _ACQUIRE_EXACT or (_words(callee) & _ACQUIRE_VERBS and callee not in _RELEASE_EXACT):
+    words = _words(callee)
+    if callee in _ACQUIRE_EXACT or (words & _ACQUIRE_VERBS and callee not in _RELEASE_EXACT):
         tags.append("acquire")
-    if callee in _RELEASE_EXACT or (_words(callee) & _RELEASE_VERBS and callee not in _ACQUIRE_EXACT):
+    if callee in _RELEASE_EXACT or (words & _RELEASE_VERBS and callee not in _ACQUIRE_EXACT):
         tags.append("release")
-    if callee in _LOCK_EXACT or ("lock" in _words(callee) and "unlock" not in _words(callee)):
+    if callee in _LOCK_EXACT or ("lock" in words and "unlock" not in words):
         tags.append("lock")
-    if callee in _UNLOCK_EXACT or "unlock" in _words(callee):
+    if callee in _UNLOCK_EXACT or "unlock" in words:
         tags.append("unlock")
     if callee in _BLOCKING_EXACT:
         tags.append("blocking")
-    if _words(callee) & _CALLBACK_VERBS:
+    if words & _CALLBACK_VERBS:
         tags.append("callback_reg")
+    if callee in _RAW_MEM_WRITE_EXACT:
+        tags.append("raw_mem_write")
+    if callee in _SHARED_MEM_OR_SLOT_VERBS or (words & _SHARED_MEM_OR_SLOT_VERBS):
+        tags.append("shared_mem_or_slot")
     return tags
 
 
@@ -113,8 +134,10 @@ def _scan_c_cpp(repo_id: str, path: str, text: str) -> dict[str, Any]:
     error_slices: list[dict[str, Any]] = []
     concurrency_anchors: list[dict[str, Any]] = []
     resource_anchors: list[dict[str, Any]] = []
+    memory_anchors: list[dict[str, Any]] = []
     field_reads: dict[str, set[str]] = defaultdict(set)
     field_writes: dict[str, set[str]] = defaultdict(set)
+    released_fields: dict[str, set[str]] = defaultdict(set)
     global_vars: set[str] = set()
     parser_mode = "tree-sitter-tolerant"
 
@@ -169,6 +192,9 @@ def _scan_c_cpp(repo_id: str, path: str, text: str) -> dict[str, Any]:
         label_cleanups: dict[str, list[str]] = defaultdict(list)
         side_effects: list[dict[str, Any]] = []
         exits: list[dict[str, Any]] = []
+        fn_releases: list[tuple[int, str, str, str]] = []
+        fn_nullifies: list[tuple[int, str]] = []
+        fn_derefs: list[tuple[int, str, str]] = []
         lock_depth = 0
         held_locks: list[str] = []
 
@@ -186,6 +212,7 @@ def _scan_c_cpp(repo_id: str, path: str, text: str) -> dict[str, Any]:
             if node.type == "call_expression":
                 callee = _callee_name(node, data)
                 tags = _classify_c_call(callee)
+                first_arg = _first_call_arg_text(node, data)
                 if current_label and ("release" in tags or "unlock" in tags):
                     label_cleanups[current_label].append(callee)
                 if "acquire" in tags or "release" in tags:
@@ -193,6 +220,30 @@ def _scan_c_cpp(repo_id: str, path: str, text: str) -> dict[str, Any]:
                     resource_anchors.append({
                         "anchor_id": _anchor_id("res", repo_id, path, line_no, f"{kind}:{callee}"),
                         "kind": kind,
+                        "line": line_no,
+                        "function": fn_name,
+                        "symbol": callee,
+                        "snippet": snippet,
+                    })
+                if "release" in tags:
+                    fn_releases.append((line_no, callee, first_arg, snippet))
+                    for m in _FIELD_RE.finditer(first_arg):
+                        released_fields[m.group(1)].add(fn_name)
+                elif first_arg:
+                    fn_derefs.append((line_no, callee, first_arg))
+                if "raw_mem_write" in tags:
+                    memory_anchors.append({
+                        "anchor_id": _anchor_id("mem", repo_id, path, line_no, f"raw:{callee}"),
+                        "kind": "raw_memory_op",
+                        "line": line_no,
+                        "function": fn_name,
+                        "symbol": callee,
+                        "snippet": snippet,
+                    })
+                if "shared_mem_or_slot" in tags:
+                    memory_anchors.append({
+                        "anchor_id": _anchor_id("mem", repo_id, path, line_no, f"slot:{callee}"),
+                        "kind": "shared_mem_or_slot_op",
                         "line": line_no,
                         "function": fn_name,
                         "symbol": callee,
@@ -246,8 +297,14 @@ def _scan_c_cpp(repo_id: str, path: str, text: str) -> dict[str, Any]:
 
             elif node.type == "assignment_expression":
                 left = node.child_by_field_name("left")
+                right = node.child_by_field_name("right")
                 if left is not None:
                     left_text = _node_text(left, data)
+                    right_text = _node_text(right, data).strip() if right is not None else ""
+                    if right_text in {"NULL", "0", "nullptr", "(void *)0", "(void*)0"}:
+                        fn_nullifies.append((line_no, left_text.strip()))
+                    else:
+                        fn_derefs.append((line_no, "assign", left_text.strip()))
                     for m in _FIELD_RE.finditer(left_text):
                         field_writes[m.group(1)].add(fn_name)
                         side_effects.append({"line": line_no, "kind": "state_write", "symbol": m.group(1)})
@@ -257,6 +314,8 @@ def _scan_c_cpp(repo_id: str, path: str, text: str) -> dict[str, Any]:
                         side_effects.append({"line": line_no, "kind": "global_write", "symbol": ident})
 
             elif node.type == "field_expression":
+                expr_full = _node_text(node, data).strip()
+                fn_derefs.append((line_no, "field", expr_full))
                 field_node = node.child_by_field_name("field")
                 if field_node is not None:
                     fname = _node_text(field_node, data).strip()
@@ -297,6 +356,36 @@ def _scan_c_cpp(repo_id: str, path: str, text: str) -> dict[str, Any]:
 
         walk_fn(body)
 
+        for rel_line, rel_callee, rel_arg, rel_snip in fn_releases:
+            if not rel_arg:
+                continue
+            nullified_after = any(nl > rel_line and lhs == rel_arg for nl, lhs in fn_nullifies)
+            later_uses = [
+                dl for dl, _dk, d_expr in fn_derefs
+                if dl > rel_line and (d_expr == rel_arg or d_expr.startswith(f"{rel_arg}->") or d_expr.startswith(f"{rel_arg}."))
+                and not any(rel_line < nl < dl and lhs == rel_arg for nl, lhs in fn_nullifies)
+            ]
+            if later_uses:
+                memory_anchors.append({
+                    "anchor_id": _anchor_id("mem", repo_id, path, rel_line, f"uaf_fn:{rel_arg}"),
+                    "kind": "post_release_use_in_fn",
+                    "line": rel_line,
+                    "function": fn_name,
+                    "symbol": rel_arg,
+                    "post_release_lines": later_uses[:4],
+                    "snippet": rel_snip,
+                })
+            elif ("->" in rel_arg or "." in rel_arg) and not nullified_after:
+                memory_anchors.append({
+                    "anchor_id": _anchor_id("mem", repo_id, path, rel_line, f"unnull:{rel_arg}"),
+                    "kind": "unnullified_member_after_release",
+                    "line": rel_line,
+                    "function": fn_name,
+                    "symbol": rel_arg,
+                    "callee": rel_callee,
+                    "snippet": rel_snip,
+                })
+
         # Keep only exits that occur AFTER at least one side effect (eliminates pure guard early-returns).
         if side_effects:
             first_effect_line = min(se["line"] for se in side_effects)
@@ -317,6 +406,20 @@ def _scan_c_cpp(repo_id: str, path: str, text: str) -> dict[str, Any]:
                     "snippet": ex["snippet"],
                 })
 
+    for sym, rel_fns in sorted(released_fields.items()):
+        other_fns = sorted((field_reads.get(sym, set()) | field_writes.get(sym, set())) - rel_fns)
+        if other_fns:
+            memory_anchors.append({
+                "anchor_id": _anchor_id("mem", repo_id, path, 1, f"xfn_uaf:{sym}"),
+                "kind": "cross_fn_dangling_candidate",
+                "line": 1,
+                "function": ",".join(sorted(rel_fns)[:4]),
+                "symbol": sym,
+                "release_functions": sorted(rel_fns)[:6],
+                "access_functions": other_fns[:8],
+                "snippet": f"成员 {sym} 在 {sorted(rel_fns)[:4]} 中被释放，同时在 {other_fns[:6]} 中被读写（核查跨线程/进程/回调释放后踩内存）",
+            })
+
     shared_access_matrix = [
         {
             "symbol": sym,
@@ -336,11 +439,12 @@ def _scan_c_cpp(repo_id: str, path: str, text: str) -> dict[str, Any]:
         "concurrency_anchors": concurrency_anchors[:160],
         "shared_access_matrix": shared_access_matrix,
         "resource_anchors": resource_anchors[:160],
+        "memory_anchors": memory_anchors[:160],
     }
 
 
 def _scan_c_cpp_fallback(repo_id: str, path: str, lines: list[str]) -> dict[str, Any]:
-    error_slices, concurrency_anchors, resource_anchors = [], [], []
+    error_slices, concurrency_anchors, resource_anchors, memory_anchors = [], [], [], []
     for i, line in enumerate(lines, 1):
         stripped = line.strip()[:160]
         if _REFCOUNT_RE.search(line):
@@ -362,15 +466,22 @@ def _scan_c_cpp_fallback(repo_id: str, path: str, lines: list[str]) -> dict[str,
                     "kind": "lock_acquire" if "lock" in tags else "lock_release",
                     "line": i, "function": None, "symbol": m.group(1), "snippet": stripped,
                 })
+            if "raw_mem_write" in tags or "shared_mem_or_slot" in tags:
+                memory_anchors.append({
+                    "anchor_id": _anchor_id("mem", repo_id, path, i, m.group(1)),
+                    "kind": "raw_memory_op" if "raw_mem_write" in tags else "shared_mem_or_slot_op",
+                    "line": i, "function": None, "symbol": m.group(1), "snippet": stripped,
+                })
     return {
         "repo_id": repo_id, "path": path, "language": "c_cpp", "parser": "regex_fallback",
         "error_slices": error_slices[:160], "concurrency_anchors": concurrency_anchors[:160],
         "shared_access_matrix": [], "resource_anchors": resource_anchors[:160],
+        "memory_anchors": memory_anchors[:160],
     }
 
 
 def _scan_lua(repo_id: str, path: str, text: str) -> dict[str, Any]:
-    """Fault-tolerant tree-sitter-lua scanner focusing on yield spans, pcall/error rollback, and resource handles."""
+    """Fault-tolerant tree-sitter-lua scanner focusing on yield spans, pcall/error rollback, resource handles, and stale/FFI memory ops."""
     from pangea_agent.inventory.lua_symbols import _load_parser
 
     data = text.encode("utf-8")
@@ -378,6 +489,7 @@ def _scan_lua(repo_id: str, path: str, text: str) -> dict[str, Any]:
     error_slices: list[dict[str, Any]] = []
     concurrency_anchors: list[dict[str, Any]] = []
     resource_anchors: list[dict[str, Any]] = []
+    memory_anchors: list[dict[str, Any]] = []
     field_reads: dict[str, set[str]] = defaultdict(set)
     field_writes: dict[str, set[str]] = defaultdict(set)
     parser_mode = "tree-sitter-lua"
@@ -437,12 +549,24 @@ def _scan_lua(repo_id: str, path: str, text: str) -> dict[str, Any]:
                         "prior_side_effects": [],
                         "snippet": snippet,
                     })
+                if _LUA_MEM_RE.search(call_text):
+                    memory_anchors.append({
+                        "anchor_id": _anchor_id("mem", repo_id, path, line_no, f"lua_mem:{fn_name}"),
+                        "kind": "lua_ffi_or_unpack_op",
+                        "line": line_no,
+                        "function": fn_name,
+                        "symbol": _LUA_MEM_RE.search(call_text).group(0),
+                        "snippet": snippet,
+                    })
             elif node.type == "assignment_statement":
                 stmt = _node_text(node, data)
-                lhs = stmt.split("=", 1)[0]
+                parts = stmt.split("=", 1)
+                lhs = parts[0]
+                rhs = parts[1].strip() if len(parts) > 1 else ""
                 for m in re.finditer(r"\bself\.([A-Za-z_]\w*)", lhs):
-                    field_writes[f"self.{m.group(1)}"].add(fn_name)
-                    fn_state_lines[fn_name].append((line_no, "write", f"self.{m.group(1)}"))
+                    sym = f"self.{m.group(1)}"
+                    field_writes[sym].add(fn_name)
+                    fn_state_lines[fn_name].append((line_no, "nil_clear" if rhs == "nil" else "write", sym))
             elif node.type == "dot_index_expression":
                 expr = _node_text(node, data)
                 if expr.startswith("self."):
@@ -468,6 +592,23 @@ def _scan_lua(repo_id: str, path: str, text: str) -> dict[str, Any]:
                     "snippet": f"{fn_name} 在 yield (L{first_y}) 前后均访问状态 {sym}",
                 })
 
+        cleared_fields: dict[str, set[str]] = defaultdict(set)
+        for fn_name, ops in fn_state_lines.items():
+            for _ln, op, sym in ops:
+                if op == "nil_clear":
+                    cleared_fields[sym].add(fn_name)
+        for sym, clear_fns in sorted(cleared_fields.items()):
+            other_fns = sorted((field_reads.get(sym, set()) | field_writes.get(sym, set())) - clear_fns)
+            if other_fns:
+                memory_anchors.append({
+                    "anchor_id": _anchor_id("mem", repo_id, path, 1, f"lua_stale:{sym}"),
+                    "kind": "lua_cross_handler_cleared_state",
+                    "line": 1,
+                    "function": ",".join(sorted(clear_fns)[:4]),
+                    "symbol": sym,
+                    "snippet": f"{sym} 在 {sorted(clear_fns)[:4]} 中置 nil 释放，同时在 {other_fns[:6]} 中被跨协程/回调访问",
+                })
+
     shared_access_matrix = [
         {
             "symbol": sym,
@@ -487,6 +628,7 @@ def _scan_lua(repo_id: str, path: str, text: str) -> dict[str, Any]:
         "concurrency_anchors": concurrency_anchors[:160],
         "shared_access_matrix": shared_access_matrix,
         "resource_anchors": resource_anchors[:160],
+        "memory_anchors": memory_anchors[:160],
     }
 
 
@@ -504,11 +646,12 @@ def scan_file_topology(repo_id: str, path: str, text: str, language: str) -> dic
         "concurrency_anchors": [],
         "shared_access_matrix": [],
         "resource_anchors": [],
+        "memory_anchors": [],
     }
 
 
 def generate_topology_summary(run_dir: Path, task: dict[str, Any]) -> dict[str, Any]:
-    """Generate frozen global three-track topology index for Stage 1 Blueprint Agent."""
+    """Generate frozen global four-track topology index for Stage 1 Blueprint Agent."""
     from pangea_agent.evidence_quotes import FrozenSourceResolver
     from pangea_agent.inventory.languages import file_language
 
@@ -537,6 +680,7 @@ def generate_topology_summary(run_dir: Path, task: dict[str, Any]) -> dict[str, 
                 "error_rollback": len(scanned["error_slices"]),
                 "concurrency_timing": len(scanned["concurrency_anchors"]),
                 "resource_lifecycle": len(scanned["resource_anchors"]),
+                "memory_corruption": len(scanned["memory_anchors"]),
                 "shared_symbols": len(scanned["shared_access_matrix"]),
             },
             "shared_access_matrix": scanned["shared_access_matrix"][:12],
@@ -585,12 +729,16 @@ def generate_track_topology(run_dir: Path, task: dict[str, Any], track: str, key
             entry["shared_access_matrix"] = scanned["shared_access_matrix"]
         elif track == "resource_lifecycle":
             entry["resource_anchors"] = scanned["resource_anchors"]
+        elif track == "memory_corruption":
+            entry["memory_anchors"] = scanned["memory_anchors"]
+            entry["shared_access_matrix"] = scanned["shared_access_matrix"]
         else:
             entry.update({
                 "error_slices": scanned["error_slices"],
                 "concurrency_anchors": scanned["concurrency_anchors"],
                 "shared_access_matrix": scanned["shared_access_matrix"],
                 "resource_anchors": scanned["resource_anchors"],
+                "memory_anchors": scanned["memory_anchors"],
             })
         files.append(entry)
 

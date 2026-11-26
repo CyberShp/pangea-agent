@@ -21,18 +21,26 @@ from pangea_agent.models.dts_pattern import (
     utc_now,
 )
 
-VALID_TRACKS = ("error_rollback", "concurrency_timing", "resource_lifecycle")
+VALID_TRACKS = ("error_rollback", "concurrency_timing", "resource_lifecycle", "memory_corruption")
 
 _TRACK_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "memory_corruption": (
+        "踩内存", "内存踩踏", "内存破坏", "越界", "溢出", "野指针", "悬空", "释放后使用",
+        "释放后访问", "释放后写", "已释放", "重分配", "槽位", "共享内存", "未置空", "未初始化",
+        "uaf", "use-after-free", "use after free", "dangling", "stale pointer", "stale handle",
+        "wild pointer", "stomp", "slot", " = null", "memory corruption", "heap corruption", "stack corruption",
+        "out-of-bounds", "out of bounds", "oob", "buffer overflow", "heap-buffer-overflow",
+        "memcpy", "memmove", "memset", "strcpy", "sprintf", "uninitialized",
+    ),
     "concurrency_timing": (
         "race", "deadlock", "lock", "mutex", "spinlock", "atomic", "yield", "coroutine",
         "timer", "callback", "reentr", "async", "cancel", "并发", "竞态", "死锁", "时序",
         "重入", "回调", "超时", "乱序", "挂起", "解锁", "持锁",
     ),
     "resource_lifecycle": (
-        "leak", "uaf", "use-after-free", "double free", "double-free", "refcount", "refcnt",
-        "fd", "socket", "handle", "pool", "quota", "unregister", "dangling", "泄漏", "泄露",
-        "悬空", "释放后使用", "二次释放", "引用计数", "句柄", "耗尽", "未释放", "未注销",
+        "leak", "double free", "double-free", "refcount", "refcnt",
+        "fd", "socket", "handle", "pool", "quota", "unregister", "泄漏", "泄露",
+        "二次释放", "重复释放", "引用计数", "句柄", "耗尽", "未释放", "未注销",
     ),
     "error_rollback": (
         "rollback", "error path", "early return", "goto", "partial", "cleanup", "errno",
@@ -65,7 +73,7 @@ def _write_registry(data_root: str | Path, registry: DTSPatternRegistry) -> Path
 
 
 def infer_dts_track(text: str) -> str | None:
-    """Classify DTS prose into one of the three deep tracks, or None if noise."""
+    """Classify DTS prose into one of the four deep tracks, or None if noise."""
     lowered = text.lower()
     if _NON_CODE_NOISE_PATTERNS.search(lowered) and not any(
         kw in lowered for words in _TRACK_KEYWORDS.values() for kw in words
@@ -79,7 +87,7 @@ def infer_dts_track(text: str) -> str | None:
     return best_track if best_score > 0 else None
 
 
-def _git_diff_excerpt(repo_path: Path, commit_ref: str, *, max_chars: int = 2400) -> str:
+def _git_diff_excerpt(repo_path: Path, commit_ref: str, *, max_chars: int = 8000) -> str:
     """Read-only commit diff lookup; always skips LFS smudge and never mutates repo."""
     if not commit_ref or not re.fullmatch(r"[0-9A-Fa-f]{7,40}", commit_ref.strip()):
         return ""
@@ -88,7 +96,7 @@ def _git_diff_excerpt(repo_path: Path, commit_ref: str, *, max_chars: int = 2400
     env = {**os.environ, "GIT_LFS_SKIP_SMUDGE": "1"}
     try:
         proc = subprocess.run(
-            ["git", "show", "--no-color", "--unified=2", "--stat", "--patch", commit_ref.strip()],
+            ["git", "show", "--no-color", "--unified=3", "--stat", "--patch", commit_ref.strip()],
             cwd=str(repo_path),
             env=env,
             capture_output=True,
@@ -104,28 +112,59 @@ def _git_diff_excerpt(repo_path: Path, commit_ref: str, *, max_chars: int = 2400
     return text[:max_chars] + ("\n... [diff truncated]" if len(text) > max_chars else "")
 
 
+_IMPL_EXTS = (".c", ".cc", ".cpp", ".cxx", ".lua", ".py", ".sh")
+
+
 def _split_diff_skeleton(diff_text: str) -> tuple[str, str]:
-    removed, added = [], []
+    """Extract removed/added code lines, prioritizing implementation files over headers/comments."""
+    impl_removed: list[str] = []
+    impl_added: list[str] = []
+    other_removed: list[str] = []
+    other_added: list[str] = []
+    in_impl = True
+    in_hunk = False
     for line in diff_text.splitlines():
-        if line.startswith("---") or line.startswith("+++"):
+        if line.startswith("diff --git ") or line.startswith("+++ "):
+            target = line.rsplit(" ", 1)[-1].strip()
+            if target != "/dev/null":
+                in_impl = target.lower().endswith(_IMPL_EXTS)
+            in_hunk = False
+            continue
+        if line.startswith("@@"):
+            in_hunk = True
+            continue
+        if not in_hunk or line.startswith("--- "):
             continue
         if line.startswith("-"):
-            removed.append(line[1:].rstrip())
+            content = line[1:].rstrip()
+            if content.strip():
+                (impl_removed if in_impl else other_removed).append(content)
         elif line.startswith("+"):
-            added.append(line[1:].rstrip())
-    buggy = "\n".join(removed[:12]).strip()
-    fixed = "\n".join(added[:12]).strip()
-    return buggy, fixed
+            content = line[1:].rstrip()
+            if content.strip():
+                (impl_added if in_impl else other_added).append(content)
+    removed = [*impl_removed, *other_removed][:40]
+    added = [*impl_added, *other_added][:40]
+    return "\n".join(removed).strip(), "\n".join(added).strip()
+
+
+def _extract_commit_sha(raw: str) -> str:
+    text = str(raw or "").strip()
+    if re.fullmatch(r"[0-9A-Fa-f]{7,40}", text):
+        return text
+    url_match = re.search(r"/(?:commit|commits)/([0-9A-Fa-f]{7,40})\b", text)
+    return url_match.group(1) if url_match else ""
 
 
 def _lookup_commit_diff(data_root: str | Path, commit_ref: str) -> tuple[str, str]:
+    sha = _extract_commit_sha(commit_ref)
     repos_root = Path(data_root) / "repositories"
-    if not commit_ref or not repos_root.is_dir():
+    if not sha or not repos_root.is_dir():
         return "", ""
     for repo_dir in sorted(repos_root.iterdir()):
         if not repo_dir.is_dir():
             continue
-        excerpt = _git_diff_excerpt(repo_dir, commit_ref)
+        excerpt = _git_diff_excerpt(repo_dir, sha)
         if excerpt:
             return repo_dir.name, excerpt
     return "", ""
@@ -237,6 +276,22 @@ def _rows_from_offline_file(source: Path) -> list[dict[str, Any]]:
         finally:
             wb.close()
         return rows
+    if suffix in {".diff", ".patch"}:
+        text = source.read_text(encoding="utf-8", errors="replace")
+        dts_match = re.search(r"\b(DTS[0-9A-Za-z_-]{4,})\b", text)
+        header = text.split("diff --git ", 1)[0]
+        subj_match = re.search(r"(?m)^Subject:\s*(?:\[[^\]]*\]\s*)?(.+)$", header) or re.search(
+            r"(?m)^    ([^\s].+)$", header
+        )
+        paths = re.findall(r"(?m)^\+\+\+\s+(?:b/)?([^\s]+)$", text)
+        mod_paths = [p for p in paths if p != "/dev/null"][:6]
+        title = (subj_match.group(1).strip() if subj_match else "") or f"补丁特征 {source.stem}"
+        return [{
+            "dts_id": dts_match.group(1) if dts_match else source.stem,
+            "title": title,
+            "module": ",".join(mod_paths),
+            "diff_excerpt": text[:8000],
+        }]
     if suffix in {".md", ".txt"}:
         text = source.read_text(encoding="utf-8", errors="replace")
         sections = [part.strip() for part in re.split(r"(?m)^#{1,3}\s+", text) if part.strip()]
@@ -250,7 +305,7 @@ def _rows_from_offline_file(source: Path) -> list[dict[str, Any]]:
             rows.append({
                 "dts_id": dts_match.group(1) if dts_match else f"{source.stem}-{idx}",
                 "title": title,
-                "root_cause": body[:800],
+                "root_cause": body[:1600],
                 "commit_ref": commit_match.group(1) if commit_match else "",
             })
         return rows
@@ -272,7 +327,7 @@ def ingest_dts_file(
     *,
     source_kind: str | None = None,
 ) -> dict[str, Any]:
-    """Ingest offline DTS exports (.json/.csv/.xlsx/.md/.txt) and enrich with local git diff if available."""
+    """Ingest offline DTS exports (.json/.csv/.xlsx/.md/.txt/.diff/.patch) and enrich with local git diff if available."""
     source = Path(source_path)
     if not source.is_file():
         raise ValueError(f"DTS 文件不存在：{source}")
@@ -293,19 +348,23 @@ def ingest_dts_file(
         fix_desc = _pick(row, "fix", "solution", "fixed_guard", "修改措施", "修复方案", "解决措施")
         module_hint = _pick(row, "module", "module_path", "component", "模块", "文件路径", "path")
         mr_url = _pick(row, "mr_url", "mr_link", "mr", "MR链接", "合入链接")
-        commit_ref = _pick(row, "commit", "commit_ref", "commit_sha", "mr_commit", "提交号")
+        commit_ref = _pick(row, "commit", "commit_ref", "commit_sha", "mr_commit", "提交号") or _extract_commit_sha(mr_url)
+        inline_diff = str(row.get("diff_excerpt") or "").strip()
+        repo_id, git_diff = ("", inline_diff) if inline_diff else _lookup_commit_diff(data_root, commit_ref)
+        diff_excerpt = inline_diff or git_diff
+        buggy_diff, fixed_diff = _split_diff_skeleton(diff_excerpt)
         explicit_track = _pick(row, "track", "轨道")
-        combined = " ".join(part for part in (title, symptom, root_cause, fix_desc) if part)
-        track = explicit_track if explicit_track in VALID_TRACKS else infer_dts_track(combined)
+        combined = " ".join(part for part in (title, symptom, root_cause, fix_desc, buggy_diff, fixed_diff) if part)
+        track = explicit_track if explicit_track in VALID_TRACKS else (
+            infer_dts_track(combined) or ("memory_corruption" if inline_diff else None)
+        )
         if not title or track is None:
             filtered_out.append({
                 "index": idx,
                 "dts_id": dts_id,
-                "reason": "缺少有效标题或不属于异常回滚/时序并发/资源生命周期三轨，已自动滤除",
+                "reason": "缺少有效标题或不属于异常回滚/时序并发/资源生命周期/踩内存悬空访问四轨，已自动滤除",
             })
             continue
-        repo_id, diff_excerpt = _lookup_commit_diff(data_root, commit_ref)
-        buggy_diff, fixed_diff = _split_diff_skeleton(diff_excerpt)
         has_diff = bool(diff_excerpt)
         effective_source = source_kind or ("offline_file_with_git" if has_diff else "offline_file_text")
         pattern_id = re.sub(r"[^A-Za-z0-9._-]+", "-", dts_id).strip("-") or f"dts-{idx+1:03d}"
@@ -317,11 +376,11 @@ def ingest_dts_file(
             "module_hints": [m.strip() for m in re.split(r"[,;\s]+", module_hint) if m.strip()],
             "context_triggers": [part for part in (symptom or title, module_hint) if part][:3],
             "buggy_skeleton": buggy_diff or root_cause or title,
-            "fixed_guard": fixed_diff or fix_desc or "核对当前源码是否存在对应防御、回滚或同步保护",
+            "fixed_guard": fixed_diff or fix_desc or "核对当前源码是否存在对应防御、回滚、置空摘链或同步保护",
             "defect_mechanism": root_cause or symptom or title,
             "already_fixed_check": (
-                f"若当前源码已包含等价修复保护（{fixed_diff[:160] or fix_desc[:160] or '完整释放/回滚/加锁校验'}），"
-                "则视为已修复免疫，仅横向排查相邻兄弟路径是否漏改"
+                f"若当前源码已包含等价修复保护（{fixed_diff[:200] or fix_desc[:200] or '完整释放/回滚/置空摘链/加锁校验'}），"
+                "则视为已修复免疫，严禁重报老单，仅横向排查相邻兄弟命令/对象/回调路径是否漏改"
             ),
             "repro_instrumentation_recipe": _pick(row, "repro", "repro_instrumentation_recipe", "复现方法", "打桩方案"),
             "has_diff_evidence": has_diff,
@@ -412,10 +471,11 @@ def freeze_dts_context(
     requested_dts_ids: list[str] | None = None,
     requested_mr_urls: list[str] | None = None,
     homologous_items: list[dict[str, Any]] | None = None,
+    selected_defect_items: list[dict[str, Any]] | None = None,
     mcp_status: dict[str, Any] | None = None,
     max_patterns: int = 24,
 ) -> dict[str, Any]:
-    """Freeze matched enabled DTS topology cards, explicit user DTS IDs/MR URLs, and homologous DTS into inputs/dts-context.json."""
+    """Freeze matched enabled DTS topology cards, explicit user DTS IDs/MR URLs, local commit/patch diffs, and selected defect assets into inputs/dts-context.json."""
     target = run_dir / "inputs" / "dts-context.json"
     if target.is_file():
         return read_json(target)
@@ -447,12 +507,91 @@ def freeze_dts_context(
 
     matched = sorted(enabled_cards, key=score)[:max_patterns]
     homologous: list[FrozenHomologousDTS] = []
+    seen_dts_ids: set[str] = set()
     warnings: list[str] = []
+
     for item in homologous_items or []:
         try:
-            homologous.append(FrozenHomologousDTS.model_validate(item))
+            parsed = FrozenHomologousDTS.model_validate(item)
+            homologous.append(parsed)
+            seen_dts_ids.add(parsed.dts_id)
         except Exception as exc:
             warnings.append(f"忽略格式不完整的同源 DTS 条目：{exc}")
+
+    # Deterministically extract local commit diffs or patch files when present in requested_mr_urls.
+    for idx, entry in enumerate(clean_mr_urls):
+        diff_excerpt = ""
+        commit_ref = ""
+        mr_link = entry
+        candidate_path = Path(entry)
+        if not entry.startswith(("http://", "https://")) and candidate_path.suffix.lower() in {".diff", ".patch"} and candidate_path.is_file():
+            diff_excerpt = candidate_path.read_text(encoding="utf-8", errors="replace")[:8000]
+            mr_link = str(candidate_path)
+        else:
+            repo_id, git_diff = _lookup_commit_diff(data_root, entry)
+            if git_diff:
+                diff_excerpt = git_diff
+                sha = _extract_commit_sha(entry)
+                commit_ref = f"{repo_id}:{sha}" if repo_id else sha
+        if diff_excerpt:
+            paired_dts = clean_dts_ids[idx] if idx < len(clean_dts_ids) else f"MR-DIFF-{idx+1:02d}"
+            if paired_dts in seen_dts_ids:
+                continue
+            header = diff_excerpt.split("diff --git ", 1)[0]
+            subj_match = re.search(r"(?m)^Subject:\s*(?:\[[^\]]*\]\s*)?(.+)$", header) or re.search(
+                r"(?m)^    ([^\s].+)$", header
+            )
+            patch_title = subj_match.group(1).strip() if subj_match else f"历史修复补丁特征 ({paired_dts})"
+            buggy_diff, fixed_diff = _split_diff_skeleton(diff_excerpt)
+            inferred_track = infer_dts_track(f"{patch_title} {buggy_diff} {fixed_diff}")
+            homologous.append(FrozenHomologousDTS(
+                dts_id=paired_dts,
+                title=patch_title,
+                track=inferred_track if inferred_track in VALID_TRACKS else None,
+                root_cause=buggy_diff[:1200],
+                mr_url=mr_link,
+                commit_ref=commit_ref,
+                diff_excerpt=diff_excerpt,
+                already_fixed_check=(
+                    f"若当前 6.1.x 源码已包含补丁保护（{fixed_diff[:200] or '见 diff_excerpt 新增防御'}），"
+                    "严禁重报该已修复点，必须横向深挖相邻兄弟路径、同类回调或同类资源的未修同源隐患"
+                ),
+                source_kind="offline_file_with_git",
+            ))
+            seen_dts_ids.add(paired_dts)
+
+    # Bridge user-selected approved historical_defect assets directly into homologous_dts.
+    for defect in selected_defect_items or []:
+        if not isinstance(defect, dict) or defect.get("item_type") != "historical_defect":
+            continue
+        cid = str(defect.get("candidate_id") or defect.get("item_id") or "").strip()
+        title = str(defect.get("title") or "").strip()
+        if not cid or not title or cid in seen_dts_ids:
+            continue
+        symptom = str(defect.get("symptom") or "").strip()
+        root_cause = str(defect.get("root_cause") or "").strip()
+        mechanism = str(defect.get("defect_mechanism") or "").strip()
+        exclusions = "; ".join(str(x).strip() for x in (defect.get("exclusion_conditions") or []) if str(x).strip())
+        refs = defect.get("source_references") or []
+        mod_path = ", ".join(
+            f"{r.get('path')}:{r.get('location')}"
+            for r in refs if isinstance(r, dict) and r.get("path")
+        )
+        inferred = infer_dts_track(f"{title} {symptom} {root_cause} {mechanism}")
+        homologous.append(FrozenHomologousDTS(
+            dts_id=cid,
+            title=title,
+            track=inferred if inferred in VALID_TRACKS else None,
+            module_path=mod_path,
+            symptom=symptom,
+            root_cause=f"{root_cause}\n缺陷机制：{mechanism}".strip() if mechanism else root_cause,
+            already_fixed_check=(
+                exclusions
+                or "若当前源码在原故障点已具备针对该缺陷机制的完整防御保护，视为已修复免疫，横向排查同模块兄弟路径与同类对象"
+            ),
+            source_kind="historical_defect_asset",
+        ))
+        seen_dts_ids.add(cid)
 
     body_for_hash = {
         "requested_dts_ids": clean_dts_ids,
@@ -473,7 +612,7 @@ def freeze_dts_context(
         mcp_status=mcp_status or {
             "dts_mcp_detected": False,
             "codehub_mcp_detected": False,
-            "mode": "offline_registry",
+            "mode": "mcp_runtime_if_configured" if (clean_dts_ids or clean_mr_urls) else "offline_registry",
         },
         homologous_dts=homologous,
         matched_patterns=matched,

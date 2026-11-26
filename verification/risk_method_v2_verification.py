@@ -262,8 +262,436 @@ def verify_v2_gates_and_ledger(tmp: Path) -> None:
 
     md_lines, _ = ledger_markdown([({"task": {"unit_id": "U1", "risk_track": "resource_lifecycle", "record_contracts": contracts}}, loaded)], {})
     md_text = "\n".join(md_lines)
-    _assert("三轨风险检查账本（risk-method-v2）" in md_text, "v2 ledger header missing")
+    _assert("四轨风险检查账本（risk-method-v2）" in md_text, "v2 4-track ledger header missing")
     _assert("待动态实锤" in md_text, "v2 two-tier column missing")
+
+
+def verify_memory_corruption_dts_and_topology(tmp: Path) -> None:
+    data_root = tmp / "pangea-mem-data"
+    repo_dir = data_root / "repositories" / "mem-repo"
+    (repo_dir / "include").mkdir(parents=True)
+    (repo_dir / "src").mkdir(parents=True)
+    subprocess.run(["git", "init", "-q"], cwd=repo_dir, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo_dir, check=True)
+    subprocess.run(["git", "config", "user.name", "Tester"], cwd=repo_dir, check=True)
+
+    # Create a header with >15 lines changed ahead of .c implementation change
+    hdr = repo_dir / "include" / "slot_mgr.h"
+    src_a = repo_dir / "src" / "chan_a.c"
+    src_b = repo_dir / "src" / "chan_b.c"
+    hdr.write_text("\n".join(f"#define HDR_CONST_{i} {i}" for i in range(20)) + "\n", encoding="utf-8")
+    src_a.write_text(
+        "void chan_a_teardown(struct chan *c) {\n"
+        "    pool_free(c->slot);\n"
+        "}\n"
+        "void chan_a_async_cb(struct chan *c, const void *buf, size_t len) {\n"
+        "    memcpy(c->slot->payload, buf, len);\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    # Sibling latent 6.1.2 bug in chan_b.c (unfixed in 6.1.7)
+    src_b.write_text(
+        "void chan_b_teardown(struct chan *c) {\n"
+        "    pool_free(c->slot);\n"
+        "}\n"
+        "void chan_b_async_cb(struct chan *c, const void *buf, size_t len) {\n"
+        "    memcpy(c->slot->payload, buf, len);\n"
+        "    c->slot->state = 2;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "add", "."], cwd=repo_dir, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "v6.1.2 baseline"], cwd=repo_dir, check=True)
+
+    # Simulate 6.1.6 fix in chan_a.c + noisy header change
+    hdr.write_text("\n".join(f"#define HDR_CONST_{i} {i + 100}" for i in range(20)) + "\n", encoding="utf-8")
+    src_a.write_text(
+        "void chan_a_teardown(struct chan *c) {\n"
+        "    cancel_async_cb(c);\n"
+        "    pool_free(c->slot);\n"
+        "    c->slot = NULL;\n"
+        "}\n"
+        "void chan_a_async_cb(struct chan *c, const void *buf, size_t len) {\n"
+        "    if (!c->slot || c->closing) return;\n"
+        "    memcpy(c->slot->payload, buf, len);\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "add", "."], cwd=repo_dir, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "DTS20260616: fix cross-thread slot stomp in chan_a"], cwd=repo_dir, check=True)
+    fix_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo_dir, text=True).strip()
+
+    # 1. Verify .patch offline ingestion + memory_corruption classification
+    patch_text = subprocess.check_output(["git", "show", fix_sha], cwd=repo_dir, text=True)
+    patch_file = tmp / "DTS20260616.patch"
+    patch_file.write_text(patch_text, encoding="utf-8")
+    patch_res = ingest_dts_file(data_root, patch_file)
+    _assert(len(patch_res["imported"]) == 1, f"expected 1 imported patch card, got {patch_res}")
+    patch_card = list_dts_patterns(data_root)["items"][0]
+    _assert(patch_card["track"] == "memory_corruption", f"expected memory_corruption track, got {patch_card}")
+    _assert("cancel_async_cb" in patch_card["fixed_guard"], f".c hunk must not be truncated by .h lines: {patch_card['fixed_guard']}")
+
+    # 2. Verify AST memory_anchors on sibling chan_b.c
+    topo = scan_file_topology("mem-repo", "src/chan_b.c", src_b.read_text(encoding="utf-8"), "c_cpp")
+    mem_kinds = {a["kind"] for a in topo.get("memory_anchors", [])}
+    _assert("unnullified_member_after_release" in mem_kinds, f"missing unnullified_member_after_release: {topo['memory_anchors']}")
+    _assert("cross_fn_dangling_candidate" in mem_kinds, f"missing cross_fn_dangling_candidate: {topo['memory_anchors']}")
+    _assert("raw_memory_op" in mem_kinds, f"missing raw_memory_op: {topo['memory_anchors']}")
+
+    # 3. Verify full Stage 1 -> Stage 2 4-track Graph flow + historical_defect asset + MR commit URL
+    from pangea_agent.agent_io import read_json, write_json
+    from pangea_agent.assets import (
+        asset_detail,
+        complete_asset_extraction,
+        import_asset,
+        prepare_asset_extraction,
+        review_asset,
+    )
+    from pangea_agent.cli.adapter_api import bind_action, settle_action
+    from pangea_agent.cli.plan_batch import plan_write_batch
+    from pangea_agent.cli.run_module_analysis import run_module_analysis
+    from pangea_agent.cli.source_first_api import result_write, task_open, work_finish
+
+    defect_doc = tmp / "defect_616.md"
+    defect_doc.write_text("# 历史踩内存缺陷\n跨线程访问已释放 slot 导致内存池重分配被踩\n", encoding="utf-8")
+    asset = import_asset(str(data_root), str(defect_doc), "historical_defect")
+    prep = prepare_asset_extraction(str(data_root), asset.asset_id)
+    write_json(
+        Path(prep["asset"]["result_path"]),
+        {
+            "schema_version": "1.0",
+            "asset_id": asset.asset_id,
+            "summary": "6.1.6 通道销毁跨线程释放后重分配踩内存案例",
+            "items": [
+                {
+                    "item_type": "historical_defect",
+                    "item_id": "HD-616",
+                    "title": "6.1.6 通道销毁未排空异步回调导致踩内存",
+                    "symptom": "并发断连压测出现不固定栈 coredump（邻居对象 magic 被覆写）",
+                    "trigger": "销毁线程释放 slot 后，工作线程晚到回调继续写入 c->slot->payload",
+                    "root_cause": "teardown 仅调用 pool_free(c->slot) 未排空回调且未置空指针",
+                    "propagation": ["pool_free 归还槽位", "新会话复用该槽位", "旧回调 memcpy 踩坏新会话内存"],
+                    "defect_mechanism": "跨线程释放后悬空指针写踩坏重分配内存池槽位",
+                    "exclusion_conditions": ["销毁前同步排空异步队列并置空引用"],
+                    "source_references": [{"path": "src/chan_a.c", "location": "chan_a_teardown"}],
+                }
+            ],
+            "warnings": [],
+        },
+    )
+    complete_asset_extraction(str(data_root), asset.asset_id)
+    review_asset(str(data_root), asset.asset_id, "approve")
+    asset_info = asset_detail(str(data_root), asset.asset_id)["asset"]
+    candidate_id = f"{asset.asset_id}:HD-616"
+
+    # Disable registry card so we specifically prove MR commit URL + historical_defect asset populate homologous_dts
+    set_dts_pattern_status(data_root, patch_card["pattern_id"], "disabled")
+
+    run_id = "run-4track-e2e"
+    req_path = tmp / "request_4track.json"
+    write_json(
+        req_path,
+        {
+            "data_root": str(data_root),
+            "run_id": run_id,
+            "repository": "mem-repo",
+            "target": "跨版本同源踩内存与资源生命周期排查",
+            "workflow_version": "source-first-v1",
+            "analysis_profile": "behavior-test-v2",
+            "analysis_settings": {
+                "scenario": "risk-analysis",
+                "mode": "depth",
+                "dts_context": {
+                    "dts_ids": ["DTS20260616"],
+                    "mr_urls": [f"https://codehub.example/org/mem-repo/-/merge_requests/88/commits/{fix_sha}"],
+                },
+            },
+            "source_scope": ["src"],
+            "asset_ids": [asset.asset_id],
+            "asset_revisions": {asset.asset_id: asset_info["input_revision"]},
+        },
+    )
+
+    started = run_module_analysis(str(req_path))
+    plan_action = started["agent_actions"][0]
+    p_bind = (str(data_root), run_id, plan_action["action_id"], "planner-4track")
+    bind_action(*p_bind)
+    opened_plan = task_open(*p_bind)
+    plan_startup_ids = {
+        p["input_id"]
+        for bucket in ("pages", "pending_inputs")
+        for p in opened_plan["planning_startup"][bucket]
+    }
+    _assert("scene_planning_rubric" in plan_startup_ids, f"missing scene_planning_rubric: {plan_startup_ids}")
+    _assert("scene_planning_rubric_scene_risk_blueprint" in plan_startup_ids, f"missing scene_risk_blueprint: {plan_startup_ids}")
+    _assert("dts_context" in plan_startup_ids, f"planning_startup must include dts_context: {plan_startup_ids}")
+    _assert("asset_candidates" in plan_startup_ids, f"planning_startup must include asset_candidates: {plan_startup_ids}")
+
+    # Stage 1 writes risk-blueprint-v1 (with memory_hazard_zones) + global note (relates_to=[])
+    blueprint_records = [
+        {
+            "kind": "note",
+            "body": {
+                "format_version": RISK_BLUEPRINT_FORMAT,
+                "resource_entities": [
+                    {
+                        "id": "RES-SLOT",
+                        "name": "chan->slot",
+                        "kind": "pool_slot",
+                        "acquire_sites": ["mem-repo:src/chan_b.c:1-3"],
+                        "release_sites": ["mem-repo:src/chan_b.c:1-3"],
+                        "owner": "struct chan",
+                    }
+                ],
+                "concurrency_contexts": [
+                    {
+                        "id": "CTX-TEARDOWN",
+                        "name": "销毁线程 vs 异步回调线程",
+                        "shared_state": ["c->slot"],
+                        "expected_guard": "cancel_async_cb 排空屏障",
+                    }
+                ],
+                "transaction_chains": [],
+                "memory_hazard_zones": [
+                    {
+                        "id": "MEM-SLOT-01",
+                        "name": "c->slot->payload 跨线程释放后重分配悬空写",
+                        "release_or_reuse_sites": ["mem-repo:src/chan_b.c:2"],
+                        "concurrent_access_sites": ["mem-repo:src/chan_b.c:5-6"],
+                    }
+                ],
+            },
+        },
+        {
+            "kind": "note",
+            "relates_to": [],
+            "body": {
+                "mcp_dts_extraction": {
+                    "dts_id": "DTS20260616",
+                    "fixed_site": "mem-repo:src/chan_a.c:1-9 (已合入 cancel_async_cb + c->slot = NULL)",
+                    "sibling_suspect": "mem-repo:src/chan_b.c:1-7 仍缺少排空与置空保护",
+                },
+            },
+        },
+    ]
+    r_write = result_write(*p_bind, expected_revision=0, records=blueprint_records)
+
+    shared_files = [
+        {"repo_id": "mem-repo", "path": "src/chan_a.c"},
+        {"repo_id": "mem-repo", "path": "src/chan_b.c"},
+    ]
+
+    # First verify same-track duplicate owned_files is STILL caught
+    dup_plan = plan_write_batch(
+        *p_bind,
+        expected_revision=r_write["revision"],
+        units=[
+            {
+                "title": "重复轨1",
+                "purpose": "测试同轨冲突",
+                "risk_track": "memory_corruption",
+                "owned_files": shared_files,
+            },
+            {
+                "title": "重复轨2",
+                "purpose": "测试同轨冲突",
+                "risk_track": "memory_corruption",
+                "owned_files": shared_files,
+            },
+        ],
+    )
+    _assert(
+        bool(dup_plan["diagnostics"]["duplicate_owned_regions"]),
+        f"same-track duplicate owned_files must still trigger duplicate_owned_regions: {dup_plan}",
+    )
+
+    # Now update unit-0001/unit-0002 to distinct tracks and append tracks 3 & 4 sharing exact same owned_files
+    batch_res = plan_write_batch(
+        *p_bind,
+        expected_revision=dup_plan["revision"],
+        units=[
+            {
+                "unit_id": "unit-0001",
+                "title": "轨1-错误回滚",
+                "purpose": "排查错误分支漏清理",
+                "risk_track": "error_rollback",
+                "asset_item_ids": [candidate_id],
+                "owned_files": shared_files,
+            },
+            {
+                "unit_id": "unit-0002",
+                "title": "轨2-并发时序",
+                "purpose": "排查锁序与状态竞争",
+                "risk_track": "concurrency_timing",
+                "asset_item_ids": [candidate_id],
+                "owned_files": shared_files,
+            },
+            {
+                "title": "轨3-资源生命周期",
+                "purpose": "排查泄漏与双重释放",
+                "risk_track": "resource_lifecycle",
+                "asset_item_ids": [candidate_id],
+                "owned_files": shared_files,
+            },
+            {
+                "title": "轨4-踩内存与悬空访问",
+                "purpose": "排查跨线程释放后重分配踩内存与越界写",
+                "risk_track": "memory_corruption",
+                "asset_item_ids": [candidate_id],
+                "owned_files": shared_files,
+            },
+        ],
+    )
+    _assert(batch_res["diagnostics"]["duplicate_owned_regions"] == [], f"distinct risk_track units must share owned_files cleanly: {batch_res['diagnostics']}")
+    _assert(batch_res["diagnostics"]["ready"] is True, f"4-track plan should be ready: {batch_res['diagnostics']}")
+
+    work_finish(*p_bind, revision=batch_res["revision"])
+    stage2 = settle_action(*p_bind[:3])
+    _assert(len(stage2["agent_actions"]) == 4, f"expected 4 Stage 2 track actions, got {len(stage2['agent_actions'])}")
+
+    run_dir = data_root / "runs" / run_id
+    _assert((run_dir / "inputs" / "risk-blueprint.json").is_file(), "risk-blueprint.json must be materialized for Stage 2")
+    frozen_dts = read_json(run_dir / "inputs" / "dts-context.json")
+    homologous = frozen_dts.get("homologous_dts", [])
+    _assert(any(h.get("source_kind") == "historical_defect_asset" and h.get("track") == "memory_corruption" for h in homologous), f"historical_defect must project into homologous_dts: {homologous}")
+    _assert(any(fix_sha in str(h.get("commit_ref", "")) and "cancel_async_cb" in str(h.get("already_fixed_check", "")) for h in homologous), f"MR commit SHA diff must be extracted into homologous_dts: {homologous}")
+
+    tracks_seen: set[str] = set()
+    flow_fixture = {
+        "format_version": "behavior-flow-v1",
+        "flow_id": "F-CHAN",
+        "title": "通道销毁与异步回调时序",
+        "role": "main",
+        "attach_to": None,
+        "text": "销毁路径释放 slot 与异步回调写入 payload 的交互。",
+        "nodes": [
+            {"id": "n1", "kind": "entry", "label": "chan_b_teardown"},
+            {"id": "n2", "kind": "exit", "label": "pool_free(c->slot)"},
+        ],
+        "edges": [{"source_step_key": "n1", "target_step_key": "n2", "condition": ""}],
+        "paths": [{"path_id": "p1", "node_ids": ["n1", "n2"]}],
+        "source_evidence": ["mem-repo:src/chan_b.c:1-3"],
+        "sequence": {
+            "format_version": "sequence-v1",
+            "title": "销毁与回调交错",
+            "status": "ready",
+            "participants": [{"id": "t1", "label": "销毁线程"}, {"id": "t2", "label": "回调线程"}],
+            "messages": [{"id": "m1", "from": "t1", "to": "t2", "label": "未同步释放 slot", "kind": "async", "source_evidence": ["mem-repo:src/chan_b.c:2"]}],
+            "fragments": [],
+            "notes": [],
+        },
+        "call_graph": {
+            "format_version": "call-graph-v1",
+            "title": "chan_b 调用关系",
+            "status": "ready",
+            "root": "chan_b_teardown",
+            "functions": [{"id": "chan_b_teardown", "kind": "function", "label": "chan_b_teardown", "signature": "void chan_b_teardown(struct chan *c)", "file": "src/chan_b.c", "line": 1}],
+            "calls": [],
+            "variables": [],
+            "notes": [],
+        },
+    }
+
+    for act in stage2["agent_actions"]:
+        u_bind = (str(data_root), run_id, act["action_id"], f"worker-{act['action_id']}")
+        bind_action(*u_bind)
+        opened = task_open(*u_bind)
+        track = opened["task"].get("risk_track")
+        _assert(track in {"error_rollback", "concurrency_timing", "resource_lifecycle", "memory_corruption"}, f"missing inline risk_track: {opened['task']}")
+        tracks_seen.add(track)
+        startup_inputs = {
+            p["input_id"]
+            for bucket in ("pages", "pending_inputs")
+            for p in opened["analysis_startup"][bucket]
+        }
+        for req_input in ("risk_blueprint", "dts_context", "asset_items"):
+            _assert(req_input in startup_inputs, f"Stage 2 analysis_startup missing {req_input}: {sorted(startup_inputs)}")
+        raw_task = read_json(Path(act["task_path"]))
+        _assert(any(inp["input_id"] == "track_topology" for inp in raw_task["inputs"]), "Stage 2 task must bind track_topology input")
+        handoff_path = next(inp["path"] for inp in raw_task["inputs"] if inp["input_id"] == "planning_handoff")
+        handoff_doc = read_json(Path(handoff_path))
+        _assert(any(r.get("scope") == "global" and "mcp_dts_extraction" in json.dumps(r, ensure_ascii=False) for r in handoff_doc.get("records", [])), f"global relates_to=[] note must reach Stage 2 planning_handoff: {handoff_doc}")
+        if track == "memory_corruption":
+            topo_path = next(inp["path"] for inp in raw_task["inputs"] if inp["input_id"] == "track_topology")
+            track_topo = read_json(Path(topo_path))
+            _assert(track_topo["track"] == "memory_corruption", f"unexpected track_topology: {track_topo}")
+            _assert(any("memory_anchors" in f for f in track_topo["files"]), f"memory_corruption track_topology missing memory_anchors: {track_topo}")
+
+        records = [
+            {
+                "kind": "check",
+                "body": {
+                    "format_version": CHECK_FORMAT_V2,
+                    "check_id": f"CHK-{track[:4].upper()}-01",
+                    "track": track,
+                    "entity_ref": "MEM-SLOT-01" if track == "memory_corruption" else "RES-SLOT",
+                    "matched_dts_pattern_ids": [h["dts_id"] for h in homologous],
+                    "object": "chan_a 已修复点与 chan_b 同源未修复点核对",
+                    "sites": ["mem-repo:src/chan_b.c:1-7"],
+                    "hypothesis": "chan_b_teardown 未排空回调释放 slot 后被 chan_b_async_cb 覆写踩内存",
+                    "conclusion": "needs_runtime_verification" if track == "memory_corruption" else "excluded",
+                    "reasoning": "chan_a.c 已在 6.1.6 合入 cancel_async_cb 与置空保护，不再重报；兄弟路径 chan_b.c 仍裸调 pool_free 且异步回调直接 memcpy 写入 c->slot->payload。",
+                    "evidence_quotes": [{"ref": "mem-repo:src/chan_b.c:1-7", "snippet": "memcpy(c->slot->payload, buf, len);"}],
+                    "risk_ids": ["R-MEM-612"] if track == "memory_corruption" else [],
+                },
+            },
+            {"kind": "flow", "body": flow_fixture},
+            {"kind": "summary", "body": f"{track} 轨道排查完成"},
+        ]
+        if track == "memory_corruption":
+            records.insert(
+                1,
+                {
+                    "kind": "risk",
+                    "body": {
+                        "format_version": RISK_FORMAT_V3,
+                        "risk_id": "R-MEM-612",
+                        "track": "memory_corruption",
+                        "verification_status": "needs_runtime_verification",
+                        "severity": "Critical",
+                        "entity_ref": "MEM-SLOT-01",
+                        "matched_dts_pattern_ids": [h["dts_id"] for h in homologous],
+                        "title": "chan_b 销毁未排空异步回调导致跨线程踩坏重分配内存池槽位",
+                        "trigger": "chan_b 并发断连销毁与异步回包同时到达",
+                        "interleaving_or_path": [
+                            "T1 chan_b_teardown L2 调用 pool_free(c->slot) 归还槽位且未置空",
+                            "内存池将该 slot 分配给新会话",
+                            "T2 chan_b_async_cb L5 执行 memcpy(c->slot->payload, buf, len) 踩坏新会话数据",
+                        ],
+                        "system_result": "新会话内存被静默覆写，后续解引用触发随机栈 coredump",
+                        "runtime_uncertainty": "取决于底层调度器在 pool_free 前是否隐式屏障等待回调线程退出",
+                        "external_observation": "开启毒化填充 0xDEADBEEF 或 ASAN 后触发 heap-use-after-free / magic 校验失败",
+                        "exclusion_condition": "销毁前同步排空异步回调并置空 c->slot",
+                        "source_evidence": ["mem-repo:src/chan_b.c:1-3", "mem-repo:src/chan_b.c:4-7"],
+                        "evidence_quotes": [
+                            {"ref": "mem-repo:src/chan_b.c:1-3", "snippet": "pool_free(c->slot);"},
+                            {"ref": "mem-repo:src/chan_b.c:4-7", "snippet": "memcpy(c->slot->payload, buf, len);"},
+                        ],
+                        "instrumentation": {
+                            "points": [
+                                {
+                                    "id": "INJ-MEM-01",
+                                    "kind": "memory_poison_or_bound_probe",
+                                    "repo_id": "mem-repo",
+                                    "path": "src/chan_b.c",
+                                    "symbol": "chan_b_teardown",
+                                    "action": "在 pool_free 前对 slot 填充毒化字节并延迟 50ms 放大异步回调窗口",
+                                    "observe": "chan_b_async_cb 命中毒化写断点或 ASAN 报错",
+                                }
+                            ]
+                        },
+                    },
+                },
+            )
+        w_res = result_write(*u_bind, expected_revision=0, records=records)
+        work_finish(*u_bind, revision=w_res["revision"])
+        settle_action(*u_bind[:3])
+
+    _assert(tracks_seen == {"error_rollback", "concurrency_timing", "resource_lifecycle", "memory_corruption"}, f"missing tracks: {tracks_seen}")
+    report_md = (run_dir / "report.md").read_text(encoding="utf-8")
+    _assert("四轨风险检查账本（risk-method-v2）" in report_md, "final report missing 4-track ledger header")
+    _assert("memory_corruption" in report_md, "final report missing memory_corruption track row")
+    _assert("R-MEM-612" in report_md, "final report missing sibling memory stomp risk")
 
 
 def main() -> None:
@@ -272,8 +700,10 @@ def main() -> None:
         verify_dts_feedback_and_git_diff(tmp)
         verify_tolerant_ast_topology()
         verify_v2_gates_and_ledger(tmp)
+        verify_memory_corruption_dts_and_topology(tmp)
     print("ALL risk-method-v2 VERIFICATIONS PASSED")
 
 
 if __name__ == "__main__":
     main()
+

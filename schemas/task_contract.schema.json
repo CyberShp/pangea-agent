@@ -79,7 +79,11 @@
       "anyOf": [
         {
           "additionalProperties": {
-            "type": "string"
+            "anyOf": [
+              { "type": "string" },
+              { "type": "object" },
+              { "type": "null" }
+            ]
           },
           "type": "object"
         },

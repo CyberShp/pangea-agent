@@ -455,7 +455,18 @@ def prepare_source_first_inputs(state: PangeaState) -> PangeaState:
         "rubric_paths": [planning_rubric, *(scene_rubric_paths(run_dir, scene, "planning", [], analysis_language) if scene else [])],
         "inputs": [
             *scene_task_inputs(run_dir, scene),
-            *([_input("scene_planning_rubric", path, "场景规划职责") for path in scene_rubric_paths(run_dir, scene, "planning", [], analysis_language)] if scene else []),
+            *(
+                [
+                    _input(
+                        "scene_planning_rubric" if idx == 0 else f"scene_planning_rubric_{Path(path).stem}",
+                        path,
+                        "场景规划职责",
+                    )
+                    for idx, path in enumerate(scene_rubric_paths(run_dir, scene, "planning", [], analysis_language))
+                ]
+                if scene
+                else []
+            ),
             *_example_inputs(state),
             _input("planning_metadata", compact_path, "源码结构摘要"),
             _input("asset_candidates", inputs / "asset-candidates.json", "候选结构化资料"),
@@ -491,6 +502,10 @@ def prepare_source_first_inputs(state: PangeaState) -> PangeaState:
     if scene and scene.get("dts_feedback"):
         from pangea_agent.dts_patterns import freeze_dts_context
         dts_settings = (contract.get("analysis_settings") or {}).get("dts_context") or {}
+        selected_defects = [
+            item for item in assets["items"].values()
+            if isinstance(item, dict) and item.get("item_type") == "historical_defect"
+        ]
         freeze_dts_context(
             state["data_root"],
             run_dir,
@@ -499,6 +514,7 @@ def prepare_source_first_inputs(state: PangeaState) -> PangeaState:
             requested_dts_ids=dts_settings.get("dts_ids") if isinstance(dts_settings, dict) else None,
             requested_mr_urls=dts_settings.get("mr_urls") if isinstance(dts_settings, dict) else None,
             homologous_items=dts_settings.get("homologous_dts") if isinstance(dts_settings, dict) else None,
+            selected_defect_items=selected_defects,
             mcp_status=dts_settings.get("mcp_status") if isinstance(dts_settings, dict) else None,
         )
         task["inputs"].append(_input("dts_context", inputs / "dts-context.json", "冻结 DTS 故障拓扑库与同源案例"))
@@ -587,6 +603,7 @@ def _planning_units(state: PangeaState, action: ActionState, task: dict, result)
         units_by_id[unit_id] = {
             "unit_id": unit_id,
             "title": str(body.get("title") or unit_id),
+            **({"risk_track": str(body["risk_track"]).strip()} if isinstance(body.get("risk_track"), str) and body["risk_track"].strip() else {}),
             **({"risk_lenses": body["risk_lenses"]} if "risk_lenses" in body else {}),
             "owned_regions": owned,
             "context_regions": context if isinstance(context, list) else [],
@@ -724,6 +741,24 @@ def _make_analysis_actions(state: PangeaState, progress: WorkflowProgress, units
         path.stem: str(path)
         for path in (run_directory(state) / "inputs" / "methodologies" / "builtin").glob("*.md")
     }
+    blueprint_path = run_directory(state) / "inputs" / "risk-blueprint.json"
+    if (
+        scene
+        and (scene.get("record_contracts") or {}).get("blueprint") == "risk-blueprint-v1"
+        and planning_result is not None
+    ):
+        latest_bp = next(
+            (
+                record.body
+                for record in reversed(active_records(planning_result))
+                if record.kind == "note"
+                and isinstance(record.body, dict)
+                and record.body.get("format_version") == "risk-blueprint-v1"
+            ),
+            None,
+        )
+        if latest_bp is not None:
+            write_json(blueprint_path, latest_bp)
     for unit in units:
         key = _safe_key(unit["unit_id"])
         action_id = f"{state['run_id']}:analysis:{unit['unit_id']}"
@@ -781,6 +816,7 @@ def _make_analysis_actions(state: PangeaState, progress: WorkflowProgress, units
             "analysis_language": language_mode(unit_languages),
             "analysis_languages": unit_languages,
             "unit_id": unit["unit_id"],
+            **({"risk_track": unit["risk_track"]} if "risk_track" in unit else {}),
             "title": unit["title"],
             "purpose": unit["purpose"],
             "owned_regions": owned,
@@ -828,6 +864,16 @@ def _make_analysis_actions(state: PangeaState, progress: WorkflowProgress, units
             task["risk_lenses"] = unit.get("risk_lenses", [])
             signal_path = generate_unit(run_directory(state), task, key)
             task["inputs"].append(_input("unit_risk_signals", signal_path, "本单元风险检索线索"))
+        if scene and scene.get("risk_topology"):
+            from pangea_agent.inventory.risk_topology_index import generate_track_topology
+            topo_path = generate_track_topology(run_directory(state), task, unit.get("risk_track") or "all", key)
+            task["inputs"].append(_input("track_topology", topo_path, "本单元分轨 AST 拓扑结构索引"))
+        if scene and scene.get("dts_feedback"):
+            dts_path = run_directory(state) / "inputs" / "dts-context.json"
+            if dts_path.is_file():
+                task["inputs"].append(_input("dts_context", dts_path, "冻结 DTS 故障拓扑库与同源案例"))
+        if blueprint_path.is_file():
+            task["inputs"].append(_input("risk_blueprint", blueprint_path, "全局风险四轨底图"))
         if plan_task.get("planning_policy") == "allocation-only-v1" and planning_result is not None:
             from pangea_agent.graph.planning_handoff import unit_handoff
             handoff_path = run_directory(state) / "inputs" / "planning-handoff" / f"{key}.json"

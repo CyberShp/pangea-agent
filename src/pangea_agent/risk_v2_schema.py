@@ -15,7 +15,7 @@ RISK_BLUEPRINT_FORMAT = "risk-blueprint-v1"
 CHECK_FORMAT_V2 = "behavior-check-v2"
 RISK_FORMAT_V3 = "behavior-risk-v3"
 
-TRACKS = ("error_rollback", "concurrency_timing", "resource_lifecycle")
+TRACKS = ("error_rollback", "concurrency_timing", "resource_lifecycle", "memory_corruption")
 VERIFICATION_STATUSES = ("static_proven", "needs_runtime_verification")
 SEVERITIES = ("Low", "Medium", "High", "Critical", "Unknown")
 CHECK_CONCLUSIONS_V2 = (
@@ -25,7 +25,13 @@ CHECK_CONCLUSIONS_V2 = (
     "unresolved",
     "not_applicable",
 )
-INSTRUMENTATION_KINDS = ("fault_return", "race_window_delay", "leak_counter_probe", "custom")
+INSTRUMENTATION_KINDS = (
+    "fault_return",
+    "race_window_delay",
+    "leak_counter_probe",
+    "memory_poison_or_bound_probe",
+    "custom",
+)
 _FORBIDDEN_PATCH_FIELDS = ("remediation_hint", "fix", "patch", "suggested_patch")
 
 
@@ -39,7 +45,9 @@ def check_blueprint_structure(body: Any) -> list[str]:
     errors: list[str] = []
     if body.get("format_version") != RISK_BLUEPRINT_FORMAT:
         errors.append(f"format_version 必须是 {RISK_BLUEPRINT_FORMAT}")
-    for key in ("resource_entities", "concurrency_contexts", "transaction_chains"):
+    for key in ("resource_entities", "concurrency_contexts", "transaction_chains", "memory_hazard_zones"):
+        if key == "memory_hazard_zones" and key not in body:
+            continue
         items = body.get(key)
         if not isinstance(items, list):
             errors.append(f"{key} 必须是数组（无对应实体时可写 []）")
@@ -185,6 +193,7 @@ def blueprint_coverage_diagnostics(
         "resource_lifecycle": "resource_entities",
         "concurrency_timing": "concurrency_contexts",
         "error_rollback": "transaction_chains",
+        "memory_corruption": "memory_hazard_zones",
     }.get(track or "")
     expected_entities = []
     if isinstance(blueprint, dict) and track_entity_key:
