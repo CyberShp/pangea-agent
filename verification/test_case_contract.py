@@ -287,15 +287,14 @@ class CaseWriteGraphChecks(unittest.TestCase):
         self.assertEqual(len(read_result(self.path).records), 3)
         self.assertEqual(read_result(self.path).records[1].body["title"], "原 worker 待核实的风险")
 
-        # 2. New risk-analysis runs enforce behavior-risk-v3 / behavior-check-v2 deterministic gates.
+        # 2. New risk-analysis runs emit advisory warnings for incomplete behavior-risk-v3 without rejecting writes.
         self.prepare_graph("risk-analysis")
-        with self.assertRaises(ResultStoreError):
-            result_write(*self.args, expected_revision=0, records=[
-                case_record(),
-                {"kind": "risk", "body": {"format_version": "behavior-risk-v2", "title": "旧版格式"}},
-            ])
-        written = result_write(*self.args, expected_revision=0, records=[
+        warned = result_write(*self.args, expected_revision=0, records=[
             case_record(),
+            {"kind": "risk", "body": {"format_version": "behavior-risk-v2", "title": "旧版格式"}},
+        ])
+        self.assertTrue(any(w["kind"] == "risk_contract_hint" for w in warned["warnings"]))
+        written = result_write(*self.args, expected_revision=warned["revision"], records=[
             {"kind": "check", "body": {
                 "format_version": "behavior-check-v2", "check_id": "C1", "track": "error_rollback",
                 "object": "one", "sites": ["demo:src/one.c:1"], "hypothesis": "return 1",
@@ -315,7 +314,7 @@ class CaseWriteGraphChecks(unittest.TestCase):
         self.assertEqual(written["warnings"], [])
         finished = work_finish(*self.args, revision=written["revision"])
         self.assertEqual(finished["status"], "valid")
-        self.assertEqual(len(read_result(self.path).records), 3)
+        self.assertEqual(len(read_result(self.path).records), 4)
 
 
 if __name__ == "__main__":

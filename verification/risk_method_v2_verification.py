@@ -166,7 +166,7 @@ def verify_v2_gates_and_ledger(tmp: Path) -> None:
     binding = SourceBinding(data_root=str(tmp), run_id="run-1", action_id="run-1:analysis:U1", task_id="task-1")
     initialize_result(result_path, binding)
 
-    # 1. Forged quote must be rejected deterministically
+    # 1. Unmatched quote emits advisory warning without rejecting the write
     forged_risk = {
         "kind": "risk",
         "body": {
@@ -185,13 +185,13 @@ def verify_v2_gates_and_ledger(tmp: Path) -> None:
             "evidence_quotes": [{"ref": "repo:src/foo.c:1-4", "snippet": "THIS_CODE_DOES_NOT_EXIST();"}],
         },
     }
-    try:
-        append_records(result_path, binding, expected_revision=0, records=[forged_risk], record_contracts=contracts, context=_MockContext())
-        raise AssertionError("forged quote must fail write gate")
-    except ResultStoreError as exc:
-        _assert("不在 repo:src/foo.c:1-4 中" in str(exc), f"unexpected error: {exc}")
+    forged_path = tmp / "forged_warn.json"
+    initialize_result(forged_path, binding)
+    forged_res = append_records(forged_path, binding, expected_revision=0, records=[forged_risk], record_contracts=contracts, context=_MockContext())
+    _assert(any(w.get("kind") == "evidence_quote_mismatch" and "不在 repo:src/foo.c:1-4 中" in w.get("message", "") for w in forged_res["warnings"]),
+            f"expected quote mismatch warning, got: {forged_res}")
 
-    # 2. needs_runtime_verification without instrumentation.points must be rejected
+    # 2. needs_runtime_verification without instrumentation.points emits advisory warning without rejecting
     missing_inst = {
         "kind": "risk",
         "body": {
@@ -201,13 +201,13 @@ def verify_v2_gates_and_ledger(tmp: Path) -> None:
             "evidence_quotes": [{"ref": "repo:src/foo.c:1-4", "snippet": "free(x->ctx);"}],
         },
     }
-    try:
-        append_records(result_path, binding, expected_revision=0, records=[missing_inst], record_contracts=contracts, context=_MockContext())
-        raise AssertionError("missing instrumentation.points must fail write gate")
-    except ResultStoreError as exc:
-        _assert("instrumentation.points" in str(exc), f"unexpected error: {exc}")
+    missing_path = tmp / "missing_inst_warn.json"
+    initialize_result(missing_path, binding)
+    missing_res = append_records(missing_path, binding, expected_revision=0, records=[missing_inst], record_contracts=contracts, context=_MockContext())
+    _assert(any(w.get("kind") == "risk_contract_hint" and "instrumentation.points" in w.get("message", "") for w in missing_res["warnings"]),
+            f"expected instrumentation.points warning, got: {missing_res}")
 
-    # 3. Valid check-v2 + needs_runtime_verification risk-v3 succeeds
+    # 3. Valid check-v2 + needs_runtime_verification risk-v3 succeeds with zero warnings
     valid_batch = [
         {
             "kind": "check",
@@ -248,6 +248,8 @@ def verify_v2_gates_and_ledger(tmp: Path) -> None:
     ]
     write_res = append_records(result_path, binding, expected_revision=0, records=valid_batch, record_contracts=contracts, context=_MockContext())
     _assert(write_res["revision"] == 1, f"expected revision 1, got {write_res}")
+    _assert(not any(w.get("kind") in {"risk_contract_hint", "check_contract_hint", "evidence_quote_mismatch"} for w in write_res["warnings"]),
+            f"unexpected contract warnings on valid batch: {write_res['warnings']}")
 
     loaded = read_result(result_path)
     diag = blueprint_coverage_diagnostics(
