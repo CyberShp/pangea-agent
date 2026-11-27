@@ -22,12 +22,16 @@ NOTE = (
 
 _ACQUIRE_EXACT = frozenset(
     "malloc calloc realloc strdup strndup fopen fdopen open openat socket accept "
-    "dup pipe mmap opendir tmpfile mkstemp pthread_create timer_create eventfd "
-    "kmalloc kzalloc vmalloc kmem_cache_alloc".split()
+    "dup dup2 pipe mmap opendir tmpfile mkstemp pthread_create timer_create eventfd "
+    "kmalloc kzalloc vmalloc kmem_cache_alloc asprintf vasprintf realpath getline getdelim "
+    "aligned_alloc posix_memalign memalign valloc pvalloc shm_open "
+    "cJSON_Parse cJSON_ParseWithLength cJSON_ParseWithOpts cJSON_Print "
+    "cJSON_PrintUnformatted cJSON_PrintBuffered cJSON_Duplicate "
+    "cJSON_CreateObject cJSON_CreateArray cJSON_CreateString cJSON_CreateRaw".split()
 )
 _RELEASE_EXACT = frozenset(
     "free fclose close munmap closedir pthread_join timer_delete kfree vfree "
-    "kmem_cache_free shmdt".split()
+    "kmem_cache_free shmdt cJSON_Delete".split()
 )
 _RAW_MEM_WRITE_EXACT = frozenset(
     "memcpy memmove memset bcopy bzero strcpy strncpy strcat strncat "
@@ -50,9 +54,17 @@ _BLOCKING_EXACT = frozenset(
     "select epoll_wait sleep usleep nanosleep pthread_cond_wait "
     "pthread_cond_timedwait msleep wait_event".split()
 )
-_ACQUIRE_VERBS = frozenset("alloc create open new get acquire ref hold register attach map pin init start subscribe enqueue reserve".split())
-_RELEASE_VERBS = frozenset("free destroy close delete put release unref drop unregister detach unmap unpin deinit uninit fini stop unsubscribe dequeue".split())
+_HEAP_ALLOC_VERBS = frozenset(
+    "alloc malloc calloc zalloc zmalloc realloc strdup strndup memdup asprintf vasprintf clone dup".split()
+)
+_ACQUIRE_VERBS = _HEAP_ALLOC_VERBS | frozenset(
+    "create open new acquire ref hold register attach map pin subscribe enqueue reserve".split()
+)
+_RELEASE_VERBS = frozenset(
+    "free zfree kfree vfree destroy close delete put release unref drop unregister detach unmap unpin deinit uninit fini stop unsubscribe dequeue".split()
+)
 _CALLBACK_VERBS = frozenset("register subscribe set_cb set_callback on_event timer add_timer schedule_work queue_work".split())
+_EARLY_EXIT_MACRO_RE = re.compile(r"^[A-Z][A-Z0-9_]*(?:RET|RETURN|GOTO|CHECK|ENSURE)[A-Z0-9_]*$")
 _LUA_YIELD_RE = re.compile(r"\b(?:coroutine\.yield|skynet\.(?:call|sleep|wait|timeout|yield))\b")
 _LUA_RESOURCE_RE = re.compile(r"\b(?:io\.open|socket\.\w+|skynet\.timeout|skynet\.fork)\b|:close\s*\(")
 _LUA_ERROR_RE = re.compile(r"\b(?:error|assert|pcall|xpcall)\s*\(")
@@ -103,12 +115,39 @@ def _c_function_name(fn_node, data: bytes) -> str:
     return match.group(1) if match else "<unknown>"
 
 
+def _enclosing_assign_target(node, data: bytes) -> str:
+    cur = node.parent
+    depth = 0
+    while cur is not None and depth < 4:
+        if cur.type == "assignment_expression":
+            left = cur.child_by_field_name("left")
+            return _node_text(left, data).strip() if left is not None else ""
+        if cur.type == "init_declarator":
+            decl = cur.child_by_field_name("declarator")
+            if decl is not None:
+                raw = _node_text(decl, data).strip()
+                m = re.search(r"([A-Za-z_]\w*)\s*$", raw)
+                return m.group(1) if m else raw.lstrip("*& \t")
+            return ""
+        if cur.type in {"cast_expression", "parenthesized_expression"}:
+            cur = cur.parent
+            depth += 1
+            continue
+        break
+    return ""
+
+
 def _classify_c_call(callee: str) -> list[str]:
     tags: list[str] = []
     words = _words(callee)
-    if callee in _ACQUIRE_EXACT or (words & _ACQUIRE_VERBS and callee not in _RELEASE_EXACT):
+    is_release = callee in _RELEASE_EXACT or (bool(words & _RELEASE_VERBS) and callee not in _ACQUIRE_EXACT)
+    is_heap_alloc = (callee in _ACQUIRE_EXACT or bool(words & _HEAP_ALLOC_VERBS)) and not is_release
+    if is_heap_alloc:
+        tags.append("heap_alloc")
         tags.append("acquire")
-    if callee in _RELEASE_EXACT or (words & _RELEASE_VERBS and callee not in _ACQUIRE_EXACT):
+    elif not is_release and bool(words & _ACQUIRE_VERBS):
+        tags.append("acquire")
+    if is_release:
         tags.append("release")
     if callee in _LOCK_EXACT or ("lock" in words and "unlock" not in words):
         tags.append("lock")
@@ -122,6 +161,8 @@ def _classify_c_call(callee: str) -> list[str]:
         tags.append("raw_mem_write")
     if callee in _SHARED_MEM_OR_SLOT_VERBS or (words & _SHARED_MEM_OR_SLOT_VERBS):
         tags.append("shared_mem_or_slot")
+    if _EARLY_EXIT_MACRO_RE.match(callee):
+        tags.append("macro_exit_candidate")
     return tags
 
 
@@ -134,6 +175,7 @@ def _scan_c_cpp(repo_id: str, path: str, text: str) -> dict[str, Any]:
     error_slices: list[dict[str, Any]] = []
     concurrency_anchors: list[dict[str, Any]] = []
     resource_anchors: list[dict[str, Any]] = []
+    alloc_flow_slices: list[dict[str, Any]] = []
     memory_anchors: list[dict[str, Any]] = []
     field_reads: dict[str, set[str]] = defaultdict(set)
     field_writes: dict[str, set[str]] = defaultdict(set)
@@ -192,6 +234,9 @@ def _scan_c_cpp(repo_id: str, path: str, text: str) -> dict[str, Any]:
         label_cleanups: dict[str, list[str]] = defaultdict(list)
         side_effects: list[dict[str, Any]] = []
         exits: list[dict[str, Any]] = []
+        fn_macro_exits: list[dict[str, Any]] = []
+        fn_allocs: list[tuple[int, str, str, str]] = []
+        fn_assigns: list[tuple[int, str]] = []
         fn_releases: list[tuple[int, str, str, str]] = []
         fn_nullifies: list[tuple[int, str]] = []
         fn_derefs: list[tuple[int, str, str]] = []
@@ -209,7 +254,37 @@ def _scan_c_cpp(repo_id: str, path: str, text: str) -> dict[str, Any]:
                 lbl = node.child_by_field_name("label")
                 current_label = _node_text(lbl, data).strip() if lbl else current_label
 
-            if node.type == "call_expression":
+            if node.type == "new_expression":
+                target_expr = _enclosing_assign_target(node, data)
+                resource_anchors.append({
+                    "anchor_id": _anchor_id("res", repo_id, path, line_no, "heap_alloc:new"),
+                    "kind": "acquire",
+                    "line": line_no,
+                    "function": fn_name,
+                    "symbol": "new",
+                    "snippet": snippet,
+                })
+                fn_allocs.append((line_no, "new", target_expr, snippet))
+                side_effects.append({"line": line_no, "kind": "acquire", "symbol": "new"})
+
+            elif node.type == "delete_expression":
+                expr_text = _node_text(node, data).strip()
+                del_arg = re.sub(r"^\s*delete(?:\s*\[\s*\])?\s+", "", expr_text).strip()
+                if current_label:
+                    label_cleanups[current_label].append("delete")
+                resource_anchors.append({
+                    "anchor_id": _anchor_id("res", repo_id, path, line_no, "release:delete"),
+                    "kind": "release",
+                    "line": line_no,
+                    "function": fn_name,
+                    "symbol": "delete",
+                    "snippet": snippet,
+                })
+                fn_releases.append((line_no, "delete", del_arg, snippet))
+                for m in _FIELD_RE.finditer(del_arg):
+                    released_fields[m.group(1)].add(fn_name)
+
+            elif node.type == "call_expression":
                 callee = _callee_name(node, data)
                 tags = _classify_c_call(callee)
                 first_arg = _first_call_arg_text(node, data)
@@ -223,6 +298,16 @@ def _scan_c_cpp(repo_id: str, path: str, text: str) -> dict[str, Any]:
                         "line": line_no,
                         "function": fn_name,
                         "symbol": callee,
+                        "snippet": snippet,
+                    })
+                if "heap_alloc" in tags:
+                    target_expr = _enclosing_assign_target(node, data)
+                    fn_allocs.append((line_no, callee, target_expr, snippet))
+                if "macro_exit_candidate" in tags:
+                    fn_macro_exits.append({
+                        "line": line_no,
+                        "kind": "macro_exit_candidate",
+                        "target_label": None,
                         "snippet": snippet,
                     })
                 if "release" in tags:
@@ -250,7 +335,7 @@ def _scan_c_cpp(repo_id: str, path: str, text: str) -> dict[str, Any]:
                         "snippet": snippet,
                     })
                 if "acquire" in tags or "callback_reg" in tags:
-                    side_effects.append({"line": line_no, "kind": tags[0], "symbol": callee})
+                    side_effects.append({"line": line_no, "kind": "acquire" if "acquire" in tags else tags[0], "symbol": callee})
                 if "lock" in tags:
                     lock_depth += 1
                     held_locks.append(callee)
@@ -305,6 +390,7 @@ def _scan_c_cpp(repo_id: str, path: str, text: str) -> dict[str, Any]:
                         fn_nullifies.append((line_no, left_text.strip()))
                     else:
                         fn_derefs.append((line_no, "assign", left_text.strip()))
+                        fn_assigns.append((line_no, left_text.strip()))
                     for m in _FIELD_RE.finditer(left_text):
                         field_writes[m.group(1)].add(fn_name)
                         side_effects.append({"line": line_no, "kind": "state_write", "symbol": m.group(1)})
@@ -322,18 +408,21 @@ def _scan_c_cpp(repo_id: str, path: str, text: str) -> dict[str, Any]:
                     if fname:
                         field_reads[fname].add(fn_name)
 
-            elif node.type in {"update_expression", "assignment_expression"}:
-                pass
-
             elif node.type in {"return_statement", "goto_statement"}:
                 target_label = None
+                return_expr = ""
                 if node.type == "goto_statement":
                     m = re.search(r"\bgoto\s+([A-Za-z_]\w*)", _node_text(node, data))
                     target_label = m.group(1) if m else None
+                else:
+                    ret_raw = _node_text(node, data).strip()
+                    m = re.match(r"return\s+(.+?)\s*;?$", ret_raw, re.DOTALL)
+                    return_expr = m.group(1).strip() if m else ""
                 exits.append({
                     "line": line_no,
                     "kind": "goto" if node.type == "goto_statement" else "return",
                     "target_label": target_label,
+                    "return_expr": return_expr,
                     "snippet": snippet,
                 })
 
@@ -355,6 +444,48 @@ def _scan_c_cpp(repo_id: str, path: str, text: str) -> dict[str, Any]:
                 walk_fn(c, current_label)
 
         walk_fn(body)
+
+        for alloc_line, alloc_callee, target_expr, alloc_snip in fn_allocs:
+            same_fn_releases = [
+                rl for rl, _rc, r_arg, _rs in fn_releases
+                if rl > alloc_line and (
+                    not target_expr
+                    or r_arg == target_expr
+                    or r_arg.startswith(f"{target_expr}->")
+                    or r_arg.startswith(f"{target_expr}.")
+                )
+            ]
+            post_exits = [
+                {
+                    "line": ex["line"],
+                    "kind": ex["kind"],
+                    "target_label": ex["target_label"],
+                    "label_cleanups": label_cleanups.get(ex["target_label"], []) if ex["target_label"] else [],
+                    "snippet": ex["snippet"],
+                }
+                for ex in sorted([*exits, *fn_macro_exits], key=lambda item: item["line"])
+                if ex["line"] > alloc_line
+            ][:12]
+            overwrite_lines = [
+                al for al, lhs in fn_assigns
+                if al > alloc_line and target_expr and lhs == target_expr
+            ][:6]
+            ownership_out = bool(
+                target_expr.startswith("*")
+                or (target_expr and any(ex.get("return_expr") == target_expr for ex in exits if ex["line"] > alloc_line))
+            )
+            alloc_flow_slices.append({
+                "anchor_id": _anchor_id("alloc", repo_id, path, alloc_line, f"{fn_name}:{alloc_callee}:{target_expr}"),
+                "function": fn_name,
+                "alloc_line": alloc_line,
+                "callee": alloc_callee,
+                "target": target_expr or None,
+                "same_fn_release_lines": same_fn_releases[:8],
+                "post_alloc_exits": post_exits,
+                "overwrite_lines": overwrite_lines,
+                "ownership_out_candidate": ownership_out,
+                "snippet": alloc_snip,
+            })
 
         for rel_line, rel_callee, rel_arg, rel_snip in fn_releases:
             if not rel_arg:
@@ -430,21 +561,30 @@ def _scan_c_cpp(repo_id: str, path: str, text: str) -> dict[str, Any]:
         if len(writers | field_reads.get(sym, set())) >= 2
     ][:40]
 
+    truncated = {
+        "error_slices": len(error_slices) > 200,
+        "concurrency_anchors": len(concurrency_anchors) > 160,
+        "resource_anchors": len(resource_anchors) > 320,
+        "alloc_flow_slices": len(alloc_flow_slices) > 240,
+        "memory_anchors": len(memory_anchors) > 160,
+    }
     return {
         "repo_id": repo_id,
         "path": path,
         "language": "c_cpp",
         "parser": parser_mode,
-        "error_slices": error_slices[:160],
+        "error_slices": error_slices[:200],
         "concurrency_anchors": concurrency_anchors[:160],
         "shared_access_matrix": shared_access_matrix,
-        "resource_anchors": resource_anchors[:160],
+        "resource_anchors": resource_anchors[:320],
+        "alloc_flow_slices": alloc_flow_slices[:240],
         "memory_anchors": memory_anchors[:160],
+        "truncated": {k: v for k, v in truncated.items() if v},
     }
 
 
 def _scan_c_cpp_fallback(repo_id: str, path: str, lines: list[str]) -> dict[str, Any]:
-    error_slices, concurrency_anchors, resource_anchors, memory_anchors = [], [], [], []
+    error_slices, concurrency_anchors, resource_anchors, alloc_flow_slices, memory_anchors = [], [], [], [], []
     for i, line in enumerate(lines, 1):
         stripped = line.strip()[:160]
         if _REFCOUNT_RE.search(line):
@@ -460,6 +600,13 @@ def _scan_c_cpp_fallback(repo_id: str, path: str, lines: list[str]) -> dict[str,
                     "kind": "acquire" if "acquire" in tags else "release",
                     "line": i, "function": None, "symbol": m.group(1), "snippet": stripped,
                 })
+            if "heap_alloc" in tags:
+                alloc_flow_slices.append({
+                    "anchor_id": _anchor_id("alloc", repo_id, path, i, m.group(1)),
+                    "function": None, "alloc_line": i, "callee": m.group(1), "target": None,
+                    "same_fn_release_lines": [], "post_alloc_exits": [], "overwrite_lines": [],
+                    "ownership_out_candidate": False, "snippet": stripped,
+                })
             if "lock" in tags or "unlock" in tags:
                 concurrency_anchors.append({
                     "anchor_id": _anchor_id("conc", repo_id, path, i, m.group(1)),
@@ -474,9 +621,11 @@ def _scan_c_cpp_fallback(repo_id: str, path: str, lines: list[str]) -> dict[str,
                 })
     return {
         "repo_id": repo_id, "path": path, "language": "c_cpp", "parser": "regex_fallback",
-        "error_slices": error_slices[:160], "concurrency_anchors": concurrency_anchors[:160],
-        "shared_access_matrix": [], "resource_anchors": resource_anchors[:160],
+        "error_slices": error_slices[:200], "concurrency_anchors": concurrency_anchors[:160],
+        "shared_access_matrix": [], "resource_anchors": resource_anchors[:320],
+        "alloc_flow_slices": alloc_flow_slices[:240],
         "memory_anchors": memory_anchors[:160],
+        "truncated": {},
     }
 
 
@@ -628,7 +777,9 @@ def _scan_lua(repo_id: str, path: str, text: str) -> dict[str, Any]:
         "concurrency_anchors": concurrency_anchors[:160],
         "shared_access_matrix": shared_access_matrix,
         "resource_anchors": resource_anchors[:160],
+        "alloc_flow_slices": [],
         "memory_anchors": memory_anchors[:160],
+        "truncated": {},
     }
 
 
@@ -646,7 +797,9 @@ def scan_file_topology(repo_id: str, path: str, text: str, language: str) -> dic
         "concurrency_anchors": [],
         "shared_access_matrix": [],
         "resource_anchors": [],
+        "alloc_flow_slices": [],
         "memory_anchors": [],
+        "truncated": {},
     }
 
 
@@ -680,6 +833,7 @@ def generate_topology_summary(run_dir: Path, task: dict[str, Any]) -> dict[str, 
                 "error_rollback": len(scanned["error_slices"]),
                 "concurrency_timing": len(scanned["concurrency_anchors"]),
                 "resource_lifecycle": len(scanned["resource_anchors"]),
+                "alloc_flow_slices": len(scanned.get("alloc_flow_slices", [])),
                 "memory_corruption": len(scanned["memory_anchors"]),
                 "shared_symbols": len(scanned["shared_access_matrix"]),
             },
@@ -722,12 +876,21 @@ def generate_track_topology(run_dir: Path, task: dict[str, Any], track: str, key
             "language": detected,
             "parser": scanned["parser"],
         }
+        if scanned.get("truncated"):
+            entry["truncated"] = scanned["truncated"]
         if track == "error_rollback":
             entry["error_slices"] = scanned["error_slices"]
         elif track == "concurrency_timing":
             entry["concurrency_anchors"] = scanned["concurrency_anchors"]
             entry["shared_access_matrix"] = scanned["shared_access_matrix"]
         elif track == "resource_lifecycle":
+            alloc_slices = scanned.get("alloc_flow_slices", [])
+            alloc_fns = {item.get("function") for item in alloc_slices if item.get("function")}
+            entry["alloc_flow_slices"] = alloc_slices
+            entry["error_slices"] = [
+                item for item in scanned["error_slices"]
+                if not alloc_fns or item.get("function") in alloc_fns
+            ]
             entry["resource_anchors"] = scanned["resource_anchors"]
         elif track == "memory_corruption":
             entry["memory_anchors"] = scanned["memory_anchors"]
@@ -738,6 +901,7 @@ def generate_track_topology(run_dir: Path, task: dict[str, Any], track: str, key
                 "concurrency_anchors": scanned["concurrency_anchors"],
                 "shared_access_matrix": scanned["shared_access_matrix"],
                 "resource_anchors": scanned["resource_anchors"],
+                "alloc_flow_slices": scanned.get("alloc_flow_slices", []),
                 "memory_anchors": scanned["memory_anchors"],
             })
         files.append(entry)

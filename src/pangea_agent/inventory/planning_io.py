@@ -66,6 +66,14 @@ def analysis_startup(data_root: str, run_id: str, action_id: str, task_id: str,
                       and isinstance(item.get("input_id"), str)]
     declared_set = set(declared_order)
     identifiers = [name for name in ("analysis_scene", "planning_handoff", "risk_blueprint", "dts_context") if name in declared_set]
+    if "rubric_scene_risk_v2" in declared_set:
+        priority_risk = (
+            "rubric_scene_risk_v2",
+            "rubric_c_cpp_risk_v2",
+            "rubric_lua_risk_v2",
+            "track_topology",
+        )
+        identifiers.extend(name for name in priority_risk if name in declared_set and name not in identifiers)
     identifiers.extend(name for name in declared_order if name.startswith("rubric_") and name not in identifiers)
     if task.get("asset_item_ids") and "asset_items" in declared_set:
         identifiers.append("asset_items")

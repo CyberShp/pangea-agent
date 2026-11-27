@@ -25,8 +25,10 @@ VALID_TRACKS = ("error_rollback", "concurrency_timing", "resource_lifecycle", "m
 
 _TRACK_KEYWORDS: dict[str, tuple[str, ...]] = {
     "memory_corruption": (
-        "踩内存", "内存踩踏", "内存破坏", "越界", "溢出", "野指针", "悬空", "释放后使用",
+        "踩内存", "内存踩踏", "内存破坏", "踩坏", "越界", "溢出", "野指针", "悬空", "释放后使用",
         "释放后访问", "释放后写", "已释放", "重分配", "槽位", "共享内存", "未置空", "未初始化",
+        "空指针", "段错误", "asan", "addresssanitizer", "segfault", "sigsegv", "null pointer",
+        "nullptr", "coredump", "core dump",
         "uaf", "use-after-free", "use after free", "dangling", "stale pointer", "stale handle",
         "wild pointer", "stomp", "slot", " = null", "memory corruption", "heap corruption", "stack corruption",
         "out-of-bounds", "out of bounds", "oob", "buffer overflow", "heap-buffer-overflow",
@@ -38,14 +40,17 @@ _TRACK_KEYWORDS: dict[str, tuple[str, ...]] = {
         "重入", "回调", "超时", "乱序", "挂起", "解锁", "持锁",
     ),
     "resource_lifecycle": (
+        "lsan", "leaksanitizer", "direct leak", "indirect leak", "memory leak", "valgrind",
         "leak", "double free", "double-free", "refcount", "refcnt",
-        "fd", "socket", "handle", "pool", "quota", "unregister", "泄漏", "泄露",
+        "fd", "socket", "handle", "pool", "quota", "unregister", "malloc", "calloc", "strdup",
+        "内存泄漏", "内存泄露", "泄漏", "泄露", "未free", "漏free",
         "二次释放", "重复释放", "引用计数", "句柄", "耗尽", "未释放", "未注销",
     ),
     "error_rollback": (
         "rollback", "error path", "early return", "goto", "partial", "cleanup", "errno",
-        "swallow", "override", "recover", "retry", "pcall", "异常", "回滚", "错误处理",
-        "错误码", "吞掉", "覆盖", "半成品", "残留", "恢复失败", "清理", "提前返回",
+        "swallow", "override", "recover", "retry", "pcall", "divide by zero", "division by zero",
+        "infinite loop", "unchecked return", "除零", "死循环", "返回值未检查", "逻辑错误",
+        "异常", "回滚", "错误处理", "错误码", "吞掉", "覆盖", "半成品", "残留", "恢复失败", "清理", "提前返回",
     ),
 }
 
@@ -355,14 +360,16 @@ def ingest_dts_file(
         buggy_diff, fixed_diff = _split_diff_skeleton(diff_excerpt)
         explicit_track = _pick(row, "track", "轨道")
         combined = " ".join(part for part in (title, symptom, root_cause, fix_desc, buggy_diff, fixed_diff) if part)
+        is_non_code_noise = bool(_NON_CODE_NOISE_PATTERNS.search(combined.lower()))
+        has_code_evidence = bool(diff_excerpt or mr_url or commit_ref)
         track = explicit_track if explicit_track in VALID_TRACKS else (
-            infer_dts_track(combined) or ("memory_corruption" if inline_diff else None)
+            infer_dts_track(combined) or ("error_rollback" if has_code_evidence and not is_non_code_noise else None)
         )
         if not title or track is None:
             filtered_out.append({
                 "index": idx,
                 "dts_id": dts_id,
-                "reason": "缺少有效标题或不属于异常回滚/时序并发/资源生命周期/踩内存悬空访问四轨，已自动滤除",
+                "reason": "缺少有效标题或属于非代码文案杂单，已自动滤除",
             })
             continue
         has_diff = bool(diff_excerpt)

@@ -694,6 +694,130 @@ def verify_memory_corruption_dts_and_topology(tmp: Path) -> None:
     _assert("R-MEM-612" in report_md, "final report missing sibling memory stomp risk")
 
 
+def verify_lsan_alloc_slices_startup_and_dts_fallback(tmp: Path) -> None:
+    # 1) Wrapped allocators, C++ new/delete, early-exit macro, overwrite, ownership-out, and noise filtering.
+    c_leak_code = """
+    static int get_id(int x) { return x + 1; }
+    static void list_init(void *p) { (void)p; }
+
+    int parse_cfg(int ver, char **out_name) {
+        int id = get_id(ver);
+        list_init(&id);
+        char *buf = (char *)vos_malloc(128);
+        if (!buf) return -1;
+        char *tag = g_strdup("cfg");
+        CHECK_RET(ver < 0);
+        if (ver != 2) {
+            return -22;
+        }
+        buf = (char *)rte_zmalloc(256);
+        char *json_str = cJSON_Print(NULL);
+        *out_name = tag;
+        free(json_str);
+        free(buf);
+        return 0;
+    }
+
+    int cpp_alloc_demo(int bad) {
+        int *arr = new int[16];
+        if (bad) return -1;
+        delete[] arr;
+        return 0;
+    }
+    """
+    scanned = scan_file_topology("leak-repo", "src/cfg.cpp", c_leak_code, "c_cpp")
+    _assert(scanned["parser"].startswith("tree-sitter"), f"expected tree-sitter parser, got {scanned['parser']}")
+    acquire_syms = {a["symbol"] for a in scanned["resource_anchors"] if a["kind"] == "acquire"}
+    _assert({"vos_malloc", "g_strdup", "rte_zmalloc", "cJSON_Print", "new"} <= acquire_syms, f"missing wrapped allocators: {acquire_syms}")
+    _assert("get_id" not in acquire_syms and "list_init" not in acquire_syms, f"high-noise get/init leaked into acquire: {acquire_syms}")
+
+    slices_by_callee = {s["callee"]: s for s in scanned["alloc_flow_slices"]}
+    _assert("vos_malloc" in slices_by_callee, f"missing vos_malloc slice: {slices_by_callee.keys()}")
+    vos_slice = slices_by_callee["vos_malloc"]
+    _assert(vos_slice["target"] == "buf", f"unexpected target: {vos_slice}")
+    _assert(any(ex["kind"] == "macro_exit_candidate" for ex in vos_slice["post_alloc_exits"]), f"missing macro exit candidate: {vos_slice}")
+    _assert(any(ex["kind"] == "return" and "-22" in ex["snippet"] for ex in vos_slice["post_alloc_exits"]), f"missing early return exit: {vos_slice}")
+    _assert(bool(vos_slice["overwrite_lines"]), f"missing overwrite_lines for buf reassignment: {vos_slice}")
+    _assert("new" in slices_by_callee and slices_by_callee["new"]["target"] == "arr", f"missing C++ new slice: {slices_by_callee}")
+
+    # 2) DTS ingestion: LSan -> resource_lifecycle, ASan/null -> memory_corruption, uncategorized MR/diff -> error_rollback, UI typo -> filtered.
+    dts_data_root = tmp / "dts-fallback-data"
+    dts_csv = tmp / "lsan_and_fallback.csv"
+    dts_csv.write_text(
+        "dts_id,title,root_cause,mr_url\n"
+        "DTS-LSAN-01,LSan报告cfg解析退出告警,parse_cfg提前返回未释放临时堆块,\n"
+        "DTS-ASAN-02,ASan触发空指针解引用崩溃,handler未判空导致SIGSEGV,\n"
+        "DTS-OTHER-03,状态字段比较写反导致业务异常,比较符号写反,https://codehub.example/org/repo/merge_requests/77\n"
+        "DTS-UI-04,界面按钮文案错别字修改,按钮文案拼写错误,\n",
+        encoding="utf-8",
+    )
+    res = ingest_dts_file(dts_data_root, dts_csv)
+    _assert("DTS-LSAN-01" in res["imported"], f"LSan ticket not imported: {res}")
+    _assert("DTS-ASAN-02" in res["imported"], f"ASan ticket not imported: {res}")
+    _assert("DTS-OTHER-03" in res["imported"], f"Code MR ticket should fallback instead of drop: {res}")
+    _assert(any(f.get("dts_id") == "DTS-UI-04" for f in res["filtered_out"]), f"UI typo noise should still be filtered: {res}")
+    listed = {item["pattern_id"]: item for item in list_dts_patterns(dts_data_root)["items"]}
+    _assert(listed["DTS-LSAN-01"]["track"] == "resource_lifecycle", f"wrong LSan track: {listed['DTS-LSAN-01']}")
+    _assert(listed["DTS-ASAN-02"]["track"] == "memory_corruption", f"wrong ASan track: {listed['DTS-ASAN-02']}")
+    _assert(listed["DTS-OTHER-03"]["track"] == "error_rollback", f"wrong fallback track: {listed['DTS-OTHER-03']}")
+
+    # 3) analysis_startup prioritizes risk-method-v2 rubrics + track_topology ahead of large scene_common_generation.
+    from pangea_agent.agent_io import write_json
+    from pangea_agent.cli.adapter_api import bind_action, settle_action
+    from pangea_agent.cli.run_module_analysis import run_module_analysis
+    from pangea_agent.cli.source_first_api import plan_write, task_open, work_finish
+
+    startup_root = tmp / "startup-priority-data"
+    repo_root = startup_root / "repositories" / "leak-repo"
+    (repo_root / "src").mkdir(parents=True)
+    (repo_root / "src" / "cfg.cpp").write_text(c_leak_code, encoding="utf-8")
+    req_path = tmp / "request_leak_startup.json"
+    run_id = "run-leak-startup"
+    write_json(
+        req_path,
+        {
+            "workflow_version": "source-first-v1",
+            "analysis_profile": "behavior-test-v2",
+            "analysis_settings": {"scenario": "risk-analysis", "mode": "depth", "objective": "product-behavior"},
+            "data_root": str(startup_root),
+            "run_id": run_id,
+            "repository": "leak-repo",
+            "target": "cfg 泄漏核查",
+            "source_scope": ["src"],
+        },
+    )
+    started = run_module_analysis(str(req_path))
+    plan_action = started["agent_actions"][0]["action_id"]
+    bind_action(str(startup_root), run_id, plan_action, "plan-leak-1")
+    p_bind = (str(startup_root), run_id, plan_action, "plan-leak-1")
+    pw = plan_write(
+        *p_bind,
+        expected_revision=0,
+        unit={
+            "title": "资源配平轨",
+            "purpose": "沿 alloc_flow_slices 逐函数核查泄漏；免重复交付模块流程",
+            "risk_track": "resource_lifecycle",
+            "owned_files": [{"repo_id": "leak-repo", "path": "src/cfg.cpp"}],
+            "context_files": [],
+        },
+    )
+    work_finish(*p_bind, revision=pw["revision"])
+    settled = settle_action(str(startup_root), run_id, plan_action)
+    ana_action = next(a["action_id"] for a in settled["agent_actions"] if a["role"] == "analysis")
+    bind_action(str(startup_root), run_id, ana_action, "ana-leak-1")
+    opened = task_open(str(startup_root), run_id, ana_action, "ana-leak-1")
+    startup_ids = [page["input_id"] for page in opened["analysis_startup"]["pages"]]
+    _assert("rubric_scene_risk_v2" in startup_ids, f"risk_v2 rubric squeezed out of startup: {startup_ids}")
+    _assert("rubric_c_cpp_risk_v2" in startup_ids, f"c_cpp_risk_v2 rubric squeezed out of startup: {startup_ids}")
+    _assert("track_topology" in startup_ids, f"track_topology squeezed out of startup: {startup_ids}")
+    topo_page = next(p for p in opened["analysis_startup"]["pages"] if p["input_id"] == "track_topology")
+    _assert("alloc_flow_slices" in topo_page["text"], "resource_lifecycle startup topology missing alloc_flow_slices")
+    topo_file = startup_root / "runs" / run_id / "inputs" / "risk-topology" / "unit-0001.json"
+    topo_full = json.loads(topo_file.read_text(encoding="utf-8"))
+    _assert(topo_full["files"] and topo_full["files"][0].get("alloc_flow_slices") and topo_full["files"][0].get("error_slices"),
+            f"resource_lifecycle full topology missing alloc_flow_slices or error_slices: {topo_full}")
+
+
 def main() -> None:
     with tempfile.TemporaryDirectory() as raw:
         tmp = Path(raw)
@@ -701,6 +825,7 @@ def main() -> None:
         verify_tolerant_ast_topology()
         verify_v2_gates_and_ledger(tmp)
         verify_memory_corruption_dts_and_topology(tmp)
+        verify_lsan_alloc_slices_startup_and_dts_fallback(tmp)
     print("ALL risk-method-v2 VERIFICATIONS PASSED")
 
 
