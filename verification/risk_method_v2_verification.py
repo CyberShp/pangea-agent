@@ -692,6 +692,7 @@ def verify_memory_corruption_dts_and_topology(tmp: Path) -> None:
     _assert("四轨风险检查账本（risk-method-v2）" in report_md, "final report missing 4-track ledger header")
     _assert("memory_corruption" in report_md, "final report missing memory_corruption track row")
     _assert("R-MEM-612" in report_md, "final report missing sibling memory stomp risk")
+    _assert("待动态核验 1" in report_md, "final report check ledger summary missing needs_runtime_verification count")
 
 
 def verify_lsan_alloc_slices_startup_and_dts_fallback(tmp: Path) -> None:

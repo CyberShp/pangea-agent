@@ -1054,9 +1054,26 @@ def _behavior_markdown(
     if scene and scene.get('presentation', {}).get('check_ledger'):
         from pangea_agent.report.risk_method import ledger_markdown, review_markdown
         ledger, checks = ledger_markdown(delivery, anchors)
-        totals = {c: sum(r.body.get('conclusion') == c for r in checks) for c in ('confirmed', 'excluded', 'unresolved', 'not_applicable')}
+        is_v2 = (
+            scene.get('method_version') == 'risk-method-v2'
+            or any(r.body.get('conclusion') == 'needs_runtime_verification' for r in checks)
+        )
+        if is_v2:
+            keys = ('confirmed', 'needs_runtime_verification', 'excluded', 'unresolved', 'not_applicable')
+            totals = {c: sum(r.body.get('conclusion') == c for r in checks) for c in keys}
+            summary_detail = (
+                f'已证实 {totals["confirmed"]}／待动态核验 {totals["needs_runtime_verification"]}'
+                f'／已排除 {totals["excluded"]}／待确认 {totals["unresolved"]}／不适用 {totals["not_applicable"]}'
+            )
+        else:
+            keys = ('confirmed', 'excluded', 'unresolved', 'not_applicable')
+            totals = {c: sum(r.body.get('conclusion') == c for r in checks) for c in keys}
+            summary_detail = (
+                f'已证实 {totals["confirmed"]}／已排除 {totals["excluded"]}'
+                f'／待确认 {totals["unresolved"]}／不适用 {totals["not_applicable"]}'
+            )
         risk_count = sum(r.kind == 'risk' for _, result in delivery for r in active_and_retired(result)[0])
-        lines.extend([f'- 风险记录：{risk_count}', f'- 检查账本：{len(checks)} 条（已证实 {totals["confirmed"]}／已排除 {totals["excluded"]}／待确认 {totals["unresolved"]}／不适用 {totals["not_applicable"]}）', '', *ledger, *review_markdown(records)])
+        lines.extend([f'- 风险记录：{risk_count}', f'- 检查账本：{len(checks)} 条（{summary_detail}）', '', *ledger, *review_markdown(records)])
     add_records("业务覆盖清单", delivery, {"note"})
 
     def other_flow_record(unit_id: str, record: Any) -> list[str]:
