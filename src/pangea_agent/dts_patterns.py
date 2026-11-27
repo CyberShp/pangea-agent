@@ -148,17 +148,144 @@ def infer_dts_track(text: str) -> str | None:
     return best_track if best_score > 0 else None
 
 
+_IMPL_EXTS = (".c", ".cc", ".cpp", ".cxx", ".lua", ".py", ".sh")
+_C_LIKE_EXTS = (".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".js", ".mjs", ".ts", ".tsx", ".go", ".rs", ".java")
+_C_PREPROCESSOR_RE = re.compile(
+    r"^#\s*(?:include|define|undef|if|ifdef|ifndef|elif|else|endif|pragma|error|line|warning)\b"
+)
+
+
+def _normalize_diff_path(raw: str) -> str:
+    token = raw.strip().split("\t", 1)[0].strip()
+    if not token or token == "/dev/null":
+        return ""
+    if token.startswith(("a/", "b/")):
+        return token[2:]
+    return token
+
+
+def _parse_diff_sections(raw_diff: str) -> tuple[str, list[dict[str, Any]]]:
+    """Parse both git diffs and plain unified diffs into per-file sections."""
+    lines = raw_diff.splitlines()
+    header_lines: list[str] = []
+    sections: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+    in_hunk = False
+
+    def _start_section(first_line: str) -> dict[str, Any]:
+        sec: dict[str, Any] = {
+            "lines": [first_line],
+            "paths": [],
+            "removed": [],
+            "added": [],
+            "has_git_header": first_line.startswith("diff --git "),
+            "seen_hunk": False,
+        }
+        sections.append(sec)
+        return sec
+
+    def _add_path(sec: dict[str, Any], raw_path: str) -> None:
+        cleaned = _normalize_diff_path(raw_path)
+        if cleaned and cleaned not in sec["paths"]:
+            sec["paths"].append(cleaned)
+
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if line.startswith("diff --git "):
+            current = _start_section(line)
+            in_hunk = False
+            match = re.match(r"^diff --git\s+(\S+)\s+(\S+)", line)
+            if match:
+                _add_path(current, match.group(1))
+                _add_path(current, match.group(2))
+            i += 1
+            continue
+        if (
+            line.startswith("--- ")
+            and i + 1 < len(lines)
+            and lines[i + 1].startswith("+++ ")
+            and (current is None or current["seen_hunk"] or not current["has_git_header"])
+        ):
+            current = _start_section(line)
+            in_hunk = False
+            _add_path(current, line[4:])
+            i += 1
+            continue
+        if current is None:
+            header_lines.append(line)
+            i += 1
+            continue
+        current["lines"].append(line)
+        if line.startswith("--- ") and not in_hunk:
+            _add_path(current, line[4:])
+        elif line.startswith("+++ ") and not in_hunk:
+            _add_path(current, line[4:])
+        elif line.startswith("@@"):
+            in_hunk = True
+            current["seen_hunk"] = True
+        elif in_hunk:
+            if line.startswith("-") and not line.startswith("--- "):
+                content = line[1:].rstrip()
+                if content.strip():
+                    current["removed"].append(content)
+            elif line.startswith("+") and not line.startswith("+++ "):
+                content = line[1:].rstrip()
+                if content.strip():
+                    current["added"].append(content)
+        i += 1
+
+    for sec in sections:
+        paths = sec["paths"]
+        sec["text"] = "\n".join(sec["lines"]).rstrip()
+        sec["label"] = paths[-1] if paths else ""
+        sec["is_impl"] = any(p.lower().endswith(_IMPL_EXTS) for p in paths)
+        sec["is_doc_only"] = bool(paths) and all(p.lower().endswith(_DOC_ONLY_EXTS) for p in paths)
+
+    return "\n".join(header_lines).strip(), sections
+
+
 def _is_doc_only_diff(diff_text: str) -> bool:
-    if not diff_text or "diff --git " not in diff_text:
+    if not diff_text:
         return False
-    paths = [
-        p.strip()
-        for p in re.findall(r"(?m)^\+\+\+\s+(?:b/)?([^\s]+)$", diff_text)
-        if p.strip() and p.strip() != "/dev/null"
+    _, sections = _parse_diff_sections(diff_text)
+    if not sections:
+        return False
+    return all(sec["is_doc_only"] for sec in sections)
+
+
+def _is_comment_line(line: str, paths: list[str]) -> bool:
+    stripped = line.strip()
+    if not stripped:
+        return True
+    if stripped.startswith(("//", "/*", "*/", "--")):
+        return True
+    if stripped == "*" or stripped.startswith("* "):
+        return True
+    if stripped.startswith("#"):
+        is_c_like = any(p.lower().endswith(_C_LIKE_EXTS) for p in paths)
+        if is_c_like or _C_PREPROCESSOR_RE.match(stripped):
+            return False
+        return True
+    return False
+
+
+def _is_comment_only_diff(diff_text: str) -> bool:
+    if not diff_text:
+        return False
+    _, sections = _parse_diff_sections(diff_text)
+    code_sections = [sec for sec in sections if not sec["is_doc_only"]]
+    if not code_sections:
+        return False
+    changed = [
+        (line, sec["paths"])
+        for sec in code_sections
+        for line in (*sec["removed"], *sec["added"])
+        if line.strip()
     ]
-    if not paths:
+    if not changed:
         return False
-    return all(p.lower().endswith(_DOC_ONLY_EXTS) for p in paths)
+    return all(_is_comment_line(line, paths) for line, paths in changed)
 
 
 def _git_diff_raw(repo_path: Path, commit_ref: str) -> str:
@@ -185,57 +312,83 @@ def _git_diff_raw(repo_path: Path, commit_ref: str) -> str:
     return proc.stdout.strip()
 
 
+def _allocate_section_excerpts(
+    sections: list[dict[str, Any]],
+    budget: int,
+) -> tuple[list[str], int]:
+    """Allocate character budget across sections fairly so short files are not starved by one long file."""
+    if not sections or budget <= 0:
+        return [], 0
+    file_notice = "\n... [file diff truncated]"
+    indexed = list(enumerate(sections))
+    # Grant full text first to short files that fit within the fair per-file share.
+    allocated: dict[int, str] = {}
+    remaining_indices = [idx for idx, _ in indexed]
+    remaining_budget = budget
+
+    while remaining_indices and remaining_budget > 0:
+        share = max(1, remaining_budget // len(remaining_indices))
+        fitted = [
+            idx for idx in remaining_indices
+            if len(sections[idx]["text"]) + 1 <= share
+        ]
+        if not fitted:
+            break
+        for idx in fitted:
+            allocated[idx] = sections[idx]["text"]
+            remaining_budget -= len(sections[idx]["text"]) + 1
+        remaining_indices = [idx for idx in remaining_indices if idx not in allocated]
+
+    if remaining_indices and remaining_budget > 0:
+        share = remaining_budget // len(remaining_indices)
+        for idx in remaining_indices:
+            if share <= len(file_notice) + 16:
+                break
+            text = sections[idx]["text"]
+            cap = max(16, share - len(file_notice) - 1)
+            piece = text[:cap].rstrip() + file_notice
+            allocated[idx] = piece
+            remaining_budget -= len(piece) + 1
+
+    ordered_chunks = [allocated[idx] for idx, _ in indexed if idx in allocated]
+    used = sum(len(c) + 1 for c in ordered_chunks)
+    return ordered_chunks, used
+
+
 def _extract_diff_excerpt(raw_diff: str, *, max_chars: int = 8000) -> tuple[str, bool]:
-    """Compress long diffs while prioritizing implementation file hunks over headers/stat."""
+    """Compress long diffs while preserving representative hunks across implementation files."""
     text = raw_diff.strip()
     if len(text) <= max_chars:
         return text, False
-    notice = f"\n... [diff truncated: original {len(text)} chars, implementation hunks prioritized]"
+    notice = f"\n... [diff truncated: original {len(text)} chars, representative hunks per file preserved]"
     budget = max(256, max_chars - len(notice))
-    parts = re.split(r"(?m)(?=^diff --git )", text)
-    header = ""
-    file_sections: list[str] = []
-    for part in parts:
-        if part.startswith("diff --git "):
-            file_sections.append(part)
-        elif not header:
-            header = part.strip()
-    if not file_sections:
+    header, sections = _parse_diff_sections(text)
+    if not sections:
         return text[:budget] + notice, True
 
-    def _is_impl_section(section: str) -> bool:
-        first_line = section.splitlines()[0] if section else ""
-        target = first_line.rsplit(" ", 1)[-1].strip()
-        if target.lower().endswith(_IMPL_EXTS):
-            return True
-        for m in re.findall(r"(?m)^\+\+\+\s+(?:b/)?([^\s]+)$", section):
-            if m != "/dev/null" and m.lower().endswith(_IMPL_EXTS):
-                return True
-        return False
-
-    impl_sections = [s for s in file_sections if _is_impl_section(s)]
-    other_sections = [s for s in file_sections if not _is_impl_section(s)]
-    ordered = [*impl_sections, *other_sections]
+    impl_sections = [s for s in sections if s["is_impl"]]
+    other_code_sections = [s for s in sections if not s["is_impl"] and not s["is_doc_only"]]
+    doc_sections = [s for s in sections if s["is_doc_only"]]
 
     chunks: list[str] = []
     used = 0
     if header:
-        header_cap = min(len(header), 1200, budget // 4)
+        header_cap = min(len(header), 800, budget // 6)
         clipped_header = header[:header_cap].rstrip()
         if clipped_header:
             chunks.append(clipped_header)
             used += len(clipped_header) + 1
-    for section in ordered:
+
+    for group in (impl_sections, other_code_sections, doc_sections):
+        if not group:
+            continue
         remaining = budget - used
-        if remaining <= 0:
+        if remaining <= 64:
             break
-        if len(section) <= remaining:
-            chunks.append(section)
-            used += len(section) + 1
-        else:
-            chunks.append(section[:remaining].rstrip())
-            used = budget
-            break
+        group_chunks, group_used = _allocate_section_excerpts(group, remaining)
+        chunks.extend(group_chunks)
+        used += group_used
+
     return "\n".join(chunks).rstrip() + notice, True
 
 
@@ -247,40 +400,88 @@ def _git_diff_excerpt(repo_path: Path, commit_ref: str, *, max_chars: int = 8000
     return excerpt
 
 
-_IMPL_EXTS = (".c", ".cc", ".cpp", ".cxx", ".lua", ".py", ".sh")
+def _select_balanced_lines(
+    groups: list[tuple[str, list[str]]],
+    max_lines: int,
+) -> tuple[list[tuple[str, str]], bool]:
+    """Select lines across files with fair per-file quotas so later files are never starved."""
+    non_empty = [(label, lines) for label, lines in groups if lines]
+    total_lines = sum(len(lines) for _, lines in non_empty)
+    if total_lines <= max_lines:
+        return [(label, line) for label, lines in non_empty for line in lines], False
+
+    quotas: dict[int, int] = {}
+    remaining_indices = list(range(len(non_empty)))
+    remaining_budget = max_lines
+
+    while remaining_indices and remaining_budget > 0:
+        share = max(1, remaining_budget // len(remaining_indices))
+        fitted = [idx for idx in remaining_indices if len(non_empty[idx][1]) <= share]
+        if not fitted:
+            break
+        for idx in fitted:
+            quotas[idx] = len(non_empty[idx][1])
+            remaining_budget -= quotas[idx]
+        remaining_indices = [idx for idx in remaining_indices if idx not in quotas]
+
+    if remaining_indices and remaining_budget > 0:
+        base = remaining_budget // len(remaining_indices)
+        extra = remaining_budget % len(remaining_indices)
+        for pos, idx in enumerate(remaining_indices):
+            quotas[idx] = base + (1 if pos < extra else 0)
+
+    selected: list[tuple[str, str]] = []
+    for idx, (label, lines) in enumerate(non_empty):
+        take = quotas.get(idx, 0)
+        for line in lines[:take]:
+            selected.append((label, line))
+    return selected, True
+
+
+def _split_diff_skeleton_details(diff_text: str, *, max_lines: int = 40) -> dict[str, Any]:
+    """Extract balanced removed/added lines per file, prioritizing implementation files over headers/docs."""
+    _, sections = _parse_diff_sections(diff_text)
+    if not sections:
+        return {"removed": "", "added": "", "added_summary": "", "truncated": False}
+
+    impl_sections = [s for s in sections if s["is_impl"]]
+    other_code_sections = [s for s in sections if not s["is_impl"] and not s["is_doc_only"]]
+    doc_sections = [s for s in sections if s["is_doc_only"]]
+    ordered = [*impl_sections, *other_code_sections] or doc_sections
+
+    removed_groups = [(sec["label"], sec["removed"]) for sec in ordered if sec["removed"]]
+    added_groups = [(sec["label"], sec["added"]) for sec in ordered if sec["added"]]
+
+    selected_removed, rem_trunc = _select_balanced_lines(removed_groups, max_lines)
+    selected_added, add_trunc = _select_balanced_lines(added_groups, max_lines)
+
+    # Build a compact multi-file summary (<= 200 chars) so every changed implementation file appears in already_fixed_check.
+    added_by_file: dict[str, list[str]] = {}
+    for label, line in selected_added:
+        added_by_file.setdefault(label, []).append(line.strip())
+    summary_parts: list[str] = []
+    if len(added_by_file) <= 1:
+        summary_text = "\n".join(line for _, line in selected_added).strip()[:200]
+    else:
+        per_file = max(36, 190 // len(added_by_file))
+        for label, flines in added_by_file.items():
+            prefix = f"{Path(label).name}: " if label else ""
+            snippet = " ".join(flines)[: max(16, per_file - len(prefix))].strip()
+            summary_parts.append(f"{prefix}{snippet}")
+        summary_text = " | ".join(summary_parts)[:200]
+
+    return {
+        "removed": "\n".join(line for _, line in selected_removed).strip(),
+        "added": "\n".join(line for _, line in selected_added).strip(),
+        "added_summary": summary_text,
+        "truncated": rem_trunc or add_trunc,
+    }
 
 
 def _split_diff_skeleton(diff_text: str) -> tuple[str, str]:
     """Extract removed/added code lines, prioritizing implementation files over headers/comments."""
-    impl_removed: list[str] = []
-    impl_added: list[str] = []
-    other_removed: list[str] = []
-    other_added: list[str] = []
-    in_impl = True
-    in_hunk = False
-    for line in diff_text.splitlines():
-        if line.startswith("diff --git ") or line.startswith("+++ "):
-            target = line.rsplit(" ", 1)[-1].strip()
-            if target != "/dev/null":
-                in_impl = target.lower().endswith(_IMPL_EXTS)
-            in_hunk = False
-            continue
-        if line.startswith("@@"):
-            in_hunk = True
-            continue
-        if not in_hunk or line.startswith("--- "):
-            continue
-        if line.startswith("-"):
-            content = line[1:].rstrip()
-            if content.strip():
-                (impl_removed if in_impl else other_removed).append(content)
-        elif line.startswith("+"):
-            content = line[1:].rstrip()
-            if content.strip():
-                (impl_added if in_impl else other_added).append(content)
-    removed = [*impl_removed, *other_removed][:40]
-    added = [*impl_added, *other_added][:40]
-    return "\n".join(removed).strip(), "\n".join(added).strip()
+    details = _split_diff_skeleton_details(diff_text)
+    return details["removed"], details["added"]
 
 
 def _extract_commit_sha(raw: str) -> str:
@@ -306,10 +507,13 @@ def _lookup_commit_diff(data_root: str | Path, commit_ref: str) -> tuple[str, st
 
 
 _CARD_OUTPUT_FIELDS = ("format_version", "status", "created_at", "updated_at")
+_DTS_ID_TOKEN_RE = re.compile(r"(?<![A-Za-z0-9_])(DTS[-_]?[0-9]+[0-9A-Za-z_-]*)(?![A-Za-z0-9_])", re.IGNORECASE)
 
 
 def _normalize_pattern_import_row(raw: dict[str, Any]) -> tuple[dict[str, Any], DTSPatternStatus | None]:
     """Convert exported dts-pattern-v1 card dicts back into DTSPatternInput payload + optional status."""
+    if "format_version" in raw and raw.get("format_version") != "dts-pattern-v1":
+        raise ValueError(f"不支持的标准 DTS 卡版本：{raw.get('format_version')}")
     if raw.get("format_version") == "dts-pattern-v1" and "created_at" in raw and "updated_at" in raw:
         card = DTSPatternCard.model_validate(raw)
         return card.model_dump(exclude=set(_CARD_OUTPUT_FIELDS)), card.status
@@ -383,7 +587,7 @@ def import_dts_patterns(
             else:
                 card = DTSPatternCard(
                     **parsed.model_dump(),
-                    status=imported_status or prev.status,
+                    status=prev.status,
                     created_at=prev.created_at,
                     updated_at=now,
                 )
@@ -404,18 +608,24 @@ def import_dts_patterns(
         }
 
 
+def _extract_json_rows(payload: Any) -> list[dict[str, Any]]:
+    if isinstance(payload, list):
+        return [row for row in payload if isinstance(row, dict)]
+    if isinstance(payload, dict):
+        # Unwrap standard CLI success envelopes (e.g. `pangea dts-patterns get/list ... > card.json`).
+        if payload.get("ok") is True and "result" in payload:
+            return _extract_json_rows(payload["result"])
+        for key in ("patterns", "items", "records", "dts", "issues"):
+            if isinstance(payload.get(key), list):
+                return [row for row in payload[key] if isinstance(row, dict)]
+        return [payload]
+    return []
+
+
 def _rows_from_offline_file(source: Path) -> list[dict[str, Any]]:
     suffix = source.suffix.lower()
     if suffix == ".json":
-        payload = read_json(source)
-        if isinstance(payload, list):
-            return [row for row in payload if isinstance(row, dict)]
-        if isinstance(payload, dict):
-            for key in ("patterns", "items", "records", "dts", "issues"):
-                if isinstance(payload.get(key), list):
-                    return [row for row in payload[key] if isinstance(row, dict)]
-            return [payload]
-        return []
+        return _extract_json_rows(read_json(source))
     if suffix == ".csv":
         with source.open("r", encoding="utf-8-sig", newline="") as fh:
             return [dict(row) for row in csv.DictReader(fh)]
@@ -440,13 +650,19 @@ def _rows_from_offline_file(source: Path) -> list[dict[str, Any]]:
         return rows
     if suffix in {".diff", ".patch"}:
         text = source.read_text(encoding="utf-8", errors="replace")
-        dts_match = re.search(r"\b(DTS[0-9A-Za-z_-]{4,})\b", text)
-        header = text.split("diff --git ", 1)[0]
+        header, sections = _parse_diff_sections(text)
+        dts_match = _DTS_ID_TOKEN_RE.search(f"{header}\n{source.stem}")
         subj_match = re.search(r"(?m)^Subject:\s*(?:\[[^\]]*\]\s*)?(.+)$", header) or re.search(
             r"(?m)^    ([^\s].+)$", header
         )
-        paths = re.findall(r"(?m)^\+\+\+\s+(?:b/)?([^\s]+)$", text)
-        mod_paths = [p for p in paths if p != "/dev/null"][:6]
+        code_paths: list[str] = []
+        doc_paths: list[str] = []
+        for sec in sections:
+            target_list = doc_paths if sec["is_doc_only"] else code_paths
+            for p in sec["paths"]:
+                if p not in target_list:
+                    target_list.append(p)
+        mod_paths = (code_paths or doc_paths)[:6]
         title = (subj_match.group(1).strip() if subj_match else "") or f"补丁特征 {source.stem}"
         return [{
             "dts_id": dts_match.group(1) if dts_match else source.stem,
@@ -463,7 +679,7 @@ def _rows_from_offline_file(source: Path) -> list[dict[str, Any]]:
             title = lines[0].strip() if lines else f"{source.stem}-{idx}"
             body = "\n".join(lines[1:]).strip() or title
             commit_match = re.search(r"\b(?:commit|sha)[:\s]+([0-9a-f]{7,40})\b", body, re.IGNORECASE)
-            dts_match = re.search(r"\b(DTS[0-9A-Za-z_-]{4,})\b", section)
+            dts_match = _DTS_ID_TOKEN_RE.search(section)
             rows.append({
                 "dts_id": dts_match.group(1) if dts_match else f"{source.stem}-{idx}",
                 "title": title,
@@ -498,7 +714,7 @@ def ingest_dts_file(
     filtered_out: list[dict[str, Any]] = []
 
     for idx, row in enumerate(raw_rows):
-        if row.get("format_version") == "dts-pattern-v1" or (
+        if "format_version" in row or (
             row.get("pattern_id") and row.get("defect_mechanism") and row.get("already_fixed_check")
         ):
             prepared.append(row)
@@ -514,25 +730,34 @@ def ingest_dts_file(
         inline_diff = str(row.get("diff_excerpt") or "").strip()
         repo_id, git_diff = ("", inline_diff) if inline_diff else _lookup_commit_diff(data_root, commit_ref)
         raw_diff = inline_diff or git_diff
-        buggy_diff, fixed_diff = _split_diff_skeleton(raw_diff)
+        skeleton = _split_diff_skeleton_details(raw_diff) if raw_diff else {
+            "removed": "", "added": "", "added_summary": "", "truncated": False
+        }
+        buggy_diff = skeleton["removed"]
+        fixed_diff = skeleton["added"]
+        skeleton_truncated = bool(skeleton["truncated"])
         diff_excerpt, diff_truncated = _extract_diff_excerpt(raw_diff, max_chars=8000) if raw_diff else ("", False)
         explicit_track = _pick(row, "track", "轨道")
         combined = " ".join(part for part in (title, symptom, root_cause, fix_desc, buggy_diff, fixed_diff) if part)
+        is_doc_only = _is_doc_only_diff(raw_diff)
+        is_comment_only = _is_comment_only_diff(raw_diff)
         if explicit_track in VALID_TRACKS:
             track = explicit_track
-        elif _is_doc_only_diff(raw_diff):
+        elif is_doc_only:
             track = None
         else:
             is_non_code_noise = bool(_NON_CODE_NOISE_PATTERNS.search(combined.lower()))
-            has_code_evidence = bool(diff_excerpt or mr_url or commit_ref)
-            track = infer_dts_track(combined) or (
-                "error_rollback" if has_code_evidence and not is_non_code_noise else None
-            )
+            has_code_evidence = bool((diff_excerpt and not is_comment_only) or mr_url or commit_ref)
+            inferred = infer_dts_track(combined)
+            if is_comment_only and inferred is None:
+                track = None
+            else:
+                track = inferred or ("error_rollback" if has_code_evidence and not is_non_code_noise else None)
         if not title or track is None:
             filtered_out.append({
                 "index": idx,
                 "dts_id": dts_id,
-                "reason": "缺少有效标题或属于非代码文案杂单，已自动滤除",
+                "reason": "缺少有效标题或属于非代码文案/纯注释杂单，已自动滤除",
             })
             continue
         has_diff = bool(diff_excerpt)
@@ -540,11 +765,19 @@ def ingest_dts_file(
         pattern_id = re.sub(r"[^A-Za-z0-9._-]+", "-", dts_id).strip("-") or f"dts-{idx+1:03d}"
         fixed_guard_text = fixed_diff or fix_desc or "核对当前源码是否存在对应防御、回滚、置空摘链或同步保护"
         source_refs = [f"{source.name}#row-{idx+1}"]
-        truncation_suffix = ""
+        truncation_notes: list[str] = []
         if diff_truncated:
             source_refs.append(f"diff-truncated:original-{len(raw_diff)}-chars")
-            fixed_guard_text = f"{fixed_guard_text}\n[注：原始补丁较长（{len(raw_diff)} 字符）已截断，已优先提取实现文件差异]"
-            truncation_suffix = "（注：原始补丁已截断，已优先提取实现文件差异）"
+            truncation_notes.append(f"原始补丁较长（{len(raw_diff)} 字符）已按文件均衡截断")
+        if skeleton_truncated:
+            source_refs.append("skeleton-truncated:max-40-lines")
+            truncation_notes.append("代码骨架超过 40 行上限已按文件均衡抽取")
+        truncation_suffix = ""
+        if truncation_notes:
+            note_body = "；".join(truncation_notes)
+            fixed_guard_text = f"{fixed_guard_text}\n[注：{note_body}]"
+            truncation_suffix = f"（注：{note_body}）"
+        fixed_summary = skeleton["added_summary"] or fix_desc[:200] or "完整释放/回滚/置空摘链/加锁校验"
         prepared.append({
             "pattern_id": pattern_id,
             "title": title,
@@ -556,7 +789,7 @@ def ingest_dts_file(
             "fixed_guard": fixed_guard_text,
             "defect_mechanism": root_cause or symptom or title,
             "already_fixed_check": (
-                f"若当前源码已包含等价修复保护（{fixed_diff[:200] or fix_desc[:200] or '完整释放/回滚/置空摘链/加锁校验'}），"
+                f"若当前源码已包含等价修复保护（{fixed_summary}），"
                 f"则视为已修复免疫，严禁重报老单，仅横向排查相邻兄弟命令/对象/回调路径是否漏改{truncation_suffix}"
             ),
             "repro_instrumentation_recipe": _pick(row, "repro", "repro_instrumentation_recipe", "复现方法", "打桩方案"),
@@ -596,6 +829,7 @@ def list_dts_patterns(
         items = [
             item for item in items
             if needle in item.pattern_id.lower()
+            or (item.dts_id and needle in item.dts_id.lower())
             or needle in item.title.lower()
             or needle in item.defect_mechanism.lower()
             or any(needle in hint.lower() for hint in item.module_hints)
@@ -648,27 +882,42 @@ def _resolve_patch_dts_id(
     idx: int,
     warnings: list[str],
 ) -> str:
-    """Deterministically bind a patch/MR to a requested DTS ID without positional index guessing."""
+    """Deterministically bind a patch/MR using header/Subject/path metadata only (never diff body comments)."""
     fallback_id = f"MR-DIFF-{idx+1:02d}"
-    haystack = f"{mr_link}\n{raw_diff}"
+    header, _ = _parse_diff_sections(raw_diff)
+    explicit_text = f"{mr_link}\n{header}"
+
     matched_req_ids: list[str] = []
     for req_id in clean_dts_ids:
-        if re.search(rf"(?<![A-Za-z0-9_]){re.escape(req_id)}(?![A-Za-z0-9_])", haystack, re.IGNORECASE):
+        if re.search(rf"(?<![A-Za-z0-9_]){re.escape(req_id)}(?![A-Za-z0-9_])", explicit_text, re.IGNORECASE):
             if req_id not in matched_req_ids:
                 matched_req_ids.append(req_id)
-    if len(matched_req_ids) == 1:
+
+    req_upper = {req_id.upper() for req_id in clean_dts_ids}
+    header_dts_tokens: list[str] = []
+    for m in _DTS_ID_TOKEN_RE.findall(explicit_text):
+        if m.upper() not in {t.upper() for t in header_dts_tokens}:
+            header_dts_tokens.append(m)
+    conflicting_dts = [tok for tok in header_dts_tokens if tok.upper() not in req_upper]
+
+    if len(matched_req_ids) == 1 and not conflicting_dts:
         return matched_req_ids[0]
-    if len(matched_req_ids) > 1:
+    if conflicting_dts:
         warnings.append(
-            f"补丁/MR（{mr_link}）同时提及多个指定单号（{', '.join(matched_req_ids)}），无法唯一归属，已作为未关联材料 {fallback_id} 保存"
+            f"补丁/MR（{mr_link}）标题或路径声明单号（{', '.join(conflicting_dts)}）与指定单号"
+            f"（{', '.join(clean_dts_ids) or '无'}）冲突，已作为未关联材料 {fallback_id} 保存"
         )
         return fallback_id
-    other_dts = {m.upper() for m in re.findall(r"\b(DTS[0-9A-Za-z_-]{4,})\b", haystack, re.IGNORECASE)}
-    if len(clean_dts_ids) == 1 and total_mr_urls == 1 and (not other_dts or other_dts == {clean_dts_ids[0].upper()}):
+    if len(matched_req_ids) > 1:
+        warnings.append(
+            f"补丁/MR（{mr_link}）标题或路径同时提及多个指定单号（{', '.join(matched_req_ids)}），无法唯一归属，已作为未关联材料 {fallback_id} 保存"
+        )
+        return fallback_id
+    if len(clean_dts_ids) == 1 and total_mr_urls == 1:
         return clean_dts_ids[0]
     if clean_dts_ids:
         warnings.append(
-            f"补丁/MR（{mr_link}）未唯一匹配指定单号（{', '.join(clean_dts_ids)}），已作为未关联材料 {fallback_id} 保存"
+            f"补丁/MR（{mr_link}）标题或路径未唯一匹配指定单号（{', '.join(clean_dts_ids)}），已作为未关联材料 {fallback_id} 保存"
         )
     return fallback_id
 
@@ -748,23 +997,48 @@ def freeze_dts_context(
         hits = hint_hits(card)
         return (-hits, -int(bool(card.module_hints)), -int(card.has_diff_evidence), card.pattern_id)
 
-    remaining_candidates = [
-        card for card in all_cards
-        if card.status == "enabled"
-        and card.pattern_id not in explicit_pattern_ids
-        and (not scope_paths or hint_hits(card) > 0 or not card.module_hints)
-    ]
+    generic_recommended: list[DTSPatternCard] = []
+    if scope_paths:
+        remaining_candidates = [
+            card for card in all_cards
+            if card.status == "enabled"
+            and card.pattern_id not in explicit_pattern_ids
+            and hint_hits(card) > 0
+        ]
+        generic_recommended = sorted(
+            (
+                card for card in all_cards
+                if card.status == "enabled"
+                and card.pattern_id not in explicit_pattern_ids
+                and not card.module_hints
+            ),
+            key=score,
+        )
+    else:
+        remaining_candidates = [
+            card for card in all_cards
+            if card.status == "enabled"
+            and card.pattern_id not in explicit_pattern_ids
+        ]
     remaining_budget = max(0, max_patterns - len(explicit_matched))
     matched = [*explicit_matched, *sorted(remaining_candidates, key=score)[:remaining_budget]]
 
+    if generic_recommended:
+        preview = "、".join(f"{c.pattern_id}（{c.title}）" for c in generic_recommended[:8])
+        more = f" 等共 {len(generic_recommended)} 张" if len(generic_recommended) > 8 else ""
+        warnings.append(f"存在无模块匹配依据的通用推荐卡（未计入已匹配模块卡）：{preview}{more}")
+
     homologous: list[FrozenHomologousDTS] = []
     seen_dts_ids: set[str] = set()
+    seen_mr_sources: set[tuple[str, str, str]] = set()
 
     for item in homologous_items or []:
         try:
             parsed = FrozenHomologousDTS.model_validate(item)
             homologous.append(parsed)
             seen_dts_ids.add(parsed.dts_id)
+            if parsed.mr_url or parsed.commit_ref:
+                seen_mr_sources.add((parsed.dts_id, parsed.mr_url, parsed.commit_ref))
         except Exception as exc:
             warnings.append(f"忽略格式不完整的同源 DTS 条目：{exc}")
 
@@ -785,20 +1059,28 @@ def freeze_dts_context(
                 commit_ref = f"{repo_id}:{sha}" if repo_id else sha
         if raw_diff:
             paired_dts = _resolve_patch_dts_id(raw_diff, mr_link, clean_dts_ids, len(clean_mr_urls), idx, warnings)
-            if paired_dts in seen_dts_ids:
+            source_key = (paired_dts, mr_link, commit_ref)
+            if source_key in seen_mr_sources:
                 continue
             diff_excerpt, diff_truncated = _extract_diff_excerpt(raw_diff, max_chars=8000)
-            if diff_truncated:
+            skeleton = _split_diff_skeleton_details(raw_diff)
+            buggy_diff = skeleton["removed"]
+            fixed_diff = skeleton["added"]
+            if diff_truncated or skeleton["truncated"]:
                 warnings.append(
-                    f"补丁/MR（{paired_dts}）原始长度为 {len(raw_diff)} 字符，已按实现文件优先摘录并截断展示"
+                    f"补丁/MR（{paired_dts}，来源 {mr_link}）原始长度为 {len(raw_diff)} 字符，已按实现文件均衡摘录并截断展示"
                 )
-            header = raw_diff.split("diff --git ", 1)[0]
+            header, _ = _parse_diff_sections(raw_diff)
             subj_match = re.search(r"(?m)^Subject:\s*(?:\[[^\]]*\]\s*)?(.+)$", header) or re.search(
                 r"(?m)^    ([^\s].+)$", header
             )
             patch_title = subj_match.group(1).strip() if subj_match else f"历史修复补丁特征 ({paired_dts})"
-            buggy_diff, fixed_diff = _split_diff_skeleton(raw_diff)
-            inferred_track = None if _is_doc_only_diff(raw_diff) else infer_dts_track(f"{patch_title} {buggy_diff} {fixed_diff}")
+            inferred_track = (
+                None
+                if _is_doc_only_diff(raw_diff)
+                else infer_dts_track(f"{patch_title} {buggy_diff} {fixed_diff}")
+            )
+            fixed_summary = skeleton["added_summary"] or "见 diff_excerpt 新增防御"
             homologous.append(FrozenHomologousDTS(
                 dts_id=paired_dts,
                 title=patch_title,
@@ -808,12 +1090,13 @@ def freeze_dts_context(
                 commit_ref=commit_ref,
                 diff_excerpt=diff_excerpt,
                 already_fixed_check=(
-                    f"若当前 6.1.x 源码已包含补丁保护（{fixed_diff[:200] or '见 diff_excerpt 新增防御'}），"
+                    f"若当前 6.1.x 源码已包含补丁保护（{fixed_summary}），"
                     "严禁重报该已修复点，必须横向深挖相邻兄弟路径、同类回调或同类资源的未修同源隐患"
                 ),
                 source_kind="offline_file_with_git",
             ))
             seen_dts_ids.add(paired_dts)
+            seen_mr_sources.add(source_key)
 
     for req_id in missing_requested_ids:
         if req_id not in seen_dts_ids and req_id.lower() not in {s.lower() for s in seen_dts_ids}:
