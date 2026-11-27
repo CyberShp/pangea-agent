@@ -7,6 +7,8 @@ import json
 import os
 import re
 import subprocess
+import threading
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -59,9 +61,55 @@ _NON_CODE_NOISE_PATTERNS = re.compile(
     re.IGNORECASE,
 )
 
+_DOC_ONLY_EXTS = (".md", ".markdown", ".txt", ".rst", ".adoc", ".html", ".css")
+_REGISTRY_LOCKS: dict[str, threading.RLock] = {}
+_REGISTRY_LOCKS_GUARD = threading.Lock()
+_HELD_REGISTRY_LOCKS = threading.local()
+
 
 def dts_registry_path(data_root: str | Path) -> Path:
     return Path(data_root) / "dts-patterns" / "registry.json"
+
+
+@contextmanager
+def _dts_registry_lock(data_root: str | Path):
+    """Serialize DTS registry read-modify-write across processes and threads."""
+    lock_path = dts_registry_path(data_root).parent / ".registry.lock"
+    key = str(lock_path.resolve())
+    with _REGISTRY_LOCKS_GUARD:
+        process_lock = _REGISTRY_LOCKS.setdefault(key, threading.RLock())
+    with process_lock:
+        held = getattr(_HELD_REGISTRY_LOCKS, "paths", set())
+        if key in held:
+            yield
+            return
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with lock_path.open("a+b") as handle:
+            locked = False
+            try:
+                if os.name == "nt":
+                    import msvcrt
+
+                    handle.seek(0)
+                    handle.write(b"0")
+                    handle.flush()
+                    handle.seek(0)
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+                locked = True
+                _HELD_REGISTRY_LOCKS.paths = held | {key}
+                yield
+            finally:
+                _HELD_REGISTRY_LOCKS.paths = held
+                if locked:
+                    if os.name == "nt":
+                        handle.seek(0)
+                        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                    else:
+                        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 def _read_registry(data_root: str | Path) -> DTSPatternRegistry:
@@ -77,22 +125,43 @@ def _write_registry(data_root: str | Path, registry: DTSPatternRegistry) -> Path
     return path
 
 
+def _keyword_matches(keyword: str, lowered: str) -> bool:
+    if keyword.isascii() and keyword[0].isalnum():
+        if len(keyword) <= 3:
+            return re.search(rf"(?<![a-z0-9_]){re.escape(keyword)}(?![a-z0-9_])", lowered) is not None
+        return re.search(rf"(?<![a-z0-9_]){re.escape(keyword)}", lowered) is not None
+    return keyword in lowered
+
+
 def infer_dts_track(text: str) -> str | None:
     """Classify DTS prose into one of the four deep tracks, or None if noise."""
     lowered = text.lower()
     if _NON_CODE_NOISE_PATTERNS.search(lowered) and not any(
-        kw in lowered for words in _TRACK_KEYWORDS.values() for kw in words
+        _keyword_matches(kw, lowered) for words in _TRACK_KEYWORDS.values() for kw in words
     ):
         return None
     scores = {
-        track: sum(1 for kw in words if kw in lowered)
+        track: sum(1 for kw in words if _keyword_matches(kw, lowered))
         for track, words in _TRACK_KEYWORDS.items()
     }
     best_track, best_score = max(scores.items(), key=lambda pair: pair[1])
     return best_track if best_score > 0 else None
 
 
-def _git_diff_excerpt(repo_path: Path, commit_ref: str, *, max_chars: int = 8000) -> str:
+def _is_doc_only_diff(diff_text: str) -> bool:
+    if not diff_text or "diff --git " not in diff_text:
+        return False
+    paths = [
+        p.strip()
+        for p in re.findall(r"(?m)^\+\+\+\s+(?:b/)?([^\s]+)$", diff_text)
+        if p.strip() and p.strip() != "/dev/null"
+    ]
+    if not paths:
+        return False
+    return all(p.lower().endswith(_DOC_ONLY_EXTS) for p in paths)
+
+
+def _git_diff_raw(repo_path: Path, commit_ref: str) -> str:
     """Read-only commit diff lookup; always skips LFS smudge and never mutates repo."""
     if not commit_ref or not re.fullmatch(r"[0-9A-Fa-f]{7,40}", commit_ref.strip()):
         return ""
@@ -113,8 +182,69 @@ def _git_diff_excerpt(repo_path: Path, commit_ref: str, *, max_chars: int = 8000
         return ""
     if proc.returncode != 0 or not proc.stdout.strip():
         return ""
-    text = proc.stdout.strip()
-    return text[:max_chars] + ("\n... [diff truncated]" if len(text) > max_chars else "")
+    return proc.stdout.strip()
+
+
+def _extract_diff_excerpt(raw_diff: str, *, max_chars: int = 8000) -> tuple[str, bool]:
+    """Compress long diffs while prioritizing implementation file hunks over headers/stat."""
+    text = raw_diff.strip()
+    if len(text) <= max_chars:
+        return text, False
+    notice = f"\n... [diff truncated: original {len(text)} chars, implementation hunks prioritized]"
+    budget = max(256, max_chars - len(notice))
+    parts = re.split(r"(?m)(?=^diff --git )", text)
+    header = ""
+    file_sections: list[str] = []
+    for part in parts:
+        if part.startswith("diff --git "):
+            file_sections.append(part)
+        elif not header:
+            header = part.strip()
+    if not file_sections:
+        return text[:budget] + notice, True
+
+    def _is_impl_section(section: str) -> bool:
+        first_line = section.splitlines()[0] if section else ""
+        target = first_line.rsplit(" ", 1)[-1].strip()
+        if target.lower().endswith(_IMPL_EXTS):
+            return True
+        for m in re.findall(r"(?m)^\+\+\+\s+(?:b/)?([^\s]+)$", section):
+            if m != "/dev/null" and m.lower().endswith(_IMPL_EXTS):
+                return True
+        return False
+
+    impl_sections = [s for s in file_sections if _is_impl_section(s)]
+    other_sections = [s for s in file_sections if not _is_impl_section(s)]
+    ordered = [*impl_sections, *other_sections]
+
+    chunks: list[str] = []
+    used = 0
+    if header:
+        header_cap = min(len(header), 1200, budget // 4)
+        clipped_header = header[:header_cap].rstrip()
+        if clipped_header:
+            chunks.append(clipped_header)
+            used += len(clipped_header) + 1
+    for section in ordered:
+        remaining = budget - used
+        if remaining <= 0:
+            break
+        if len(section) <= remaining:
+            chunks.append(section)
+            used += len(section) + 1
+        else:
+            chunks.append(section[:remaining].rstrip())
+            used = budget
+            break
+    return "\n".join(chunks).rstrip() + notice, True
+
+
+def _git_diff_excerpt(repo_path: Path, commit_ref: str, *, max_chars: int = 8000) -> str:
+    raw = _git_diff_raw(repo_path, commit_ref)
+    if not raw:
+        return ""
+    excerpt, _ = _extract_diff_excerpt(raw, max_chars=max_chars)
+    return excerpt
 
 
 _IMPL_EXTS = (".c", ".cc", ".cpp", ".cxx", ".lua", ".py", ".sh")
@@ -169,82 +299,109 @@ def _lookup_commit_diff(data_root: str | Path, commit_ref: str) -> tuple[str, st
     for repo_dir in sorted(repos_root.iterdir()):
         if not repo_dir.is_dir():
             continue
-        excerpt = _git_diff_excerpt(repo_dir, sha)
-        if excerpt:
-            return repo_dir.name, excerpt
+        raw_diff = _git_diff_raw(repo_dir, sha)
+        if raw_diff:
+            return repo_dir.name, raw_diff
     return "", ""
+
+
+_CARD_OUTPUT_FIELDS = ("format_version", "status", "created_at", "updated_at")
+
+
+def _normalize_pattern_import_row(raw: dict[str, Any]) -> tuple[dict[str, Any], DTSPatternStatus | None]:
+    """Convert exported dts-pattern-v1 card dicts back into DTSPatternInput payload + optional status."""
+    if raw.get("format_version") == "dts-pattern-v1" and "created_at" in raw and "updated_at" in raw:
+        card = DTSPatternCard.model_validate(raw)
+        return card.model_dump(exclude=set(_CARD_OUTPUT_FIELDS)), card.status
+    if any(field in raw for field in _CARD_OUTPUT_FIELDS):
+        raw_status = raw.get("status")
+        if raw_status is not None and raw_status not in ("enabled", "disabled"):
+            raise ValueError(f"无效 status：{raw_status}")
+        cleaned = {k: v for k, v in raw.items() if k not in _CARD_OUTPUT_FIELDS}
+        return cleaned, raw_status
+    return raw, None
 
 
 def import_dts_patterns(
     data_root: str | Path,
     items: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    """Import structured DTS topology cards; drop non-three-track noise and default to enabled."""
-    registry = _read_registry(data_root)
-    existing = {item.pattern_id: item for item in registry.patterns}
-    imported, updated, filtered_out = [], [], []
-    now = utc_now()
+    """Import structured DTS topology cards; drop non-four-track noise and default to enabled."""
+    with _dts_registry_lock(data_root):
+        registry = _read_registry(data_root)
+        existing = {item.pattern_id: item for item in registry.patterns}
+        imported, updated, filtered_out = [], [], []
+        now = utc_now()
 
-    for idx, raw in enumerate(items):
-        if not isinstance(raw, dict):
-            filtered_out.append({"index": idx, "reason": "条目不是 JSON 对象"})
-            continue
-        track = raw.get("track")
-        if track not in VALID_TRACKS:
-            probe_text = " ".join(
-                str(raw.get(k, ""))
-                for k in ("title", "defect_mechanism", "buggy_skeleton", "root_cause", "symptom")
-            )
-            inferred = infer_dts_track(probe_text)
-            if inferred is None:
+        for idx, raw in enumerate(items):
+            if not isinstance(raw, dict):
+                filtered_out.append({"index": idx, "reason": "条目不是 JSON 对象"})
+                continue
+            try:
+                normalized_raw, imported_status = _normalize_pattern_import_row(raw)
+            except Exception as exc:
                 filtered_out.append({
                     "index": idx,
-                    "pattern_id": raw.get("pattern_id") or raw.get("dts_id") or f"row-{idx}",
-                    "reason": "非异常回滚/时序并发/资源生命周期三轨代码缺陷，已自动滤除",
+                    "pattern_id": raw.get("pattern_id") or f"row-{idx}",
+                    "reason": f"标准 DTS 卡格式无效：{exc}",
                 })
                 continue
-            raw = {**raw, "track": inferred}
-        try:
-            parsed = DTSPatternInput.model_validate(raw)
-        except Exception as exc:
-            filtered_out.append({
-                "index": idx,
-                "pattern_id": raw.get("pattern_id") or f"row-{idx}",
-                "reason": f"缺少必要因果拓扑或免疫判据：{exc}",
-            })
-            continue
-        prev = existing.get(parsed.pattern_id)
-        if prev is None:
-            card = DTSPatternCard(
-                **parsed.model_dump(),
-                status="enabled",
-                created_at=now,
-                updated_at=now,
-            )
-            existing[card.pattern_id] = card
-            imported.append(card.pattern_id)
-        else:
-            card = DTSPatternCard(
-                **parsed.model_dump(),
-                status=prev.status,
-                created_at=prev.created_at,
-                updated_at=now,
-            )
-            existing[card.pattern_id] = card
-            updated.append(card.pattern_id)
+            track = normalized_raw.get("track")
+            if track not in VALID_TRACKS:
+                probe_text = " ".join(
+                    str(normalized_raw.get(k, ""))
+                    for k in ("title", "defect_mechanism", "buggy_skeleton", "root_cause", "symptom")
+                )
+                inferred = infer_dts_track(probe_text)
+                if inferred is None:
+                    filtered_out.append({
+                        "index": idx,
+                        "pattern_id": normalized_raw.get("pattern_id") or normalized_raw.get("dts_id") or f"row-{idx}",
+                        "reason": "非异常回滚/时序并发/资源生命周期/踩内存悬空访问四轨代码缺陷，已自动滤除",
+                    })
+                    continue
+                normalized_raw = {**normalized_raw, "track": inferred}
+            try:
+                parsed = DTSPatternInput.model_validate(normalized_raw)
+            except Exception as exc:
+                filtered_out.append({
+                    "index": idx,
+                    "pattern_id": normalized_raw.get("pattern_id") or f"row-{idx}",
+                    "reason": f"缺少必要因果拓扑或免疫判据：{exc}",
+                })
+                continue
+            prev = existing.get(parsed.pattern_id)
+            if prev is None:
+                card = DTSPatternCard(
+                    **parsed.model_dump(),
+                    status=imported_status or "enabled",
+                    created_at=now,
+                    updated_at=now,
+                )
+                existing[card.pattern_id] = card
+                imported.append(card.pattern_id)
+            else:
+                card = DTSPatternCard(
+                    **parsed.model_dump(),
+                    status=imported_status or prev.status,
+                    created_at=prev.created_at,
+                    updated_at=now,
+                )
+                existing[card.pattern_id] = card
+                updated.append(card.pattern_id)
 
-    registry = DTSPatternRegistry(
-        patterns=sorted(existing.values(), key=lambda p: (p.track, p.pattern_id))
-    )
-    reg_path = _write_registry(data_root, registry)
-    return {
-        "registry_path": str(reg_path),
-        "imported": imported,
-        "updated": updated,
-        "filtered_out": filtered_out,
-        "total_enabled": sum(1 for p in registry.patterns if p.status == "enabled"),
-        "total": len(registry.patterns),
-    }
+        registry = DTSPatternRegistry(
+            patterns=sorted(existing.values(), key=lambda p: (p.track, p.pattern_id))
+        )
+        reg_path = _write_registry(data_root, registry)
+        return {
+            "registry_path": str(reg_path),
+            "imported": imported,
+            "updated": updated,
+            "filtered_out": filtered_out,
+            "total_enabled": sum(1 for p in registry.patterns if p.status == "enabled"),
+            "total": len(registry.patterns),
+        }
 
 
 def _rows_from_offline_file(source: Path) -> list[dict[str, Any]]:
@@ -295,7 +452,7 @@ def _rows_from_offline_file(source: Path) -> list[dict[str, Any]]:
             "dts_id": dts_match.group(1) if dts_match else source.stem,
             "title": title,
             "module": ",".join(mod_paths),
-            "diff_excerpt": text[:8000],
+            "diff_excerpt": text,
         }]
     if suffix in {".md", ".txt"}:
         text = source.read_text(encoding="utf-8", errors="replace")
@@ -356,15 +513,21 @@ def ingest_dts_file(
         commit_ref = _pick(row, "commit", "commit_ref", "commit_sha", "mr_commit", "提交号") or _extract_commit_sha(mr_url)
         inline_diff = str(row.get("diff_excerpt") or "").strip()
         repo_id, git_diff = ("", inline_diff) if inline_diff else _lookup_commit_diff(data_root, commit_ref)
-        diff_excerpt = inline_diff or git_diff
-        buggy_diff, fixed_diff = _split_diff_skeleton(diff_excerpt)
+        raw_diff = inline_diff or git_diff
+        buggy_diff, fixed_diff = _split_diff_skeleton(raw_diff)
+        diff_excerpt, diff_truncated = _extract_diff_excerpt(raw_diff, max_chars=8000) if raw_diff else ("", False)
         explicit_track = _pick(row, "track", "轨道")
         combined = " ".join(part for part in (title, symptom, root_cause, fix_desc, buggy_diff, fixed_diff) if part)
-        is_non_code_noise = bool(_NON_CODE_NOISE_PATTERNS.search(combined.lower()))
-        has_code_evidence = bool(diff_excerpt or mr_url or commit_ref)
-        track = explicit_track if explicit_track in VALID_TRACKS else (
-            infer_dts_track(combined) or ("error_rollback" if has_code_evidence and not is_non_code_noise else None)
-        )
+        if explicit_track in VALID_TRACKS:
+            track = explicit_track
+        elif _is_doc_only_diff(raw_diff):
+            track = None
+        else:
+            is_non_code_noise = bool(_NON_CODE_NOISE_PATTERNS.search(combined.lower()))
+            has_code_evidence = bool(diff_excerpt or mr_url or commit_ref)
+            track = infer_dts_track(combined) or (
+                "error_rollback" if has_code_evidence and not is_non_code_noise else None
+            )
         if not title or track is None:
             filtered_out.append({
                 "index": idx,
@@ -375,6 +538,13 @@ def ingest_dts_file(
         has_diff = bool(diff_excerpt)
         effective_source = source_kind or ("offline_file_with_git" if has_diff else "offline_file_text")
         pattern_id = re.sub(r"[^A-Za-z0-9._-]+", "-", dts_id).strip("-") or f"dts-{idx+1:03d}"
+        fixed_guard_text = fixed_diff or fix_desc or "核对当前源码是否存在对应防御、回滚、置空摘链或同步保护"
+        source_refs = [f"{source.name}#row-{idx+1}"]
+        truncation_suffix = ""
+        if diff_truncated:
+            source_refs.append(f"diff-truncated:original-{len(raw_diff)}-chars")
+            fixed_guard_text = f"{fixed_guard_text}\n[注：原始补丁较长（{len(raw_diff)} 字符）已截断，已优先提取实现文件差异]"
+            truncation_suffix = "（注：原始补丁已截断，已优先提取实现文件差异）"
         prepared.append({
             "pattern_id": pattern_id,
             "title": title,
@@ -383,18 +553,18 @@ def ingest_dts_file(
             "module_hints": [m.strip() for m in re.split(r"[,;\s]+", module_hint) if m.strip()],
             "context_triggers": [part for part in (symptom or title, module_hint) if part][:3],
             "buggy_skeleton": buggy_diff or root_cause or title,
-            "fixed_guard": fixed_diff or fix_desc or "核对当前源码是否存在对应防御、回滚、置空摘链或同步保护",
+            "fixed_guard": fixed_guard_text,
             "defect_mechanism": root_cause or symptom or title,
             "already_fixed_check": (
                 f"若当前源码已包含等价修复保护（{fixed_diff[:200] or fix_desc[:200] or '完整释放/回滚/置空摘链/加锁校验'}），"
-                "则视为已修复免疫，严禁重报老单，仅横向排查相邻兄弟命令/对象/回调路径是否漏改"
+                f"则视为已修复免疫，严禁重报老单，仅横向排查相邻兄弟命令/对象/回调路径是否漏改{truncation_suffix}"
             ),
             "repro_instrumentation_recipe": _pick(row, "repro", "repro_instrumentation_recipe", "复现方法", "打桩方案"),
             "has_diff_evidence": has_diff,
             "mr_url": mr_url or None,
             "commit_ref": f"{repo_id}:{commit_ref}" if repo_id and commit_ref else (commit_ref or None),
             "source_kind": effective_source,
-            "source_refs": [f"{source.name}#row-{idx+1}"],
+            "source_refs": source_refs,
         })
 
     result = import_dts_patterns(data_root, prepared)
@@ -454,19 +624,53 @@ def set_dts_pattern_status(
     pattern_id: str,
     status: DTSPatternStatus,
 ) -> dict[str, Any]:
-    registry = _read_registry(data_root)
-    updated_card = None
-    patterns = []
-    for item in registry.patterns:
-        if item.pattern_id == pattern_id:
-            updated_card = item.model_copy(update={"status": status, "updated_at": utc_now()})
-            patterns.append(updated_card)
-        else:
-            patterns.append(item)
-    if updated_card is None:
-        raise ValueError(f"DTS 故障拓扑卡不存在：{pattern_id}")
-    _write_registry(data_root, DTSPatternRegistry(patterns=patterns))
-    return updated_card.model_dump(mode="json")
+    with _dts_registry_lock(data_root):
+        registry = _read_registry(data_root)
+        updated_card = None
+        patterns = []
+        for item in registry.patterns:
+            if item.pattern_id == pattern_id:
+                updated_card = item.model_copy(update={"status": status, "updated_at": utc_now()})
+                patterns.append(updated_card)
+            else:
+                patterns.append(item)
+        if updated_card is None:
+            raise ValueError(f"DTS 故障拓扑卡不存在：{pattern_id}")
+        _write_registry(data_root, DTSPatternRegistry(patterns=patterns))
+        return updated_card.model_dump(mode="json")
+
+
+def _resolve_patch_dts_id(
+    raw_diff: str,
+    mr_link: str,
+    clean_dts_ids: list[str],
+    total_mr_urls: int,
+    idx: int,
+    warnings: list[str],
+) -> str:
+    """Deterministically bind a patch/MR to a requested DTS ID without positional index guessing."""
+    fallback_id = f"MR-DIFF-{idx+1:02d}"
+    haystack = f"{mr_link}\n{raw_diff}"
+    matched_req_ids: list[str] = []
+    for req_id in clean_dts_ids:
+        if re.search(rf"(?<![A-Za-z0-9_]){re.escape(req_id)}(?![A-Za-z0-9_])", haystack, re.IGNORECASE):
+            if req_id not in matched_req_ids:
+                matched_req_ids.append(req_id)
+    if len(matched_req_ids) == 1:
+        return matched_req_ids[0]
+    if len(matched_req_ids) > 1:
+        warnings.append(
+            f"补丁/MR（{mr_link}）同时提及多个指定单号（{', '.join(matched_req_ids)}），无法唯一归属，已作为未关联材料 {fallback_id} 保存"
+        )
+        return fallback_id
+    other_dts = {m.upper() for m in re.findall(r"\b(DTS[0-9A-Za-z_-]{4,})\b", haystack, re.IGNORECASE)}
+    if len(clean_dts_ids) == 1 and total_mr_urls == 1 and (not other_dts or other_dts == {clean_dts_ids[0].upper()}):
+        return clean_dts_ids[0]
+    if clean_dts_ids:
+        warnings.append(
+            f"补丁/MR（{mr_link}）未唯一匹配指定单号（{', '.join(clean_dts_ids)}），已作为未关联材料 {fallback_id} 保存"
+        )
+    return fallback_id
 
 
 def freeze_dts_context(
@@ -503,19 +707,58 @@ def freeze_dts_context(
         for tok in re.split(r"[/\\._-]+", path)
         if len(tok) >= 3
     }
-    enabled_cards = [card for card in _read_registry(data_root).patterns if card.status == "enabled"]
+    all_cards = _read_registry(data_root).patterns
+    warnings: list[str] = []
 
-    def score(card: DTSPatternCard) -> tuple[int, int, str]:
-        hint_hits = sum(
+    by_exact: dict[str, list[DTSPatternCard]] = {}
+    by_lower: dict[str, list[DTSPatternCard]] = {}
+    for card in all_cards:
+        keys = [card.pattern_id]
+        if card.dts_id and card.dts_id != card.pattern_id:
+            keys.append(card.dts_id)
+        for key in keys:
+            by_exact.setdefault(key, []).append(card)
+            by_lower.setdefault(key.lower(), []).append(card)
+
+    explicit_matched: list[DTSPatternCard] = []
+    explicit_pattern_ids: set[str] = set()
+    missing_requested_ids: list[str] = []
+    for req_id in clean_dts_ids:
+        candidates = by_exact.get(req_id) or by_lower.get(req_id.lower()) or []
+        if not candidates:
+            missing_requested_ids.append(req_id)
+            continue
+        enabled_hits = [card for card in candidates if card.status == "enabled"]
+        if enabled_hits:
+            for card in enabled_hits:
+                if card.pattern_id not in explicit_pattern_ids:
+                    explicit_matched.append(card)
+                    explicit_pattern_ids.add(card.pattern_id)
+        else:
+            disabled_ids = ", ".join(card.pattern_id for card in candidates)
+            warnings.append(f"显式指定的本地 DTS 拓扑卡 {req_id} 当前已禁用（{disabled_ids}），未自动启用")
+
+    def hint_hits(card: DTSPatternCard) -> int:
+        return sum(
             1 for hint in card.module_hints
             if any(hint.lower() in path.lower() or hint.lower() in scope_tokens for path in scope_paths)
         )
-        return (-hint_hits, -int(card.has_diff_evidence), card.pattern_id)
 
-    matched = sorted(enabled_cards, key=score)[:max_patterns]
+    def score(card: DTSPatternCard) -> tuple[int, int, int, str]:
+        hits = hint_hits(card)
+        return (-hits, -int(bool(card.module_hints)), -int(card.has_diff_evidence), card.pattern_id)
+
+    remaining_candidates = [
+        card for card in all_cards
+        if card.status == "enabled"
+        and card.pattern_id not in explicit_pattern_ids
+        and (not scope_paths or hint_hits(card) > 0 or not card.module_hints)
+    ]
+    remaining_budget = max(0, max_patterns - len(explicit_matched))
+    matched = [*explicit_matched, *sorted(remaining_candidates, key=score)[:remaining_budget]]
+
     homologous: list[FrozenHomologousDTS] = []
     seen_dts_ids: set[str] = set()
-    warnings: list[str] = []
 
     for item in homologous_items or []:
         try:
@@ -527,30 +770,35 @@ def freeze_dts_context(
 
     # Deterministically extract local commit diffs or patch files when present in requested_mr_urls.
     for idx, entry in enumerate(clean_mr_urls):
-        diff_excerpt = ""
+        raw_diff = ""
         commit_ref = ""
         mr_link = entry
         candidate_path = Path(entry)
         if not entry.startswith(("http://", "https://")) and candidate_path.suffix.lower() in {".diff", ".patch"} and candidate_path.is_file():
-            diff_excerpt = candidate_path.read_text(encoding="utf-8", errors="replace")[:8000]
+            raw_diff = candidate_path.read_text(encoding="utf-8", errors="replace")
             mr_link = str(candidate_path)
         else:
             repo_id, git_diff = _lookup_commit_diff(data_root, entry)
             if git_diff:
-                diff_excerpt = git_diff
+                raw_diff = git_diff
                 sha = _extract_commit_sha(entry)
                 commit_ref = f"{repo_id}:{sha}" if repo_id else sha
-        if diff_excerpt:
-            paired_dts = clean_dts_ids[idx] if idx < len(clean_dts_ids) else f"MR-DIFF-{idx+1:02d}"
+        if raw_diff:
+            paired_dts = _resolve_patch_dts_id(raw_diff, mr_link, clean_dts_ids, len(clean_mr_urls), idx, warnings)
             if paired_dts in seen_dts_ids:
                 continue
-            header = diff_excerpt.split("diff --git ", 1)[0]
+            diff_excerpt, diff_truncated = _extract_diff_excerpt(raw_diff, max_chars=8000)
+            if diff_truncated:
+                warnings.append(
+                    f"补丁/MR（{paired_dts}）原始长度为 {len(raw_diff)} 字符，已按实现文件优先摘录并截断展示"
+                )
+            header = raw_diff.split("diff --git ", 1)[0]
             subj_match = re.search(r"(?m)^Subject:\s*(?:\[[^\]]*\]\s*)?(.+)$", header) or re.search(
                 r"(?m)^    ([^\s].+)$", header
             )
             patch_title = subj_match.group(1).strip() if subj_match else f"历史修复补丁特征 ({paired_dts})"
-            buggy_diff, fixed_diff = _split_diff_skeleton(diff_excerpt)
-            inferred_track = infer_dts_track(f"{patch_title} {buggy_diff} {fixed_diff}")
+            buggy_diff, fixed_diff = _split_diff_skeleton(raw_diff)
+            inferred_track = None if _is_doc_only_diff(raw_diff) else infer_dts_track(f"{patch_title} {buggy_diff} {fixed_diff}")
             homologous.append(FrozenHomologousDTS(
                 dts_id=paired_dts,
                 title=patch_title,
@@ -566,6 +814,10 @@ def freeze_dts_context(
                 source_kind="offline_file_with_git",
             ))
             seen_dts_ids.add(paired_dts)
+
+    for req_id in missing_requested_ids:
+        if req_id not in seen_dts_ids and req_id.lower() not in {s.lower() for s in seen_dts_ids}:
+            warnings.append(f"显式指定的 DTS {req_id} 在本地故障拓扑库中未找到，离线模式下无对应本地证据")
 
     # Bridge user-selected approved historical_defect assets directly into homologous_dts.
     for defect in selected_defect_items or []:
