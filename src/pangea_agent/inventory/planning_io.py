@@ -56,8 +56,7 @@ def planning_startup(data_root: str, run_id: str, action_id: str, task_id: str,
     identifiers = [name for name in ("analysis_scene", "unit_planning_rubric",
                                     "scene_planning_rubric", *extra_scene_rubrics, "planning_metadata",
                                     "dts_context", "asset_candidates") if name in declared]
-    effective_max = max(max_chars, 24_000) if "dts_context" in declared else max_chars
-    return _bounded_startup(data_root, run_id, action_id, task_id, identifiers, max_chars=effective_max)
+    return _bounded_startup(data_root, run_id, action_id, task_id, identifiers, max_chars=max_chars)
 
 
 def analysis_startup(data_root: str, run_id: str, action_id: str, task_id: str,
@@ -67,9 +66,7 @@ def analysis_startup(data_root: str, run_id: str, action_id: str, task_id: str,
                       and isinstance(item.get("input_id"), str)]
     declared_set = set(declared_order)
     identifiers = [name for name in ("analysis_scene", "planning_handoff", "risk_blueprint", "dts_context") if name in declared_set]
-    effective_max = max_chars
     if "rubric_scene_risk_v2" in declared_set:
-        effective_max = max(max_chars, 28_000)
         priority_risk = (
             "rubric_scene_risk_v2",
             "rubric_c_cpp_risk_v2",
@@ -80,7 +77,7 @@ def analysis_startup(data_root: str, run_id: str, action_id: str, task_id: str,
     identifiers.extend(name for name in declared_order if name.startswith("rubric_") and name not in identifiers)
     if task.get("asset_item_ids") and "asset_items" in declared_set:
         identifiers.append("asset_items")
-    return _bounded_startup(data_root, run_id, action_id, task_id, identifiers, max_chars=effective_max)
+    return _bounded_startup(data_root, run_id, action_id, task_id, identifiers, max_chars=max_chars)
 
 
 _OPERATIONS = {

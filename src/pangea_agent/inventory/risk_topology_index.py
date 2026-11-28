@@ -1519,15 +1519,13 @@ def generate_track_topology(run_dir: Path, task: dict[str, Any], track: str, key
             1 for a in scanned["concurrency_anchors"] if a.get("kind") == "global_lazy_init_or_alloc"
         )
         dir_item: dict[str, Any] = {
-            "repo_id": repo,
             "path": path,
             "phase_hint": phase_hint,
-            "alloc_slices": len(alloc_slices),
-            "global_lazy_or_alloc_writes": global_lazy_cnt,
-            "concurrency_anchors": len(scanned["concurrency_anchors"]),
-            "memory_anchors": len(scanned["memory_anchors"]),
-            "error_slices": len(scanned["error_slices"]),
         }
+        if alloc_slices:
+            dir_item["alloc_slices"] = len(alloc_slices)
+        if global_lazy_cnt:
+            dir_item["global_lazy_or_alloc_writes"] = global_lazy_cnt
         if uncleaned_fns:
             dir_item["uncleaned_exit_candidates"] = uncleaned_fns
 
