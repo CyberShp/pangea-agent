@@ -16,8 +16,8 @@
 ## 二、构建全局四轨底图（`kind=note`，`format_version=risk-blueprint-v1`）
 
 使用 `result-write` 保存一条 `kind=note`、`relates_to=[]` 的全局底图对象，为四轨 Worker 提供跨文件锚点：
-- `resource_entities`：跨函数/跨文件的受管资源实体（堆对象、fd/socket、句柄、引用计数、定时器、队列额度）以及**高频局部堆分配密集函数族**，写明获取点、所有权流转与预期释放点（供 `resource_lifecycle` 查泄漏与重复释放）。
-- `concurrency_contexts`：独立执行流（主线程、工作线程、定时器/异步回调、Skynet 协程、IPC 对端进程）、存活态共享状态及预期锁/原子保护（供 `concurrency_timing` 查竞态与死锁）。
+- `resource_entities`：跨函数/跨文件的受管资源实体（堆对象、fd/socket、句柄、引用计数、定时器、队列额度）、**并发/建连/恢复路径上惰性初始化或重复赋值的全局/静态缓冲区指针（对照 `risk_topology_summary` 的 `global_alloc_candidates`，切勿因体积小如 4KB 暂存/丢弃缓冲而遗漏）**，以及**高频局部堆分配/多出口校验密集函数族**，写明获取点、所有权流转与预期释放点（供 `resource_lifecycle` 查泄漏、并发惰性初始化覆写与重复释放）。
+- `concurrency_contexts`：独立执行流（主线程、并发建连/请求工作线程、定时器/异步回调、Skynet 协程、IPC 对端进程）、**同一注册/处理函数被多线程并发重入的全局/静态共享指针或状态**及预期锁/原子保护（供 `concurrency_timing` 与 `resource_lifecycle` 核查竞态、无锁惰性初始化与死锁）。
 - `transaction_chains`：包含多步状态修改、资源分配或跨边界调用的核心事务入口链（供 `error_rollback` 查中途失败逆序撤销与脏态残留）。
 - `memory_hazard_zones`：**跨线程/跨进程共享生命周期指针、销毁与回调/定时器注销交错点、对象池/共享内存复用槽位（Slot/Ring/SHM）、以及非常量长度内存写边界**（供 `memory_corruption` 专职查释放后跨流访问踩内存与空间越界写）。
 
@@ -43,8 +43,8 @@
 
 - 废除按文件机械互斥切块。正常规模下按 **4 个专职轨道**派单，通过 `risk_track` 显式声明轨道（**不同 `risk_track` 的单元允许且应当共享相同的核心 `owned_files`**，同一轨道内部拆分子单元时须互不重叠）：
   1. `risk_track="error_rollback"`：异常分支与状态回滚轨（覆盖 `transaction_chains` 及相关源文件；**默认兼任模块主干流程 owner 与跨轨/非四轨 DTS 特征兜底认领轨**）。
-  2. `risk_track="concurrency_timing"`：锁纪律与存活态并发竞态轨（覆盖 `concurrency_contexts` 及相关源文件）。
-  3. `risk_track="resource_lifecycle"`：资源配平与内存/句柄泄漏、重复释放轨（对照 `risk_topology_overview.counts.alloc_flow_slices` 与 `resource_lifecycle`，**必须把全部含堆分配/资源获取的目标文件纳入覆盖**；当分配密集文件较多时，按契约闭包将 `resource_lifecycle` 拆分为 2–3 个互不重叠子单元，避免单 Worker 走马观花漏查局部泄漏）。
+  2. `risk_track="concurrency_timing"`：锁纪律与存活态并发竞态轨（覆盖 `concurrency_contexts` 及相关源文件；目标范围跨越多个独立子业务或文件较多时，可按并发域拆分为互不重叠子单元）。
+  3. `risk_track="resource_lifecycle"`：资源配平与内存/句柄泄漏、并发全局惰性初始化覆写及重复释放轨（对照 `risk_topology_overview.counts` 的 `alloc_flow_slices`、`global_lazy_or_alloc_writes` 与 `resource_lifecycle`，**必须把全部含堆分配/全局缓冲初始化/资源获取的目标文件纳入覆盖**；当分配密集文件或独立业务链较多时，按功能/契约闭包将 `resource_lifecycle` 拆分为 2–3 个互不重叠小单元，保证每个 Worker 能逐函数通读完整函数体而非走马观花扫摘要）。
   4. `risk_track="memory_corruption"`：**踩内存与跨流悬空访问轨**（覆盖 `memory_hazard_zones` 及相关源文件，重点排查线程/进程访问已释放或重分配资源导致的踩内存，以及空间越界写）。
 - **单主干轨道画图（消除重复消耗）**：仅指定 **1 个主干单元**（默认 `error_rollback`）在 `purpose` 中承担本模块结构化流程图交付（`kind=flow`，含 `sequence`/`call_graph`），其余轨道单元在 `purpose` 中写明“免重复交付模块流程，专职本轨风险深潜”。
 - **DTS / MR 特征点名认领（严禁无人认领）**：每条导入的 `dts_context` / MR Diff / 缺陷资产特征，必须在对应轨道单元的 `purpose` 中**显式写出其单号/ID 归该单元负责横向核查**（LSan/内存泄漏归 `resource_lifecycle`，踩内存/空指针归 `memory_corruption`，并发/锁归 `concurrency_timing`，跨轨或不易归类的其他代码缺陷统一指派给 `error_rollback` 兜底）。

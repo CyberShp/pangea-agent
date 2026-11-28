@@ -821,6 +821,183 @@ def verify_lsan_alloc_slices_startup_and_dts_fallback(tmp: Path) -> None:
             f"resource_lifecycle full topology missing alloc_flow_slices or error_slices: {topo_full}")
 
 
+def verify_global_lazy_init_race_and_deep_exit_slices(tmp: Path) -> None:
+    from pangea_agent.agent_io import read_json, write_json
+    from pangea_agent.cli.adapter_api import bind_action, settle_action
+    from pangea_agent.cli.plan_batch import plan_write_batch
+    from pangea_agent.cli.run_module_analysis import run_module_analysis
+    from pangea_agent.cli.source_first_api import work_finish
+
+    # Bug 1 variants:
+    # - F1: extern/header-declared global pointer P, 2-step check-alloc-assign with custom memory manager (no lock)
+    # - F2: function-static pointer with out-param buffer getter `ret = vos_get_buf(4096, (void **)&s_drop_buf)` (no lock)
+    # - F3: mirror reverse pattern - recovery re-allocates global pointer without null-check or free
+    # - F4: locked lazy-init control - records held_locks=["pthread_mutex_lock"]
+    # - G: firmware image check with 16 sequential early-return checks after front allocation (must not truncate at 12)
+    checks_15 = "\n".join(
+        f"    if (hdr_field_{i} < 0) {{ free(work_buf); return -{100 + i}; }}"
+        for i in range(1, 15)
+    )
+    conn_and_fw_code = f"""
+    static char *g_reinit_buf = NULL;
+    static char *g_locked_buf = NULL;
+
+    int conn_register_step(struct conn_ctx *ctx) {{
+        if (g_drop_staging_buf == NULL) {{
+            void *new_buf = ExoticMemMgr_Obtain4K(4096);
+            if (new_buf == NULL) {{
+                return -12;
+            }}
+            g_drop_staging_buf = new_buf;
+        }}
+        return bind_conn_slot(ctx, g_drop_staging_buf);
+    }}
+
+    int conn_bind_outparam(int chan_id) {{
+        static void *s_chan_drop = NULL;
+        int ret = 0;
+        if (!s_chan_drop) {{
+            ret = vos_get_buf(4096, (void **)&s_chan_drop);
+            if (ret != 0) {{
+                return ret;
+            }}
+        }}
+        return chan_id;
+    }}
+
+    int conn_recover_reinit(void) {{
+        g_reinit_buf = (char *)vos_malloc(4096);
+        return g_reinit_buf ? 0 : -1;
+    }}
+
+    int conn_init_locked(pthread_mutex_t *mtx) {{
+        pthread_mutex_lock(mtx);
+        if (g_locked_buf == NULL) {{
+            g_locked_buf = (char *)malloc(4096);
+        }}
+        pthread_mutex_unlock(mtx);
+        return 0;
+    }}
+
+    int fw_verify_image(int cap_expand_cfg, int compat_ok,
+                        int hdr_field_1, int hdr_field_2, int hdr_field_3, int hdr_field_4,
+                        int hdr_field_5, int hdr_field_6, int hdr_field_7, int hdr_field_8,
+                        int hdr_field_9, int hdr_field_10, int hdr_field_11, int hdr_field_12,
+                        int hdr_field_13, int hdr_field_14) {{
+        int ret = 0;
+        char *work_buf = NULL;
+        ret = vos_alloc_mem(8192, (void **)&work_buf);
+        if (ret != 0) return ret;
+{checks_15}
+        if (cap_expand_cfg && !compat_ok) {{
+            return -999; // 16th post-alloc exit: leaked work_buf!
+        }}
+        free(work_buf);
+        return 0;
+    }}
+    """
+    scanned = scan_file_topology("conn-repo", "src/conn_reg.c", conn_and_fw_code, "c_cpp")
+    _assert(scanned["parser"].startswith("tree-sitter"), f"unexpected parser: {scanned['parser']}")
+
+    lazy_conc = {
+        (a["function"], a["symbol"]): a
+        for a in scanned["concurrency_anchors"]
+        if a.get("kind") == "global_lazy_init_or_alloc"
+    }
+    _assert(("conn_register_step", "g_drop_staging_buf") in lazy_conc, f"missed 2-step extern global lazy init: {lazy_conc}")
+    f1 = lazy_conc[("conn_register_step", "g_drop_staging_buf")]
+    _assert(f1["null_checked"] is True and f1["held_locks"] == [] and f1["callee"] == "ExoticMemMgr_Obtain4K", f"wrong F1 anchor: {f1}")
+
+    _assert(("conn_bind_outparam", "s_chan_drop") in lazy_conc, f"missed static out-param lazy init: {lazy_conc}")
+    f2 = lazy_conc[("conn_bind_outparam", "s_chan_drop")]
+    _assert(f2["null_checked"] is True and f2["held_locks"] == [] and f2["callee"] == "vos_get_buf", f"wrong F2 anchor: {f2}")
+
+    _assert(("conn_recover_reinit", "g_reinit_buf") in lazy_conc, f"missed mirror unguarded global alloc overwrite: {lazy_conc}")
+    f3 = lazy_conc[("conn_recover_reinit", "g_reinit_buf")]
+    _assert(f3["null_checked"] is False and f3["held_locks"] == [], f"wrong F3 mirror anchor: {f3}")
+
+    _assert(("conn_init_locked", "g_locked_buf") in lazy_conc, f"missed locked lazy init anchor: {lazy_conc}")
+    f4 = lazy_conc[("conn_init_locked", "g_locked_buf")]
+    _assert(f4["held_locks"] == ["pthread_mutex_lock"], f"expected held lock on F4: {f4}")
+
+    shared_syms = {m["symbol"]: m for m in scanned["shared_access_matrix"]}
+    _assert("g_drop_staging_buf" in shared_syms and "conn_register_step" in shared_syms["g_drop_staging_buf"]["writers"],
+            f"single-function reentrant global write must not be dropped from shared_access_matrix: {shared_syms}")
+
+    fw_slices = [s for s in scanned["alloc_flow_slices"] if s["function"] == "fw_verify_image"]
+    _assert(len(fw_slices) == 1 and fw_slices[0]["target"] == "work_buf", f"out-param target resolution failed: {fw_slices}")
+    _assert(any("-999" in ex["snippet"] for ex in fw_slices[0]["post_alloc_exits"]),
+            f"16th post-alloc exit was truncated: {fw_slices[0]['post_alloc_exits']}")
+
+    f1_slices = [s for s in scanned["alloc_flow_slices"] if s["function"] == "conn_register_step"]
+    _assert(
+        any(
+            s.get("global_or_static_target") == "g_drop_staging_buf"
+            and s.get("null_checked_before_assign") is True
+            and s.get("held_locks_at_assign") == []
+            for s in f1_slices
+        ),
+        f"resource_lifecycle alloc_flow_slices missing global_or_static_target metadata: {f1_slices}",
+    )
+
+    # Verify end-to-end Stage 1 summary & Stage 2 per-track topology files surface the anchors
+    root_dir = tmp / "bug1-topo-data"
+    repo_dir = root_dir / "repositories" / "conn-repo" / "src"
+    repo_dir.mkdir(parents=True)
+    (repo_dir / "conn_reg.c").write_text(conn_and_fw_code, encoding="utf-8")
+    req = tmp / "req_bug1.json"
+    run_id = "run-bug1-topo"
+    write_json(
+        req,
+        {
+            "workflow_version": "source-first-v1",
+            "analysis_profile": "behavior-test-v2",
+            "analysis_settings": {"scenario": "risk-analysis", "mode": "depth", "objective": "product-behavior"},
+            "data_root": str(root_dir),
+            "run_id": run_id,
+            "repository": "conn-repo",
+            "target": "连接注册并发惰性初始化与升级校验排查",
+            "source_scope": ["src"],
+        },
+    )
+    started = run_module_analysis(str(req))
+    p_act = started["agent_actions"][0]["action_id"]
+    p_bind = (str(root_dir), run_id, p_act, "plan-bug1")
+    bind_action(*p_bind)
+    summary_doc = read_json(root_dir / "runs" / run_id / "inputs" / "risk-topology-summary.json")
+    f_sum = summary_doc["files"][0]
+    _assert(f_sum["counts"]["global_lazy_or_alloc_writes"] >= 4, f"Stage 1 summary missing global_lazy_or_alloc_writes: {f_sum}")
+    _assert(any(c["symbol"] == "g_drop_staging_buf" for c in f_sum.get("global_alloc_candidates", [])),
+            f"Stage 1 summary missing global_alloc_candidates: {f_sum}")
+
+    batch = plan_write_batch(
+        *p_bind,
+        expected_revision=0,
+        units=[
+            {
+                "title": "并发轨",
+                "purpose": "核查并发建连无锁惰性初始化",
+                "risk_track": "concurrency_timing",
+                "owned_files": [{"repo_id": "conn-repo", "path": "src/conn_reg.c"}],
+            },
+            {
+                "title": "资源轨",
+                "purpose": "核查 L1-L7 全局惰性初始化竞态泄漏与多出口漏释放",
+                "risk_track": "resource_lifecycle",
+                "owned_files": [{"repo_id": "conn-repo", "path": "src/conn_reg.c"}],
+            },
+        ],
+    )
+    work_finish(*p_bind, revision=batch["revision"])
+    settle_action(*p_bind[:3])
+    conc_topo = read_json(root_dir / "runs" / run_id / "inputs" / "risk-topology" / "unit-0001.json")
+    res_topo = read_json(root_dir / "runs" / run_id / "inputs" / "risk-topology" / "unit-0002.json")
+    _assert(any(a.get("kind") == "global_lazy_init_or_alloc" for a in conc_topo["files"][0]["concurrency_anchors"]),
+            "concurrency_timing topology missing global_lazy_init_or_alloc")
+    _assert(any(a.get("kind") == "global_alloc_assign" for a in res_topo["files"][0]["resource_anchors"]),
+            "resource_lifecycle topology missing global_alloc_assign")
+
+
 def main() -> None:
     with tempfile.TemporaryDirectory() as raw:
         tmp = Path(raw)
@@ -829,6 +1006,7 @@ def main() -> None:
         verify_v2_gates_and_ledger(tmp)
         verify_memory_corruption_dts_and_topology(tmp)
         verify_lsan_alloc_slices_startup_and_dts_fallback(tmp)
+        verify_global_lazy_init_race_and_deep_exit_slices(tmp)
     print("ALL risk-method-v2 VERIFICATIONS PASSED")
 
 

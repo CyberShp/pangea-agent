@@ -57,6 +57,12 @@ _BLOCKING_EXACT = frozenset(
 _HEAP_ALLOC_VERBS = frozenset(
     "alloc malloc calloc zalloc zmalloc realloc strdup strndup memdup asprintf vasprintf clone dup".split()
 )
+_BUFFER_RESOURCE_NOUNS = frozenset(
+    "buf buffer mem memory page pages blk block slot pkt skb mbuf sgl iobuf".split()
+)
+_GETTER_META_WORDS = frozenset(
+    "id idx index size len length cnt count num max min cap info stat stats status state flag flags type name addr offset ver version".split()
+)
 _ACQUIRE_VERBS = _HEAP_ALLOC_VERBS | frozenset(
     "create open new acquire ref hold register attach map pin subscribe enqueue reserve".split()
 )
@@ -75,6 +81,15 @@ _REFCOUNT_RE = re.compile(
 )
 _IDENT_WORDS_RE = re.compile(r"([a-z0-9])([A-Z])")
 _FIELD_RE = re.compile(r"(?:->|\.)\s*([A-Za-z_]\w*)")
+_C_IGNORE_PERSISTENT = frozenset(
+    "NULL nullptr true false TRUE FALSE errno this stdin stdout stderr".split()
+)
+_SCALAR_TYPE_RE = re.compile(
+    r"\b(?:int|long|short|bool|_Bool|ssize_t|size_t|errno_t|u?int(?:8|16|32|64)_t|"
+    r"[us](?:8|16|32|64)|ULONG|LONG|UINT|INT|DWORD|HRESULT)\b"
+)
+_STATUS_VAR_NAMES = frozenset("ret rc err rv res result status errcode retval ret_val".split())
+_POST_ALLOC_EXIT_LIMIT = 64
 
 
 def _words(token: str) -> set[str]:
@@ -106,6 +121,78 @@ def _first_call_arg_text(call_node, data: bytes) -> str:
     return re.sub(r"^\s*&\s*", "", raw)
 
 
+def _call_addr_targets(call_node, data: bytes) -> list[str]:
+    """Extract `&target` out-parameter expressions (unwrapping C-style casts/parens)."""
+    args = call_node.child_by_field_name("arguments")
+    if args is None:
+        return []
+    targets: list[str] = []
+    for arg in args.named_children:
+        raw = _node_text(arg, data).strip()
+        unwrapped = re.sub(r"^(?:\([^()]*\)\s*)+", "", raw).strip()
+        if unwrapped.startswith("&") and not unwrapped.startswith("&&"):
+            target = unwrapped[1:].strip().strip("()").strip()
+            if target and target not in targets:
+                targets.append(target)
+    return targets
+
+
+def _extract_decl_ident(decl_node, data: bytes) -> str:
+    cur = decl_node
+    for _ in range(12):
+        if cur is None:
+            return ""
+        if cur.type in {"identifier", "field_identifier"}:
+            return _node_text(cur, data).strip()
+        nxt = cur.child_by_field_name("declarator")
+        if nxt is not None:
+            cur = nxt
+            continue
+        named = [
+            c for c in cur.named_children
+            if c.type not in {"parameter_list", "type_qualifier", "attribute_specifier", "ms_declspec_modifier"}
+        ]
+        cur = named[0] if named else None
+    return ""
+
+
+def _strip_casts_and_parens(expr: str) -> str:
+    cleaned = expr.strip()
+    for _ in range(6):
+        nxt = re.sub(r"^\([^()]*\)\s*", "", cleaned).strip()
+        if nxt.startswith("(") and nxt.endswith(")"):
+            inner = nxt[1:-1].strip()
+            if inner.count("(") == inner.count(")"):
+                nxt = inner
+        if nxt == cleaned:
+            break
+        cleaned = nxt
+    return cleaned
+
+
+def _root_ident(expr: str) -> str:
+    cleaned = _strip_casts_and_parens(expr)
+    cleaned = re.sub(r"^[!*&\s]+", "", cleaned)
+    m = re.match(r"^([A-Za-z_]\w*)", cleaned)
+    return m.group(1) if m else ""
+
+
+def _cond_mentions_target(cond_texts: list[str] | tuple[str, ...], target_expr: str) -> bool:
+    target = target_expr.strip()
+    if not target or not cond_texts:
+        return False
+    root = _root_ident(target)
+    leaf = target.split("->")[-1].split(".")[-1].split("[")[0].strip()
+    for cond in cond_texts:
+        if target in cond:
+            return True
+        if leaf and re.search(rf"\b{re.escape(leaf)}\b", cond) and (
+            not root or root == leaf or re.search(rf"\b{re.escape(root)}\b", cond)
+        ):
+            return True
+    return False
+
+
 def _c_function_name(fn_node, data: bytes) -> str:
     decl = fn_node.child_by_field_name("declarator")
     if decl is None:
@@ -115,33 +202,55 @@ def _c_function_name(fn_node, data: bytes) -> str:
     return match.group(1) if match else "<unknown>"
 
 
-def _enclosing_assign_target(node, data: bytes) -> str:
+def _enclosing_assign_info(node, data: bytes) -> tuple[str, bool]:
+    """Return `(lhs_target, is_non_pointer_init)` for an expression."""
     cur = node.parent
     depth = 0
     while cur is not None and depth < 4:
         if cur.type == "assignment_expression":
             left = cur.child_by_field_name("left")
-            return _node_text(left, data).strip() if left is not None else ""
+            return (_node_text(left, data).strip() if left is not None else ""), False
         if cur.type == "init_declarator":
             decl = cur.child_by_field_name("declarator")
             if decl is not None:
                 raw = _node_text(decl, data).strip()
-                m = re.search(r"([A-Za-z_]\w*)\s*$", raw)
-                return m.group(1) if m else raw.lstrip("*& \t")
-            return ""
+                ident = _extract_decl_ident(decl, data)
+                if not ident:
+                    m = re.search(r"([A-Za-z_]\w*)\s*$", raw)
+                    ident = m.group(1) if m else raw.lstrip("*& \t")
+                has_ptr = "*" in raw or "[" in raw
+                parent_decl = cur.parent
+                type_text = ""
+                if parent_decl is not None and parent_decl.type == "declaration":
+                    t_node = parent_decl.child_by_field_name("type")
+                    type_text = _node_text(t_node, data) if t_node is not None else ""
+                is_scalar_init = (not has_ptr) and bool(_SCALAR_TYPE_RE.search(type_text) or ident in _STATUS_VAR_NAMES)
+                return ident, is_scalar_init
+            return "", False
         if cur.type in {"cast_expression", "parenthesized_expression"}:
             cur = cur.parent
             depth += 1
             continue
         break
-    return ""
+    return "", False
+
+
+def _enclosing_assign_target(node, data: bytes) -> str:
+    target, _ = _enclosing_assign_info(node, data)
+    return target
 
 
 def _classify_c_call(callee: str) -> list[str]:
     tags: list[str] = []
     words = _words(callee)
     is_release = callee in _RELEASE_EXACT or (bool(words & _RELEASE_VERBS) and callee not in _ACQUIRE_EXACT)
-    is_heap_alloc = (callee in _ACQUIRE_EXACT or bool(words & _HEAP_ALLOC_VERBS)) and not is_release
+    is_buf_acquire = (
+        bool(words & {"get", "acquire", "create", "reserve", "borrow"})
+        and bool(words & _BUFFER_RESOURCE_NOUNS)
+        and not bool(words & _GETTER_META_WORDS)
+        and not is_release
+    )
+    is_heap_alloc = (callee in _ACQUIRE_EXACT or bool(words & _HEAP_ALLOC_VERBS) or is_buf_acquire) and not is_release
     if is_heap_alloc:
         tags.append("heap_alloc")
         tags.append("acquire")
@@ -179,6 +288,8 @@ def _scan_c_cpp(repo_id: str, path: str, text: str) -> dict[str, Any]:
     memory_anchors: list[dict[str, Any]] = []
     field_reads: dict[str, set[str]] = defaultdict(set)
     field_writes: dict[str, set[str]] = defaultdict(set)
+    persistent_reads: dict[str, set[str]] = defaultdict(set)
+    persistent_writes: dict[str, set[str]] = defaultdict(set)
     released_fields: dict[str, set[str]] = defaultdict(set)
     global_vars: set[str] = set()
     parser_mode = "tree-sitter-tolerant"
@@ -191,25 +302,25 @@ def _scan_c_cpp(repo_id: str, path: str, text: str) -> dict[str, Any]:
     except Exception:
         return _scan_c_cpp_fallback(repo_id, path, lines)
 
-    # First pass: top-level non-extern declarations (file-scope shared state candidates).
+    # First pass: top-level declarations (file-scope and extern shared state candidates).
     for child in root.named_children:
         if child.type == "declaration":
             decl_text = _node_text(child, data)
-            if not re.search(r"\bextern\b", decl_text) and not any(
-                c.type == "function_declarator" for c in child.named_children
-            ):
+            if not any(c.type == "function_declarator" for c in child.named_children):
+                is_extern = bool(re.search(r"\bextern\b", decl_text))
                 for m in re.finditer(r"\b([A-Za-z_]\w*)\s*(?:=|;|\[)", decl_text):
                     name = m.group(1)
-                    if name not in {"static", "const", "volatile", "struct", "enum", "union", "typedef"}:
+                    if name not in {"static", "const", "volatile", "struct", "enum", "union", "typedef", "extern"}:
                         global_vars.add(name)
-                        concurrency_anchors.append({
-                            "anchor_id": _anchor_id("conc", repo_id, path, child.start_point.row + 1, f"global:{name}"),
-                            "kind": "shared_decl",
-                            "line": child.start_point.row + 1,
-                            "function": None,
-                            "symbol": name,
-                            "snippet": lines[child.start_point.row][:160] if child.start_point.row < len(lines) else "",
-                        })
+                        if not is_extern:
+                            concurrency_anchors.append({
+                                "anchor_id": _anchor_id("conc", repo_id, path, child.start_point.row + 1, f"global:{name}"),
+                                "kind": "shared_decl",
+                                "line": child.start_point.row + 1,
+                                "function": None,
+                                "symbol": name,
+                                "snippet": lines[child.start_point.row][:160] if child.start_point.row < len(lines) else "",
+                            })
 
     def collect_functions(node) -> list:
         found = []
@@ -230,20 +341,139 @@ def _scan_c_cpp(repo_id: str, path: str, text: str) -> dict[str, Any]:
         if body is None:
             continue
 
+        # Pre-pass: distinguish parameters & automatic locals from function-static / global / extern symbols.
+        param_vars: set[str] = set()
+        fn_local_vars: set[str] = set()
+        fn_static_vars: set[str] = set()
+        scalar_locals: set[str] = set()
+
+        fn_decl = fn_node.child_by_field_name("declarator")
+        if fn_decl is not None:
+            p_stack = [fn_decl]
+            while p_stack:
+                p_cur = p_stack.pop()
+                if p_cur.type == "parameter_declaration":
+                    p_ident = _extract_decl_ident(p_cur.child_by_field_name("declarator"), data)
+                    if p_ident:
+                        param_vars.add(p_ident)
+                    continue
+                for c in p_cur.named_children:
+                    if c.type != "ERROR":
+                        p_stack.append(c)
+
+        d_stack = [body]
+        while d_stack:
+            d_cur = d_stack.pop()
+            if d_cur.type == "declaration":
+                storage_tokens = {
+                    _node_text(c, data).strip()
+                    for c in d_cur.children
+                    if c.type == "storage_class_specifier"
+                }
+                t_node = d_cur.child_by_field_name("type")
+                type_text = _node_text(t_node, data) if t_node is not None else ""
+                is_static_or_extern = bool(storage_tokens & {"static", "extern"})
+                for sub in d_cur.named_children:
+                    if sub.type in {"type_qualifier", "storage_class_specifier", "primitive_type", "sized_type_specifier", "type_identifier", "struct_specifier", "enum_specifier", "union_specifier"}:
+                        continue
+                    decl_part = sub.child_by_field_name("declarator") if sub.type == "init_declarator" else sub
+                    if decl_part is None:
+                        continue
+                    raw_decl = _node_text(decl_part, data)
+                    ident = _extract_decl_ident(decl_part, data)
+                    if not ident:
+                        continue
+                    if is_static_or_extern:
+                        fn_static_vars.add(ident)
+                        if "static" in storage_tokens:
+                            d_line = d_cur.start_point.row + 1
+                            concurrency_anchors.append({
+                                "anchor_id": _anchor_id("conc", repo_id, path, d_line, f"fn_static:{fn_name}:{ident}"),
+                                "kind": "shared_decl",
+                                "line": d_line,
+                                "function": fn_name,
+                                "symbol": ident,
+                                "snippet": lines[d_line - 1].strip()[:160] if 1 <= d_line <= len(lines) else "",
+                            })
+                    else:
+                        fn_local_vars.add(ident)
+                        if "*" not in raw_decl and "[" not in raw_decl and (
+                            _SCALAR_TYPE_RE.search(type_text) or ident in _STATUS_VAR_NAMES
+                        ):
+                            scalar_locals.add(ident)
+                continue
+            if d_cur.type == "for_range_loop":
+                r_ident = _extract_decl_ident(d_cur.child_by_field_name("declarator"), data)
+                if r_ident:
+                    fn_local_vars.add(r_ident)
+            for c in d_cur.named_children:
+                if c.type != "ERROR":
+                    d_stack.append(c)
+
+        def is_persistent_expr(expr: str) -> bool:
+            root_id = _root_ident(expr)
+            if not root_id or root_id in _C_IGNORE_PERSISTENT or root_id.isupper():
+                return False
+            if root_id in param_vars or root_id in fn_local_vars:
+                return False
+            return True
+
         # Collect goto label cleanup summaries in this function.
         label_cleanups: dict[str, list[str]] = defaultdict(list)
         side_effects: list[dict[str, Any]] = []
         exits: list[dict[str, Any]] = []
         fn_macro_exits: list[dict[str, Any]] = []
-        fn_allocs: list[tuple[int, str, str, str]] = []
+        fn_allocs: list[dict[str, Any]] = []
         fn_assigns: list[tuple[int, str]] = []
         fn_releases: list[tuple[int, str, str, str]] = []
         fn_nullifies: list[tuple[int, str]] = []
         fn_derefs: list[tuple[int, str, str]] = []
+        fn_if_conds: list[tuple[int, str]] = []
+        local_alloc_origins: dict[str, int] = {}
+        local_call_origins: dict[str, tuple[int, str]] = {}
+        emitted_global_allocs: set[tuple[int, str]] = set()
         lock_depth = 0
         held_locks: list[str] = []
 
-        def walk_fn(node, current_label: str | None = None) -> None:
+        def emit_global_alloc_anchor(
+            assign_line: int,
+            alloc_line: int,
+            symbol: str,
+            callee: str,
+            null_checked: bool,
+            locks_snapshot: list[str],
+            snip: str,
+        ) -> None:
+            key = (assign_line, symbol)
+            if key in emitted_global_allocs:
+                return
+            emitted_global_allocs.add(key)
+            concurrency_anchors.append({
+                "anchor_id": _anchor_id("conc", repo_id, path, assign_line, f"glazy:{fn_name}:{symbol}:{callee}"),
+                "kind": "global_lazy_init_or_alloc",
+                "line": assign_line,
+                "alloc_line": alloc_line,
+                "function": fn_name,
+                "symbol": symbol,
+                "callee": callee,
+                "null_checked": null_checked,
+                "held_locks": locks_snapshot,
+                "snippet": snip,
+            })
+            resource_anchors.append({
+                "anchor_id": _anchor_id("res", repo_id, path, assign_line, f"galloc:{fn_name}:{symbol}:{callee}"),
+                "kind": "global_alloc_assign",
+                "line": assign_line,
+                "alloc_line": alloc_line,
+                "function": fn_name,
+                "symbol": symbol,
+                "callee": callee,
+                "null_checked": null_checked,
+                "held_locks": locks_snapshot,
+                "snippet": snip,
+            })
+
+        def walk_fn(node, current_label: str | None = None, active_conds: tuple[str, ...] = ()) -> None:
             nonlocal lock_depth
             if node.type == "ERROR":
                 return
@@ -253,6 +483,22 @@ def _scan_c_cpp(repo_id: str, path: str, text: str) -> dict[str, Any]:
             if node.type == "labeled_statement":
                 lbl = node.child_by_field_name("label")
                 current_label = _node_text(lbl, data).strip() if lbl else current_label
+
+            if node.type == "if_statement":
+                cond_node = node.child_by_field_name("condition")
+                cond_text = _node_text(cond_node, data).strip() if cond_node is not None else ""
+                if cond_text:
+                    fn_if_conds.append((line_no, cond_text))
+                if cond_node is not None:
+                    walk_fn(cond_node, current_label, active_conds)
+                consequence = node.child_by_field_name("consequence")
+                if consequence is not None:
+                    next_conds = (*active_conds, cond_text) if cond_text else active_conds
+                    walk_fn(consequence, current_label, next_conds)
+                alternative = node.child_by_field_name("alternative")
+                if alternative is not None:
+                    walk_fn(alternative, current_label, active_conds)
+                return
 
             if node.type == "new_expression":
                 target_expr = _enclosing_assign_target(node, data)
@@ -264,7 +510,25 @@ def _scan_c_cpp(repo_id: str, path: str, text: str) -> dict[str, Any]:
                     "symbol": "new",
                     "snippet": snippet,
                 })
-                fn_allocs.append((line_no, "new", target_expr, snippet))
+                is_pers = is_persistent_expr(target_expr)
+                prior_conds = [ct for cl, ct in fn_if_conds if cl <= line_no]
+                null_chk = _cond_mentions_target((*active_conds, *prior_conds), target_expr) if is_pers else False
+                alloc_idx = len(fn_allocs)
+                fn_allocs.append({
+                    "alloc_line": line_no,
+                    "callee": "new",
+                    "target_expr": target_expr,
+                    "snippet": snippet,
+                    "global_target": target_expr if is_pers else None,
+                    "global_assign_line": line_no if is_pers else None,
+                    "null_checked": null_chk if is_pers else None,
+                    "held_locks": list(held_locks) if is_pers else None,
+                })
+                if target_expr and not is_pers:
+                    local_alloc_origins[target_expr] = alloc_idx
+                elif is_pers:
+                    persistent_writes[_root_ident(target_expr)].add(fn_name)
+                    emit_global_alloc_anchor(line_no, line_no, target_expr, "new", null_chk, list(held_locks), snippet)
                 side_effects.append({"line": line_no, "kind": "acquire", "symbol": "new"})
 
             elif node.type == "delete_expression":
@@ -288,6 +552,10 @@ def _scan_c_cpp(repo_id: str, path: str, text: str) -> dict[str, Any]:
                 callee = _callee_name(node, data)
                 tags = _classify_c_call(callee)
                 first_arg = _first_call_arg_text(node, data)
+                lhs_target, lhs_is_scalar_init = _enclosing_assign_info(node, data)
+                addr_targets = _call_addr_targets(node, data)
+                if lhs_target and lhs_target in fn_local_vars and lhs_target not in scalar_locals and not lhs_is_scalar_init:
+                    local_call_origins[lhs_target] = (line_no, callee)
                 if current_label and ("release" in tags or "unlock" in tags):
                     label_cleanups[current_label].append(callee)
                 if "acquire" in tags or "release" in tags:
@@ -301,8 +569,40 @@ def _scan_c_cpp(repo_id: str, path: str, text: str) -> dict[str, Any]:
                         "snippet": snippet,
                     })
                 if "heap_alloc" in tags:
-                    target_expr = _enclosing_assign_target(node, data)
-                    fn_allocs.append((line_no, callee, target_expr, snippet))
+                    target_expr = lhs_target
+                    if addr_targets and (
+                        not target_expr
+                        or lhs_is_scalar_init
+                        or target_expr in scalar_locals
+                        or target_expr in _STATUS_VAR_NAMES
+                    ):
+                        target_expr = addr_targets[0]
+                    is_pers = is_persistent_expr(target_expr)
+                    prior_conds = [ct for cl, ct in fn_if_conds if cl <= line_no]
+                    null_chk = _cond_mentions_target((*active_conds, *prior_conds), target_expr) if is_pers else False
+                    alloc_idx = len(fn_allocs)
+                    fn_allocs.append({
+                        "alloc_line": line_no,
+                        "callee": callee,
+                        "target_expr": target_expr,
+                        "snippet": snippet,
+                        "global_target": target_expr if is_pers else None,
+                        "global_assign_line": line_no if is_pers else None,
+                        "null_checked": null_chk if is_pers else None,
+                        "held_locks": list(held_locks) if is_pers else None,
+                    })
+                    if target_expr and not is_pers:
+                        local_alloc_origins[target_expr] = alloc_idx
+                    elif is_pers:
+                        persistent_writes[_root_ident(target_expr)].add(fn_name)
+                        emit_global_alloc_anchor(line_no, line_no, target_expr, callee, null_chk, list(held_locks), snippet)
+                elif "acquire" in tags and addr_targets:
+                    for out_t in addr_targets:
+                        if is_persistent_expr(out_t):
+                            prior_conds = [ct for cl, ct in fn_if_conds if cl <= line_no]
+                            null_chk = _cond_mentions_target((*active_conds, *prior_conds), out_t)
+                            persistent_writes[_root_ident(out_t)].add(fn_name)
+                            emit_global_alloc_anchor(line_no, line_no, out_t, callee, null_chk, list(held_locks), snippet)
                 if "macro_exit_candidate" in tags:
                     fn_macro_exits.append({
                         "line": line_no,
@@ -385,19 +685,72 @@ def _scan_c_cpp(repo_id: str, path: str, text: str) -> dict[str, Any]:
                 right = node.child_by_field_name("right")
                 if left is not None:
                     left_text = _node_text(left, data)
+                    left_clean = left_text.strip()
                     right_text = _node_text(right, data).strip() if right is not None else ""
                     if right_text in {"NULL", "0", "nullptr", "(void *)0", "(void*)0"}:
-                        fn_nullifies.append((line_no, left_text.strip()))
+                        fn_nullifies.append((line_no, left_clean))
                     else:
-                        fn_derefs.append((line_no, "assign", left_text.strip()))
-                        fn_assigns.append((line_no, left_text.strip()))
+                        fn_derefs.append((line_no, "assign", left_clean))
+                        fn_assigns.append((line_no, left_clean))
                     for m in _FIELD_RE.finditer(left_text):
                         field_writes[m.group(1)].add(fn_name)
                         side_effects.append({"line": line_no, "kind": "state_write", "symbol": m.group(1)})
-                    ident = left_text.strip()
-                    if ident in global_vars:
-                        field_writes[ident].add(fn_name)
-                        side_effects.append({"line": line_no, "kind": "global_write", "symbol": ident})
+                    if is_persistent_expr(left_clean):
+                        root_sym = _root_ident(left_clean)
+                        persistent_writes[root_sym].add(fn_name)
+                        side_effects.append({"line": line_no, "kind": "global_write", "symbol": left_clean})
+                        if right_text not in {"NULL", "0", "nullptr", "(void *)0", "(void*)0"}:
+                            rhs_stripped = _strip_casts_and_parens(right_text)
+                            prior_conds = [ct for cl, ct in fn_if_conds if cl <= line_no]
+                            null_chk = _cond_mentions_target((*active_conds, *prior_conds), left_clean)
+                            if rhs_stripped in local_alloc_origins:
+                                origin = fn_allocs[local_alloc_origins[rhs_stripped]]
+                                origin["global_target"] = left_clean
+                                origin["global_assign_line"] = line_no
+                                origin["null_checked"] = null_chk
+                                origin["held_locks"] = list(held_locks)
+                                emit_global_alloc_anchor(
+                                    line_no,
+                                    origin["alloc_line"],
+                                    left_clean,
+                                    origin["callee"],
+                                    null_chk,
+                                    list(held_locks),
+                                    snippet,
+                                )
+                            elif _cond_mentions_target(active_conds, left_clean):
+                                custom_callee = None
+                                custom_alloc_line = line_no
+                                if rhs_stripped in local_call_origins:
+                                    custom_alloc_line, custom_callee = local_call_origins[rhs_stripped]
+                                elif right is not None:
+                                    r_stack = [right]
+                                    while r_stack:
+                                        rc = r_stack.pop()
+                                        if rc.type == "call_expression":
+                                            custom_callee = _callee_name(rc, data)
+                                            break
+                                        r_stack.extend(reversed(rc.named_children))
+                                if custom_callee and "release" not in _classify_c_call(custom_callee):
+                                    fn_allocs.append({
+                                        "alloc_line": custom_alloc_line,
+                                        "callee": custom_callee,
+                                        "target_expr": left_clean,
+                                        "snippet": snippet,
+                                        "global_target": left_clean,
+                                        "global_assign_line": line_no,
+                                        "null_checked": True,
+                                        "held_locks": list(held_locks),
+                                    })
+                                    emit_global_alloc_anchor(
+                                        line_no,
+                                        custom_alloc_line,
+                                        left_clean,
+                                        custom_callee,
+                                        True,
+                                        list(held_locks),
+                                        snippet,
+                                    )
 
             elif node.type == "field_expression":
                 expr_full = _node_text(node, data).strip()
@@ -407,6 +760,20 @@ def _scan_c_cpp(repo_id: str, path: str, text: str) -> dict[str, Any]:
                     fname = _node_text(field_node, data).strip()
                     if fname:
                         field_reads[fname].add(fn_name)
+                if is_persistent_expr(expr_full):
+                    parent = node.parent
+                    if not (parent is not None and parent.type == "assignment_expression" and parent.child_by_field_name("left") == node):
+                        persistent_reads[_root_ident(expr_full)].add(fn_name)
+
+            elif node.type == "identifier":
+                ident_name = _node_text(node, data).strip()
+                if ident_name in global_vars or ident_name in fn_static_vars:
+                    parent = node.parent
+                    is_callee = parent is not None and parent.type == "call_expression" and parent.child_by_field_name("function") == node
+                    is_lhs = parent is not None and parent.type == "assignment_expression" and parent.child_by_field_name("left") == node
+                    is_decl = parent is not None and parent.type in {"init_declarator", "pointer_declarator", "array_declarator", "declaration"}
+                    if not is_callee and not is_lhs and not is_decl:
+                        persistent_reads[ident_name].add(fn_name)
 
             elif node.type in {"return_statement", "goto_statement"}:
                 target_label = None
@@ -428,6 +795,9 @@ def _scan_c_cpp(repo_id: str, path: str, text: str) -> dict[str, Any]:
 
             if node.type == "update_expression":
                 expr_text = _node_text(node, data)
+                if is_persistent_expr(expr_text):
+                    persistent_writes[_root_ident(expr_text)].add(fn_name)
+                    side_effects.append({"line": line_no, "kind": "global_write", "symbol": _root_ident(expr_text)})
                 m = _REFCOUNT_RE.search(expr_text)
                 if m:
                     sym = m.group(1) or m.group(2)
@@ -441,11 +811,16 @@ def _scan_c_cpp(repo_id: str, path: str, text: str) -> dict[str, Any]:
                     })
 
             for c in node.named_children:
-                walk_fn(c, current_label)
+                walk_fn(c, current_label, active_conds)
 
         walk_fn(body)
 
-        for alloc_line, alloc_callee, target_expr, alloc_snip in fn_allocs:
+        for alloc_info in fn_allocs:
+            alloc_line = alloc_info["alloc_line"]
+            alloc_callee = alloc_info["callee"]
+            target_expr = alloc_info["target_expr"]
+            alloc_snip = alloc_info["snippet"]
+            global_target = alloc_info.get("global_target")
             same_fn_releases = [
                 rl for rl, _rc, r_arg, _rs in fn_releases
                 if rl > alloc_line and (
@@ -453,9 +828,10 @@ def _scan_c_cpp(repo_id: str, path: str, text: str) -> dict[str, Any]:
                     or r_arg == target_expr
                     or r_arg.startswith(f"{target_expr}->")
                     or r_arg.startswith(f"{target_expr}.")
+                    or (global_target and (r_arg == global_target or r_arg.startswith(f"{global_target}->")))
                 )
             ]
-            post_exits = [
+            all_post_exits = [
                 {
                     "line": ex["line"],
                     "kind": ex["kind"],
@@ -465,27 +841,37 @@ def _scan_c_cpp(repo_id: str, path: str, text: str) -> dict[str, Any]:
                 }
                 for ex in sorted([*exits, *fn_macro_exits], key=lambda item: item["line"])
                 if ex["line"] > alloc_line
-            ][:12]
+            ]
+            post_exits = all_post_exits[:_POST_ALLOC_EXIT_LIMIT]
             overwrite_lines = [
                 al for al, lhs in fn_assigns
                 if al > alloc_line and target_expr and lhs == target_expr
-            ][:6]
+            ][:8]
             ownership_out = bool(
                 target_expr.startswith("*")
                 or (target_expr and any(ex.get("return_expr") == target_expr for ex in exits if ex["line"] > alloc_line))
             )
-            alloc_flow_slices.append({
+            slice_item: dict[str, Any] = {
                 "anchor_id": _anchor_id("alloc", repo_id, path, alloc_line, f"{fn_name}:{alloc_callee}:{target_expr}"),
                 "function": fn_name,
                 "alloc_line": alloc_line,
                 "callee": alloc_callee,
                 "target": target_expr or None,
-                "same_fn_release_lines": same_fn_releases[:8],
+                "same_fn_release_lines": same_fn_releases[:12],
                 "post_alloc_exits": post_exits,
                 "overwrite_lines": overwrite_lines,
                 "ownership_out_candidate": ownership_out,
                 "snippet": alloc_snip,
-            })
+            }
+            if len(all_post_exits) > _POST_ALLOC_EXIT_LIMIT:
+                slice_item["post_alloc_exits_total"] = len(all_post_exits)
+                slice_item["post_alloc_exits_truncated"] = True
+            if global_target:
+                slice_item["global_or_static_target"] = global_target
+                slice_item["global_assign_line"] = alloc_info.get("global_assign_line")
+                slice_item["null_checked_before_assign"] = bool(alloc_info.get("null_checked"))
+                slice_item["held_locks_at_assign"] = list(alloc_info.get("held_locks") or [])
+            alloc_flow_slices.append(slice_item)
 
         for rel_line, rel_callee, rel_arg, rel_snip in fn_releases:
             if not rel_arg:
@@ -551,34 +937,44 @@ def _scan_c_cpp(repo_id: str, path: str, text: str) -> dict[str, Any]:
                 "snippet": f"成员 {sym} 在 {sorted(rel_fns)[:4]} 中被释放，同时在 {other_fns[:6]} 中被读写（核查跨线程/进程/回调释放后踩内存）",
             })
 
-    shared_access_matrix = [
-        {
+    shared_by_sym: dict[str, dict[str, Any]] = {}
+    for sym, writers in sorted(persistent_writes.items()):
+        shared_by_sym[sym] = {
             "symbol": sym,
+            "scope": "global_or_static",
             "writers": sorted(writers)[:8],
-            "readers": sorted(field_reads.get(sym, set()))[:8],
+            "readers": sorted(persistent_reads.get(sym, set()))[:8],
         }
-        for sym, writers in sorted(field_writes.items())
-        if len(writers | field_reads.get(sym, set())) >= 2
-    ][:40]
+    for sym, writers in sorted(field_writes.items()):
+        if sym in shared_by_sym:
+            shared_by_sym[sym]["writers"] = sorted(set(shared_by_sym[sym]["writers"]) | writers)[:8]
+            shared_by_sym[sym]["readers"] = sorted(set(shared_by_sym[sym]["readers"]) | field_reads.get(sym, set()))[:8]
+        elif len(writers | field_reads.get(sym, set())) >= 2:
+            shared_by_sym[sym] = {
+                "symbol": sym,
+                "writers": sorted(writers)[:8],
+                "readers": sorted(field_reads.get(sym, set()))[:8],
+            }
+    shared_access_matrix = list(shared_by_sym.values())[:48]
 
     truncated = {
-        "error_slices": len(error_slices) > 200,
-        "concurrency_anchors": len(concurrency_anchors) > 160,
-        "resource_anchors": len(resource_anchors) > 320,
-        "alloc_flow_slices": len(alloc_flow_slices) > 240,
-        "memory_anchors": len(memory_anchors) > 160,
+        "error_slices": len(error_slices) > 280,
+        "concurrency_anchors": len(concurrency_anchors) > 200,
+        "resource_anchors": len(resource_anchors) > 360,
+        "alloc_flow_slices": len(alloc_flow_slices) > 300,
+        "memory_anchors": len(memory_anchors) > 200,
     }
     return {
         "repo_id": repo_id,
         "path": path,
         "language": "c_cpp",
         "parser": parser_mode,
-        "error_slices": error_slices[:200],
-        "concurrency_anchors": concurrency_anchors[:160],
+        "error_slices": error_slices[:280],
+        "concurrency_anchors": concurrency_anchors[:200],
         "shared_access_matrix": shared_access_matrix,
-        "resource_anchors": resource_anchors[:320],
-        "alloc_flow_slices": alloc_flow_slices[:240],
-        "memory_anchors": memory_anchors[:160],
+        "resource_anchors": resource_anchors[:360],
+        "alloc_flow_slices": alloc_flow_slices[:300],
+        "memory_anchors": memory_anchors[:200],
         "truncated": {k: v for k, v in truncated.items() if v},
     }
 
@@ -824,7 +1220,20 @@ def generate_topology_summary(run_dir: Path, task: dict[str, Any]) -> dict[str, 
             continue
         text = "\n".join(resolver.lines(repo, path))
         scanned = scan_file_topology(repo, path, text, detected)
-        files.append({
+        global_allocs = [
+            {
+                "function": a.get("function"),
+                "line": a.get("line"),
+                "alloc_line": a.get("alloc_line"),
+                "symbol": a.get("symbol"),
+                "callee": a.get("callee"),
+                "null_checked": a.get("null_checked"),
+                "held_locks": a.get("held_locks", []),
+            }
+            for a in scanned["concurrency_anchors"]
+            if a.get("kind") == "global_lazy_init_or_alloc"
+        ]
+        file_entry: dict[str, Any] = {
             "repo_id": repo,
             "path": path,
             "language": detected,
@@ -834,11 +1243,15 @@ def generate_topology_summary(run_dir: Path, task: dict[str, Any]) -> dict[str, 
                 "concurrency_timing": len(scanned["concurrency_anchors"]),
                 "resource_lifecycle": len(scanned["resource_anchors"]),
                 "alloc_flow_slices": len(scanned.get("alloc_flow_slices", [])),
+                "global_lazy_or_alloc_writes": len(global_allocs),
                 "memory_corruption": len(scanned["memory_anchors"]),
                 "shared_symbols": len(scanned["shared_access_matrix"]),
             },
             "shared_access_matrix": scanned["shared_access_matrix"][:12],
-        })
+        }
+        if global_allocs:
+            file_entry["global_alloc_candidates"] = global_allocs[:12]
+        files.append(file_entry)
 
     payload = {
         "format_version": "risk-topology-summary-v1",

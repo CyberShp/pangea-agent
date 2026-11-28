@@ -10,17 +10,17 @@
    - **老 Bug 免疫红线（严防重报已修点）**：若当前版本目标位置已具备历史补丁的等价防御（满足 `already_fixed_check`，例如已在 6.1.6 合入加锁/置空/排空回调/释放修复），**严禁把已修复位置重报为风险**，在 `kind=check` 记为 `conclusion="excluded"` 并注明已具备补丁保护。
    - **跨路径同源潜伏猎杀（核心价值）**：提取历史缺陷的底层代码反模式（如“中途失败 `return`/`goto` 错位漏释放局部堆块”、“浅释放外层结构体漏 `free` 子成员”、“某线程/进程释放或回收槽位时未同步排空异步回调导致另一执行流踩内存”），在当前 `owned_regions` 及其仓内关联路径中，**横向深挖同模块相邻兄弟命令、其他消息处理分支、同类资源结构体/对象池槽位或对称清理接口**是否存在自早期版本一直遗留未修的同源隐患！
    - 凡受历史 DTS、MR Diff 或缺陷资产启发完成核查或发现的新隐患，在 `matched_dts_pattern_ids` 填写对应 `dts_id`、`pattern_id` 或 `candidate_id`。
-3. **无 DTS 盲测兜底与跨文件穿透反证**：
-   - `risk_blueprint` 只是宏观跨文件锚点，**绝不等于全部待查对象**。尤其在无历史 DTS 盲测场景下，`resource_lifecycle` 必须对照 `track_topology.alloc_flow_slices` 及源码中的实际分配点（含函数局部临时内存、包装分配宏、`strdup`/`cJSON`、Callee 传出指针）逐函数做全出口释放守恒对账，严禁仅核对完三五个宏观大对象就零风险草草收工；若 `track_topology` 提示 `truncated`，须直接按源码补读后半段函数。
-   - 允许使用绑定工具按 `repository-local-v1` 在所选仓库内穿透追踪跨文件释放点、Callee 分配传出点、对象池/共享内存重分配点、回调/定时器注册与注销点及上游 1–2 层调用方。
-   - 拟上报的每条风险，必须在当轮完成窄域反证（上游门禁、引用计数/世代号保护、所有权转移接管、线程串行保证或同步排空证明）；若保护闭环成立，记为 `kind=check, conclusion="excluded"`，不上报风险。
+3. **全量原生深潜（不受限于历史 DTS）与跨文件穿透反证**：
+   - `risk_blueprint` 只是宏观跨文件锚点，**绝不等于全部待查对象**；**无论本次任务是否导入历史 DTS，`resource_lifecycle` 与各轨均须对 `owned_regions` 执行完整的源码原生排查**（绝不能查完指派 DTS 单号或三五个宏观大对象就草草收工）。`resource_lifecycle` 必须同时核对：① `track_topology.alloc_flow_slices` 及源码中的实际申请点（含函数前部临时工作缓冲、包装分配器、`&out` 出参获取与调用链上游传入缓冲），**用 `source-read` 通读分配点至函数末尾 `}` 的完整函数体**做全出口释放配平对账；② `resource_anchors` 中的 `global_alloc_assign` 与全局/静态指针惰性初始化（核查并发建连/重入路径上的无锁“判空—申请—赋值”竞态覆写泄漏及恢复路径未判空重复申请，严禁按单线程假设直接把 `if (P == NULL) P = alloc()` 放行）。若 `track_topology` 提示 `truncated` 或 `post_alloc_exits_truncated`，须直接按源码补读全函数。
+   - 允许使用绑定工具按 `repository-local-v1` 在所选仓库内穿透追踪跨文件释放点、Callee 分配传出点、全局资源调用链并发度、对象池/共享内存重分配点、回调/定时器注册与注销点及上游 1–2 层调用方。
+   - 拟上报的每条风险，必须在当轮完成窄域反证（上游门禁、引用计数/世代号保护、所有权转移接管、单线程启动/持锁覆盖“判空-申请-赋值”完整窗口或同步排空证明）；诊断/故障注入命令中带重入保护的故意测试泄漏同样记为 `kind=check, conclusion="excluded"`，不上报风险。
 4. **两级实证梯度（直通打桩工作台）**：
    - **`static_proven`**：源码铁证完全闭环（触发路径、泄漏/回滚缺失/跨流交错/释放后踩踏机制与后果均可由静态证据证成）。
    - **`needs_runtime_verification`**：已锁定具体泄漏路径、回滚缺口或悬空访问窗口，但受限于运行时内部失败分支、线程/进程调度、外部库回调排空语义或底层故障条件无法纯静态 100% 敲死；**必须附带可执行的 `instrumentation.points` 桩点配方**（指定 `fault_return` / `race_window_delay` / `leak_counter_probe` / `memory_poison_or_bound_probe`）及配对 `kind=test_case, purpose="risk", execution_readiness="needs_instrumentation"`，供报告高亮并一键流入 `dsh-pangea` 打桩工作台实锤。
-5. **写入强校验门禁**：
-   - 本任务对 `kind=check`（`behavior-check-v2`）与 `kind=risk`（`behavior-risk-v3`）在 `result-write` 时强校验 JSON 必填结构、`source_evidence` 真实行号、`evidence_quotes` 逐字存在性，以及 `needs_runtime_verification` 风险的 `instrumentation.points` 完整性。
-   - 校验未通过仅拒收当次批次，不丢弃此前已保存内容；按返回的具体字段错误与真实源码片段修正后在本轮重写。
-   - 零风险在底图实体、本轨高危切片（如 `alloc_flow_slices`）与指派 DTS 均已交代结论时完全合法；时间预算不足时对未查完实体显式写入 `conclusion="unresolved"` 说明缺口即可正常 `work-finish`。
+5. **确定性引文与结构核对**：
+   - 本任务对 `kind=check`（`behavior-check-v2`）与 `kind=risk`（`behavior-risk-v3`）在 `result-write` 时核对 JSON 必填结构、`source_evidence` 真实行号、`evidence_quotes` 逐字存在性，以及 `needs_runtime_verification` 风险的 `instrumentation.points` 完整性。
+   - 出现 `warnings` 诊断提示时保留已保存正文，按返回的具体字段错误与真实源码片段在本轮通过 `result-supersede` 局部修正。
+   - 零风险在底图实体、本轨高危切片（如 `alloc_flow_slices`、`global_alloc_assign`）与指派 DTS 均已交代结论时完全合法；时间预算不足时对未查完实体显式写入 `conclusion="unresolved"` 说明缺口即可正常 `work-finish`。
 
 ## 二、标准数据契约
 
