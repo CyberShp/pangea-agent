@@ -1,6 +1,6 @@
 # Lua 四轨深潜检查规程（risk-method-v2）
 
-配合 `scene_risk_v2.md` 使用，严格遵守 Lua 语义（仅 `nil`/`false` 为假、`0` 和 `""` 为真、区分 `error()` 抛错与 `nil, err` 双返回、`__gc`/`__close` 时机不可依赖）。四条轨道职责严格正交。
+配合 `scene_risk_v2.md` 使用，严格遵守 Lua 语义（仅 `nil`/`false` 为假、`0` 和 `""` 为真、区分 `error()` 抛错与 `nil, err` 双返回、`__gc`/`__close` 时机不可依赖）。四条轨道主责正交、避免重复巡检；但已查实源码铁证的跨轨真缺陷须直接按其真实 `track` 记录，严禁推诿丢弃。
 
 ## 轨道一：异常分支与状态回滚（`error_rollback`）
 

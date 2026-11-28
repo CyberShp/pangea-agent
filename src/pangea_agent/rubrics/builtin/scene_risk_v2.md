@@ -2,25 +2,26 @@
 
 本场景优先于 `scene_common_generation`；具体语言检查规程见冻结的 `c_cpp_risk_v2.md` 或 `lua_risk_v2.md`。
 
-## 一、核心原则：正交四轨穿透 + 历史特征对标猎变种 + 两级实证 + 强门禁写入
+## 一、核心原则：运行态优先四轨深潜 + 历史特征对标猎变种 + 两级实证 + 零推诿闭环
 
-1. **只盯本轨道正交深水区 + 流程单轨交付**：读取 `task.risk_track`（`error_rollback` | `concurrency_timing` | `resource_lifecycle` | `memory_corruption`）、全局底图 `risk_blueprint`、本轨 AST 索引 `track_topology`、`planning_handoff`（含 Stage 1 提取的全局 DTS/MR Diff 特征 `note`）、冻结的 `dts_context`，以及已选 `asset_items`（历史缺陷资产）。不同轨道职责正交，不越界重复上报其他轨道问题；**仅被 Stage 1 在 `purpose` 中指定为主干流程 owner 的单元按 `scene_flow` 交付模块流程图（含 `sequence`/`call_graph`），其余轨道免重复画图，把全部上下文和推理预算集中于源码漏洞深潜**。
+1. **本轨主责深潜 + 跨轨实锤零推诿闭环 + 流程单轨交付**：读取 `task.risk_track`（`error_rollback` | `concurrency_timing` | `resource_lifecycle` | `memory_corruption`）、全局底图 `risk_blueprint`、本轨 AST 索引 `track_topology`、`planning_handoff`（含 Stage 1 提取的全局 DTS/MR Diff 特征 `note`）、冻结的 `dts_context`，以及已选 `asset_items`（历史缺陷资产）。主动巡检聚焦本 `task.risk_track` 避免四轨重复扫描；**但因四轨并发执行且无二次转办队列，若你在深挖本轨源码时已顺手查清并由源码铁证锁定某处跨轨真实缺陷（如查锁竞态时直接证成全局指针覆写泄漏，或查泄漏/回滚时直接证成先释放后注销导致跨流 UAF 踩内存），严禁以“归其他轨道管”为由丢弃！必须直接提交 `kind=risk` 并填写该缺陷真实的 `track` 归属，做到见洞必收、零推诿漏报**。**仅被 Stage 1 在 `purpose` 中指定为主干流程 owner 的单元按 `scene_flow` 交付模块流程图（含 `sequence`/`call_graph`），其余轨道免重复画图，把全部上下文和推理预算集中于源码漏洞深潜**。
 2. **历史 DTS / MR Diff / 缺陷资产反哺与点名认领兜底**：
-   - 逐项核对 `purpose` 中**点名指派给本单元**的全部 DTS/MR 特征（含不易归类而指派给本轨兜底的跨轨缺陷特征，不得以“不属于本轨”推诿），以及 `dts_context.homologous_dts`、`dts_context.matched_patterns`、`planning_handoff` 与 `asset_items` 中属于本轨道的历史缺陷模式。
+   - 逐项核对 `purpose` 中**点名指派给本单元**的全部 DTS/MR 特征（含不易归类而指派给本轨兜底的跨轨缺陷特征，不得推诿），以及 `dts_context.homologous_dts`、`dts_context.matched_patterns`、`planning_handoff` 与 `asset_items` 中属于本轨道的历史缺陷模式。
    - **老 Bug 免疫红线（严防重报已修点）**：若当前版本目标位置已具备历史补丁的等价防御（满足 `already_fixed_check`，例如已在 6.1.6 合入加锁/置空/排空回调/释放修复），**严禁把已修复位置重报为风险**，在 `kind=check` 记为 `conclusion="excluded"` 并注明已具备补丁保护。
-   - **跨路径同源潜伏猎杀（核心价值）**：提取历史缺陷的底层代码反模式（如“中途失败 `return`/`goto` 错位漏释放局部堆块”、“浅释放外层结构体漏 `free` 子成员”、“某线程/进程释放或回收槽位时未同步排空异步回调导致另一执行流踩内存”），在当前 `owned_regions` 及其仓内关联路径中，**横向深挖同模块相邻兄弟命令、其他消息处理分支、同类资源结构体/对象池槽位或对称清理接口**是否存在自早期版本一直遗留未修的同源隐患！
+   - **跨路径同源潜伏猎杀（核心价值）**：提取历史缺陷的底层代码反模式（如“函数前部申请工作缓冲后多步校验失败提前 `return` 漏释放”、“浅释放外层结构体漏 `free` 子成员”、“某线程/进程释放或回收槽位时未同步排空异步回调导致另一执行流踩内存”），在当前 `owned_regions` 及其仓内关联路径中，**横向深挖同模块相邻兄弟命令、其他消息处理分支、同类资源结构体/对象池槽位或对称清理接口**是否存在自早期版本一直遗留未修的同源隐患！
    - 凡受历史 DTS、MR Diff 或缺陷资产启发完成核查或发现的新隐患，在 `matched_dts_pattern_ids` 填写对应 `dts_id`、`pattern_id` 或 `candidate_id`。
-3. **全量原生深潜（不受限于历史 DTS）与跨文件穿透反证**：
-   - `risk_blueprint` 只是宏观跨文件锚点，**绝不等于全部待查对象**；**无论本次任务是否导入历史 DTS，`resource_lifecycle` 与各轨均须对 `owned_regions` 执行完整的源码原生排查**（绝不能查完指派 DTS 单号或三五个宏观大对象就草草收工）。`resource_lifecycle` 必须同时核对：① `track_topology.alloc_flow_slices` 及源码中的实际申请点（含函数前部临时工作缓冲、包装分配器、`&out` 出参获取与调用链上游传入缓冲），**用 `source-read` 通读分配点至函数末尾 `}` 的完整函数体**做全出口释放配平对账；② `resource_anchors` 中的 `global_alloc_assign` 与全局/静态指针惰性初始化（核查并发建连/重入路径上的无锁“判空—申请—赋值”竞态覆写泄漏及恢复路径未判空重复申请，严禁按单线程假设直接把 `if (P == NULL) P = alloc()` 放行）。若 `track_topology` 提示 `truncated` 或 `post_alloc_exits_truncated`，须直接按源码补读全函数。
-   - 允许使用绑定工具按 `repository-local-v1` 在所选仓库内穿透追踪跨文件释放点、Callee 分配传出点、全局资源调用链并发度、对象池/共享内存重分配点、回调/定时器注册与注销点及上游 1–2 层调用方。
-   - 拟上报的每条风险，必须在当轮完成窄域反证（上游门禁、引用计数/世代号保护、所有权转移接管、单线程启动/持锁覆盖“判空-申请-赋值”完整窗口或同步排空证明）；诊断/故障注入命令中带重入保护的故意测试泄漏同样记为 `kind=check, conclusion="excluded"`，不上报风险。
+3. **运行态主战场优先序、全量分配函数对账与排除举证硬约束**：
+   - **先看 `track_topology.file_directory`，严禁倒挂在 `init/` 启动目录刷屏**：打开 `track_topology` 后先读顶层 `file_directory`（已按运行态 `phase_hint="runtime"`、`uncleaned_exit_candidates` 与 `global_lazy_or_alloc_writes` 降序排列，`phase_hint="init_or_boot"` 排在最后）。**必须优先逐文件吃透 `phase_hint="runtime"` 的运行期业务路径**（建连/会话注册、收发包、命令处理、固件升级传包校验、断链/超时恢复），最后再核查 `init_or_boot` 启动初始化代码。对于进程/模块启动期一次性执行的 `ENOMEM` 早退，若启动失败直接退出进程或卸载模块由 OS/框架整体回收，记为 `excluded`（确有进程存活期残留的仅标 `Low`），**严禁把 `init/` 启动初始化分支刷成满屏 `High` 风险卡而挤占运行态深潜预算**。
+   - **全量原生深潜（不受限于历史 DTS 与宏观底图）**：`risk_blueprint` 只是宏观锚点，**无论是否导入历史 DTS，`resource_lifecycle` 均须对 `owned_regions` 全部真实分配点做逐函数通读对账**：① 对照 `alloc_flow_slices`（含封装分配器与 `&out` 二级指针传出传播切片），重点紧盯 `uncleaned_exit_lines` 非空项，**用 `source-read` 一次读完 `[fn_start_line, fn_end_line]` 完整函数体**做全出口释放与所有权移交配平对账；② 对照 `resource_anchors` 的 `global_alloc_assign` 与全局/静态指针惰性初始化，核查并发建连/重入路径上的无锁“判空—申请—赋值”竞态覆写泄漏及恢复路径未判空覆写（严禁把 `if (P == NULL) P = alloc()` 按单线程假设直接放行）。若切片标有 `truncated` 或 `post_alloc_exits_truncated`，须按源码读完全函数。
+   - **`excluded` 排除结论必须附真实释放/接管/加锁引文（严禁空口放行）**：允许按 `repository-local-v1` 穿透追踪跨文件释放点、Callee 分配传出点、调用链并发度及上游 1–2 层调用方。在将分配切片或高危出口记为 `kind=check, conclusion="excluded"` 时，**`evidence_quotes` 必须逐字贴出真实的释放语句（如 `free(buf)` 或 `goto` 目标标签下的释放行）、所有权挂接语句（如 `ctx->buf = buf`）或覆盖完整“判空-申请-赋值”窗口的锁/单线程启动证据**（诊断/故障注入命令带重入保护的故意泄漏亦引用对应保护代码排除）；严禁未读到释放代码就凭主观臆测排除。
+   - **分配函数完备性自检（`uncovered_alloc_functions`）**：`resource_lifecycle` 调用 `work-finish` 时系统会返回非阻断对账提示 `uncovered_alloc_functions`（列出 `owned_regions` 内尚未被任何 `check.sites` 或 `risk.source_evidence` 覆盖的分配函数）；结束前须优先补查其中运行态函数，预算耗尽时对未查完项显式写 `conclusion="unresolved"` 说明缺口。
 4. **两级实证梯度（直通打桩工作台）**：
-   - **`static_proven`**：源码铁证完全闭环（触发路径、泄漏/回滚缺失/跨流交错/释放后踩踏机制与后果均可由静态证据证成）。
+   - **`static_proven`**：源码铁证完全闭环（触发路径、泄漏/回滚缺失/跨流交错/释放后踩踏机制与量化后果均可由静态证据证成）。
    - **`needs_runtime_verification`**：已锁定具体泄漏路径、回滚缺口或悬空访问窗口，但受限于运行时内部失败分支、线程/进程调度、外部库回调排空语义或底层故障条件无法纯静态 100% 敲死；**必须附带可执行的 `instrumentation.points` 桩点配方**（指定 `fault_return` / `race_window_delay` / `leak_counter_probe` / `memory_poison_or_bound_probe`）及配对 `kind=test_case, purpose="risk", execution_readiness="needs_instrumentation"`，供报告高亮并一键流入 `dsh-pangea` 打桩工作台实锤。
 5. **确定性引文与结构核对**：
    - 本任务对 `kind=check`（`behavior-check-v2`）与 `kind=risk`（`behavior-risk-v3`）在 `result-write` 时核对 JSON 必填结构、`source_evidence` 真实行号、`evidence_quotes` 逐字存在性，以及 `needs_runtime_verification` 风险的 `instrumentation.points` 完整性。
    - 出现 `warnings` 诊断提示时保留已保存正文，按返回的具体字段错误与真实源码片段在本轮通过 `result-supersede` 局部修正。
-   - 零风险在底图实体、本轨高危切片（如 `alloc_flow_slices`、`global_alloc_assign`）与指派 DTS 均已交代结论时完全合法；时间预算不足时对未查完实体显式写入 `conclusion="unresolved"` 说明缺口即可正常 `work-finish`。
+   - 零风险在底图实体、本轨高危切片（如 `alloc_flow_slices`、`global_alloc_assign`）与指派 DTS 均已附真实引文交代结论时完全合法；时间预算不足时对未查完实体显式写入 `conclusion="unresolved"` 说明缺口即可正常 `work-finish`。
 
 ## 二、标准数据契约
 

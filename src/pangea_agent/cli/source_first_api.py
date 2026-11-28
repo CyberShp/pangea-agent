@@ -256,10 +256,16 @@ def validate_source_first_result(
         from pangea_agent.risk_v2_schema import blueprint_coverage_diagnostics
         bp_input = next((i for i in task.get('inputs', []) if i.get('input_id') == 'risk_blueprint'), None)
         dts_input = next((i for i in task.get('inputs', []) if i.get('input_id') == 'dts_context'), None)
+        topo_input = next((i for i in task.get('inputs', []) if i.get('input_id') == 'track_topology'), None)
         bp_data = read_json(Path(bp_input['path'])) if bp_input and Path(bp_input['path']).is_file() else None
         dts_data = read_json(Path(dts_input['path'])) if dts_input and Path(dts_input['path']).is_file() else None
-        v2_diag = blueprint_coverage_diagnostics(task.get('risk_track'), bp_data, records, dts_data)
-        if v2_diag['missing_blueprint_entities'] or v2_diag['unaddressed_homologous_dts']:
+        topo_data = read_json(Path(topo_input['path'])) if topo_input and Path(topo_input['path']).is_file() else None
+        v2_diag = blueprint_coverage_diagnostics(task.get('risk_track'), bp_data, records, dts_data, topo_data)
+        if (
+            v2_diag['missing_blueprint_entities']
+            or v2_diag['unaddressed_homologous_dts']
+            or v2_diag.get('uncovered_alloc_functions')
+        ):
             warnings.append({'kind': 'risk_v2_coverage_hint', **v2_diag})
     if not records:
         return {

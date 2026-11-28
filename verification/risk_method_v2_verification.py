@@ -998,6 +998,244 @@ def verify_global_lazy_init_race_and_deep_exit_slices(tmp: Path) -> None:
             "resource_lifecycle topology missing global_alloc_assign")
 
 
+def verify_runtime_priority_uncleaned_exits_and_alloc_coverage(tmp: Path) -> None:
+    from pangea_agent.agent_io import read_json, write_json
+    from pangea_agent.cli.adapter_api import bind_action, settle_action
+    from pangea_agent.cli.plan_batch import plan_write_batch
+    from pangea_agent.cli.run_module_analysis import run_module_analysis
+    from pangea_agent.cli.source_first_api import result_write, work_finish
+
+    # 1. Intra-file 2-pass wrapper propagation + exact uncleaned_exit_lines + handoff suppression
+    upg_code = """
+    static int fc_alloc_work_buf(size_t sz, char **out_buf) {
+        char *p = (char *)vos_malloc(sz);
+        if (p == NULL) {
+            return -12;
+        }
+        *out_buf = p;
+        return 0;
+    }
+
+    int fc_upg_check_image(int bad_magic, int bad_crc, int cap_expand, int compat_ok) {
+        char *work_buf = NULL;
+        int rc = fc_alloc_work_buf(16384, &work_buf);
+        if (rc != 0) {
+            return rc;
+        }
+        if (bad_magic) {
+            free(work_buf);
+            return -101;
+        }
+        if (bad_crc) {
+            rc = -102;
+            goto out_free;
+        }
+        if (cap_expand && !compat_ok) {
+            return -203;
+        }
+    out_free:
+        free(work_buf);
+        return rc;
+    }
+
+    int fc_upg_attach_stage(struct upg_ctx *ctx, int post_fail) {
+        char *buf = NULL;
+        if (fc_alloc_work_buf(4096, &buf) != 0) {
+            return -12;
+        }
+        ctx->stage_buf = buf;
+        if (post_fail) {
+            return -5;
+        }
+        return 0;
+    }
+    """
+    upg_scan = scan_file_topology("fc-repo", "src/upg/fc_upg.c", upg_code, "c_cpp")
+    _assert(upg_scan["phase_hint"] == "runtime", f"expected runtime phase_hint: {upg_scan['phase_hint']}")
+    check_slices = [s for s in upg_scan["alloc_flow_slices"] if s["function"] == "fc_upg_check_image"]
+    _assert(
+        len(check_slices) == 1 and check_slices[0]["callee"] == "fc_alloc_work_buf" and check_slices[0]["target"] == "work_buf",
+        f"2-pass intra-file wrapper allocator did not propagate to caller: {upg_scan['alloc_flow_slices']}",
+    )
+    uncleaned = check_slices[0].get("uncleaned_exit_lines", [])
+    leak_line = next(
+        idx for idx, line in enumerate(upg_code.splitlines(), start=1) if "return -203;" in line
+    )
+    _assert(
+        uncleaned == [leak_line],
+        f"expected ONLY leaking early-return line {leak_line} in uncleaned_exit_lines, got {uncleaned}",
+    )
+    _assert(
+        check_slices[0].get("fn_start_line", 0) < leak_line < check_slices[0].get("fn_end_line", 0),
+        f"invalid fn_start_line/fn_end_line on slice: {check_slices[0]}",
+    )
+
+    attach_slices = [s for s in upg_scan["alloc_flow_slices"] if s["function"] == "fc_upg_attach_stage"]
+    _assert(
+        len(attach_slices) == 1 and attach_slices[0].get("uncleaned_exit_lines", []) == [],
+        f"ownership handoff to ctx->stage_buf should suppress uncleaned_exit_lines: {attach_slices}",
+    )
+
+    # 2. End-to-end runtime-first sorting ahead of noisy init/ directory + context compaction + uncovered_alloc_functions
+    init_code = "\n".join(
+        [
+            f"int fc_boot_pool_{i}(void) {{ void *p = malloc(1024); if (!p) return -1; g_pool_{i} = p; return 0; }}"
+            for i in range(1, 10)
+        ]
+    )
+    ctx_code = "void *fc_ctx_helper_dup(size_t n) { return malloc(n); }\n"
+
+    root_dir = tmp / "fc-runtime-prio"
+    src_root = root_dir / "repositories" / "fc-repo" / "src"
+    (src_root / "init").mkdir(parents=True)
+    (src_root / "upg").mkdir(parents=True)
+    (src_root / "common").mkdir(parents=True)
+    (src_root / "init" / "fc_init.c").write_text(init_code, encoding="utf-8")
+    (src_root / "upg" / "fc_upg.c").write_text(upg_code, encoding="utf-8")
+    (src_root / "common" / "fc_ctx_helper.c").write_text(ctx_code, encoding="utf-8")
+
+    req = tmp / "req_fc_prio.json"
+    run_id = "run-fc-prio"
+    write_json(
+        req,
+        {
+            "workflow_version": "source-first-v1",
+            "analysis_profile": "behavior-test-v2",
+            "analysis_settings": {"scenario": "risk-analysis", "mode": "depth", "objective": "product-behavior"},
+            "data_root": str(root_dir),
+            "run_id": run_id,
+            "repository": "fc-repo",
+            "target": "FC 模块运行期内存泄漏排查",
+            "source_scope": ["src"],
+        },
+    )
+    started = run_module_analysis(str(req))
+    p_act = started["agent_actions"][0]["action_id"]
+    p_bind = (str(root_dir), run_id, p_act, "plan-fc-prio")
+    bind_action(*p_bind)
+    from pangea_agent.cli.source_first_api import task_open
+    from pangea_agent.inventory.source_access import input_read
+
+    opened_plan = task_open(*p_bind)
+    _assert(
+        any(p["input_id"] == "planning_metadata" for p in opened_plan["planning_startup"]["pages"]),
+        f"planning_metadata missing from planning_startup: {opened_plan['planning_startup']}",
+    )
+    meta_full = input_read(*p_bind, input_id="planning_metadata", max_chars=24000)
+    overview = json.loads(meta_full["text"])["risk_topology_overview"]
+    _assert(
+        overview[0]["path"] == "src/upg/fc_upg.c" and overview[0]["phase_hint"] == "runtime",
+        f"Stage 1 risk_topology_overview failed to rank runtime file ahead of noisy init/: {overview}",
+    )
+    init_ov = next(item for item in overview if item["path"] == "src/init/fc_init.c")
+    _assert(init_ov["phase_hint"] == "init_or_boot", f"expected init_or_boot phase_hint for init/: {init_ov}")
+
+    summary_doc = read_json(root_dir / "runs" / run_id / "inputs" / "risk-topology-summary.json")
+    _assert(
+        summary_doc["files"][0]["path"] == "src/upg/fc_upg.c"
+        and any("fc_upg_check_image" in c for c in summary_doc["files"][0].get("uncleaned_exit_candidates", [])),
+        f"risk-topology-summary failed to rank runtime uncleaned_exit_candidates first: {summary_doc['files'][:2]}",
+    )
+
+    batch = plan_write_batch(
+        *p_bind,
+        expected_revision=0,
+        units=[
+            {
+                "title": "资源生命周期核查",
+                "purpose": "核查升级传包与初始化资源配平",
+                "risk_track": "resource_lifecycle",
+                "owned_files": [
+                    {"repo_id": "fc-repo", "path": "src/init/fc_init.c"},
+                    {"repo_id": "fc-repo", "path": "src/upg/fc_upg.c"},
+                ],
+                "context_files": ["fc-repo:src/common/fc_ctx_helper.c"],
+            },
+        ],
+    )
+    work_finish(*p_bind, revision=batch["revision"])
+    settled = settle_action(*p_bind[:3])
+
+    unit_topo = read_json(root_dir / "runs" / run_id / "inputs" / "risk-topology" / "unit-0001.json")
+    _assert(
+        unit_topo["file_directory"][0]["path"] == "src/upg/fc_upg.c"
+        and unit_topo["file_directory"][1]["path"] == "src/init/fc_init.c",
+        f"track_topology file_directory did not prioritize runtime ahead of init/: {unit_topo['file_directory']}",
+    )
+    _assert(
+        [f["path"] for f in unit_topo["files"]] == ["src/upg/fc_upg.c", "src/init/fc_init.c"]
+        and unit_topo.get("context_reference_paths") == ["fc-repo:src/common/fc_ctx_helper.c"],
+        f"context_files should stay compact in context_reference_paths instead of bloating files: {unit_topo}",
+    )
+
+    # 3. Verify non-blocking uncovered_alloc_functions reconciliation when worker only checks init/
+    u_act = settled["agent_actions"][0]["action_id"]
+    u_bind = (str(root_dir), run_id, u_act, "worker-fc-res")
+    bind_action(*u_bind)
+    w1 = result_write(
+        *u_bind,
+        expected_revision=0,
+        records=[
+            {
+                "kind": "check",
+                "body": {
+                    "format_version": "behavior-check-v2",
+                    "check_id": "CHK-INIT-001",
+                    "track": "resource_lifecycle",
+                    "object": "启动期池初始化",
+                    "sites": ["fc-repo:src/init/fc_init.c:1-2"],
+                    "hypothesis": "检查启动池分配失败处理",
+                    "conclusion": "excluded",
+                    "reasoning": "启动期失败直接退出进程由 OS 回收",
+                    "evidence_quotes": [{"ref": "fc-repo:src/init/fc_init.c:1-2", "snippet": "if (!p) return -1;"}],
+                },
+            }
+        ],
+    )
+    fin1 = work_finish(*u_bind, revision=w1["revision"])
+    diag1 = next(w for w in fin1["validation"]["warnings"] if w.get("kind") == "risk_v2_coverage_hint")
+    _assert(
+        diag1["uncovered_alloc_function_count"] >= 2
+        and diag1["uncovered_alloc_functions"][0].startswith("fc-repo:src/upg/fc_upg.c:fc_upg_check_image"),
+        f"uncovered_alloc_functions should prioritize runtime uncleaned-exit function fc_upg_check_image: {diag1}",
+    )
+
+    # Once worker audits fc_upg_check_image and writes the risk, fc_upg_check_image is cleared from uncovered list
+    w2 = result_write(
+        *u_bind,
+        expected_revision=fin1["revision"],
+        records=[
+            {
+                "kind": "risk",
+                "body": {
+                    "format_version": "behavior-risk-v3",
+                    "risk_id": "R-UPG-001",
+                    "track": "resource_lifecycle",
+                    "verification_status": "static_proven",
+                    "severity": "High",
+                    "title": "fc_upg_check_image 扩容兼容性校验不通过提前返回漏释放 16KB work_buf",
+                    "trigger": "扩容配置下传入兼容性不匹配的升级镜像触发 cap_expand && !compat_ok 分支",
+                    "interleaving_or_path": [
+                        "fc_upg_check_image 调用 fc_alloc_work_buf 申请 16KB work_buf",
+                        f"L{leak_line} 命中 cap_expand && !compat_ok 直接 return -203，跳过 out_free 漏释放 work_buf",
+                    ],
+                    "system_result": "单次拒单泄漏 16KB 堆内存，每次异常升级重试呈 O(N) 线性无界累积，进程不重启不回收",
+                    "external_observation": "LSan 报告 fc_alloc_work_buf / fc_upg_check_image Direct leak 16384 bytes",
+                    "exclusion_condition": "无",
+                    "source_evidence": [f"fc-repo:src/upg/fc_upg.c:{leak_line - 1}-{leak_line + 1}"],
+                    "evidence_quotes": [{"ref": f"fc-repo:src/upg/fc_upg.c:{leak_line - 1}-{leak_line + 1}", "snippet": "return -203;"}],
+                },
+            }
+        ],
+    )
+    fin2 = work_finish(*u_bind, revision=w2["revision"])
+    diag2 = next(w for w in fin2["validation"]["warnings"] if w.get("kind") == "risk_v2_coverage_hint")
+    _assert(
+        not any("fc_upg_check_image" in item for item in diag2["uncovered_alloc_functions"]),
+        f"fc_upg_check_image should be marked covered after reporting R-UPG-001: {diag2}",
+    )
+
+
 def main() -> None:
     with tempfile.TemporaryDirectory() as raw:
         tmp = Path(raw)
@@ -1007,6 +1245,7 @@ def main() -> None:
         verify_memory_corruption_dts_and_topology(tmp)
         verify_lsan_alloc_slices_startup_and_dts_fallback(tmp)
         verify_global_lazy_init_race_and_deep_exit_slices(tmp)
+        verify_runtime_priority_uncleaned_exits_and_alloc_coverage(tmp)
     print("ALL risk-method-v2 VERIFICATIONS PASSED")
 
 

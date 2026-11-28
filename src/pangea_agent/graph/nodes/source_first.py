@@ -491,10 +491,17 @@ def prepare_source_first_inputs(state: PangeaState) -> PangeaState:
         from pangea_agent.inventory.risk_topology_index import generate_topology_summary
         topo_summary = generate_topology_summary(run_dir, task)
         compact_metadata["risk_topology_overview"] = [
-            {key: f[key] for key in ("repo_id", "path", "language", "parser", "counts")}
+            {key: f[key] for key in ("repo_id", "path", "phase_hint", "language", "parser", "counts") if key in f}
             for f in sorted(
                 topo_summary["files"],
-                key=lambda f: (-sum(f["counts"].values()), f["repo_id"], f["path"]),
+                key=lambda f: (
+                    1 if f.get("phase_hint") == "init_or_boot" else 0,
+                    -int(f["counts"].get("uncleaned_exit_slices", 0)) * 20
+                    - int(f["counts"].get("global_lazy_or_alloc_writes", 0)) * 20
+                    - sum(f["counts"].values()),
+                    f["repo_id"],
+                    f["path"],
+                ),
             )[:100]
         ]
         write_json(compact_path, compact_metadata)

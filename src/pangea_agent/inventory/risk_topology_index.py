@@ -240,7 +240,54 @@ def _enclosing_assign_target(node, data: bytes) -> str:
     return target
 
 
-def _classify_c_call(callee: str) -> list[str]:
+_INIT_PATH_RE = re.compile(
+    r"(?:^|/)(?:init|boot|startup|mod_init)(?:/|_|\.)|_(?:init|boot)\.[ch](?:pp|xx|c)?$",
+    re.IGNORECASE,
+)
+
+
+def is_init_like_path(path: str) -> bool:
+    """Deterministic path-shape hint for ordering steady-state runtime files ahead of bootstrap files."""
+    return bool(_INIT_PATH_RE.search(path.replace("\\", "/")))
+
+
+def _is_null_alloc_guard(
+    cond_texts: list[str] | tuple[str, ...],
+    snippet: str,
+    exit_kind: str,
+    target_expr: str,
+    status_lhs: str | None,
+    status_reassigned: bool,
+    alloc_callee: str | None = None,
+) -> bool:
+    texts = list(cond_texts)
+    if exit_kind == "macro_exit_candidate" and snippet:
+        texts.append(snippet)
+    if target_expr:
+        esc = re.escape(target_expr.strip())
+        for cond in texts:
+            if (
+                re.search(rf"!\s*\(*\s*{esc}\b", cond)
+                or re.search(rf"\b{esc}\s*==\s*(?:NULL|nullptr|0)\b", cond)
+                or re.search(rf"\b(?:NULL|nullptr|0)\s*==\s*{esc}\b", cond)
+            ):
+                return True
+    if alloc_callee:
+        c_esc = re.escape(alloc_callee.strip())
+        for cond in texts:
+            if re.search(rf"\b{c_esc}\s*\(", cond) and not re.search(
+                r"==\s*(?:0|VOS_OK|RET_OK|OK|SUCCESS|TRUE|true)\b", cond
+            ):
+                return True
+    if status_lhs and not status_reassigned:
+        s_esc = re.escape(status_lhs.strip())
+        for cond in texts:
+            if re.search(rf"\b{s_esc}\b", cond):
+                return True
+    return False
+
+
+def _classify_c_call(callee: str, extra_heap_callees: frozenset[str] | set[str] = frozenset()) -> list[str]:
     tags: list[str] = []
     words = _words(callee)
     is_release = callee in _RELEASE_EXACT or (bool(words & _RELEASE_VERBS) and callee not in _ACQUIRE_EXACT)
@@ -250,7 +297,12 @@ def _classify_c_call(callee: str) -> list[str]:
         and not bool(words & _GETTER_META_WORDS)
         and not is_release
     )
-    is_heap_alloc = (callee in _ACQUIRE_EXACT or bool(words & _HEAP_ALLOC_VERBS) or is_buf_acquire) and not is_release
+    is_heap_alloc = (
+        callee in _ACQUIRE_EXACT
+        or callee in extra_heap_callees
+        or bool(words & _HEAP_ALLOC_VERBS)
+        or is_buf_acquire
+    ) and not is_release
     if is_heap_alloc:
         tags.append("heap_alloc")
         tags.append("acquire")
@@ -275,12 +327,15 @@ def _classify_c_call(callee: str) -> list[str]:
     return tags
 
 
-def _scan_c_cpp(repo_id: str, path: str, text: str) -> dict[str, Any]:
-    """Fault-tolerant tree-sitter C/C++ scanner: never discards valid functions on local parse errors."""
-    from pangea_agent.inventory.cpp_symbols import _load_parser
-
-    data = text.encode("utf-8")
-    lines = text.splitlines()
+def _scan_c_cpp_ast(
+    repo_id: str,
+    path: str,
+    data: bytes,
+    lines: list[str],
+    root: Any,
+    parser_mode: str,
+    extra_heap_callees: set[str],
+) -> dict[str, Any]:
     error_slices: list[dict[str, Any]] = []
     concurrency_anchors: list[dict[str, Any]] = []
     resource_anchors: list[dict[str, Any]] = []
@@ -292,15 +347,6 @@ def _scan_c_cpp(repo_id: str, path: str, text: str) -> dict[str, Any]:
     persistent_writes: dict[str, set[str]] = defaultdict(set)
     released_fields: dict[str, set[str]] = defaultdict(set)
     global_vars: set[str] = set()
-    parser_mode = "tree-sitter-tolerant"
-
-    try:
-        parser, _ = _load_parser(Path(path))
-        root = parser.parse(data).root_node
-        if root.has_error:
-            parser_mode = "tree-sitter-partial"
-    except Exception:
-        return _scan_c_cpp_fallback(repo_id, path, lines)
 
     # First pass: top-level declarations (file-scope and extern shared state candidates).
     for child in root.named_children:
@@ -340,6 +386,8 @@ def _scan_c_cpp(repo_id: str, path: str, text: str) -> dict[str, Any]:
         body = fn_node.child_by_field_name("body")
         if body is None:
             continue
+        fn_start_line = fn_node.start_point.row + 1
+        fn_end_line = fn_node.end_point.row + 1
 
         # Pre-pass: distinguish parameters & automatic locals from function-static / global / extern symbols.
         param_vars: set[str] = set()
@@ -418,14 +466,15 @@ def _scan_c_cpp(repo_id: str, path: str, text: str) -> dict[str, Any]:
                 return False
             return True
 
-        # Collect goto label cleanup summaries in this function.
         label_cleanups: dict[str, list[str]] = defaultdict(list)
+        label_lines: dict[str, int] = {}
         side_effects: list[dict[str, Any]] = []
         exits: list[dict[str, Any]] = []
         fn_macro_exits: list[dict[str, Any]] = []
         fn_allocs: list[dict[str, Any]] = []
         fn_assigns: list[tuple[int, str]] = []
-        fn_releases: list[tuple[int, str, str, str]] = []
+        fn_releases: list[tuple[int, str, str, str, int]] = []
+        fn_handoffs: list[tuple[int, str, int]] = []
         fn_nullifies: list[tuple[int, str]] = []
         fn_derefs: list[tuple[int, str, str]] = []
         fn_if_conds: list[tuple[int, str]] = []
@@ -434,6 +483,7 @@ def _scan_c_cpp(repo_id: str, path: str, text: str) -> dict[str, Any]:
         emitted_global_allocs: set[tuple[int, str]] = set()
         lock_depth = 0
         held_locks: list[str] = []
+        next_block_id = 0
 
         def emit_global_alloc_anchor(
             assign_line: int,
@@ -473,16 +523,31 @@ def _scan_c_cpp(repo_id: str, path: str, text: str) -> dict[str, Any]:
                 "snippet": snip,
             })
 
-        def walk_fn(node, current_label: str | None = None, active_conds: tuple[str, ...] = ()) -> None:
-            nonlocal lock_depth
+        def walk_fn(
+            node,
+            current_label: str | None = None,
+            active_conds: tuple[str, ...] = (),
+            block_ancestors: tuple[int, ...] = (),
+        ) -> None:
+            nonlocal lock_depth, next_block_id
             if node.type == "ERROR":
                 return
             line_no = node.start_point.row + 1
             snippet = lines[line_no - 1].strip()[:160] if 1 <= line_no <= len(lines) else ""
 
+            if node.type == "compound_statement":
+                next_block_id += 1
+                block_ancestors = (*block_ancestors, next_block_id)
+
+            cur_block = block_ancestors[-1] if block_ancestors else 0
+
             if node.type == "labeled_statement":
                 lbl = node.child_by_field_name("label")
-                current_label = _node_text(lbl, data).strip() if lbl else current_label
+                if lbl is not None:
+                    lbl_text = _node_text(lbl, data).strip()
+                    if lbl_text:
+                        current_label = lbl_text
+                        label_lines.setdefault(lbl_text, line_no)
 
             if node.type == "if_statement":
                 cond_node = node.child_by_field_name("condition")
@@ -490,14 +555,14 @@ def _scan_c_cpp(repo_id: str, path: str, text: str) -> dict[str, Any]:
                 if cond_text:
                     fn_if_conds.append((line_no, cond_text))
                 if cond_node is not None:
-                    walk_fn(cond_node, current_label, active_conds)
+                    walk_fn(cond_node, current_label, active_conds, block_ancestors)
                 consequence = node.child_by_field_name("consequence")
                 if consequence is not None:
                     next_conds = (*active_conds, cond_text) if cond_text else active_conds
-                    walk_fn(consequence, current_label, next_conds)
+                    walk_fn(consequence, current_label, next_conds, block_ancestors)
                 alternative = node.child_by_field_name("alternative")
                 if alternative is not None:
-                    walk_fn(alternative, current_label, active_conds)
+                    walk_fn(alternative, current_label, active_conds, block_ancestors)
                 return
 
             if node.type == "new_expression":
@@ -518,7 +583,9 @@ def _scan_c_cpp(repo_id: str, path: str, text: str) -> dict[str, Any]:
                     "alloc_line": line_no,
                     "callee": "new",
                     "target_expr": target_expr,
+                    "status_lhs": None,
                     "snippet": snippet,
+                    "ownership_out": target_expr.startswith("*"),
                     "global_target": target_expr if is_pers else None,
                     "global_assign_line": line_no if is_pers else None,
                     "null_checked": null_chk if is_pers else None,
@@ -544,13 +611,13 @@ def _scan_c_cpp(repo_id: str, path: str, text: str) -> dict[str, Any]:
                     "symbol": "delete",
                     "snippet": snippet,
                 })
-                fn_releases.append((line_no, "delete", del_arg, snippet))
+                fn_releases.append((line_no, "delete", del_arg, snippet, cur_block))
                 for m in _FIELD_RE.finditer(del_arg):
                     released_fields[m.group(1)].add(fn_name)
 
             elif node.type == "call_expression":
                 callee = _callee_name(node, data)
-                tags = _classify_c_call(callee)
+                tags = _classify_c_call(callee, extra_heap_callees)
                 first_arg = _first_call_arg_text(node, data)
                 lhs_target, lhs_is_scalar_init = _enclosing_assign_info(node, data)
                 addr_targets = _call_addr_targets(node, data)
@@ -570,12 +637,14 @@ def _scan_c_cpp(repo_id: str, path: str, text: str) -> dict[str, Any]:
                     })
                 if "heap_alloc" in tags:
                     target_expr = lhs_target
+                    status_lhs = None
                     if addr_targets and (
                         not target_expr
                         or lhs_is_scalar_init
                         or target_expr in scalar_locals
                         or target_expr in _STATUS_VAR_NAMES
                     ):
+                        status_lhs = lhs_target or None
                         target_expr = addr_targets[0]
                     is_pers = is_persistent_expr(target_expr)
                     prior_conds = [ct for cl, ct in fn_if_conds if cl <= line_no]
@@ -585,7 +654,9 @@ def _scan_c_cpp(repo_id: str, path: str, text: str) -> dict[str, Any]:
                         "alloc_line": line_no,
                         "callee": callee,
                         "target_expr": target_expr,
+                        "status_lhs": status_lhs,
                         "snippet": snippet,
+                        "ownership_out": target_expr.startswith("*"),
                         "global_target": target_expr if is_pers else None,
                         "global_assign_line": line_no if is_pers else None,
                         "null_checked": null_chk if is_pers else None,
@@ -608,10 +679,13 @@ def _scan_c_cpp(repo_id: str, path: str, text: str) -> dict[str, Any]:
                         "line": line_no,
                         "kind": "macro_exit_candidate",
                         "target_label": None,
+                        "return_expr": "",
                         "snippet": snippet,
+                        "block_ancestors": block_ancestors,
+                        "active_conds": active_conds,
                     })
                 if "release" in tags:
-                    fn_releases.append((line_no, callee, first_arg, snippet))
+                    fn_releases.append((line_no, callee, first_arg, snippet, cur_block))
                     for m in _FIELD_RE.finditer(first_arg):
                         released_fields[m.group(1)].add(fn_name)
                 elif first_arg:
@@ -687,11 +761,18 @@ def _scan_c_cpp(repo_id: str, path: str, text: str) -> dict[str, Any]:
                     left_text = _node_text(left, data)
                     left_clean = left_text.strip()
                     right_text = _node_text(right, data).strip() if right is not None else ""
+                    rhs_stripped = _strip_casts_and_parens(right_text) if right_text else ""
                     if right_text in {"NULL", "0", "nullptr", "(void *)0", "(void*)0"}:
                         fn_nullifies.append((line_no, left_clean))
                     else:
                         fn_derefs.append((line_no, "assign", left_clean))
                         fn_assigns.append((line_no, left_clean))
+                        if rhs_stripped in local_alloc_origins:
+                            if left_clean.startswith("*"):
+                                fn_allocs[local_alloc_origins[rhs_stripped]]["ownership_out"] = True
+                                fn_handoffs.append((line_no, rhs_stripped, cur_block))
+                            elif "->" in left_clean or "." in left_clean or is_persistent_expr(left_clean):
+                                fn_handoffs.append((line_no, rhs_stripped, cur_block))
                     for m in _FIELD_RE.finditer(left_text):
                         field_writes[m.group(1)].add(fn_name)
                         side_effects.append({"line": line_no, "kind": "state_write", "symbol": m.group(1)})
@@ -700,7 +781,6 @@ def _scan_c_cpp(repo_id: str, path: str, text: str) -> dict[str, Any]:
                         persistent_writes[root_sym].add(fn_name)
                         side_effects.append({"line": line_no, "kind": "global_write", "symbol": left_clean})
                         if right_text not in {"NULL", "0", "nullptr", "(void *)0", "(void*)0"}:
-                            rhs_stripped = _strip_casts_and_parens(right_text)
                             prior_conds = [ct for cl, ct in fn_if_conds if cl <= line_no]
                             null_chk = _cond_mentions_target((*active_conds, *prior_conds), left_clean)
                             if rhs_stripped in local_alloc_origins:
@@ -731,12 +811,14 @@ def _scan_c_cpp(repo_id: str, path: str, text: str) -> dict[str, Any]:
                                             custom_callee = _callee_name(rc, data)
                                             break
                                         r_stack.extend(reversed(rc.named_children))
-                                if custom_callee and "release" not in _classify_c_call(custom_callee):
+                                if custom_callee and "release" not in _classify_c_call(custom_callee, extra_heap_callees):
                                     fn_allocs.append({
                                         "alloc_line": custom_alloc_line,
                                         "callee": custom_callee,
                                         "target_expr": left_clean,
+                                        "status_lhs": None,
                                         "snippet": snippet,
+                                        "ownership_out": False,
                                         "global_target": left_clean,
                                         "global_assign_line": line_no,
                                         "null_checked": True,
@@ -791,6 +873,8 @@ def _scan_c_cpp(repo_id: str, path: str, text: str) -> dict[str, Any]:
                     "target_label": target_label,
                     "return_expr": return_expr,
                     "snippet": snippet,
+                    "block_ancestors": block_ancestors,
+                    "active_conds": active_conds,
                 })
 
             if node.type == "update_expression":
@@ -811,7 +895,7 @@ def _scan_c_cpp(repo_id: str, path: str, text: str) -> dict[str, Any]:
                     })
 
             for c in node.named_children:
-                walk_fn(c, current_label, active_conds)
+                walk_fn(c, current_label, active_conds, block_ancestors)
 
         walk_fn(body)
 
@@ -819,10 +903,12 @@ def _scan_c_cpp(repo_id: str, path: str, text: str) -> dict[str, Any]:
             alloc_line = alloc_info["alloc_line"]
             alloc_callee = alloc_info["callee"]
             target_expr = alloc_info["target_expr"]
+            status_lhs = alloc_info.get("status_lhs")
             alloc_snip = alloc_info["snippet"]
             global_target = alloc_info.get("global_target")
-            same_fn_releases = [
-                rl for rl, _rc, r_arg, _rs in fn_releases
+            matching_releases = [
+                (rl, rb)
+                for rl, _rc, r_arg, _rs, rb in fn_releases
                 if rl > alloc_line and (
                     not target_expr
                     or r_arg == target_expr
@@ -830,6 +916,16 @@ def _scan_c_cpp(repo_id: str, path: str, text: str) -> dict[str, Any]:
                     or r_arg.startswith(f"{target_expr}.")
                     or (global_target and (r_arg == global_target or r_arg.startswith(f"{global_target}->")))
                 )
+            ]
+            same_fn_releases = [rl for rl, _rb in matching_releases]
+            matching_handoffs = [
+                (hl, hb)
+                for hl, h_sym, hb in fn_handoffs
+                if hl > alloc_line and target_expr and h_sym == target_expr
+            ]
+            sorted_exits = [
+                ex for ex in sorted([*exits, *fn_macro_exits], key=lambda item: item["line"])
+                if ex["line"] > alloc_line
             ]
             all_post_exits = [
                 {
@@ -839,25 +935,68 @@ def _scan_c_cpp(repo_id: str, path: str, text: str) -> dict[str, Any]:
                     "label_cleanups": label_cleanups.get(ex["target_label"], []) if ex["target_label"] else [],
                     "snippet": ex["snippet"],
                 }
-                for ex in sorted([*exits, *fn_macro_exits], key=lambda item: item["line"])
-                if ex["line"] > alloc_line
+                for ex in sorted_exits
             ]
+            uncleaned_exit_lines: list[int] = []
+            if target_expr and not is_persistent_expr(target_expr) and not target_expr.startswith("*"):
+                for ex in sorted_exits:
+                    ex_line = ex["line"]
+                    ex_ret = _strip_casts_and_parens(ex.get("return_expr") or "")
+                    if ex_ret == target_expr:
+                        continue
+                    status_reassigned = bool(
+                        status_lhs and any(alloc_line < al < ex_line and lhs == status_lhs for al, lhs in fn_assigns)
+                    )
+                    if _is_null_alloc_guard(
+                        ex.get("active_conds", ()),
+                        ex["snippet"],
+                        ex["kind"],
+                        target_expr,
+                        status_lhs,
+                        status_reassigned,
+                        alloc_callee,
+                    ):
+                        continue
+                    t_lbl = ex.get("target_label")
+                    if t_lbl and (
+                        label_cleanups.get(t_lbl)
+                        or (t_lbl in label_lines and any(rl >= label_lines[t_lbl] for rl in same_fn_releases))
+                    ):
+                        continue
+                    anc_set = set(ex.get("block_ancestors") or ())
+                    if any(rl < ex_line and rb in anc_set for rl, rb in matching_releases):
+                        continue
+                    if any(hl < ex_line and hb in anc_set for hl, hb in matching_handoffs):
+                        continue
+                    uncleaned_exit_lines.append(ex_line)
+
             post_exits = all_post_exits[:_POST_ALLOC_EXIT_LIMIT]
             overwrite_lines = [
                 al for al, lhs in fn_assigns
                 if al > alloc_line and target_expr and lhs == target_expr
             ][:8]
             ownership_out = bool(
-                target_expr.startswith("*")
-                or (target_expr and any(ex.get("return_expr") == target_expr for ex in exits if ex["line"] > alloc_line))
+                alloc_info.get("ownership_out")
+                or target_expr.startswith("*")
+                or (
+                    target_expr
+                    and any(
+                        _strip_casts_and_parens(ex.get("return_expr") or "") == target_expr
+                        for ex in exits
+                        if ex["line"] > alloc_line
+                    )
+                )
             )
             slice_item: dict[str, Any] = {
                 "anchor_id": _anchor_id("alloc", repo_id, path, alloc_line, f"{fn_name}:{alloc_callee}:{target_expr}"),
                 "function": fn_name,
+                "fn_start_line": fn_start_line,
+                "fn_end_line": fn_end_line,
                 "alloc_line": alloc_line,
                 "callee": alloc_callee,
                 "target": target_expr or None,
                 "same_fn_release_lines": same_fn_releases[:12],
+                "uncleaned_exit_lines": uncleaned_exit_lines[:24],
                 "post_alloc_exits": post_exits,
                 "overwrite_lines": overwrite_lines,
                 "ownership_out_candidate": ownership_out,
@@ -873,7 +1012,7 @@ def _scan_c_cpp(repo_id: str, path: str, text: str) -> dict[str, Any]:
                 slice_item["held_locks_at_assign"] = list(alloc_info.get("held_locks") or [])
             alloc_flow_slices.append(slice_item)
 
-        for rel_line, rel_callee, rel_arg, rel_snip in fn_releases:
+        for rel_line, rel_callee, rel_arg, rel_snip, _rel_blk in fn_releases:
             if not rel_arg:
                 continue
             nullified_after = any(nl > rel_line and lhs == rel_arg for nl, lhs in fn_nullifies)
@@ -977,6 +1116,36 @@ def _scan_c_cpp(repo_id: str, path: str, text: str) -> dict[str, Any]:
         "memory_anchors": memory_anchors[:200],
         "truncated": {k: v for k, v in truncated.items() if v},
     }
+
+
+def _scan_c_cpp(repo_id: str, path: str, text: str) -> dict[str, Any]:
+    """Fault-tolerant two-pass tree-sitter C/C++ scanner (propagates intra-file ownership-out wrapper allocators)."""
+    from pangea_agent.inventory.cpp_symbols import _load_parser
+
+    data = text.encode("utf-8")
+    lines = text.splitlines()
+    parser_mode = "tree-sitter-tolerant"
+
+    try:
+        parser, _ = _load_parser(Path(path))
+        root = parser.parse(data).root_node
+        if root.has_error:
+            parser_mode = "tree-sitter-partial"
+    except Exception:
+        return _scan_c_cpp_fallback(repo_id, path, lines)
+
+    first = _scan_c_cpp_ast(repo_id, path, data, lines, root, parser_mode, set())
+    local_helpers = {
+        str(s["function"])
+        for s in first["alloc_flow_slices"]
+        if s.get("ownership_out_candidate")
+        and s.get("function")
+        and s["function"] != "<unknown>"
+        and "heap_alloc" not in _classify_c_call(str(s["function"]))
+    }
+    if not local_helpers:
+        return first
+    return _scan_c_cpp_ast(repo_id, path, data, lines, root, parser_mode, local_helpers)
 
 
 def _scan_c_cpp_fallback(repo_id: str, path: str, lines: list[str]) -> dict[str, Any]:
@@ -1180,13 +1349,15 @@ def _scan_lua(repo_id: str, path: str, text: str) -> dict[str, Any]:
 
 
 def scan_file_topology(repo_id: str, path: str, text: str, language: str) -> dict[str, Any]:
+    phase_hint = "init_or_boot" if is_init_like_path(path) else "runtime"
     if language == "c_cpp":
-        return _scan_c_cpp(repo_id, path, text)
+        return {"phase_hint": phase_hint, **_scan_c_cpp(repo_id, path, text)}
     if language == "lua":
-        return _scan_lua(repo_id, path, text)
+        return {"phase_hint": phase_hint, **_scan_lua(repo_id, path, text)}
     return {
         "repo_id": repo_id,
         "path": path,
+        "phase_hint": phase_hint,
         "language": language,
         "parser": "raw_source_required",
         "error_slices": [],
@@ -1199,6 +1370,25 @@ def scan_file_topology(repo_id: str, path: str, text: str, language: str) -> dic
     }
 
 
+def _compact_alloc_slice(item: dict[str, Any]) -> dict[str, Any]:
+    """Preserve all uncleaned post-alloc exits while condensing repetitive cleaned exits in large files."""
+    exits = item.get("post_alloc_exits") or []
+    if len(exits) <= 10:
+        return item
+    uncleaned_set = set(item.get("uncleaned_exit_lines") or [])
+    must_keep = [ex for ex in exits if ex.get("line") in uncleaned_set]
+    others = [ex for ex in exits if ex.get("line") not in uncleaned_set][:6]
+    kept = sorted([*must_keep, *others], key=lambda ex: ex.get("line", 0))
+    omitted = len(exits) - len(kept)
+    if omitted <= 0:
+        return item
+    return {
+        **item,
+        "post_alloc_exits": kept,
+        "cleaned_exits_omitted": omitted,
+    }
+
+
 def generate_topology_summary(run_dir: Path, task: dict[str, Any]) -> dict[str, Any]:
     """Generate frozen global four-track topology index for Stage 1 Blueprint Agent."""
     from pangea_agent.evidence_quotes import FrozenSourceResolver
@@ -1206,7 +1396,11 @@ def generate_topology_summary(run_dir: Path, task: dict[str, Any]) -> dict[str, 
 
     resolver = FrozenSourceResolver(run_dir.parents[1], run_dir.name, task)
     files, skipped, used_bytes = [], [], 0
-    for item in sorted(task.get("owned_scope_paths", []), key=lambda x: (x["repo_id"], x["path"])):
+    ordered_scope = sorted(
+        task.get("owned_scope_paths", []),
+        key=lambda x: (1 if is_init_like_path(str(x.get("path", ""))) else 0, x["repo_id"], x["path"]),
+    )
+    for item in ordered_scope:
         repo, path = item["repo_id"], item["path"]
         source = resolver.repositories[repo][0] / path
         size = long_path(source).stat().st_size
@@ -1220,6 +1414,8 @@ def generate_topology_summary(run_dir: Path, task: dict[str, Any]) -> dict[str, 
             continue
         text = "\n".join(resolver.lines(repo, path))
         scanned = scan_file_topology(repo, path, text, detected)
+        alloc_slices = scanned.get("alloc_flow_slices", [])
+        uncleaned_slices = [s for s in alloc_slices if s.get("uncleaned_exit_lines")]
         global_allocs = [
             {
                 "function": a.get("function"),
@@ -1236,13 +1432,15 @@ def generate_topology_summary(run_dir: Path, task: dict[str, Any]) -> dict[str, 
         file_entry: dict[str, Any] = {
             "repo_id": repo,
             "path": path,
+            "phase_hint": "init_or_boot" if is_init_like_path(path) else "runtime",
             "language": detected,
             "parser": scanned["parser"],
             "counts": {
                 "error_rollback": len(scanned["error_slices"]),
                 "concurrency_timing": len(scanned["concurrency_anchors"]),
                 "resource_lifecycle": len(scanned["resource_anchors"]),
-                "alloc_flow_slices": len(scanned.get("alloc_flow_slices", [])),
+                "alloc_flow_slices": len(alloc_slices),
+                "uncleaned_exit_slices": len(uncleaned_slices),
                 "global_lazy_or_alloc_writes": len(global_allocs),
                 "memory_corruption": len(scanned["memory_anchors"]),
                 "shared_symbols": len(scanned["shared_access_matrix"]),
@@ -1251,8 +1449,22 @@ def generate_topology_summary(run_dir: Path, task: dict[str, Any]) -> dict[str, 
         }
         if global_allocs:
             file_entry["global_alloc_candidates"] = global_allocs[:12]
+        if uncleaned_slices:
+            file_entry["uncleaned_exit_candidates"] = [
+                f"{s['function']}@L{s['alloc_line']}(exits:{s['uncleaned_exit_lines'][:6]})"
+                for s in uncleaned_slices[:12]
+            ]
         files.append(file_entry)
 
+    files.sort(
+        key=lambda f: (
+            1 if f.get("phase_hint") == "init_or_boot" else 0,
+            -(f["counts"].get("uncleaned_exit_slices", 0) + f["counts"].get("global_lazy_or_alloc_writes", 0)),
+            -sum(f["counts"].values()),
+            f["repo_id"],
+            f["path"],
+        )
+    )
     payload = {
         "format_version": "risk-topology-summary-v1",
         "files": files,
@@ -1269,23 +1481,60 @@ def generate_track_topology(run_dir: Path, task: dict[str, Any], track: str, key
     from pangea_agent.inventory.languages import file_language
 
     resolver = FrozenSourceResolver(run_dir.parents[1], run_dir.name, task)
-    paths = sorted({
-        (r["repo_id"], r["path"])
-        for group in (task.get("owned_regions", []), task.get("context_regions", []), task.get("context_files", []))
-        for r in group
-        if isinstance(r, dict) and r.get("repo_id") and r.get("path")
-    })
-    files = []
+    owned_paths = sorted(
+        {
+            (r["repo_id"], r["path"])
+            for r in task.get("owned_regions", [])
+            if isinstance(r, dict) and r.get("repo_id") and r.get("path")
+        },
+        key=lambda pair: (1 if is_init_like_path(pair[1]) else 0, pair[0], pair[1]),
+    )
+    context_only_paths = sorted(
+        {
+            (r["repo_id"], r["path"])
+            for group in (task.get("context_regions", []), task.get("context_files", []))
+            for r in group
+            if isinstance(r, dict) and r.get("repo_id") and r.get("path")
+        } - set(owned_paths)
+    )
+    paths = owned_paths or context_only_paths
+    paired_entries: list[tuple[tuple[int, int, int, str, str], dict[str, Any], dict[str, Any]]] = []
     for repo, path in paths:
         source = resolver.repositories[repo][0] / path
         detected = file_language(source)
+        phase_hint = "init_or_boot" if is_init_like_path(path) else "runtime"
         if detected not in {"c_cpp", "lua"}:
-            files.append({"repo_id": repo, "path": path, "language": detected, "parser": "raw_source_required"})
+            raw_item = {"repo_id": repo, "path": path, "phase_hint": phase_hint, "language": detected, "parser": "raw_source_required"}
+            paired_entries.append(((1 if phase_hint == "init_or_boot" else 0, 0, 0, repo, path), dict(raw_item), dict(raw_item)))
             continue
         scanned = scan_file_topology(repo, path, "\n".join(resolver.lines(repo, path)), detected)
+        alloc_slices = scanned.get("alloc_flow_slices", [])
+        uncleaned_cnt = sum(1 for s in alloc_slices if s.get("uncleaned_exit_lines"))
+        uncleaned_fns = [
+            f"{s['function']}@L{s['alloc_line']}(exits:{s['uncleaned_exit_lines'][:6]})"
+            for s in alloc_slices
+            if s.get("uncleaned_exit_lines")
+        ][:12]
+        global_lazy_cnt = sum(
+            1 for a in scanned["concurrency_anchors"] if a.get("kind") == "global_lazy_init_or_alloc"
+        )
+        dir_item: dict[str, Any] = {
+            "repo_id": repo,
+            "path": path,
+            "phase_hint": phase_hint,
+            "alloc_slices": len(alloc_slices),
+            "global_lazy_or_alloc_writes": global_lazy_cnt,
+            "concurrency_anchors": len(scanned["concurrency_anchors"]),
+            "memory_anchors": len(scanned["memory_anchors"]),
+            "error_slices": len(scanned["error_slices"]),
+        }
+        if uncleaned_fns:
+            dir_item["uncleaned_exit_candidates"] = uncleaned_fns
+
         entry: dict[str, Any] = {
             "repo_id": repo,
             "path": path,
+            "phase_hint": phase_hint,
             "language": detected,
             "parser": scanned["parser"],
         }
@@ -1293,38 +1542,67 @@ def generate_track_topology(run_dir: Path, task: dict[str, Any], track: str, key
             entry["truncated"] = scanned["truncated"]
         if track == "error_rollback":
             entry["error_slices"] = scanned["error_slices"]
+            track_weight = len(scanned["error_slices"])
         elif track == "concurrency_timing":
             entry["concurrency_anchors"] = scanned["concurrency_anchors"]
             entry["shared_access_matrix"] = scanned["shared_access_matrix"]
+            track_weight = len(scanned["concurrency_anchors"]) + global_lazy_cnt * 4
         elif track == "resource_lifecycle":
-            alloc_slices = scanned.get("alloc_flow_slices", [])
             alloc_fns = {item.get("function") for item in alloc_slices if item.get("function")}
-            entry["alloc_flow_slices"] = alloc_slices
-            entry["error_slices"] = [
-                item for item in scanned["error_slices"]
-                if not alloc_fns or item.get("function") in alloc_fns
-            ]
-            entry["resource_anchors"] = scanned["resource_anchors"]
+            uncleaned_lines = {
+                ln for item in alloc_slices for ln in (item.get("uncleaned_exit_lines") or [])
+            }
+            entry["alloc_flow_slices"] = [_compact_alloc_slice(s) for s in alloc_slices]
+            prioritized_err = sorted(
+                [item for item in scanned["error_slices"] if not alloc_fns or item.get("function") in alloc_fns],
+                key=lambda item: (0 if item.get("line") in uncleaned_lines else 1, item.get("line", 0)),
+            )
+            entry["error_slices"] = prioritized_err[:32]
+            alloc_lines = {item.get("alloc_line") for item in alloc_slices}
+            entry["resource_anchors"] = [
+                a for a in scanned["resource_anchors"]
+                if a.get("kind") in {"global_alloc_assign", "refcount_op"}
+                or (a.get("kind") == "acquire" and a.get("line") not in alloc_lines)
+                or a.get("kind") == "release"
+            ][:64]
+            track_weight = len(alloc_slices) + len(entry["resource_anchors"])
         elif track == "memory_corruption":
             entry["memory_anchors"] = scanned["memory_anchors"]
             entry["shared_access_matrix"] = scanned["shared_access_matrix"]
+            track_weight = len(scanned["memory_anchors"])
         else:
             entry.update({
                 "error_slices": scanned["error_slices"],
                 "concurrency_anchors": scanned["concurrency_anchors"],
                 "shared_access_matrix": scanned["shared_access_matrix"],
                 "resource_anchors": scanned["resource_anchors"],
-                "alloc_flow_slices": scanned.get("alloc_flow_slices", []),
+                "alloc_flow_slices": [_compact_alloc_slice(s) for s in alloc_slices],
                 "memory_anchors": scanned["memory_anchors"],
             })
-        files.append(entry)
+            track_weight = len(alloc_slices) + len(scanned["error_slices"])
+        sort_key = (
+            1 if phase_hint == "init_or_boot" else 0,
+            -(uncleaned_cnt + global_lazy_cnt),
+            -track_weight,
+            repo,
+            path,
+        )
+        paired_entries.append((sort_key, dir_item, entry))
+
+    paired_entries.sort(key=lambda t: t[0])
+    file_directory = [t[1] for t in paired_entries]
+    files = [t[2] for t in paired_entries]
 
     target = run_dir / "inputs" / "risk-topology" / f"{key}.json"
-    write_json(target, {
+    payload: dict[str, Any] = {
         "format_version": "risk-track-topology-v1",
         "track": track,
         "unit_id": task.get("unit_id"),
+        "file_directory": file_directory,
         "files": files,
         "note": NOTE,
-    })
+    }
+    if context_only_paths and owned_paths:
+        payload["context_reference_paths"] = [f"{r}:{p}" for r, p in context_only_paths[:64]]
+    write_json(target, payload)
     return target

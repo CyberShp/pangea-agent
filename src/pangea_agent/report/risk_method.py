@@ -73,9 +73,11 @@ def ledger_markdown(delivery, anchors):
             from pangea_agent.risk_v2_schema import blueprint_coverage_diagnostics
             bp_input = next((i for i in task.get('inputs', []) if i.get('input_id') == 'risk_blueprint'), None)
             dts_input = next((i for i in task.get('inputs', []) if i.get('input_id') == 'dts_context'), None)
+            topo_input = next((i for i in task.get('inputs', []) if i.get('input_id') == 'track_topology'), None)
             blueprint = read_json(Path(bp_input['path'])) if bp_input and Path(bp_input['path']).is_file() else None
             dts_ctx = read_json(Path(dts_input['path'])) if dts_input and Path(dts_input['path']).is_file() else None
-            hints = blueprint_coverage_diagnostics(task.get('risk_track'), blueprint, active_records(result), dts_ctx)
+            topo_ctx = read_json(Path(topo_input['path'])) if topo_input and Path(topo_input['path']).is_file() else None
+            hints = blueprint_coverage_diagnostics(task.get('risk_track'), blueprint, active_records(result), dts_ctx, topo_ctx)
         else:
             signal_input = next((i for i in task.get('inputs', []) if i.get('input_id') == 'unit_risk_signals'), None)
             signals = read_json(Path(signal_input['path'])) if signal_input else {}

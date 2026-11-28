@@ -6,6 +6,7 @@ risk is real, never forces non-zero risk counts, and never auto-mutates content.
 """
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from pangea_agent.risk_schema import _SOURCE_REFERENCE
@@ -168,13 +169,33 @@ def format_v2_gate_errors(kind: str, offset: int, errors: list[str]) -> str:
     return "\n".join(lines)
 
 
+_SOURCE_SPAN_RE = re.compile(r"^([^:\s]+):([^\r\n]+):([1-9]\d*)(?:-([1-9]\d*))?$")
+
+
+def _parse_site_spans(refs: list[Any]) -> dict[tuple[str, str], list[tuple[int, int]]]:
+    spans: dict[tuple[str, str], list[tuple[int, int]]] = {}
+    for ref in refs:
+        if not isinstance(ref, str):
+            continue
+        m = _SOURCE_SPAN_RE.fullmatch(ref.strip())
+        if not m:
+            continue
+        repo_id, raw_path, start_s, end_s = m.groups()
+        norm_path = raw_path.replace("\\", "/")
+        start = int(start_s)
+        end = int(end_s) if end_s else start
+        spans.setdefault((repo_id, norm_path), []).append((min(start, end), max(start, end)))
+    return spans
+
+
 def blueprint_coverage_diagnostics(
     track: str | None,
     blueprint: dict[str, Any] | None,
     records: list[Any],
     dts_context: dict[str, Any] | None = None,
+    track_topology: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Non-blocking work-finish advisory: summarize entity and homologous DTS dispositions."""
+    """Non-blocking work-finish advisory: summarize entity, homologous DTS, and allocation-function coverage."""
     rows = [r.model_dump(mode="json") if hasattr(r, "model_dump") else r for r in records]
     checks = [r["body"] for r in rows if r.get("kind") == "check" and isinstance(r.get("body"), dict)]
     risks = [r["body"] for r in rows if r.get("kind") == "risk" and isinstance(r.get("body"), dict)]
@@ -209,7 +230,41 @@ def blueprint_coverage_diagnostics(
         and isinstance(item.get("dts_id"), str)
         and (not track or item.get("track") in (None, track))
     ]
-    return {
+    uncovered_alloc_fns: list[tuple[int, str]] = []
+    if track == "resource_lifecycle" and isinstance(track_topology, dict):
+        all_refs = [
+            ref
+            for b in (*checks, *risks)
+            for ref in (*(b.get("sites") or []), *(b.get("source_evidence") or []))
+        ]
+        site_spans = _parse_site_spans(all_refs)
+        seen_fns: set[tuple[str, str, str]] = set()
+        for f_entry in track_topology.get("files", []):
+            if not isinstance(f_entry, dict):
+                continue
+            repo_id = str(f_entry.get("repo_id") or "")
+            fpath = str(f_entry.get("path") or "").replace("\\", "/")
+            is_init = f_entry.get("phase_hint") == "init_or_boot"
+            f_spans = site_spans.get((repo_id, fpath), [])
+            for sl in f_entry.get("alloc_flow_slices") or []:
+                if not isinstance(sl, dict) or not sl.get("function"):
+                    continue
+                fn_name = str(sl["function"])
+                fn_key = (repo_id, fpath, fn_name)
+                if fn_key in seen_fns:
+                    continue
+                seen_fns.add(fn_key)
+                fn_start = int(sl.get("fn_start_line") or sl.get("alloc_line") or 1)
+                fn_end = int(sl.get("fn_end_line") or sl.get("alloc_line") or fn_start)
+                covered = any(s <= fn_end and e >= fn_start for s, e in f_spans)
+                if not covered:
+                    has_uncleaned = bool(sl.get("uncleaned_exit_lines") or sl.get("global_or_static_target"))
+                    prio = (2 if is_init else 0) + (0 if has_uncleaned else 1)
+                    label = f"{repo_id}:{fpath}:{fn_name} (L{fn_start}-{fn_end})"
+                    uncovered_alloc_fns.append((prio, label))
+        uncovered_alloc_fns.sort(key=lambda pair: (pair[0], pair[1]))
+
+    diag: dict[str, Any] = {
         "track": track,
         "missing_blueprint_entities": sorted(set(expected_entities) - covered_entities),
         "unaddressed_homologous_dts": sorted(set(expected_homologous) - covered_dts),
@@ -217,3 +272,7 @@ def blueprint_coverage_diagnostics(
         "needs_runtime_verification_count": sum(1 for r in risks if r.get("verification_status") == "needs_runtime_verification"),
         "check_count": len(checks),
     }
+    if track == "resource_lifecycle" and isinstance(track_topology, dict):
+        diag["uncovered_alloc_function_count"] = len(uncovered_alloc_fns)
+        diag["uncovered_alloc_functions"] = [lbl for _, lbl in uncovered_alloc_fns[:24]]
+    return diag
